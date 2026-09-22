@@ -1,0 +1,496 @@
+import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+
+struct CredentialView {
+    title: string,
+    username: string,
+    password: string,
+}
+
+export component MainWindow inherits Window {
+    title: "PhantomVault — Zero-Knowledge Native Vault";
+    min-width: 800px;
+    min-height: 560px;
+    background: #0f172a;
+
+    in-out property <bool> is_unlocked: false;
+    in-out property <bool> show_add_form: false;
+    in-out property <string> status_text: "Vault is locked. Enter Master Password:";
+    in-out property <string> live_totp_code: "------";
+    in-out property <string> totp_countdown: "30s";
+    in-out property <string> notification_text: "";
+    in-out property <[CredentialView]> credentials;
+
+    // Form two-way bound properties so Rust can clear on success
+    in-out property <string> new_title;
+    in-out property <string> new_username;
+    in-out property <string> new_password;
+
+    // Phase 7: Real-time Search / Filter
+    in-out property <string> search_query;
+    // Phase 8: 2FA Import
+    in-out property <bool> show_2fa_import: false;
+    in-out property <string> import_input;
+    callback unlock_requested(string);
+    callback copy_password_requested(string);
+    callback add_credential_requested(string, string, string);
+    callback search_changed(string);
+    callback scan_qr_requested();
+    callback import_url_requested(string);
+
+    VerticalLayout {
+        padding: 24px;
+        spacing: 16px;
+
+        // Header
+        HorizontalLayout {
+            alignment: space-between;
+            Text {
+                text: "🛡️ PHANTOM VAULT";
+                font-size: 22px;
+                font-weight: 800;
+                color: #38bdf8;
+            }
+            Text {
+                text: "Native DirectX | 15s Auto-Flush Active";
+                font-size: 12px;
+                color: #64748b;
+            }
+        }
+
+        // Lock screen
+        if !root.is_unlocked : VerticalLayout {
+            alignment: center;
+            spacing: 16px;
+
+            Text {
+                text: root.status_text;
+                font-size: 15px;
+                color: #94a3b8;
+                horizontal-alignment: center;
+            }
+
+            password_input := LineEdit {
+                placeholder-text: "Enter Master Password (first time creates vault)...";
+                input-type: password;
+                horizontal-alignment: center;
+                height: 44px;
+                accepted(text) => { root.unlock_requested(text); }
+            }
+
+            HorizontalLayout {
+                alignment: center;
+                Button {
+                    text: "🔓 Unlock / Initialize Vault";
+                    primary: true;
+                    clicked => {
+                        root.unlock_requested(password_input.text);
+                    }
+                }
+            }
+        }
+
+        // Unlocked dashboard
+        if root.is_unlocked : VerticalLayout {
+            spacing: 16px;
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "🎉 Vault Decrypted in RAM (Zero-Knowledge)";
+                    color: #4ade80;
+                    font-size: 14px;
+                    font-weight: 700;
+                }
+                Text {
+                    text: root.notification_text;
+                    color: #38bdf8;
+                    font-size: 13px;
+                    font-weight: 600;
+                }
+            }
+
+            // Live 2FA card
+            Rectangle {
+                background: #1e293b;
+                border-radius: 10px;
+                height: 90px;
+
+                HorizontalLayout {
+                    padding: 16px;
+                    alignment: space-between;
+
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        Text {
+                            text: "Google Workspace (2FA)";
+                            color: #94a3b8;
+                            font-size: 13px;
+                        }
+                        Text {
+                            text: root.live_totp_code;
+                            color: #38bdf8;
+                            font-size: 28px;
+                            font-weight: 900;
+                        }
+                    }
+
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "Expires in: " + root.totp_countdown;
+                            color: #f59e0b;
+                            font-size: 14px;
+                            font-weight: 700;
+                        }
+                    }
+                }
+            }
+
+            // Phase 8: 2FA Import toggle
+            HorizontalLayout {
+                alignment: space-between;
+                Button {
+                    text: root.show_2fa_import ? "✕ Close Import" : "📲 Import 2FA";
+                    clicked => {
+                        root.show_2fa_import = !root.show_2fa_import;
+                    }
+                }
+            }
+
+            if root.show_2fa_import : Rectangle {
+                background: #1e293b;
+                border-radius: 10px;
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+                    Text {
+                        text: "Import from Google Authenticator / otpauth";
+                        color: #38bdf8;
+                        font-size: 13px;
+                        font-weight: 700;
+                    }
+                    Button {
+                        text: "📋 Scan QR from Clipboard";
+                        primary: true;
+                        clicked => { root.scan_qr_requested(); }
+                    }
+                    Text {
+                        text: "Or paste migration URL / otpauth link:";
+                        color: #94a3b8;
+                        font-size: 12px;
+                    }
+                    import_input_field := LineEdit {
+                        placeholder-text: "otpauth-migration://offline?data=...  or  otpauth://totp/...";
+                        text <=> root.import_input;
+                        height: 36px;
+                    }
+                    HorizontalLayout {
+                        alignment: center;
+                        Button {
+                            text: "⬇️ Import";
+                            primary: true;
+                            clicked => { root.import_url_requested(root.import_input); }
+                        }
+                    }
+                    Text {
+                        text: "Tip: Win+Shift+S to screenshot QR, then Scan";
+                        color: #64748b;
+                        font-size: 11px;
+                        horizontal-alignment: center;
+                    }
+                }
+            }
+
+            // Toggle Add form button
+            HorizontalLayout {
+                alignment: space-between;
+                Button {
+                    text: root.show_add_form ? "✕ Cancel" : "➕ Add New Password";
+                    primary: !root.show_add_form;
+                    clicked => {
+                        root.show_add_form = !root.show_add_form;
+                    }
+                }
+            }
+
+            // Input Form (visible when toggled)
+            if root.show_add_form : Rectangle {
+                background: #1e293b;
+                border-radius: 10px;
+
+                VerticalLayout {
+                    padding: 16px;
+                    spacing: 10px;
+
+                    Text {
+                        text: "Add New Credential — Encrypted with XChaCha20Poly1305";
+                        color: #38bdf8;
+                        font-size: 14px;
+                        font-weight: 700;
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "Service / Title"; color: #94a3b8; font-size: 12px; }
+                        service_input := LineEdit {
+                            placeholder-text: "e.g. GitHub, Proton Mail, AWS...";
+                            text <=> root.new_title;
+                            height: 36px;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "Username / Email"; color: #94a3b8; font-size: 12px; }
+                        username_input := LineEdit {
+                            placeholder-text: "e.g. user@example.com";
+                            text <=> root.new_username;
+                            height: 36px;
+                        }
+                    }
+
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text { text: "Password"; color: #94a3b8; font-size: 12px; }
+                        pass_input := LineEdit {
+                            placeholder-text: "Enter strong password...";
+                            input-type: password;
+                            text <=> root.new_password;
+                            height: 36px;
+                        }
+                    }
+
+                    HorizontalLayout {
+                        alignment: center;
+                        padding-top: 6px;
+                        Button {
+                            text: "💾 Save & Encrypt to Disk";
+                            primary: true;
+                            clicked => {
+                                root.add_credential_requested(root.new_title, root.new_username, root.new_password);
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Phase 7: Real-time Search / Filter Bar
+            search_bar := LineEdit {
+                placeholder-text: "🔍 Search passwords or services...";
+                text <=> root.search_query;
+                height: 38px;
+                edited(text) => { root.search_changed(text); }
+            }
+
+            // Credentials list header
+            Text {
+                text: "🔐 Stored Credentials (" + root.credentials.length + ")";
+                color: #e2e8f0;
+                font-size: 13px;
+                font-weight: 700;
+            }
+
+            // Dynamically refreshed list with per-card copy button
+            ScrollView {
+                vertical-stretch: 1;
+
+                VerticalLayout {
+                    spacing: 10px;
+
+                    for cred in root.credentials : Rectangle {
+                        background: #1e293b;
+                        border-radius: 10px;
+                        height: 80px;
+
+                        HorizontalLayout {
+                            padding: 16px;
+                            alignment: space-between;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "🔑 " + cred.title;
+                                    color: #f1f5f9;
+                                    font-size: 15px;
+                                    font-weight: 700;
+                                }
+                                Text {
+                                    text: cred.username;
+                                    color: #64748b;
+                                    font-size: 12px;
+                                }
+                            }
+
+                            VerticalLayout {
+                                alignment: center;
+                                Button {
+                                    text: "📋 Copy Password";
+                                    clicked => {
+                                        root.copy_password_requested(cred.password);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.credentials.length == 0 : Rectangle {
+                        background: #1e293b;
+                        border-radius: 10px;
+                        height: 64px;
+                        Text {
+                            text: "No credentials yet. Use ➕ Add New Password to get started.";
+                            color: #64748b;
+                            font-size: 13px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// Phase 9: Raycast / Spotlight-Style Global Quick-Bar (Alt + Space)
+export component QuickBarWindow inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    width: 620px;
+    height: 340px;
+    background: #0f172a;
+    title: "PhantomVault Quick Bar";
+
+    in-out property <string> quick_query;
+    in-out property <[CredentialView]> filtered_results;
+
+    callback query_changed(string);
+    callback item_selected(string);
+    callback dismiss();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #0f172a;
+        border-radius: 12px;
+        border-color: #38bdf8;
+        border-width: 1.5px;
+        clip: true;
+
+        FocusScope {
+            // Escape key dismiss — FocusScope captures key events
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.dismiss();
+                    return accept;
+                }
+                return reject;
+            }
+
+            VerticalLayout {
+                padding: 16px;
+                spacing: 12px;
+
+            Text {
+                text: "⚡ PhantomVault Quick Bar — Alt+Space";
+                color: #38bdf8;
+                font-size: 13px;
+                font-weight: 800;
+                horizontal-alignment: center;
+            }
+
+            quick_input := LineEdit {
+                placeholder-text: "⚡ Quick Search... Type to filter, Enter or Click to copy";
+                text <=> root.quick_query;
+                height: 38px;
+                edited(text) => { root.query_changed(text); }
+                accepted(text) => {
+                    root.query_changed(text);
+                    if root.filtered_results.length > 0 {
+                        root.item_selected(root.filtered_results[0].password);
+                    }
+                }
+            }
+
+            Text {
+                text: root.filtered_results.length + " results";
+                color: #64748b;
+                font-size: 11px;
+                horizontal-alignment: right;
+            }
+
+            ScrollView {
+                vertical-stretch: 1;
+                VerticalLayout {
+                    spacing: 8px;
+                    for item in root.filtered_results : Rectangle {
+                        background: #1e293b;
+                        border-radius: 8px;
+                        height: 64px;
+
+                        HorizontalLayout {
+                            padding: 12px;
+                            spacing: 8px;
+                            alignment: space-between;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 2px;
+                                Text {
+                                    text: "🔑 " + item.title;
+                                    color: #f1f5f9;
+                                    font-size: 14px;
+                                    font-weight: 700;
+                                    overflow: elide;
+                                }
+                                Text {
+                                    text: item.username;
+                                    color: #64748b;
+                                    font-size: 12px;
+                                    overflow: elide;
+                                }
+                            }
+
+                            HorizontalLayout {
+                                alignment: center;
+                                spacing: 6px;
+                                Button {
+                                    text: "📋 Copy";
+                                    clicked => { root.item_selected(item.password); }
+                                }
+                            }
+                        }
+                    }
+
+                    if root.filtered_results.length == 0 : Rectangle {
+                        background: #1e293b;
+                        border-radius: 8px;
+                        height: 48px;
+                        Text {
+                            text: "No matches. Type to search vault.";
+                            color: #64748b;
+                            font-size: 12px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                alignment: space-between;
+                Text {
+                    text: "Enter: copy first • Click: copy • Esc: dismiss";
+                    color: #475569;
+                    font-size: 10px;
+                }
+                Button {
+                    text: "✕ Dismiss";
+                    clicked => { root.dismiss(); }
+                }
+            }
+            }
+        }
+    }
+}
