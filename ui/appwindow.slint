@@ -1,17 +1,313 @@
-import { Button, LineEdit, ScrollView } from "std-widgets.slint";
+import { Button, LineEdit, ScrollView, ComboBox } from "std-widgets.slint";
 
+// =============================================================================
+// PHANTOM VAULT — "Phantom Aura" design system
+// Deep void-navy + phantom violet aura. All property/callback names are a
+// frozen contract with src/main.rs — NEVER rename them (UI-only redesign).
+// =============================================================================
+
+// Unified row for all 6 item kinds. kind: 1 login, 2 license, 3 note,
+// 4 card, 5 identity, 6 ssh. user=subtitles, secret=protected value,
+// meta=short aux (expiry/phone/fingerprint), url+notes as applicable.
 struct CredentialView {
+    id: string,
+    kind: int,
     title: string,
     username: string,
     password: string,
+    meta: string,
+    url: string,
+    notes: string,
+    folder: string,
+}
+
+// Bitwarden-style custom field. ftype: 0 text, 1 hidden, 2 checkbox.
+struct CustomFieldView {
+    name: string,
+    value: string,
+    ftype: int,
+}
+
+// --- Phantom palette (single source of truth) ---
+global PhantomTheme {
+    in-out property <color> void: #060a15;
+    in-out property <color> abyss: #0b1226;
+    in-out property <color> panel: #101834;
+    in-out property <color> card: #131d3d;
+    in-out property <color> edge: #26315c;
+    in-out property <color> aura: #8b7cf6;
+    in-out property <color> pulse: #38e1ff;
+    in-out property <color> ink: #eef1ff;
+    in-out property <color> mist: #8e99c0;
+    in-out property <color> dim: #5b6589;
+    in-out property <color> good: #34d399;
+    in-out property <color> warn: #fbbf24;
+    in-out property <color> bad: #fb7185;
+}
+
+// --- Small reusable atoms (pure visual, no logic) ---
+component AuraButton inherits Rectangle {
+    in-out property <string> label;
+    in-out property <bool> primary: false;
+    in-out property <bool> danger: false;
+    callback clicked();
+    height: 38px;
+    border-radius: 10px;
+    background: root.primary ? #8b7cf6 : (root.danger ? #3a1730 : #1a2450);
+    border-width: 1px;
+    border-color: root.primary ? #a99bff : (root.danger ? #fb7185 : #2c3a6e);
+    drop-shadow-blur: root.primary ? 18px : 0px;
+    drop-shadow-color: #8b7cf655;
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.clicked(); }
+    }
+    Text {
+        text: root.label;
+        color: root.primary ? #ffffff : (root.danger ? #fb7185 : #cfd7ff);
+        font-size: 13px;
+        font-weight: 700;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    states [
+        pressed when area.pressed : {
+            background: root.primary ? #7464e8 : #232e63;
+        }
+        hover when area.has-hover : {
+            border-color: root.primary ? #c4b8ff : #8b7cf6;
+        }
+    ]
+}
+
+component NavItem inherits Rectangle {
+    in-out property <string> icon;
+    in-out property <string> label;
+    in-out property <bool> active: false;
+    callback tapped();
+    height: 44px;
+    border-radius: 10px;
+    background: root.active ? #1a2450 : transparent;
+    border-width: 1px;
+    border-color: root.active ? #8b7cf6 : transparent;
+    area := TouchArea {
+        mouse-cursor: pointer;
+        clicked => { root.tapped(); }
+    }
+    HorizontalLayout {
+        padding-left: 14px;
+        padding-right: 14px;
+        spacing: 10px;
+        alignment: start;
+        Text {
+            text: root.icon;
+            font-size: 15px;
+            vertical-alignment: center;
+        }
+        Text {
+            text: root.label;
+            color: root.active ? #ffffff : #8e99c0;
+            font-size: 13px;
+            font-weight: root.active ? 700 : 400;
+            vertical-alignment: center;
+        }
+    }
+    states [
+        hover when area.has-hover : {
+            background: #151d42;
+        }
+    ]
+}
+
+component FieldLabel inherits Text {
+    font-size: 11px;
+    font-weight: 700;
+    color: #8e99c0;
+}
+
+component GeneratorPanel inherits Rectangle {
+    width: 460px;
+    // height grows with content (no fixed height → never overflows taskbar)
+    background: #0d1430;
+    border-radius: 16px;
+    border-width: 1.5px;
+    border-color: #8b7cf6;
+    drop-shadow-blur: 40px;
+    drop-shadow-color: #8b7cf644;
+
+    in-out property <int> gen_length;
+    in-out property <bool> gen_uppercase;
+    in-out property <bool> gen_lowercase;
+    in-out property <bool> gen_digits;
+    in-out property <bool> gen_symbols;
+    in-out property <bool> gen_exclude_ambiguous;
+    in-out property <bool> gen_diceware_mode;
+    in-out property <int> gen_word_count;
+    in-out property <string> gen_output;
+    in-out property <float> gen_entropy_bits;
+
+    callback regenerate();
+    callback use_password(string);
+    callback close_panel();
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+
+        // Header
+        HorizontalLayout {
+            alignment: space-between;
+            Text { text: "🎲  Generator"; font-size: 17px; font-weight: 800; color: #eef1ff; vertical-alignment: center; }
+            AuraButton {
+                label: "✕";
+                width: 34px;
+                height: 34px;
+                clicked => { root.close_panel(); }
+            }
+        }
+
+        // Mode segmented control
+        Rectangle {
+            background: #0a0f24;
+            border-radius: 10px;
+            height: 42px;
+            HorizontalLayout {
+                padding: 4px;
+                spacing: 4px;
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 8px;
+                    background: !root.gen_diceware_mode ? #8b7cf6 : transparent;
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.gen_diceware_mode = false; root.regenerate(); }
+                    }
+                    Text { text: "Complex"; color: !root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                Rectangle {
+                    horizontal-stretch: 1;
+                    border-radius: 8px;
+                    background: root.gen_diceware_mode ? #8b7cf6 : transparent;
+                    TouchArea {
+                        mouse-cursor: pointer;
+                        clicked => { root.gen_diceware_mode = true; root.regenerate(); }
+                    }
+                    Text { text: "Diceware"; color: root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                }
+            }
+        }
+
+        if !root.gen_diceware_mode : VerticalLayout {
+            spacing: 8px;
+            HorizontalLayout {
+                alignment: space-between;
+                FieldLabel { text: "LENGTH"; vertical-alignment: center; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    AuraButton { label: "−"; width: 34px; height: 32px; clicked => { if root.gen_length > 8 { root.gen_length -= 1; root.regenerate(); } } }
+                    Text { text: root.gen_length; color: #38e1ff; font-size: 15px; font-weight: 800; vertical-alignment: center; min-width: 36px; horizontal-alignment: center; }
+                    AuraButton { label: "+"; width: 34px; height: 32px; clicked => { if root.gen_length < 128 { root.gen_length += 1; root.regenerate(); } } }
+                }
+            }
+            HorizontalLayout {
+                spacing: 8px;
+                alignment: space-between;
+                VerticalLayout {
+                    spacing: 2px;
+                    alignment: center;
+                    AuraButton { label: root.gen_uppercase ? "A-Z ✓" : "A-Z"; width: 86px; height: 32px; primary: root.gen_uppercase; clicked => { root.gen_uppercase = !root.gen_uppercase; root.regenerate(); } }
+                    AuraButton { label: root.gen_lowercase ? "a-z ✓" : "a-z"; width: 86px; height: 32px; primary: root.gen_lowercase; clicked => { root.gen_lowercase = !root.gen_lowercase; root.regenerate(); } }
+                }
+                VerticalLayout {
+                    spacing: 2px;
+                    alignment: center;
+                    AuraButton { label: root.gen_digits ? "0-9 ✓" : "0-9"; width: 86px; height: 32px; primary: root.gen_digits; clicked => { root.gen_digits = !root.gen_digits; root.regenerate(); } }
+                    AuraButton { label: root.gen_symbols ? "#$! ✓" : "#$!"; width: 86px; height: 32px; primary: root.gen_symbols; clicked => { root.gen_symbols = !root.gen_symbols; root.regenerate(); } }
+                }
+                VerticalLayout {
+                    spacing: 2px;
+                    alignment: center;
+                    FieldLabel { text: "NO AMBIGUOUS"; horizontal-alignment: center; }
+                    AuraButton { label: root.gen_exclude_ambiguous ? "0/O/l ✓" : "0/O/l"; width: 86px; height: 32px; primary: root.gen_exclude_ambiguous; clicked => { root.gen_exclude_ambiguous = !root.gen_exclude_ambiguous; root.regenerate(); } }
+                }
+            }
+        }
+
+        if root.gen_diceware_mode : HorizontalLayout {
+            alignment: space-between;
+            FieldLabel { text: "WORDS"; vertical-alignment: center; }
+            HorizontalLayout {
+                spacing: 8px;
+                AuraButton { label: "−"; width: 34px; height: 32px; clicked => { if root.gen_word_count > 4 { root.gen_word_count -= 1; root.regenerate(); } } }
+                Text { text: root.gen_word_count; color: #38e1ff; font-size: 15px; font-weight: 800; vertical-alignment: center; min-width: 30px; horizontal-alignment: center; }
+                AuraButton { label: "+"; width: 34px; height: 32px; clicked => { if root.gen_word_count < 12 { root.gen_word_count += 1; root.regenerate(); } } }
+            }
+        }
+
+        // Output well
+        Rectangle {
+            background: #0a0f24;
+            border-radius: 10px;
+            border-width: 1px;
+            border-color: #26315c;
+            height: 56px;
+            Text {
+                x: 12px;
+                width: parent.width - 24px;
+                height: parent.height;
+                text: root.gen_output == "" ? "—" : root.gen_output;
+                color: root.gen_output == "" ? #5b6589 : #38e1ff;
+                font-size: 14px;
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+                wrap: word-wrap;
+                overflow: elide;
+            }
+        }
+
+        // Entropy meter
+        VerticalLayout {
+            spacing: 4px;
+            HorizontalLayout {
+                alignment: space-between;
+                FieldLabel { text: "ENTROPY"; }
+                Text {
+                    text: Math.round(root.gen_entropy_bits) + " bits";
+                    font-size: 12px;
+                    font-weight: 800;
+                    color: root.gen_entropy_bits > 80 ? #34d399 : (root.gen_entropy_bits > 60 ? #fbbf24 : #fb7185);
+                }
+            }
+            Rectangle {
+                background: #0a0f24;
+                border-radius: 4px;
+                height: 8px;
+                Rectangle {
+                    x: 0;
+                    width: Math.min(root.gen_entropy_bits / 128 * (parent.width), parent.width);
+                    height: parent.height;
+                    border-radius: 4px;
+                    background: root.gen_entropy_bits > 80 ? #34d399 : (root.gen_entropy_bits > 60 ? #fbbf24 : #fb7185);
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8px;
+            AuraButton { label: "🔄  Regenerate"; horizontal-stretch: 1; clicked => { root.regenerate(); } }
+            AuraButton { label: "✅  Use This"; primary: true; horizontal-stretch: 1; clicked => { root.use_password(root.gen_output); } }
+        }
+    }
 }
 
 export component MainWindow inherits Window {
     title: "PhantomVault — Zero-Knowledge Native Vault";
-    min-width: 800px;
-    min-height: 560px;
-    background: #0f172a;
+    min-width: 960px;
+    min-height: 620px;
+    background: #060a15;
 
+    // ==== Frozen Rust contract (do not rename) ====
     in-out property <bool> is_unlocked: false;
     in-out property <bool> show_add_form: false;
     in-out property <string> status_text: "Vault is locked. Enter Master Password:";
@@ -19,334 +315,1028 @@ export component MainWindow inherits Window {
     in-out property <string> totp_countdown: "30s";
     in-out property <string> notification_text: "";
     in-out property <[CredentialView]> credentials;
-
-    // Form two-way bound properties so Rust can clear on success
-    in-out property <string> new_title;
-    in-out property <string> new_username;
-    in-out property <string> new_password;
-
-    // Phase 7: Real-time Search / Filter
     in-out property <string> search_query;
-    // Phase 8: 2FA Import
+    // Bitwarden-parity item management
+    in-out property <int> new_kind: 1;
+    in-out property <int> type_filter: 0;
+    in-out property <string> folder_filter: "All";
+    in-out property <string> f_title;
+    in-out property <string> f_a;
+    in-out property <string> f_b;
+    in-out property <string> f_c;
+    in-out property <string> f_d;
+    in-out property <string> f_e;
+    in-out property <string> f_notes;
+    in-out property <string> f_folder: "General";
+    in-out property <string> f_totp;
+    in-out property <string> f_backup;
+    in-out property <bool> f_reprompt: false;
+    // Folder engine
+    in-out property <[string]> folders_list;
+    in-out property <[string]> filter_folders;
+    in-out property <string> new_folder_name;
+    // Custom fields (pending form list + add dialog)
+    in-out property <[CustomFieldView]> custom_fields;
+    in-out property <bool> show_cf_dialog: false;
+    in-out property <int> cf_type: 0;
+    in-out property <string> cf_name;
+    in-out property <string> cf_value;
+    in-out property <int> cf_revealed: -1;
+    in-out property <bool> show_new_menu: false;
+    in-out property <bool> show_detail: false;
+    in-out property <string> d_id;
+    in-out property <int> d_kind: 1;
+    in-out property <string> d_title;
+    in-out property <string> d_user;
+    in-out property <string> d_secret;
+    in-out property <string> d_meta;
+    in-out property <string> d_url;
+    in-out property <string> d_notes;
+    in-out property <string> d_urls_extra;
+    in-out property <string> d_folder;
+    in-out property <bool> d_secret_visible: false;
+    in-out property <bool> d_reprompt: false;
+    in-out property <string> d_totp;
+    in-out property <string> d_backup;
+    in-out property <[CustomFieldView]> d_custom;
+    in-out property <int> d_revealed: -1;
+    // Reprompt gate modal
+    in-out property <bool> rp_show: false;
+    in-out property <int> rp_action: 0;
+    in-out property <int> rp_kind: 1;
+    in-out property <string> rp_id;
+    in-out property <string> rp_user;
+    in-out property <string> rp_secret;
+    in-out property <string> rp_error: "";
     in-out property <bool> show_2fa_import: false;
     in-out property <string> import_input;
+    // Phase 11: Windows Hello
+    in-out property <bool> hello_available: false;
+    in-out property <string> unlock_error_message: "";
+    // Phase 17: Shamir recovery sheet (unlocked) + shard recovery (lock)
+    in-out property <bool> show_shards: false;
+    in-out property <string> shard_1;
+    in-out property <string> shard_2;
+    in-out property <string> shard_3;
+    in-out property <string> shard_4;
+    in-out property <string> shard_5;
+    in-out property <bool> show_recover: false;
+    in-out property <string> recover_1;
+    in-out property <string> recover_2;
+    in-out property <string> recover_3;
+    callback generate_shards();
+    callback recover_with_shards(string, string, string);
+    callback stego_hide();
+    callback stego_restore();
+    // Phase 15 (Option 1): paranoia suite
+    in-out property <bool> is_decoy: false;
+    in-out property <string> duress_input;
+    // Phase 18: Omni-Importer vault view
+    in-out property <bool> show_import: false;
+    in-out property <string> import_status: "No import yet — pick any export file.";
+    // Phase 12: zero-knowledge GitHub sync
+    in-out property <bool> show_sync: false;
+    in-out property <string> sync_owner;
+    in-out property <string> sync_repo;
+    in-out property <string> sync_token_input;
+    in-out property <string> sync_status: "";
+    in-out property <bool> show_generator: false;
+    in-out property <int> gen_length: 20;
+    in-out property <bool> gen_uppercase: true;
+    in-out property <bool> gen_lowercase: true;
+    in-out property <bool> gen_digits: true;
+    in-out property <bool> gen_symbols: true;
+    in-out property <bool> gen_exclude_ambiguous: true;
+    in-out property <bool> gen_diceware_mode: false;
+    in-out property <int> gen_word_count: 6;
+    in-out property <string> gen_output: "";
+    in-out property <float> gen_entropy_bits: 0.0;
     callback unlock_requested(string);
     callback copy_password_requested(string);
-    callback add_credential_requested(string, string, string);
+    callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, bool);
+    callback delete_item_requested(int, string);
+    callback type_filter_changed(int);
+    callback folder_filter_changed(string);
+    callback open_new_form(int);
+    callback cancel_form();
+    callback add_folder_requested(string);
+    callback add_custom_field(int, string, string);
+    callback delete_custom_field(int);
+    callback toggle_pending_field(int);
+    callback toggle_saved_field(int, string, int);
+    callback edit_item_requested(int, string);
+    callback open_detail(string);
+    callback reprompt_confirm(string);
     callback search_changed(string);
     callback scan_qr_requested();
     callback import_url_requested(string);
+    callback request_biometric_unlock();
+    callback type_credential_requested(string, string);
+    callback save_sync_config(string, string, string);
+    callback sync_now();
+    callback pick_import_file();
+    callback set_duress_password(string);
+    callback plant_canary();
+    callback regenerate();
+    callback use_password(string);
+    callback close_panel();
 
-    VerticalLayout {
-        padding: 24px;
-        spacing: 16px;
-
-        // Header
-        HorizontalLayout {
-            alignment: space-between;
-            Text {
-                text: "🛡️ PHANTOM VAULT";
-                font-size: 22px;
-                font-weight: 800;
-                color: #38bdf8;
-            }
-            Text {
-                text: "Native DirectX | 15s Auto-Flush Active";
-                font-size: 12px;
-                color: #64748b;
-            }
+    // ================= LOCK SCREEN =================
+    if !root.is_unlocked : Rectangle {
+        // Invisible focus grabber: conditional ids aren't visible to root init,
+        // so focus is requested from inside the lock-screen scope itself.
+        FocusScope {
+            width: 0;
+            height: 0;
+            init => { password_input.focus(); }
         }
-
-        // Lock screen
-        if !root.is_unlocked : VerticalLayout {
+        background: #060a15;
+        // aura glows
+        Rectangle { x: parent.width * 0.12; y: parent.height * 0.08; width: 340px; height: 340px; border-radius: 170px; background: #8b7cf622; }
+        Rectangle { x: parent.width * 0.72; y: parent.height * 0.55; width: 300px; height: 300px; border-radius: 150px; background: #38e1ff18; }
+        VerticalLayout {
             alignment: center;
-            spacing: 16px;
-
-            Text {
-                text: root.status_text;
-                font-size: 15px;
-                color: #94a3b8;
-                horizontal-alignment: center;
-            }
-
-            password_input := LineEdit {
-                placeholder-text: "Enter Master Password (first time creates vault)...";
-                input-type: password;
-                horizontal-alignment: center;
-                height: 44px;
-                accepted(text) => { root.unlock_requested(text); }
-            }
-
+            // brand
             HorizontalLayout {
                 alignment: center;
-                Button {
-                    text: "🔓 Unlock / Initialize Vault";
-                    primary: true;
-                    clicked => {
-                        root.unlock_requested(password_input.text);
+                spacing: 12px;
+                Rectangle {
+                    width: 52px;
+                    height: 52px;
+                    border-radius: 14px;
+                    background: #8b7cf6;
+                    drop-shadow-blur: 30px;
+                    drop-shadow-color: #8b7cf688;
+                    Text { text: "P"; color: #ffffff; font-size: 26px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                }
+                VerticalLayout {
+                    spacing: 0px;
+                    alignment: center;
+                    Text { text: "PHANTOM VAULT"; font-size: 24px; font-weight: 900; color: #eef1ff; }
+                    Text { text: "ZERO-KNOWLEDGE  •  NATIVE  •  QUANTUM-READY"; font-size: 10px; font-weight: 700; color: #5b6589; }
+                }
+            }
+            Rectangle { height: 26px; }
+            // unlock card (wrapped to force perfect horizontal centering)
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                width: 440px;
+                background: #0d1430;
+                border-radius: 18px;
+                border-width: 1px;
+                border-color: #26315c;
+                drop-shadow-blur: 36px;
+                drop-shadow-color: #00000088;
+                VerticalLayout {
+                    padding: 28px;
+                    spacing: 14px;
+                    Text { text: root.status_text; font-size: 13px; color: #8e99c0; horizontal-alignment: center; wrap: word-wrap; }
+                    password_input := LineEdit {
+                        placeholder-text: "Master password…";
+                        input-type: password;
+                        height: 46px;
+                        font-size: 15px;
+                        accepted(text) => { root.unlock_requested(text); }
                     }
+                    AuraButton {
+                        label: "🔓  Unlock Vault";
+                        primary: true;
+                        height: 46px;
+                        clicked => { root.unlock_requested(password_input.text); }
+                    }
+                    if root.hello_available : AuraButton {
+                        label: "🖐  Quick Unlock with Windows Hello";
+                        height: 42px;
+                        clicked => { root.request_biometric_unlock(); }
+                    }
+                    if root.unlock_error_message != "" : HorizontalLayout {
+                        alignment: center;
+                        spacing: 8px;
+                        Text { text: root.unlock_error_message; font-size: 12px; font-weight: 600; color: #fb7185; horizontal-alignment: center; wrap: word-wrap; }
+                        AuraButton { label: "✕"; width: 26px; height: 24px; danger: true; clicked => { root.unlock_error_message = ""; } }
+                    }
+                    // Phase 17: shard recovery (lost master password)
+                    AuraButton {
+                        label: root.show_recover ? "🔑  Back to Password" : "🆘  Recover via Shards";
+                        height: 38px;
+                        clicked => { root.show_recover = !root.show_recover; }
+                    }
+                    if root.show_recover : VerticalLayout {
+                        spacing: 8px;
+                        FieldLabel { text: "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
+                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; text <=> root.recover_1; height: 38px; }
+                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; text <=> root.recover_2; height: 38px; }
+                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; text <=> root.recover_3; height: 38px; }
+                        AuraButton {
+                            label: "🔓  Rebuild & Unlock";
+                            primary: true;
+                            height: 42px;
+                            clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); }
+                        }
+                    }
+                    Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 10px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
+                }
                 }
             }
         }
+    }
 
-        // Unlocked dashboard
-        if root.is_unlocked : VerticalLayout {
-            spacing: 16px;
+    // ================= APP SHELL =================
+    if root.is_unlocked : HorizontalLayout {
+        spacing: 0px;
+
+        // ---- Sidebar ----
+        Rectangle {
+            width: 232px;
+            background: #0a0f24;
+            VerticalLayout {
+            padding: 18px;
+            spacing: 6px;
 
             HorizontalLayout {
-                alignment: space-between;
-                Text {
-                    text: "🎉 Vault Decrypted in RAM (Zero-Knowledge)";
-                    color: #4ade80;
-                    font-size: 14px;
-                    font-weight: 700;
+                spacing: 10px;
+                padding-bottom: 14px;
+                Rectangle {
+                    width: 38px;
+                    height: 38px;
+                    border-radius: 11px;
+                    background: #8b7cf6;
+                    drop-shadow-blur: 16px;
+                    drop-shadow-color: #8b7cf666;
+                    Text { text: "P"; color: #ffffff; font-size: 19px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
                 }
-                Text {
-                    text: root.notification_text;
-                    color: #38bdf8;
-                    font-size: 13px;
-                    font-weight: 600;
+                VerticalLayout {
+                    alignment: center;
+                    spacing: 0px;
+                    Text { text: "PHANTOM"; font-size: 14px; font-weight: 900; color: #eef1ff; }
+                    Text { text: "VAULT"; font-size: 10px; font-weight: 700; color: #8b7cf6; }
                 }
             }
 
-            // Live 2FA card
+            FieldLabel { text: "WORKSPACE"; }
+            NavItem { icon: "🗝"; label: "Vault"; active: !root.show_add_form && !root.show_2fa_import && !root.show_sync && !root.show_import; tapped => { root.show_add_form = false; root.show_2fa_import = false; root.show_sync = false; root.show_detail = false; root.show_new_menu = false; root.show_import = false; } }
+            NavItem { icon: "➕"; label: "+ New"; active: root.show_add_form || root.show_new_menu; tapped => { root.show_new_menu = !root.show_new_menu; } }
+            if root.show_new_menu : VerticalLayout {
+                spacing: 2px;
+                NavItem { icon: "🌐"; label: "Login"; tapped => { root.open_new_form(1); } }
+                NavItem { icon: "💳"; label: "Card"; tapped => { root.open_new_form(4); } }
+                NavItem { icon: "🪪"; label: "Identity"; tapped => { root.open_new_form(5); } }
+                NavItem { icon: "📝"; label: "Note"; tapped => { root.open_new_form(3); } }
+                NavItem { icon: "📜"; label: "License"; tapped => { root.open_new_form(2); } }
+                NavItem { icon: "🔑"; label: "SSH Key"; tapped => { root.open_new_form(6); } }
+            }
+            NavItem { icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
+            NavItem { icon: "📲"; label: "Import 2FA"; active: root.show_2fa_import; tapped => { root.show_2fa_import = !root.show_2fa_import; } }
+            NavItem { icon: "🔄"; label: "Sync"; active: root.show_sync; tapped => { root.show_sync = !root.show_sync; } }
+            NavItem { icon: "📥"; label: "Import Vault"; active: root.show_import; tapped => { root.show_import = !root.show_import; } }
+
+            Rectangle { vertical-stretch: 1; }
+
+            // vault health footer
             Rectangle {
-                background: #1e293b;
-                border-radius: 10px;
-                height: 90px;
+                background: #101834;
+                border-radius: 12px;
+                border-width: 1px;
+                border-color: #26315c;
+                VerticalLayout {
+                    padding: 12px;
+                    spacing: 4px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Rectangle { width: 8px; height: 8px; border-radius: 4px; background: root.is_decoy ? #fb7185 : #34d399; y: 5px; }
+                        Text { text: root.is_decoy ? "DECOY MODE" : "VAULT SEALED"; font-size: 11px; font-weight: 800; color: root.is_decoy ? #fb7185 : #34d399; }
+                    }
+                    Text { text: "XChaCha20  •  Argon2id"; font-size: 10px; color: #5b6589; }
+                    Text { text: "Alt+Space  →  Quick Bar"; font-size: 10px; color: #5b6589; }
+                }
+            }
+            }
+        }
 
+        // ---- Main column ----
+        Rectangle {
+            background: #060a15;
+            clip: true;
+            VerticalLayout {
+            padding: 22px;
+            spacing: 14px;
+
+            // Topbar: search + notification
+            HorizontalLayout {
+                spacing: 12px;
+                search_bar := LineEdit {
+                    placeholder-text: "🔍  Search vault…";
+                    text <=> root.search_query;
+                    height: 42px;
+                    font-size: 14px;
+                    horizontal-stretch: 1;
+                    edited(text) => { root.search_changed(text); }
+                }
+            }
+            if root.notification_text != "" : Rectangle {
+                background: #101834;
+                border-radius: 10px;
+                border-width: 1px;
+                border-color: #38e1ff55;
+                height: 36px;
                 HorizontalLayout {
-                    padding: 16px;
-                    alignment: space-between;
-
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        Text {
-                            text: "Google Workspace (2FA)";
-                            color: #94a3b8;
-                            font-size: 13px;
-                        }
-                        Text {
-                            text: root.live_totp_code;
-                            color: #38bdf8;
-                            font-size: 28px;
-                            font-weight: 900;
-                        }
-                    }
-
-                    VerticalLayout {
-                        alignment: center;
-                        Text {
-                            text: "Expires in: " + root.totp_countdown;
-                            color: #f59e0b;
-                            font-size: 14px;
-                            font-weight: 700;
-                        }
-                    }
+                    padding-left: 12px;
+                    padding-right: 6px;
+                    spacing: 8px;
+                    Text { text: root.notification_text; color: #38e1ff; font-size: 12px; font-weight: 600; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                    AuraButton { label: "✕"; width: 28px; height: 26px; y: 5px; clicked => { root.notification_text = ""; } }
                 }
             }
 
-            // Phase 8: 2FA Import toggle
-            HorizontalLayout {
-                alignment: space-between;
-                Button {
-                    text: root.show_2fa_import ? "✕ Close Import" : "📲 Import 2FA";
-                    clicked => {
-                        root.show_2fa_import = !root.show_2fa_import;
-                    }
-                }
-            }
-
-            if root.show_2fa_import : Rectangle {
-                background: #1e293b;
-                border-radius: 10px;
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 10px;
-                    Text {
-                        text: "Import from Google Authenticator / otpauth";
-                        color: #38bdf8;
-                        font-size: 13px;
-                        font-weight: 700;
-                    }
-                    Button {
-                        text: "📋 Scan QR from Clipboard";
-                        primary: true;
-                        clicked => { root.scan_qr_requested(); }
-                    }
-                    Text {
-                        text: "Or paste migration URL / otpauth link:";
-                        color: #94a3b8;
-                        font-size: 12px;
-                    }
-                    import_input_field := LineEdit {
-                        placeholder-text: "otpauth-migration://offline?data=...  or  otpauth://totp/...";
-                        text <=> root.import_input;
-                        height: 36px;
-                    }
-                    HorizontalLayout {
-                        alignment: center;
-                        Button {
-                            text: "⬇️ Import";
-                            primary: true;
-                            clicked => { root.import_url_requested(root.import_input); }
-                        }
-                    }
-                    Text {
-                        text: "Tip: Win+Shift+S to screenshot QR, then Scan";
-                        color: #64748b;
-                        font-size: 11px;
-                        horizontal-alignment: center;
-                    }
-                }
-            }
-
-            // Toggle Add form button
-            HorizontalLayout {
-                alignment: space-between;
-                Button {
-                    text: root.show_add_form ? "✕ Cancel" : "➕ Add New Password";
-                    primary: !root.show_add_form;
-                    clicked => {
-                        root.show_add_form = !root.show_add_form;
-                    }
-                }
-            }
-
-            // Input Form (visible when toggled)
-            if root.show_add_form : Rectangle {
-                background: #1e293b;
-                border-radius: 10px;
-
-                VerticalLayout {
-                    padding: 16px;
-                    spacing: 10px;
-
-                    Text {
-                        text: "Add New Credential — Encrypted with XChaCha20Poly1305";
-                        color: #38bdf8;
-                        font-size: 14px;
-                        font-weight: 700;
-                    }
-
-                    VerticalLayout {
-                        spacing: 4px;
-                        Text { text: "Service / Title"; color: #94a3b8; font-size: 12px; }
-                        service_input := LineEdit {
-                            placeholder-text: "e.g. GitHub, Proton Mail, AWS...";
-                            text <=> root.new_title;
-                            height: 36px;
-                        }
-                    }
-
-                    VerticalLayout {
-                        spacing: 4px;
-                        Text { text: "Username / Email"; color: #94a3b8; font-size: 12px; }
-                        username_input := LineEdit {
-                            placeholder-text: "e.g. user@example.com";
-                            text <=> root.new_username;
-                            height: 36px;
-                        }
-                    }
-
-                    VerticalLayout {
-                        spacing: 4px;
-                        Text { text: "Password"; color: #94a3b8; font-size: 12px; }
-                        pass_input := LineEdit {
-                            placeholder-text: "Enter strong password...";
-                            input-type: password;
-                            text <=> root.new_password;
-                            height: 36px;
-                        }
-                    }
-
-                    HorizontalLayout {
-                        alignment: center;
-                        padding-top: 6px;
-                        Button {
-                            text: "💾 Save & Encrypt to Disk";
-                            primary: true;
-                            clicked => {
-                                root.add_credential_requested(root.new_title, root.new_username, root.new_password);
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Phase 7: Real-time Search / Filter Bar
-            search_bar := LineEdit {
-                placeholder-text: "🔍 Search passwords or services...";
-                text <=> root.search_query;
-                height: 38px;
-                edited(text) => { root.search_changed(text); }
-            }
-
-            // Credentials list header
-            Text {
-                text: "🔐 Stored Credentials (" + root.credentials.length + ")";
-                color: #e2e8f0;
-                font-size: 13px;
-                font-weight: 700;
-            }
-
-            // Dynamically refreshed list with per-card copy button
             ScrollView {
                 vertical-stretch: 1;
-
                 VerticalLayout {
-                    spacing: 10px;
+                    spacing: 14px;
 
-                    for cred in root.credentials : Rectangle {
-                        background: #1e293b;
-                        border-radius: 10px;
-                        height: 80px;
-
+                    // TOTP hero card
+                    Rectangle {
+                        background: #0d1430;
+                        border-radius: 16px;
+                        border-width: 1px;
+                        border-color: #8b7cf655;
+                        drop-shadow-blur: 24px;
+                        drop-shadow-color: #8b7cf622;
                         HorizontalLayout {
-                            padding: 16px;
+                            padding: 18px;
+                            spacing: 16px;
                             alignment: space-between;
-
+                            VerticalLayout {
+                                spacing: 2px;
+                                alignment: center;
+                                FieldLabel { text: "LIVE 2FA  •  GOOGLE WORKSPACE"; }
+                                Text { text: root.live_totp_code; color: #38e1ff; font-size: 34px; font-weight: 900; }
+                            }
                             VerticalLayout {
                                 alignment: center;
-                                spacing: 2px;
-                                Text {
-                                    text: "🔑 " + cred.title;
-                                    color: #f1f5f9;
-                                    font-size: 15px;
-                                    font-weight: 700;
-                                }
-                                Text {
-                                    text: cred.username;
-                                    color: #64748b;
-                                    font-size: 12px;
+                                spacing: 6px;
+                                Rectangle {
+                                    width: 76px;
+                                    height: 76px;
+                                    border-radius: 38px;
+                                    border-width: 2px;
+                                    border-color: #fbbf24;
+                                    Text { text: root.totp_countdown; color: #fbbf24; font-size: 15px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                                 }
                             }
+                        }
+                    }
 
-                            VerticalLayout {
+                    // Import 2FA panel
+                    if root.show_2fa_import : Rectangle {
+                        background: #0d1430;
+                        border-radius: 16px;
+                        border-width: 1px;
+                        border-color: #26315c;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            Text { text: "📲  Import from Google Authenticator"; color: #eef1ff; font-size: 14px; font-weight: 800; }
+                            AuraButton { label: "📋  Scan QR from Clipboard"; primary: true; clicked => { root.scan_qr_requested(); } }
+                            FieldLabel { text: "OR PASTE MIGRATION / OTPAUTH LINK"; }
+                            import_input_field := LineEdit {
+                                placeholder-text: "otpauth-migration://offline?data=…";
+                                text <=> root.import_input;
+                                height: 38px;
+                            }
+                            HorizontalLayout {
                                 alignment: center;
-                                Button {
-                                    text: "📋 Copy Password";
-                                    clicked => {
-                                        root.copy_password_requested(cred.password);
+                                AuraButton { label: "⬇  Import"; primary: true; width: 180px; clicked => { root.import_url_requested(root.import_input); } }
+                            }
+                            Text { text: "Tip: Win+Shift+S to snip a QR, then Scan"; color: #5b6589; font-size: 11px; horizontal-alignment: center; }
+                        }
+                    }
+
+                    // Phase 18: Omni-Universal importer view
+                    if root.show_import : Rectangle {
+                        background: #0d1430;
+                        border-radius: 16px;
+                        border-width: 1px;
+                        border-color: #8b7cf655;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            Text { text: "📥  Import ANY Vault File — auto-detected"; color: #eef1ff; font-size: 14px; font-weight: 800; }
+                            Text { text: "Bitwarden  •  1Password  •  KeePassXC  •  Chrome  •  Brave  •  Edge  •  Firefox  •  Safari  •  LastPass  •  Proton"; color: #8b7cf6; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-alignment: center; }
+                            Text { text: "Encrypted exports are refused with guidance. Duplicates merge silently. Folders preserved."; color: #5b6589; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                            HorizontalLayout {
+                                alignment: center;
+                                AuraButton { label: "📁  Browse & Import ANY File"; primary: true; width: 280px; clicked => { root.pick_import_file(); } }
+                            }
+                            Rectangle {
+                                background: #0a0f24;
+                                border-radius: 10px;
+                                border-width: 1px;
+                                border-color: #26315c;
+                                VerticalLayout {
+                                    padding: 12px;
+                                    spacing: 4px;
+                                    Text { text: "DIAGNOSTICS"; color: #5b6589; font-size: 10px; font-weight: 700; }
+                                    Text { text: root.import_status; color: #38e1ff; font-size: 12px; font-weight: 600; wrap: word-wrap; }
+                                }
+                            }
+                        }
+                    }
+
+                    // Phase 12: private-repo sync panel (ciphertext only)
+                    if root.show_sync : Rectangle {
+                        background: #0d1430;
+                        border-radius: 16px;
+                        border-width: 1px;
+                        border-color: #26315c;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            Text { text: "🔄  Private GitHub Sync — ciphertext only"; color: #eef1ff; font-size: 14px; font-weight: 800; }
+                            Text { text: "Only the sealed vault blob leaves this device. GitHub never sees passwords, names, or counts."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                            FieldLabel { text: "REPO OWNER"; }
+                            sync_owner_field := LineEdit { placeholder-text: "e.g. yourname"; text <=> root.sync_owner; height: 38px; }
+                            FieldLabel { text: "PRIVATE REPO NAME"; }
+                            sync_repo_field := LineEdit { placeholder-text: "e.g. phantom-backup (must be private)"; text <=> root.sync_repo; height: 38px; }
+                            FieldLabel { text: "FINE-GRAINED TOKEN (contents: read+write)"; }
+                            sync_token_field := LineEdit { placeholder-text: "github_pat_… (sealed with DPAPI on save)"; input-type: password; text <=> root.sync_token_input; height: 38px; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                AuraButton { label: "💾  Connect"; primary: true; width: 170px; clicked => { root.save_sync_config(root.sync_owner, root.sync_repo, root.sync_token_input); } }
+                                AuraButton { label: "☁️  Sync Now"; width: 170px; clicked => { root.sync_now(); } }
+                            }
+                            if root.sync_status != "" : HorizontalLayout {
+                                alignment: center;
+                                spacing: 8px;
+                                Text { text: root.sync_status; color: #38e1ff; font-size: 12px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
+                                AuraButton { label: "✕"; width: 26px; height: 24px; clicked => { root.sync_status = ""; } }
+                            }
+                            // Phase 15 (Option 1): paranoia — duress vault + honeytokens
+                            Rectangle { height: 1px; background: #26315c; }
+                            Text { text: "🛡️  PARANOIA SUITE"; color: #eef1ff; font-size: 13px; font-weight: 800; }
+                            Text { text: "Duress password opens a believable fake vault. Honeytokens scream into canary_alert.log if touched."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                            FieldLabel { text: "DURESS PASSWORD (8+ CHARS)"; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                duress_field := LineEdit { placeholder-text: "Separate from master password…"; input-type: password; text <=> root.duress_input; height: 38px; horizontal-stretch: 1; }
+                                AuraButton { label: "🕊️  Arm Decoy"; width: 150px; clicked => { root.set_duress_password(root.duress_input); } }
+                            }
+                            HorizontalLayout {
+                                alignment: center;
+                                AuraButton { label: "🐤  Plant Honeytoken"; width: 220px; clicked => { root.plant_canary(); } }
+                            }
+                            // Phase 17: Shamir emergency recovery sheet
+                            Rectangle { height: 1px; background: #26315c; }
+                            Text { text: "🆘  EMERGENCY RECOVERY (3-OF-5 SHARDS)"; color: #eef1ff; font-size: 13px; font-weight: 800; }
+                            Text { text: "Any 3 shards rebuild your master password. Print them on paper — never store all 5 together digitally."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                            HorizontalLayout {
+                                alignment: center;
+                                AuraButton { label: root.show_shards ? "🙈  Hide Sheet" : "📄  Generate Recovery Sheet"; primary: !root.show_shards; width: 260px; clicked => { if root.show_shards { root.show_shards = false; } else { root.generate_shards(); } } }
+                            }
+                            if root.show_shards : VerticalLayout {
+                                spacing: 8px;
+                                FieldLabel { text: "SHARD 1 OF 5"; }
+                                HorizontalLayout { spacing: 8px; Text { text: root.shard_1; color: #38e1ff; font-size: 11px; wrap: word-wrap; horizontal-stretch: 1; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.shard_1); } } }
+                                FieldLabel { text: "SHARD 2 OF 5"; }
+                                HorizontalLayout { spacing: 8px; Text { text: root.shard_2; color: #38e1ff; font-size: 11px; wrap: word-wrap; horizontal-stretch: 1; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.shard_2); } } }
+                                FieldLabel { text: "SHARD 3 OF 5"; }
+                                HorizontalLayout { spacing: 8px; Text { text: root.shard_3; color: #38e1ff; font-size: 11px; wrap: word-wrap; horizontal-stretch: 1; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.shard_3); } } }
+                                FieldLabel { text: "SHARD 4 OF 5"; }
+                                HorizontalLayout { spacing: 8px; Text { text: root.shard_4; color: #38e1ff; font-size: 11px; wrap: word-wrap; horizontal-stretch: 1; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.shard_4); } } }
+                                FieldLabel { text: "SHARD 5 OF 5"; }
+                                HorizontalLayout { spacing: 8px; Text { text: root.shard_5; color: #38e1ff; font-size: 11px; wrap: word-wrap; horizontal-stretch: 1; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.shard_5); } } }
+                            }
+                            // Phase 21: PNG vault locker
+                            Rectangle { height: 1px; background: #26315c; }
+                            Text { text: "🖼️  STEGANOGRAPHY (PNG VAULT LOCKER)"; color: #eef1ff; font-size: 13px; font-weight: 800; }
+                            Text { text: "Conceals the sealed vault inside ordinary PNG pixels (RGB LSB). Use a large photo as carrier."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                            HorizontalLayout {
+                                spacing: 8px;
+                                alignment: center;
+                                AuraButton { label: "🖼️  Hide Vault in Image"; width: 210px; clicked => { root.stego_hide(); } }
+                                AuraButton { label: "🔓  Restore from Image"; width: 210px; clicked => { root.stego_restore(); } }
+                            }
+                        }
+                    }
+
+                    // + New: tailored form per item kind (1 login, 2 license, 3 note, 4 card, 5 identity, 6 ssh)
+                    if root.show_add_form : Rectangle {
+                        background: #0d1430;
+                        border-radius: 16px;
+                        border-width: 1px;
+                        border-color: #8b7cf655;
+                        VerticalLayout {
+                            padding: 18px;
+                            spacing: 10px;
+                            HorizontalLayout {
+                                alignment: space-between;
+                                Text { text: "➕  New item — sealed on save"; color: #eef1ff; font-size: 14px; font-weight: 800; vertical-alignment: center; }
+                                AuraButton { label: "✕"; width: 30px; height: 30px; clicked => { root.cancel_form(); } }
+                            }
+                            // kind selector
+                            HorizontalLayout {
+                                spacing: 6px;
+                                AuraButton { label: "🌐 Login"; primary: root.new_kind == 1; horizontal-stretch: 1; clicked => { root.new_kind = 1; } }
+                                AuraButton { label: "📜 License"; primary: root.new_kind == 2; horizontal-stretch: 1; clicked => { root.new_kind = 2; } }
+                                AuraButton { label: "📝 Note"; primary: root.new_kind == 3; horizontal-stretch: 1; clicked => { root.new_kind = 3; } }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                AuraButton { label: "💳 Card"; primary: root.new_kind == 4; horizontal-stretch: 1; clicked => { root.new_kind = 4; } }
+                                AuraButton { label: "🪪 ID"; primary: root.new_kind == 5; horizontal-stretch: 1; clicked => { root.new_kind = 5; } }
+                                AuraButton { label: "🔑 SSH"; primary: root.new_kind == 6; horizontal-stretch: 1; clicked => { root.new_kind = 6; } }
+                            }
+                            FieldLabel { text: root.new_kind == 2 ? "APP NAME" : (root.new_kind == 3 ? "NOTE TITLE" : (root.new_kind == 4 ? "CARD LABEL" : (root.new_kind == 5 ? "IDENTITY LABEL" : (root.new_kind == 6 ? "KEY LABEL" : "SERVICE / TITLE")))); }
+                            LineEdit { placeholder-text: "Title…"; text <=> root.f_title; height: 38px; }
+                            if root.new_kind == 1 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "USERNAME / EMAIL"; }
+                                LineEdit { placeholder-text: "e.g. you@example.com"; text <=> root.f_a; height: 38px; }
+                                FieldLabel { text: "PASSWORD"; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    LineEdit { placeholder-text: "Strong password or 🎲 Generate…"; input-type: password; text <=> root.f_b; height: 38px; horizontal-stretch: 1; }
+                                    AuraButton { label: "🎲"; width: 64px; clicked => { root.show_generator = true; root.regenerate(); } }
+                                }
+                                FieldLabel { text: "URLS (ONE PER LINE, FIRST = PRIMARY)"; }
+                                LineEdit { placeholder-text: "https://…"; text <=> root.f_c; height: 56px; }
+                                FieldLabel { text: "TOTP SECRET (OPTIONAL, BASE32)"; }
+                                LineEdit { placeholder-text: "JBSWY3DPEHPK3PXP…"; text <=> root.f_totp; height: 38px; }
+                                FieldLabel { text: "BACKUP / RECOVERY CODES (ONE PER LINE)"; }
+                                LineEdit { placeholder-text: "1234-5678…"; text <=> root.f_backup; height: 56px; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    alignment: start;
+                                    FieldLabel { text: "🔒 MASTER REPROMPT ON USE"; vertical-alignment: center; }
+                                    AuraButton { label: root.f_reprompt ? "ON ✓" : "OFF"; primary: root.f_reprompt; width: 90px; height: 30px; clicked => { root.f_reprompt = !root.f_reprompt; } }
+                                }
+                            }
+                            if root.new_kind == 2 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "LICENSE KEY"; }
+                                LineEdit { placeholder-text: "XXXX-XXXX-XXXX…"; text <=> root.f_a; height: 38px; }
+                                FieldLabel { text: "EXPIRY (OPTIONAL)"; }
+                                LineEdit { placeholder-text: "e.g. 2028-12-31"; text <=> root.f_b; height: 38px; }
+                            }
+                            if root.new_kind == 3 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "CONTENT"; }
+                                LineEdit { placeholder-text: "Markdown supported…"; text <=> root.f_a; height: 76px; }
+                            }
+                            if root.new_kind == 4 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "CARDHOLDER NAME"; }
+                                LineEdit { placeholder-text: "Name on card"; text <=> root.f_a; height: 38px; }
+                                FieldLabel { text: "CARD NUMBER"; }
+                                LineEdit { placeholder-text: "4111 1111 1111 1111"; input-type: password; text <=> root.f_b; height: 38px; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VerticalLayout { spacing: 10px; horizontal-stretch: 1; FieldLabel { text: "EXP MM/YY"; } LineEdit { placeholder-text: "12/28"; text <=> root.f_c; height: 38px; } }
+                                    VerticalLayout { spacing: 10px; horizontal-stretch: 1; FieldLabel { text: "CVV"; } LineEdit { placeholder-text: "123"; input-type: password; text <=> root.f_d; height: 38px; } }
+                                }
+                            }
+                            if root.new_kind == 5 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "FULL NAME"; }
+                                LineEdit { placeholder-text: "Full legal name"; text <=> root.f_a; height: 38px; }
+                                FieldLabel { text: "NID / PASSPORT"; }
+                                LineEdit { placeholder-text: "ID number"; input-type: password; text <=> root.f_b; height: 38px; }
+                                FieldLabel { text: "EMAIL"; }
+                                LineEdit { placeholder-text: "you@example.com"; text <=> root.f_c; height: 38px; }
+                                HorizontalLayout {
+                                    spacing: 8px;
+                                    VerticalLayout { spacing: 10px; horizontal-stretch: 1; FieldLabel { text: "PHONE"; } LineEdit { placeholder-text: "+880…"; text <=> root.f_d; height: 38px; } }
+                                    VerticalLayout { spacing: 10px; horizontal-stretch: 1; FieldLabel { text: "ADDRESS"; } LineEdit { placeholder-text: "City, street…"; text <=> root.f_e; height: 38px; } }
+                                }
+                            }
+                            if root.new_kind == 6 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "PUBLIC KEY"; }
+                                LineEdit { placeholder-text: "ssh-ed25519 AAAA…"; text <=> root.f_a; height: 38px; }
+                                FieldLabel { text: "PRIVATE KEY (PEM)"; }
+                                LineEdit { placeholder-text: "-----BEGIN OPENSSH PRIVATE KEY-----"; input-type: password; text <=> root.f_b; height: 38px; }
+                                FieldLabel { text: "FINGERPRINT (OPTIONAL)"; }
+                                LineEdit { placeholder-text: "SHA256:…"; text <=> root.f_c; height: 38px; }
+                            }
+                            if root.new_kind == 1 || root.new_kind == 2 || root.new_kind == 3 || root.new_kind == 4 || root.new_kind == 6 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "NOTES (OPTIONAL)"; }
+                                LineEdit { placeholder-text: "Anything extra…"; text <=> root.f_notes; height: 38px; }
+                            }
+                            if root.new_kind == 1 : VerticalLayout {
+                                spacing: 10px;
+                                FieldLabel { text: "CUSTOM FIELDS"; }
+                                for cf[idx] in root.custom_fields : Rectangle {
+                                    background: #0a0f24;
+                                    border-radius: 8px;
+                                    height: 36px;
+                                    HorizontalLayout {
+                                        padding-left: 10px;
+                                        padding-right: 6px;
+                                        spacing: 8px;
+                                        Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                        Text { text: cf.ftype == 1 ? "••••" : (cf.ftype == 2 ? (cf.value == "true" ? "✓" : "✕") : (cf.ftype == 3 ? ("→ " + cf.value) : cf.value)); color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                        AuraButton { label: "✕"; width: 26px; height: 24px; y: 6px; clicked => { root.delete_custom_field(idx); } }
                                     }
                                 }
+                                HorizontalLayout {
+                                    alignment: center;
+                                    AuraButton { label: "+ Add Field"; width: 200px; height: 32px; clicked => { root.show_cf_dialog = true; } }
+                                }
+                            }
+                            FieldLabel { text: "FOLDER"; }
+                            ComboBox { model: root.folders_list; current-value <=> root.f_folder; height: 38px; }
+                            HorizontalLayout {
+                                alignment: center;
+                                padding-top: 4px;
+                                AuraButton { label: "💾  Save & Encrypt"; primary: true; width: 220px; clicked => { root.add_item_requested(root.new_kind, root.f_title, root.f_a, root.f_b, root.f_c, root.f_d, root.f_e, root.f_notes, root.f_folder, root.f_totp, root.f_backup, root.f_reprompt); } }
+                            }
+                        }
+                    }
+
+                    // Section header + Bitwarden-style filters
+                    HorizontalLayout {
+                        alignment: space-between;
+                        Text { text: "🔐  Items  (" + root.credentials.length + ")"; color: #eef1ff; font-size: 13px; font-weight: 800; vertical-alignment: center; }
+                        Text { text: "15s auto-flush armed"; color: #5b6589; font-size: 11px; vertical-alignment: center; }
+                    }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        ComboBox {
+                            model: ["All", "🌐 Logins", "📜 Licenses", "📝 Notes", "💳 Cards", "🪪 Identities", "🔑 SSH Keys"];
+                            current-index <=> root.type_filter;
+                            horizontal-stretch: 1;
+                            selected(_) => { root.type_filter_changed(root.type_filter); }
+                        }
+                        ComboBox {
+                            model: root.filter_folders;
+                            current-value <=> root.folder_filter;
+                            horizontal-stretch: 1;
+                            selected(_) => { root.folder_filter_changed(root.folder_filter); }
+                        }
+                    }
+                    // + Folder inline creator
+                    HorizontalLayout {
+                        spacing: 8px;
+                        LineEdit { placeholder-text: "📁  New folder name…"; text <=> root.new_folder_name; height: 34px; horizontal-stretch: 1; accepted(text) => { root.add_folder_requested(text); } }
+                        AuraButton { label: "+ Folder"; width: 110px; height: 34px; clicked => { root.add_folder_requested(root.new_folder_name); } }
+                    }
+
+                    // Item cards (click text area to inspect)
+                    for cred in root.credentials : Rectangle {
+                        background: #0d1430;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: #26315c;
+                        height: 76px;
+                        HorizontalLayout {
+                            padding: 14px;
+                            spacing: 12px;
+                            alignment: space-between;
+                            TouchArea {
+                                horizontal-stretch: 1;
+                                mouse-cursor: pointer;
+                                clicked => { root.open_detail(cred.id); }
+                                HorizontalLayout {
+                                    spacing: 12px;
+                                    Rectangle {
+                                        width: 46px;
+                                        height: 46px;
+                                        border-radius: 12px;
+                                        background: #1a2450;
+                                        border-width: 1px;
+                                        border-color: #8b7cf655;
+                                        Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : "🔑")))); font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 2px;
+                                        Text { text: cred.title; color: #eef1ff; font-size: 14px; font-weight: 700; overflow: elide; }
+                                        Text { text: cred.username + "  •  " + cred.folder; color: #5b6589; font-size: 12px; overflow: elide; }
+                                    }
+                                }
+                            }
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: center;
+                                if cred.kind == 1 : AuraButton { label: "⌨️  Type"; width: 96px; y: 4px; clicked => { root.type_credential_requested(cred.username, cred.password); } }
+                                AuraButton { label: "📋  Copy"; width: 96px; y: 4px; clicked => { root.copy_password_requested(cred.password); } }
                             }
                         }
                     }
 
                     if root.credentials.length == 0 : Rectangle {
-                        background: #1e293b;
-                        border-radius: 10px;
-                        height: 64px;
-                        Text {
-                            text: "No credentials yet. Use ➕ Add New Password to get started.";
-                            color: #64748b;
-                            font-size: 13px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        background: #0d1430;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: #26315c;
+                        height: 72px;
+                        Text { text: "Empty here — press ➕ New to seal your first item."; color: #5b6589; font-size: 13px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    Rectangle { height: 8px; }
+                }
+            }
+            }
+        }
+    }
+
+    // ==== Generator floating layer (window-level, never under taskbar) ====
+    if root.show_generator : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        TouchArea {
+            clicked => { root.close_panel(); }
+        }
+        GeneratorPanel {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            gen_length <=> root.gen_length;
+            gen_uppercase <=> root.gen_uppercase;
+            gen_lowercase <=> root.gen_lowercase;
+            gen_digits <=> root.gen_digits;
+            gen_symbols <=> root.gen_symbols;
+            gen_exclude_ambiguous <=> root.gen_exclude_ambiguous;
+            gen_diceware_mode <=> root.gen_diceware_mode;
+            gen_word_count <=> root.gen_word_count;
+            gen_output <=> root.gen_output;
+            gen_entropy_bits <=> root.gen_entropy_bits;
+            regenerate() => { root.regenerate(); }
+            use_password(pwd) => { root.use_password(pwd); }
+            close_panel() => { root.close_panel(); }
+        }
+    }
+
+    // ==== + Add Field dialog (custom field builder) ====
+    if root.show_cf_dialog : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        TouchArea {
+            clicked => { root.show_cf_dialog = false; }
+        }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 400px;
+            background: #0d1430;
+            border-radius: 16px;
+            border-width: 1.5px;
+            border-color: #8b7cf6;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: #8b7cf644;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                Text { text: "+ Add Custom Field"; font-size: 16px; font-weight: 800; color: #eef1ff; horizontal-alignment: center; }
+                HorizontalLayout {
+                    spacing: 6px;
+                    AuraButton { label: "📝 Text"; primary: root.cf_type == 0; horizontal-stretch: 1; clicked => { root.cf_type = 0; } }
+                    AuraButton { label: "🔒 Hidden"; primary: root.cf_type == 1; horizontal-stretch: 1; clicked => { root.cf_type = 1; } }
+                }
+                HorizontalLayout {
+                    spacing: 6px;
+                    AuraButton { label: "☑ Check"; primary: root.cf_type == 2; horizontal-stretch: 1; clicked => { root.cf_type = 2; } }
+                    AuraButton { label: "🔗 Link"; primary: root.cf_type == 3; horizontal-stretch: 1; clicked => { root.cf_type = 3; root.cf_value = "password"; } }
+                }
+                Text { text: root.cf_type == 1 ? "Hidden fields mask secrets with an eye toggle." : (root.cf_type == 2 ? "Checkbox starts OFF — toggle anytime." : (root.cf_type == 3 ? "Linked field mirrors Username or Password live — no duplicated secret." : "Text fields fit security questions & extras.")); color: #5b6589; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                FieldLabel { text: "FIELD LABEL *"; }
+                LineEdit { placeholder-text: "e.g. Security question"; text <=> root.cf_name; height: 38px; }
+                if root.cf_type == 0 || root.cf_type == 1 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "VALUE"; }
+                    LineEdit { placeholder-text: "Value…"; input-type: root.cf_type == 1 ? password : text; text <=> root.cf_value; height: 38px; }
+                }
+                if root.cf_type == 3 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "MIRROR TARGET"; }
+                    HorizontalLayout {
+                        spacing: 6px;
+                        AuraButton { label: "Username"; primary: root.cf_value == "username"; horizontal-stretch: 1; clicked => { root.cf_value = "username"; } }
+                        AuraButton { label: "Password"; primary: root.cf_value == "password"; horizontal-stretch: 1; clicked => { root.cf_value = "password"; } }
+                    }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    AuraButton { label: "Add"; primary: true; width: 130px; clicked => { root.add_custom_field(root.cf_type, root.cf_name, root.cf_value); } }
+                    AuraButton { label: "Cancel"; width: 130px; clicked => { root.show_cf_dialog = false; } }
+                }
+            }
+        }
+    }
+
+    // ==== Master-reprompt gate modal ====
+    if root.rp_show : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 400px;
+            background: #0d1430;
+            border-radius: 16px;
+            border-width: 1.5px;
+            border-color: #fbbf24;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                Text { text: "🔒  Master Reprompt"; font-size: 16px; font-weight: 800; color: #fbbf24; horizontal-alignment: center; }
+                Text { text: "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; }
+                rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 42px; accepted(text) => { root.reprompt_confirm(text); } }
+                if root.rp_error != "" : Text { text: root.rp_error; color: #fb7185; font-size: 12px; horizontal-alignment: center; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    AuraButton { label: "Confirm"; primary: true; width: 130px; clicked => { root.reprompt_confirm(rp_input.text); } }
+                    AuraButton { label: "Cancel"; width: 130px; clicked => { root.rp_show = false; root.rp_error = ""; } }
+                }
+            }
+        }
+    }
+
+    // ==== Item detail / inspection modal ====
+    if root.show_detail : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        TouchArea {
+            clicked => { root.show_detail = false; }
+        }
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 480px;
+            background: #0d1430;
+            border-radius: 16px;
+            border-width: 1.5px;
+            border-color: #8b7cf6;
+            drop-shadow-blur: 40px;
+            drop-shadow-color: #8b7cf644;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 10px;
+                HorizontalLayout {
+                    spacing: 12px;
+                    Rectangle {
+                        width: 48px;
+                        height: 48px;
+                        border-radius: 12px;
+                        background: #1a2450;
+                        border-width: 1px;
+                        border-color: #8b7cf655;
+                        Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : "🔑")))); font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 2px;
+                        horizontal-stretch: 1;
+                        Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; overflow: elide; }
+                        Text { text: root.d_folder; color: #8b7cf6; font-size: 11px; font-weight: 700; }
+                    }
+                    AuraButton { label: "✕"; width: 32px; height: 32px; y: 8px; clicked => { root.show_detail = false; } }
+                }
+                if root.d_reprompt : Text { text: "🔒  Master reprompt armed — copy / fill / delete ask first"; color: #fbbf24; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
+                // Login fields
+                if root.d_kind == 1 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "USERNAME"; }
+                    HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 14px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_user); } } }
+                    FieldLabel { text: "PASSWORD"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = 1; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
+                        AuraButton { label: "⚡ Fill"; width: 80px; primary: true; clicked => { if root.d_reprompt { root.rp_action = 2; root.rp_kind = 1; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.show_detail = false; root.type_credential_requested(root.d_user, root.d_secret); } } }
+                    }
+                    if root.d_url != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "URLS"; } Text { text: root.d_urls_extra == "" ? root.d_url : root.d_url + "\n" + root.d_urls_extra; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
+                    if root.d_totp != "" : VerticalLayout {
+                        spacing: 10px;
+                        FieldLabel { text: "TOTP SECRET"; }
+                        HorizontalLayout { spacing: 8px; Text { text: root.d_totp; color: #38e1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_totp); } } }
+                    }
+                    if root.d_backup != "" : VerticalLayout {
+                        spacing: 10px;
+                        FieldLabel { text: "BACKUP / RECOVERY CODES"; }
+                        Rectangle {
+                            background: #0a0f24;
+                            border-radius: 8px;
+                            height: 84px;
+                            clip: true;
+                            Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: root.d_backup; color: #eef1ff; font-size: 12px; wrap: word-wrap; overflow: elide; }
+                        }
+                        HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy All Codes"; width: 190px; clicked => { root.copy_password_requested(root.d_backup); } } }
+                    }
+                    if root.d_custom.length > 0 : VerticalLayout {
+                        spacing: 6px;
+                        FieldLabel { text: "CUSTOM FIELDS"; }
+                        for cf[idx] in root.d_custom : Rectangle {
+                            background: #0a0f24;
+                            border-radius: 8px;
+                            height: 36px;
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 6px;
+                                spacing: 8px;
+                                Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                if cf.ftype == 0 : Text { text: cf.value; color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                if cf.ftype == 0 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } }
+                                if cf.ftype == 1 : Text { text: root.d_revealed == idx ? cf.value : "••••"; color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                if cf.ftype == 1 : AuraButton { label: root.d_revealed == idx ? "👁️‍🗨️" : "👁️"; width: 40px; height: 24px; y: 6px; clicked => { root.d_revealed = root.d_revealed == idx ? -1 : idx; } }
+                                if cf.ftype == 1 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } }
+                                if cf.ftype == 2 : AuraButton { label: cf.value == "true" ? "✓ ON" : "✕ OFF"; primary: cf.value == "true"; width: 76px; height: 24px; y: 6px; clicked => { root.toggle_saved_field(root.d_kind, root.d_id, idx); } }
+                                if cf.ftype == 3 : Text { text: cf.value == "username" ? root.d_user : root.d_secret; color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
+                                if cf.ftype == 3 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value == "username" ? root.d_user : root.d_secret); } }
+                            }
                         }
                     }
+                    if root.d_notes != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "NOTES"; } Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
+                }
+                // License fields
+                if root.d_kind == 2 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "LICENSE KEY"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                    }
+                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "EXPIRY"; } Text { text: root.d_meta; color: #eef1ff; font-size: 14px; } }
+                }
+                // Note content
+                if root.d_kind == 3 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "CONTENT"; }
+                    ScrollView {
+                        height: 140px;
+                        Text { text: root.d_secret; color: #eef1ff; font-size: 13px; wrap: word-wrap; width: parent.width; }
+                    }
+                    HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy Note"; width: 170px; clicked => { root.copy_password_requested(root.d_secret); } } }
+                }
+                // Card fields
+                if root.d_kind == 4 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "CARDHOLDER"; }
+                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
+                    FieldLabel { text: "CARD NUMBER"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "•••• •••• •••• ••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                    }
+                    FieldLabel { text: "EXPIRY + CVV"; }
+                    Text { text: root.d_meta; color: #eef1ff; font-size: 14px; }
+                }
+                // Identity fields
+                if root.d_kind == 5 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "FULL NAME"; }
+                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
+                    FieldLabel { text: "NID / PASSPORT"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                    }
+                    if root.d_url != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "EMAIL"; } Text { text: root.d_url; color: #8e99c0; font-size: 12px; } }
+                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "PHONE"; } Text { text: root.d_meta; color: #eef1ff; font-size: 14px; } }
+                    if root.d_notes != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "ADDRESS"; } Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
+                }
+                // SSH fields
+                if root.d_kind == 6 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "PUBLIC KEY"; }
+                    Text { text: root.d_notes; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    FieldLabel { text: "PRIVATE KEY"; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                    }
+                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "FINGERPRINT"; } Text { text: root.d_meta; color: #8e99c0; font-size: 12px; } }
+                }
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    padding-top: 6px;
+                    AuraButton { label: "✏️  Edit"; width: 130px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
+                    AuraButton { label: "🗑️  Delete"; danger: true; width: 130px; clicked => { if root.d_reprompt { root.rp_action = 3; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = ""; root.rp_error = ""; root.rp_show = true; } else { root.delete_item_requested(root.d_kind, root.d_id); } } }
+                    AuraButton { label: "✕  Close"; width: 130px; clicked => { root.show_detail = false; } }
                 }
             }
         }
@@ -357,9 +1347,9 @@ export component MainWindow inherits Window {
 export component QuickBarWindow inherits Window {
     no-frame: true;
     always-on-top: true;
-    width: 620px;
-    height: 340px;
-    background: #0f172a;
+    width: 640px;
+    height: 380px;
+    background: transparent;
     title: "PhantomVault Quick Bar";
 
     in-out property <string> quick_query;
@@ -367,19 +1357,21 @@ export component QuickBarWindow inherits Window {
 
     callback query_changed(string);
     callback item_selected(string);
+    callback type_selected(string, string);
     callback dismiss();
 
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #0f172a;
-        border-radius: 12px;
-        border-color: #38bdf8;
+        background: #0b1226f2;
+        border-radius: 18px;
+        border-color: #8b7cf6;
         border-width: 1.5px;
+        drop-shadow-blur: 48px;
+        drop-shadow-color: #8b7cf666;
         clip: true;
 
         FocusScope {
-            // Escape key dismiss — FocusScope captures key events
             key-pressed(event) => {
                 if event.text == Key.Escape {
                     root.dismiss();
@@ -389,107 +1381,168 @@ export component QuickBarWindow inherits Window {
             }
 
             VerticalLayout {
-                padding: 16px;
+                padding: 18px;
                 spacing: 12px;
 
-            Text {
-                text: "⚡ PhantomVault Quick Bar — Alt+Space";
-                color: #38bdf8;
-                font-size: 13px;
-                font-weight: 800;
-                horizontal-alignment: center;
-            }
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: #8b7cf6;
+                        Text { text: "⚡"; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 0px;
+                        Text { text: "Phantom Quick Bar"; color: #eef1ff; font-size: 14px; font-weight: 800; }
+                        Text { text: "Alt+Space  •  instant copy"; color: #5b6589; font-size: 10px; }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.filtered_results.length + " hits"; color: #5b6589; font-size: 11px; vertical-alignment: center; }
+                }
 
-            quick_input := LineEdit {
-                placeholder-text: "⚡ Quick Search... Type to filter, Enter or Click to copy";
-                text <=> root.quick_query;
-                height: 38px;
-                edited(text) => { root.query_changed(text); }
-                accepted(text) => {
-                    root.query_changed(text);
-                    if root.filtered_results.length > 0 {
-                        root.item_selected(root.filtered_results[0].password);
+                quick_input := LineEdit {
+                    placeholder-text: "Type to filter — Enter copies first hit…";
+                    text <=> root.quick_query;
+                    height: 44px;
+                    font-size: 15px;
+                    edited(text) => { root.query_changed(text); }
+                    accepted(text) => {
+                        root.query_changed(text);
+                        if root.filtered_results.length > 0 {
+                            root.item_selected(root.filtered_results[0].password);
+                        }
                     }
                 }
-            }
 
-            Text {
-                text: root.filtered_results.length + " results";
-                color: #64748b;
-                font-size: 11px;
-                horizontal-alignment: right;
-            }
-
-            ScrollView {
-                vertical-stretch: 1;
-                VerticalLayout {
-                    spacing: 8px;
-                    for item in root.filtered_results : Rectangle {
-                        background: #1e293b;
-                        border-radius: 8px;
-                        height: 64px;
-
-                        HorizontalLayout {
-                            padding: 12px;
-                            spacing: 8px;
-                            alignment: space-between;
-
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 2px;
-                                Text {
-                                    text: "🔑 " + item.title;
-                                    color: #f1f5f9;
-                                    font-size: 14px;
-                                    font-weight: 700;
-                                    overflow: elide;
-                                }
-                                Text {
-                                    text: item.username;
-                                    color: #64748b;
-                                    font-size: 12px;
-                                    overflow: elide;
-                                }
-                            }
-
+                ScrollView {
+                    vertical-stretch: 1;
+                    VerticalLayout {
+                        spacing: 8px;
+                        for item in root.filtered_results : Rectangle {
+                            background: #131d3d;
+                            border-radius: 12px;
+                            border-width: 1px;
+                            border-color: #26315c;
+                            height: 62px;
                             HorizontalLayout {
-                                alignment: center;
-                                spacing: 6px;
-                                Button {
-                                    text: "📋 Copy";
-                                    clicked => { root.item_selected(item.password); }
+                                padding: 10px;
+                                spacing: 10px;
+                                alignment: space-between;
+                                HorizontalLayout {
+                                    spacing: 10px;
+                                    Rectangle {
+                                        width: 40px;
+                                        height: 40px;
+                                        border-radius: 10px;
+                                        background: #1a2450;
+                                        Text { text: "🔑"; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    VerticalLayout {
+                                        alignment: center;
+                                        spacing: 1px;
+                                        Text { text: item.title; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; }
+                                        Text { text: item.username; color: #5b6589; font-size: 11px; overflow: elide; }
+                                    }
+                                }
+                                HorizontalLayout {
+                                    spacing: 6px;
+                                    alignment: center;
+                                    AuraButton { label: "⌨️ Type"; width: 88px; y: 2px; clicked => { root.type_selected(item.username, item.password); } }
+                                    AuraButton { label: "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.password); } }
                                 }
                             }
                         }
-                    }
-
-                    if root.filtered_results.length == 0 : Rectangle {
-                        background: #1e293b;
-                        border-radius: 8px;
-                        height: 48px;
-                        Text {
-                            text: "No matches. Type to search vault.";
-                            color: #64748b;
-                            font-size: 12px;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
-                        }
+                        if root.filtered_results.length == 0 : Text { text: "No matches — keep typing."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
                     }
                 }
+
+                HorizontalLayout {
+                    alignment: space-between;
+                    Text { text: "Enter: copy first  •  Type: keystroke fill  •  Esc: dismiss"; color: #5b6589; font-size: 10px; vertical-alignment: center; }
+                    AuraButton { label: "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
+                }
+            }
+        }
+    }
+}
+
+// Phase 22: Smart-Grab quick-capture overlay (Alt + S)
+export component QuickCaptureWindow inherits Window {
+    no-frame: true;
+    always-on-top: true;
+    width: 520px;
+    height: 330px;
+    background: transparent;
+    title: "PhantomVault Quick Capture";
+
+    in-out property <string> cap_title;
+    in-out property <string> cap_user;
+    in-out property <string> cap_hint: "";
+
+    callback capture_save(string, string, string);
+    callback capture_cancel();
+
+    Rectangle {
+        width: parent.width;
+        height: parent.height;
+        background: #0b1226f2;
+        border-radius: 18px;
+        border-color: #8b7cf6;
+        border-width: 1.5px;
+        drop-shadow-blur: 48px;
+        drop-shadow-color: #8b7cf666;
+        clip: true;
+
+        FocusScope {
+            key-pressed(event) => {
+                if event.text == Key.Escape {
+                    root.capture_cancel();
+                    return accept;
+                }
+                if event.text == Key.Return {
+                    root.capture_save(root.cap_title, root.cap_user, cap_pass.text);
+                    return accept;
+                }
+                return reject;
             }
 
-            HorizontalLayout {
-                alignment: space-between;
-                Text {
-                    text: "Enter: copy first • Click: copy • Esc: dismiss";
-                    color: #475569;
-                    font-size: 10px;
+            VerticalLayout {
+                padding: 18px;
+                spacing: 10px;
+
+                HorizontalLayout {
+                    spacing: 10px;
+                    Rectangle {
+                        width: 36px;
+                        height: 36px;
+                        border-radius: 10px;
+                        background: #8b7cf6;
+                        Text { text: "⚡"; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        spacing: 0px;
+                        Text { text: "Quick Capture Login"; color: #eef1ff; font-size: 14px; font-weight: 800; }
+                        Text { text: root.cap_hint == "" ? "Alt+S grabbed this app" : root.cap_hint; color: #5b6589; font-size: 10px; }
+                    }
                 }
-                Button {
-                    text: "✕ Dismiss";
-                    clicked => { root.dismiss(); }
+
+                FieldLabel { text: "SERVICE TITLE"; }
+                LineEdit { placeholder-text: "e.g. Discord"; text <=> root.cap_title; height: 36px; }
+                FieldLabel { text: "USERNAME / EMAIL"; }
+                LineEdit { placeholder-text: "Detected automatically when possible"; text <=> root.cap_user; height: 36px; }
+                FieldLabel { text: "PASSWORD"; }
+                cap_pass := LineEdit { placeholder-text: "Paste or type, Enter saves…"; input-type: password; height: 36px; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text); } }
+
+                HorizontalLayout {
+                    spacing: 8px;
+                    alignment: center;
+                    AuraButton { label: "💾  Save to Vault"; primary: true; width: 200px; clicked => { root.capture_save(root.cap_title, root.cap_user, cap_pass.text); } }
+                    AuraButton { label: "✕ Dismiss"; width: 130px; clicked => { root.capture_cancel(); } }
                 }
-            }
             }
         }
     }

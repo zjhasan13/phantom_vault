@@ -208,7 +208,7 @@ fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
 /// Base64 decode helper — tries URL_SAFE, STANDARD, with/without padding
 fn b64_decode_migration(data: &str) -> Result<Vec<u8>, String> {
     use base64::Engine as _;
-    let cleaned = data.trim().replace(' ', "").replace('\n', "").replace('\r', "");
+    let cleaned = data.trim().replace([' ', '\n', '\r'], "");
     if let Ok(b) = base64::engine::general_purpose::URL_SAFE.decode(&cleaned) {
         return Ok(b);
     }

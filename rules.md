@@ -19,24 +19,26 @@
    - Never inject WebView2 or HTML/JS runtimes. Maximum RAM footprint: 10–20 MB. Cold start: < 30ms.
 
 2. MEMORY HARDENING & SECRECY:
-   - Sensitive memory buffers (passwords, master keys, decrypted credentials, TOTP secrets) MUST implement `zeroize::Zeroize` and `zeroize::ZeroizeOnDrop`.
+   - Sensitive memory buffers (passwords, master keys, decrypted credentials, TOTP secrets, recovery shards) MUST implement `zeroize::Zeroize` and `zeroize::ZeroizeOnDrop`.
    - Wrap sensitive types in `secrecy::Secret<T>`. Never log, format, or print secrets to `stdout`/`stderr`.
-   - Protect secrets in memory from being swapped to disk using Windows DPAPI or `VirtualLock`.
+   - Protect secrets in memory from being swapped to disk using Windows DPAPI and Win32 `VirtualLock` on sensitive pages.
 
 3. STRICT AUDITED CRYPTOGRAPHY ("Don't roll your own crypto"):
    - Key Derivation Function (KDF): `argon2::Argon2` (Argon2id mode, memory-hard parameters).
    - Symmetric Authenticated Encryption: `chacha20poly1305::XChaCha20Poly1305` (AEAD with 192-bit nonce).
-   - Post-Quantum Cryptography: `ml-kem` (Kyber-768/1024) hybrid layer for future-proof quantum resistance.
+   - Post-Quantum Cryptography: NIST FIPS 203 `ml-kem` (ML-KEM-768/1024) hybrid layer (`PV2` portable envelope with master key-wrapping, zero sidecar dependency across machines).
    - True Randomness: System entropy via `rand_core::OsRng`.
 
-4. ZERO-KNOWLEDGE & LOCAL-FIRST:
-   - The primary vault is fully local and encrypted on disk (`vault.enc`).
+4. ZERO-KNOWLEDGE, LOCAL-FIRST & UNIVERSAL SYNC:
+   - The primary vault is fully local and encrypted on disk (`my_secure_vault.enc`).
    - Sync MUST be client-side end-to-end encrypted before leaving the machine.
-   - Remote Sync Provider: User's Private GitHub Repository via `octocrab` REST API. Zero cloud subscription fees.
+   - Remote Sync Provider: User's Private GitHub Repository via `octocrab` REST API (zero Git CLI dependency).
+   - Fallback Sync Providers: Local Wi-Fi P2P (mDNS/TLS), Air-Gapped Animated QR stream, and Decentralized Nostr relays.
 
-5. ERROR HANDLING:
+5. ERROR HANDLING & GRACEFUL DEGRADATION:
    - NEVER use `.unwrap()` or `.expect()` in production/critical paths.
    - Use `thiserror` to define a unified `VaultError` enum across all modules.
+   - If global hotkeys fail to register, warn the user rather than panicking.
 
 ---
 
@@ -47,124 +49,219 @@ The agent must maintain this clean modular organization:
 ```text
 phantom_vault/
 ├── Cargo.toml
+├── build.rs                   # Slint compilation + winres Windows .ico embedding
+├── assets/
+│   └── app.ico                # Embedded PhantomVault taskbar/executable logo
 ├── RULES.md
 ├── ui/
 │   ├── appwindow.slint        # Slint native UI layouts & components
-│   └── components/            # Slint widgets (VaultItem, TotpRow, QuickBar)
+│   └── components/            # Slint widgets (VaultItem, TotpRow, QuickBar, Modals)
 ├── src/
-│   ├── main.rs                # App entrypoint, event loop & lifecycle
+│   ├── main.rs                # App entrypoint, event loop, hotkey dispatch & lifecycle
 │   ├── error.rs               # Custom VaultError enum (via thiserror)
 │   ├── core/
 │   │   ├── mod.rs
-│   │   ├── crypto.rs          # Argon2id, XChaCha20Poly1305, Kyber-768
-│   │   ├── memory.rs          # Zeroize allocators, DPAPI bindings
-│   │   ├── storage.rs         # Bincode serialization & encrypted file I/O
-│   │   └── models.rs          # VaultItem, Credential, LicenseKey, Note structs
+│   │   ├── crypto.rs          # Argon2id, XChaCha20Poly1305, key wrapping (wrap_dk/unwrap_dk)
+│   │   ├── pq_hybrid.rs       # NIST FIPS 203 ML-KEM-768 hybrid engine (PV2 envelope)
+│   │   ├── generator.rs       # Complex symbol + 7776-word EFF Diceware generator
+│   │   ├── memory.rs          # Zeroize allocators, DPAPI guard, VirtualLock paging protection
+│   │   ├── storage.rs         # Portable versioned save/load, auto-migration, DoD shredder hook
+│   │   └── models.rs          # Credential, PaymentCard, IdentityItem, SshKeyItem, Passkey, Folder
 │   ├── authenticator/
 │   │   ├── mod.rs
-│   │   ├── totp.rs            # RFC 6238 TOTP & Steam Guard generators
+│   │   ├── totp.rs            # RFC 6238 TOTP, RFC 4226 HOTP, and Steam Guard 5-char generators
 │   │   ├── google_migration.rs# Google Authenticator Protobuf parser (prost)
-│   │   └── screen_scanner.rs  # Windows screen region snip & QR decoder (rqrr)
+│   │   ├── qr_scanner.rs      # Screen region snip & clipboard QR decoder (rqrr)
+│   │   └── camera_scanner.rs  # Live webcam video stream QR reader
+│   ├── importer/
+│   │   ├── mod.rs             # Unified ingestion pipeline & deduplication
+│   │   ├── sniffer.rs         # Auto-format sniffer, BOM stripper, delimiter detector (, ; \t |)
+│   │   ├── bitwarden.rs       # Bitwarden JSON & CSV parser (custom fields, URIs, notes)
+│   │   ├── keepass.rs         # KeePass 2.x XML (<KeePassFile>) & CSV parser
+│   │   ├── onepassword.rs     # 1Password CSV & 1PUX/Proton Pass JSON parser
+│   │   ├── browser_csv.rs     # Chrome, Brave, Edge, Firefox, Safari (OTPAuth), LastPass CSVs
+│   │   └── fuzzy.rs           # Universal heuristic fallback for unknown CSV/TSV
 │   ├── windows_native/
 │   │   ├── mod.rs
-│   │   ├── hello.rs           # Windows Hello biometrics (WinRT Credentials UI)
-│   │   ├── display_guard.rs   # SetWindowDisplayAffinity (OBS/Discord blackout)
-│   │   ├── clipboard.rs       # Win+V masking & auto-clear (15-20s timer)
-│   │   ├── autotype.rs        # Win32 SendInput virtual keystroke injection
-│   │   ├── uia_autofill.rs    # Windows UI Automation (desktop inline autofill)
-│   │   └── hotkeys.rs         # Global hotkeys (Alt+Space, Panic Nuke)
+│   │   ├── hello.rs           # Windows Hello biometrics (WinRT UserConsentVerifier bridge)
+│   │   ├── display_guard.rs   # SetWindowDisplayAffinity (WDA_MONITOR GDI/OBS/ShareX blackout)
+│   │   ├── clipboard.rs       # Win+V exclusion formats, busy-retry, guarded 15s auto-clear
+│   │   ├── autotype.rs        # Win32 SendInput unicode keystroke engine with settle timing
+│   │   ├── desktop_autofill.rs# Windows UI Automation (UIA) focused field probe
+│   │   ├── smart_grab.rs      # Alt+S active app capture & quick-save dialog
+│   │   ├── proximity_lock.rs  # Bluetooth Low Energy (BLE) RSSI proximity auto-lock
+│   │   ├── native_host.rs     # Native Messaging Host bridge for browser extensions (stdin/stdout)
+│   │   └── hotkeys.rs         # Global hotkeys (Alt+Space, Alt+S, Ctrl+Alt+A, Ctrl+Shift+Alt+Q)
 │   ├── developer/
 │   │   ├── mod.rs
-│   │   ├── ssh_agent.rs       # Named pipe \\.\pipe\openssh-ssh-agent
-│   │   ├── git_signer.rs      # SSH-based commit signing with biometric touch
-│   │   ├── vault_run.rs       # CLI process secret injection (no .env files)
-│   │   └── precommit_hook.rs  # Git secret leak detection scanner
+│   │   ├── ssh_agent.rs       # Named pipe \\.\pipe\openssh-ssh-agent (protocol sign/verify)
+│   │   ├── git_signer.rs      # SSH-based commit signing with Windows Hello biometric confirmation
+│   │   ├── vault_run.rs       # CLI process secret injection (no .env files on disk)
+│   │   ├── precommit_hook.rs  # Git secret leak detection scanner (13 rules + Shannon entropy)
+│   │   ├── shell_complete.rs  # PowerShell, Bash, Nushell tab-autocompletion script generator
+│   │   ├── cloud_tokens.rs    # Ephemeral 1-hour AWS STS session token generator
+│   │   └── db_tunnel.rs       # 1-click background SSH port-forwarding database tunnel
 │   ├── security/
 │   │   ├── mod.rs
-│   │   ├── anti_debug.rs      # Anti-debugging, Mimikatz memory dump defense
-│   │   ├── decoy.rs           # Duress/Fake secondary vault
-│   │   ├── canary.rs          # Honeytoken tripwire credentials
-│   │   ├── steganography.rs   # Hide encrypted vault inside PNG/MP4
-│   │   ├── shredder.rs        # DoD 5220.22-M secure disk overwrite
-│   │   └── shamir.rs          # Shamir's Secret Sharing (3-of-5 shard recovery)
+│   │   ├── anti_debug.rs      # Anti-debugging watchdog (2-strike timing, Mimikatz defense)
+│   │   ├── decoy.rs           # Duress/Fake secondary vault (read-only cover)
+│   │   ├── canary.rs          # Honeytoken tripwire credentials with alert logging
+│   │   ├── steganography.rs   # LSB PNG image locker (hide vault in carrier PNG)
+│   │   ├── shredder.rs        # DoD 5220.22-M 3-pass disk overwrite (0x00, 0xFF, OsRng)
+│   │   ├── shamir.rs          # Shamir's Secret Sharing (3-of-5 threshold, GF(2^8) + EFF words)
+│   │   └── travel_mode.rs     # Temporary vault stripping/hiding for border crossing
 │   └── sync/
 │       ├── mod.rs
-│       ├── github_sync.rs     # Octocrab API integration (private repo sync)
-│       ├── airgap_qr.rs       # Animated high-density QR camera sync
-│       └── p2p_local.rs       # LocalSend-style LAN sync via mDNS
+│       ├── github_sync.rs     # Octocrab API integration (private repo sync, sha conflict guard)
+│       ├── airgap_qr.rs       # Animated high-density QR camera sync for mobile
+│       ├── p2p_local.rs       # LocalSend-style LAN sync via mDNS and TLS
+│       ├── nostr_sync.rs      # Decentralized relay-based encrypted sync
+│       └── crdt_merge.rs      # Conflict-free Replicated Data Type offline merging
 3. EXHAUSTIVE FEATURE SPECIFICATION (A TO Z)
-Category 1: Core Vault Items
-Logins & Passwords: Username, password, multi-URLs, custom fields.
-Password Generator: Dice-ware passphrase generator and complex customizable symbol generator.
-Software Licenses & Keys: Activation codes, purchase dates, expiry, and receipt/invoice file attachments.
-Secure Notes: AES-encrypted Markdown notes.
-Identities & Payment Cards: Credit/debit cards, bank accounts, passport, and National ID numbers.
-Encrypted File Locker: Secure document storage inside the encrypted container.
-Category 2: 2FA & Authenticator (Proton/Google Auth Killer)
-Live TOTP/HOTP: RFC 6238 standard, 30-second countdown with visual circular progress ring.
-Google Authenticator 1-Click Migration: Parse Google's otpauth-migration:// Protobuf payloads via prost to import all accounts instantly.
-Screen QR Snipper: Crop any region on the Windows desktop, decode QR via rqrr, extract secret key directly.
-Steam Guard Support: Generate Steam-compliant 5-character alphanumeric 2FA tokens.
-Category 3: Windows Native & UX Mastery
-GPU-Accelerated UI: Slint-driven fluent dark theme running directly on DirectX/Vulkan.
-Raycast / Spotlight Quick-Bar (Alt + Space): Floating search bar overlay; instant search and 1-click credential/TOTP copy (< 0.2s).
-System-Wide Desktop Autofill: Detect password boxes in native apps (Discord, Steam, Spotify, VPNs) using IUIAutomation and display inline auto-fill icon.
-Global Auto-Type (Ctrl + Alt + A): Directly simulate keystrokes {User}{Tab}{Pass}{Enter} via Win32 SendInput. Completely bypasses clipboard sniffing.
-Windows Hello Biometric Unlock: Unlock the vault in < 0.1s using Fingerprint, Face ID, or PIN via windows::Security::Credentials::UI.
-Clipboard Masking & Auto-Flush: Exclude passwords from Windows 10/11 Win + V history via ExcludeClipboardContentFromMonitorProcessing. Auto-clear clipboard in 15–20s.
-Pastejacking Protection: Sanitize hidden carriage returns (\r, \n) or shell traps from copied strings.
-Category 4: Developer Superpowers
+Category 1: Rich Vault & Item Management (Full Bitwarden Parity)
+Logins & Passwords: Username, password (masked, eye toggle, generator), multi-URLs, custom fields, notes.
+Embedded Authenticator (TOTP/HOTP): TOTP secret embedded directly inside login items (live 30s countdown, copy).
+Backup & Recovery Codes: Multiline storage for 8–10 one-time recovery codes with a single 📋 Copy All Codes button.
+Dynamic Custom Fields (Bitwarden Parity):
+Text: Security questions, secondary logins, PINs.
+Hidden: Masked secret keys, API tokens with eye reveal toggle.
+Checkbox: Boolean flags.
+Linked: Live mirror referencing username or password without duplicating secrets at rest.
+Dynamic Custom Folders: Built-in folders + dynamic user-created folders (+ Folder), folder assignment, folder filter.
+Item Detail & Inspection Modal: Full modal view on item click, eye toggles, copy buttons, ⚡ Fill button, ✏️ Edit, and 🗑️ Delete.
+Master Password Reprompt: Gate sensitive items behind an in-memory master password re-prompt before viewing/copying.
+Passkey Support (FIDO2 / WebAuthn): Store and manage resident credentials / passkeys for passwordless web authentication.
+Multi-Type Vault Items:
+📜 Software Licenses: App name, license key, purchase date, expiry date, notes, receipt attachments.
+📝 Secure Notes: AES-encrypted Markdown notes.
+💳 Payment Cards: Cardholder name, card number (masked/revealed), expiration, CVV, billing notes.
+🪪 Identities: Full name, NID/Passport number, email, phone, physical address, notes.
+🔑 SSH Keys: Key name, private key (masked), public key, fingerprint, notes.
+Encrypted File Attachments: Store encrypted receipt photos, invoices, and certificates inside the container.
+Password & Diceware Generator:
+Complex symbol generator (guaranteed inclusion, Fisher-Yates shuffle, Shannon entropy rating).
+Diceware Passphrase generator (EFF 7776-wordlist, 4–12 words with custom separators).
+Category 2: 2FA & Authenticator (Proton & Google Auth Killer)
+Live TOTP Engine: RFC 6238 standard, 30-second live circular countdown ring.
+HOTP Engine: RFC 4226 counter-based one-time password generation.
+Steam Guard 2FA: 5-character alphanumeric token algorithm for gaming accounts.
+Google Authenticator 1-Click Migration: Protobuf parser (prost) decoding otpauth-migration:// export payloads.
+Screen & Clipboard QR Scanner: Win+Shift+S screen snipper and clipboard image QR decoder via rqrr.
+Live Webcam Scanner: Video stream QR code reader using native PC webcam.
+Category 3: Universal Omni-Importer Engine (Zero-Failure)
+Content Auto-Sniffer: Automatic file signature, BOM, and delimiter detection (, ; \t |).
+Supported Providers:
+Bitwarden (both .json and .csv with full custom fields and folders).
+1Password (both .csv and 1PUX / export.data JSON).
+KeePass / KeePassXC (.xml <KeePassFile> with group hierarchy and .csv).
+Google Chrome, Brave, Edge, Opera (.csv).
+Mozilla Firefox (logins.json and .csv).
+Apple Safari / iCloud Keychain (passwords.csv with OTPAuth column).
+LastPass & Dashlane (.csv).
+Proton Pass (.json).
+Universal Fuzzy Fallback (heuristic scoring for unknown CSV/TSV).
+Fault Tolerance: Row-level error containment (bad row skipped, batch continues), intelligent deduplication.
+Category 4: Windows Native & UX Mastery
+GPU-Accelerated UI: Slint-driven "Phantom Aura" fluent dark theme running directly on DirectX/Vulkan.
+Raycast / Spotlight Quick-Bar (Alt + Space): Floating search bar overlay; instant search and 1-click credential/TOTP copy (< 0.2s), Esc dismiss, toggleable.
+Desktop In-line Autofill: UI Automation (UIA) detects focused password boxes in native apps (Steam, Discord, Telegram, Spotify, Browsers).
+Smart-Grab & Auto-Capture (Alt + S): Automatically captures active application name and form data to save new credentials in 1 click.
+Global Auto-Type (Ctrl + Alt + A): Direct keystroke simulation {User}{Tab}{Pass}{Enter} via Win32 SendInput with 800ms DWM settle delay.
+Windows Hello Biometric Unlock: Unlock the vault in < 0.1s using Fingerprint, Face ID, or PIN via WinRT UserConsentVerifier bridge.
+Clipboard Masking (Win + V Exclusion): Sets ExcludeClipboardContentFromMonitorProcessing, CanIncludeInClipboardHistory=0, and CanUploadToCloudClipboard=0.
+Guarded Clipboard Auto-Flush: Clears clipboard after 15s only if the copied secret still matches.
+Pastejacking Protection: Strips hidden carriage returns (\r, \n) or shell traps from copied strings.
+DWM Screen Capture Blackout: SetWindowDisplayAffinity(hwnd, WDA_MONITOR) forces a pitch-black box on ShareX, Snipping Tool, OBS, Discord, and Zoom.
+Memory Paging Lock (VirtualLock): Locks sensitive crypto pages in RAM to prevent swapping into pagefile.sys.
+Bluetooth Proximity Auto-Lock: Measures BLE RSSI; automatically locks the vault when the user's paired phone/watch leaves proximity.
+Windows App Branding (.ico): winres embeds assets/app.ico into the executable binary for the taskbar and desktop.
+Category 5: Developer Superpowers
 Native OpenSSH Agent: Expose \\.\pipe\openssh-ssh-agent. Confirm git push or SSH sessions via biometric touch without typing passphrases.
 Git Commit Signing via SSH: Sign commits with biometric touch to get GitHub "Verified" green badges (no GPG configuration).
 vault run CLI Secret Injector: Inject secrets into child processes in memory (vault run -- npm start). Zero plaintext .env files on disk.
-Git Pre-Commit Secret Scanner: Hook to prevent committing API keys (OpenAI, AWS, Stripe) into repositories.
-Shell Autocomplete: Native PowerShell / CMD / Bash tab autocompletion (vault get <tab>).
-Temporary Cloud Credentials: Issue ephemeral 1-hour AWS STS session tokens automatically.
-Category 5: Military-Grade & Paranoia Defense
-OBS / Screen Share Blackout: Enforce SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) so the app renders as a pitch-black box on Discord/Zoom/OBS.
-Hardware Binding (TPM 2.0 & YubiKey): Lock master key with Windows TPM 2.0 and support YubiKey HMAC-SHA256 Challenge-Response.
-Anti-Debugging & Self-Defense: Detect attached debuggers or memory injection tools (Mimikatz/Process Hacker). Abort instantly (std::process::abort()) and zeroize memory on detection.
-Instant Panic Nuke Hotkey (Ctrl + Shift + Alt + Q): Immediate memory wipe and process termination.
-Decoy / Duress Vault: Entering a secondary duress password opens an isolated fake vault with dummy entries.
+Git Pre-Commit Secret Scanner (vault scan): Hook preventing accidental commit of API keys (13 rules + Shannon entropy).
+Shell Autocomplete Script: PowerShell, Bash, and Nushell completion script generator (vault get <tab>).
+Temporary Cloud Session Tokens: Ephemeral 1-hour AWS STS session token generation.
+1-Click Database Tunneling: Background SSH port-forwarding database tunnel manager.
+Docker / Podman Secret Mount: RAM-based tmpfs volume mounting for container secrets.
+Category 6: Military-Grade & Paranoia Defense
+Post-Quantum Cryptography (PQC): NIST FIPS 203 ML-KEM-768 hybrid key layer (PV2 portable container with master key-wrapped DK).
+Hardware Binding (TPM 2.0 & YubiKey): DPAPI-backed Windows TPM lock and YubiKey HMAC-SHA256 Challenge-Response.
+Anti-Debugging Watchdog: 2-strike timing detection against attached debuggers and Mimikatz memory dumpers.
+Instant Panic Nuke Hotkey (Ctrl + Shift + Alt + Q): Best-effort RAM zeroize wipe and immediate process termination (0x1AFE).
+Decoy / Duress Vault: Secondary duress password opens an isolated fake vault with dummy entries (read-only cover).
 Canary Trap / Honeytokens: Trap credentials that trigger background emergency alerts if viewed or copied.
-Steganography: Capability to hide the encrypted vault container inside standard PNG images or MP4 video files.
-Secure File Shredder: Multi-pass random overwrite (DoD 5220.22-M standard) on deletion.
-Category 6: Privacy, Sync & Disaster Recovery
+Steganography PNG Locker: Embeds and extracts encrypted vault containers inside ordinary carrier PNG images using LSB encoding (b"PSTE").
+Secure File Shredder (DoD 5220.22-M): 3-pass disk overwrite (0x00, 0xFF, OsRng) before deletion.
+Travel Mode: Border-control mode temporarily hiding flagged vaults/items.
+Category 7: Privacy, Sync & Disaster Recovery
 Private GitHub Repo Sync: Zero-knowledge encrypted sync using octocrab. Automate commit & push on changes, giving free unlimited version history.
-Air-Gapped Animated QR Sync: Sync to mobile devices without Wi-Fi, Bluetooth, or cables using high-speed animated QR code streams.
-Zero-Cloud Local P2P Sync: Direct LAN synchronization using mDNS and TLS.
-CRDT Conflict-Free Engine: Multi-device offline edits merge mathematically without sync conflict files.
-Privacy Email Aliases: Integrate Addy.io / SimpleLogin APIs to generate random forwarding emails on the fly.
-Shamir's Secret Sharing: Split master key into 3-of-5 threshold shards for family disaster recovery.
-Time Machine Rollback: Micro-version history for all credentials to restore past passwords.
+Shamir's Secret Sharing (3-of-5): Mathematical Galois Field 
+G
+F
+(
+2
+8
+)
+GF(2 
+8
+ )
+ master key splitting into 82-word EFF shards with lock screen recovery.
+Emergency Printable Sheet: 1-page printable PDF containing QR and recovery parameters.
+Air-Gapped Animated QR Sync: High-density animated QR streaming for mobile sync without radio (Wi-Fi/Bluetooth).
+Local P2P Wi-Fi Sync: LocalSend-style LAN sync via mDNS and TLS.
+Decentralized Nostr Relays Sync: Censorship-resistant relay-based encrypted sync.
+CRDT Conflict-Free Engine: Offline multi-device edits merge mathematically without sync conflict files.
+Privacy Email Aliases: Addy.io / SimpleLogin API integration for throwaway forwarding emails.
 Zero-Footprint Portable Mode: Run completely within a RAM-disk from a USB drive without leaving temporary SSD artifacts.
+Private Metadata / Favicon Fetcher: Anonymous logo downloading via DNS-over-HTTPS (DoH) or Tor.
+Password Health & Breach Checker: HaveIBeenPwned k-Anonymity API (first 5 SHA-1 characters, no plaintext leakage).
 4. CODING CONVENTIONS FOR AI AGENTS
 DEPENDENCY SPECIFICATIONS (Must use current stable versions):
 argon2 = "0.5"
 chacha20poly1305 = "0.10"
 zeroize = { version = "1.8", features = ["derive"] }
 secrecy = "0.8"
-slint = "1.7" (or latest stable)
-windows = { version = "0.58", features = [...] }
+slint = "1.8" (with raw-window-handle-06)
+windows = "0.58" / windows-sys = "0.59"
 tokio = { version = "1.38", features = ["full"] }
-totp-rs = "5.6"
+totp-rs = "5.7"
 prost = "0.13"
 octocrab = "0.38"
 rqrr = "0.7"
 bincode = "1.3"
 serde = { version = "1.0", features = ["derive"] }
-RELEASE COMPILATION OPTIMIZATIONS:
+serde_json = "1.0"
+csv = "1.3"
+quick-xml = "0.36"
+rfd = "0.14"
+global-hotkey = "0.6"
+image = "0.25"
+hkdf = "0.12"
+ml-kem = "0.2"
+sha2 = "0.10"
+BUILD DEPENDENCIES (for Windows icon embedding):
+code
+Toml
+[build-dependencies]
+slint-build = "1.8"
+winres = "0.1"
+DEV & RELEASE COMPILATION OPTIMIZATIONS:
 The Cargo.toml must include:
 code
 Toml
+[profile.dev.package."*"]
+opt-level = 3
+
 [profile.release]
 opt-level = "z"
 lto = true
 codegen-units = 1
 strip = true
 panic = "abort"
-AGENT WORKFLOW:
+AGENT WORKFLOW & VERIFICATION:
 Build iteratively module by module.
 Run cargo check and cargo test after implementing each module.
+Always retain existing passing unit tests.
 Never stub out security functions with "TODO" or insecure dummy fallbacks.
 Keep comments concise and maintain maximum code clarity.

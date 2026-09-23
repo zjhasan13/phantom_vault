@@ -1,0 +1,347 @@
+//! Phase 16 (Option 2c) — Native OpenSSH-agent-compatible named pipe.
+//!
+//! Serve `vault ssh-agent`: unlock once, then expose vault `SSH:` credentials
+//! (OpenSSH private keys in the password field) over a local named pipe using
+//! the SSH agent wire protocol (identities + sign, ed25519).
+//!
+//! Safety decision: we serve `\\.\pipe\phantom-vault-ssh-agent` by default and
+//! NEVER squat the system `openssh-ssh-agent` pipe uninvited (that would
+//! hijack the user's real agent). Override with `PHANTOM_SSH_PIPE` only if
+//! you know what you are doing. Clients point via `SSH_AUTH_SOCK`.
+
+use crate::models::Vault;
+use crate::storage::load_vault_versioned;
+use ed25519_dalek::Signer as _;
+use ssh_key::private::{Ed25519Keypair, KeypairData};
+use ssh_key::PrivateKey;
+use std::sync::Arc;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+pub const DEFAULT_PIPE: &str = r"\\.\pipe\phantom-vault-ssh-agent";
+const MAX_MSG: usize = 1024 * 1024;
+
+const MSG_FAILURE: u8 = 5;
+const MSG_REQ_IDENTITIES: u8 = 11;
+const MSG_IDENTITIES_ANSWER: u8 = 12;
+const MSG_SIGN_REQUEST: u8 = 13;
+const MSG_SIGN_RESPONSE: u8 = 14;
+
+pub struct AgentKey {
+    pub comment: String,
+    pub pubkey: [u8; 32],
+    signing: ed25519_dalek::SigningKey,
+}
+
+// Manual Debug: never leak key material into logs.
+impl std::fmt::Debug for AgentKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AgentKey")
+            .field("comment", &self.comment)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Collect ed25519 keys from vault credentials titled `SSH: <comment>`.
+/// Private key PEM lives in the password field. Non-ed25519 entries are
+/// skipped (never error — one bad entry must not kill the agent).
+pub fn collect_keys(vault: &Vault) -> Vec<AgentKey> {
+    let mut out = Vec::new();
+    for cred in &vault.credentials {
+        let Some(comment) = cred.title.strip_prefix("SSH:") else {
+            continue;
+        };
+        let comment = comment.trim().to_string();
+        let Ok(private) = PrivateKey::from_openssh(cred.password.trim()) else {
+            continue;
+        };
+        let KeypairData::Ed25519(pair) = private.key_data() else {
+            continue;
+        };
+        let pair: &Ed25519Keypair = pair;
+        let Ok(signing) = ed25519_dalek::SigningKey::try_from(pair) else {
+            continue;
+        };
+        out.push(AgentKey {
+            comment,
+            pubkey: signing.verifying_key().to_bytes(),
+            signing,
+        });
+    }
+    out
+}
+
+// ---- wire codec (pure, unit tested) ----
+
+fn put_string(buf: &mut Vec<u8>, bytes: &[u8]) {
+    buf.extend_from_slice(&(bytes.len() as u32).to_be_bytes());
+    buf.extend_from_slice(bytes);
+}
+
+fn get_string(msg: &[u8], pos: &mut usize) -> Option<Vec<u8>> {
+    let end = pos.checked_add(4)?;
+    let len = u32::from_be_bytes(msg.get(*pos..end)?.try_into().ok()?) as usize;
+    *pos = end;
+    let end = pos.checked_add(len)?;
+    let out = msg.get(*pos..end)?.to_vec();
+    *pos = end;
+    Some(out)
+}
+
+fn key_blob(pubkey: &[u8; 32]) -> Vec<u8> {
+    let mut b = Vec::new();
+    put_string(&mut b, b"ssh-ed25519");
+    put_string(&mut b, pubkey);
+    b
+}
+
+/// Parse a key blob back to (algo, pubkey). Rejects non-ed25519 blobs.
+fn parse_blob(blob: &[u8]) -> Option<[u8; 32]> {
+    let mut pos = 0;
+    let algo = get_string(blob, &mut pos)?;
+    let key = get_string(blob, &mut pos)?;
+    if algo != b"ssh-ed25519" || key.len() != 32 {
+        return None;
+    }
+    let mut out = [0u8; 32];
+    out.copy_from_slice(&key);
+    Some(out)
+}
+
+fn identities_answer(keys: &[AgentKey]) -> Vec<u8> {
+    let mut body = vec![MSG_IDENTITIES_ANSWER];
+    body.extend_from_slice(&(keys.len() as u32).to_be_bytes());
+    for k in keys {
+        put_string(&mut body, &key_blob(&k.pubkey));
+        put_string(&mut body, k.comment.as_bytes());
+    }
+    body
+}
+
+fn sign_response(sig: &[u8; 64]) -> Vec<u8> {
+    let mut inner = Vec::new();
+    put_string(&mut inner, b"ssh-ed25519");
+    put_string(&mut inner, sig);
+    let mut body = vec![MSG_SIGN_RESPONSE];
+    put_string(&mut body, &inner);
+    body
+}
+
+/// Dispatch one request payload → response payload. Pure logic; IO-free.
+fn dispatch(keys: &[AgentKey], req: &[u8]) -> Vec<u8> {
+    let Some((&kind, rest)) = req.split_first() else {
+        return vec![MSG_FAILURE];
+    };
+    match kind {
+        MSG_REQ_IDENTITIES => identities_answer(keys),
+        MSG_SIGN_REQUEST => {
+            let mut pos = 0;
+            let (Some(blob), Some(data)) =
+                (get_string(rest, &mut pos), get_string(rest, &mut pos))
+            else {
+                return vec![MSG_FAILURE];
+            };
+            // flags (u32) follows; read-and-ignore (agent constraints out of scope).
+            let Some(want) = parse_blob(&blob) else {
+                return vec![MSG_FAILURE];
+            };
+            let Some(key) = keys.iter().find(|k| k.pubkey == want) else {
+                return vec![MSG_FAILURE];
+            };
+            let sig = key.signing.sign(&data).to_bytes();
+            sign_response(&sig)
+        }
+        _ => vec![MSG_FAILURE],
+    }
+}
+
+async fn handle_client(
+    keys: Arc<Vec<AgentKey>>,
+    mut stream: tokio::net::windows::named_pipe::NamedPipeServer,
+) {
+    loop {
+        let mut len_buf = [0u8; 4];
+        if stream.read_exact(&mut len_buf).await.is_err() {
+            break;
+        }
+        let len = u32::from_be_bytes(len_buf) as usize;
+        if len == 0 || len > MAX_MSG {
+            break;
+        }
+        let mut req = vec![0u8; len];
+        if stream.read_exact(&mut req).await.is_err() {
+            break;
+        }
+        let resp = dispatch(&keys, &req);
+        let out_len = (resp.len() as u32).to_be_bytes();
+        if stream.write_all(&out_len).await.is_err() {
+            break;
+        }
+        if stream.write_all(&resp).await.is_err() {
+            break;
+        }
+    }
+}
+
+/// Foreground entrypoint: `vault ssh-agent`. Ctrl+C stops (keys die with us).
+pub fn serve_cli() -> i32 {
+    eprint!("Master password: ");
+    let mut password = match rpassword::read_password() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("ssh-agent: cannot read password: {e}");
+            return 2;
+        }
+    };
+    let (vault, _) = match load_vault_versioned(
+        password.trim(),
+        super::vault_run::VAULT_FILE,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            use zeroize::Zeroize;
+            password.zeroize();
+            eprintln!("ssh-agent: unlock failed: {e}");
+            return 1;
+        }
+    };
+    {
+        use zeroize::Zeroize;
+        password.zeroize();
+    }
+    let keys = Arc::new(collect_keys(&vault));
+    drop(vault);
+    if keys.is_empty() {
+        eprintln!("ssh-agent: no ed25519 keys found — add a credential titled \"SSH: <name>\" holding the OpenSSH private key.");
+        return 2;
+    }
+    let pipe_name = std::env::var("PHANTOM_SSH_PIPE").unwrap_or_else(|_| DEFAULT_PIPE.to_string());
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("ssh-agent: runtime failed: {e}");
+            return 1;
+        }
+    };
+    println!(
+        "ssh-agent: serving {} key(s) on {pipe_name} (Ctrl+C to stop)",
+        keys.len()
+    );
+    rt.block_on(async {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        loop {
+            let server = match ServerOptions::new().create(&pipe_name) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("ssh-agent: pipe failed: {e}");
+                    break;
+                }
+            };
+            if server.connect().await.is_err() {
+                continue;
+            }
+            let keys = Arc::clone(&keys);
+            tokio::spawn(async move {
+                handle_client(keys, server).await;
+            });
+        }
+    });
+    0
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_keys() -> Vec<AgentKey> {
+        // Deterministic test key (NOT a real secret — committed fixture).
+        let seed = [9u8; 32];
+        let signing = ed25519_dalek::SigningKey::from_bytes(&seed);
+        vec![AgentKey {
+            comment: "test@example".into(),
+            pubkey: signing.verifying_key().to_bytes(),
+            signing,
+        }]
+    }
+
+    fn frame(body: &[u8]) -> Vec<u8> {
+        body.to_vec()
+    }
+
+    #[test]
+    fn identities_roundtrip() {
+        let keys = test_keys();
+        let resp = dispatch(&keys, &frame(&[MSG_REQ_IDENTITIES]));
+        assert_eq!(resp[0], MSG_IDENTITIES_ANSWER);
+        let count = u32::from_be_bytes(resp[1..5].try_into().unwrap());
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn sign_and_verify() {
+        use ed25519_dalek::Verifier as _;
+        let keys = test_keys();
+        let blob = key_blob(&keys[0].pubkey);
+        let data = b"ssh-connection-test-data";
+        let mut req = vec![MSG_SIGN_REQUEST];
+        put_string(&mut req, &blob);
+        put_string(&mut req, data);
+        req.extend_from_slice(&0u32.to_be_bytes());
+        let resp = dispatch(&keys, &req);
+        assert_eq!(resp[0], MSG_SIGN_RESPONSE);
+        let mut pos = 1;
+        let inner = get_string(&resp, &mut pos).unwrap();
+        let mut ipos = 0;
+        let algo = get_string(&inner, &mut ipos).unwrap();
+        let sig = get_string(&inner, &mut ipos).unwrap();
+        assert_eq!(algo, b"ssh-ed25519");
+        assert_eq!(sig.len(), 64);
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&keys[0].pubkey).unwrap();
+        vk.verify(
+            data,
+            &ed25519_dalek::Signature::from_slice(&sig).unwrap(),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn unknown_key_fails() {
+        let keys = test_keys();
+        let blob = key_blob(&[7u8; 32]);
+        let mut req = vec![MSG_SIGN_REQUEST];
+        put_string(&mut req, &blob);
+        put_string(&mut req, b"data");
+        req.extend_from_slice(&0u32.to_be_bytes());
+        assert_eq!(dispatch(&keys, &req), vec![MSG_FAILURE]);
+    }
+
+    #[test]
+    fn garbage_fails() {
+        let keys = test_keys();
+        assert_eq!(dispatch(&keys, &[]), vec![MSG_FAILURE]);
+        assert_eq!(dispatch(&keys, &[99]), vec![MSG_FAILURE]);
+    }
+
+    #[test]
+    fn collect_skips_non_ssh_titles() {
+        use crate::models::{Credential, Vault};
+        let mut v = Vault::new();
+        v.credentials.push(Credential {
+            id: "1".into(),
+            title: "GitHub".into(),
+            username: "u".into(),
+            password: "p".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                
+            reprompt: false,
+        });
+        assert!(collect_keys(&v).is_empty());
+    }
+}
