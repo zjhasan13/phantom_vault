@@ -33,8 +33,51 @@ rqrr = "0.7"
 image = "0.25"
 percent-encoding = "2.3"
 
+# Phase 10: Secure Generator
+rand = "0.8"
+secrecy = "0.8"
+thiserror = "2"
+once_cell = "1.19"
+
+# Phase 18: Omni-Universal Vault Importer
+csv = "1.3"
+serde_json = "1.0"
+quick-xml = "0.36"
+rfd = "0.14"
+
+# Phase 16 (Option 2): developer superpowers
+rpassword = "7"
+ssh-key = { version = "0.6", features = ["ed25519", "alloc"] }
+ed25519-dalek = "2"
+
+# Phase 14: Post-quantum hybrid (ML-KEM-768 + HKDF-SHA256)
+ml-kem = "0.2"
+hkdf = "0.12"
+sha2 = "0.10"
+
+# Phase 12: Zero-knowledge GitHub sync (ciphertext only)
+octocrab = "0.38"
+http = "1"
+
+# Phase 11: Windows Hello (WinRT) + async bridge
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_System_Com",
+    "Win32_System_ProcessStatus",
+    "Win32_UI_Accessibility",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_Security_Cryptography",
+    "Win32_System_DataExchange",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Security_Credentials_UI",
+] }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "time"] }
+
 # Windows Anti-Capture (OBS/Discord Blackout)
-windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging"] }
+windows-sys = { version = "0.59", features = ["Win32_UI_WindowsAndMessaging", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Foundation"] }
 
 # Phase 9: Global Quick-Bar
 global-hotkey = "0.6"
@@ -45,13 +88,27 @@ raw-window-handle = "0.6"
 [build-dependencies]
 slint-build = "1.8"
 
-[profile.dev.package."*"]
-opt-level = 3
-
-# Keep proc-macros unoptimized to avoid prefer-dynamic conflict
-[profile.dev.package.windows-implement]
-opt-level = 0
-[profile.dev.package.windows-interface]
-opt-level = 0
 [profile.dev.build-override]
 opt-level = 0
+
+# Fast Argon2id in dev without OOM: optimize only crypto/hot crates
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+[profile.dev.package.chacha20poly1305]
+opt-level = 3
+[profile.dev.package.cipher]
+opt-level = 3
+[profile.dev.package.digest]
+opt-level = 3
+[profile.dev.package.cpufeatures]
+opt-level = 3
+[profile.dev.package.subtle]
+opt-level = 3
+[profile.dev.package.generic-array]
+opt-level = 3
+[profile.dev.package.rand_core]
+opt-level = 3
+[profile.dev.package.password-hash]
+opt-level = 3

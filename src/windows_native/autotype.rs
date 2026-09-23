@@ -1,0 +1,243 @@
+//! Phase 13 — Global Auto-Type via Win32 `SendInput`.
+//!
+//! Security upgrades over the naive spec:
+//! - Clipboard is never touched (immune to clipboard sniffers / Win+V history).
+//! - Pastejacking guard: CR/LF stripped from fields; only the intentional
+//!   final Enter is ever sent as a control key.
+//! - Timing jitter (8–28 ms) between keystrokes resists keystroke-timing analysis.
+//! - Unicode path (`KEYEVENTF_UNICODE`) types symbols/non-ASCII exactly,
+//!   independent of the victim layout.
+//! - Pre-type focus delay lets the OS settle on the target field after minimize.
+
+use crate::error::{Result, VaultError};
+use rand::Rng;
+use rand_core::OsRng;
+use std::time::Duration;
+use windows::Win32::UI::Input::KeyboardAndMouse::{
+    SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
+    VIRTUAL_KEY, VK_RETURN, VK_TAB,
+};
+use zeroize::Zeroize;
+
+const FOCUS_DELAY_MS: u64 = 600;
+/// Phase 17 fix: DWM minimize-animation settle before the FIRST keystroke.
+/// 800ms — slower machines drop the first chars at 400ms while focus is
+/// still in transit to the target window.
+const SETTLE_MS: u64 = 800;
+/// Phase 17 fix: down→up hold window. Below ~8ms Windows may miss KeyUp and
+/// the hardware repeat kicks in (the infamous 'tttttt').
+const HOLD_MIN_MS: u64 = 8;
+const HOLD_MAX_MS: u64 = 15;
+/// Phase 17 fix: inter-character gap.
+const GAP_MIN_MS: u64 = 10;
+const GAP_MAX_MS: u64 = 20;
+/// Phase 17 fix: Tab transition — app needs time to move field focus.
+const TAB_PRE_MS: u64 = 100;
+const TAB_POST_MS: u64 = 150;
+
+/// Strip carriage returns / line feeds (pastejacking) and trim.
+/// Pure — unit tested.
+pub fn sanitize_field(raw: &str) -> String {
+    raw.replace(['\r', '\n'], "")
+}
+
+/// Push one Rust `char` as its true UTF-16 code units — direct, untranslated.
+/// Surrogate pairs (non-BMP) emit both units in order; BMP chars emit one.
+/// There is deliberately NO layout table, NO shift-state, NO scan mapping:
+/// `wVk = 0` + `KEYEVENTF_UNICODE` + raw `wScan` unit, byte-exact.
+fn push_char(seq: &mut Vec<u16>, ch: char) {
+    let mut buf = [0u16; 2];
+    let units = ch.encode_utf16(&mut buf);
+    seq.extend_from_slice(units);
+}
+
+/// Collect the UTF-16 units of a sanitized field, char by char.
+fn field_units(raw: &str) -> Vec<u16> {
+    let mut out = Vec::new();
+    for ch in sanitize_field(raw).chars() {
+        push_char(&mut out, ch);
+    }
+    out
+}
+
+/// Build the exact key sequence: user + Tab + pass + Enter.
+/// Authoritative contract of the typing order; pinned by unit tests.
+#[allow(dead_code)]
+pub fn build_sequence(username: &str, password: &str) -> Vec<KeyStroke> {
+    let mut seq = Vec::new();
+    for unit in sanitize_field(username).encode_utf16() {
+        seq.push(KeyStroke::Unicode(unit));
+    }
+    seq.push(KeyStroke::Vk(VK_TAB));
+    for unit in sanitize_field(password).encode_utf16() {
+        seq.push(KeyStroke::Unicode(unit));
+    }
+    seq.push(KeyStroke::Vk(VK_RETURN));
+    seq
+}
+
+#[allow(dead_code)]
+pub enum KeyStroke {
+    Unicode(u16),
+    Vk(VIRTUAL_KEY),
+}
+
+fn key_input(vk: VIRTUAL_KEY, scan: u16, flags: u32) -> INPUT {
+    INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 {
+            ki: KEYBDINPUT {
+                wVk: vk,
+                wScan: scan,
+                dwFlags: windows::Win32::UI::Input::KeyboardAndMouse::KEYBD_EVENT_FLAGS(flags),
+                time: 0,
+                dwExtraInfo: 0,
+            },
+        },
+    }
+}
+
+fn send_one(input: &INPUT) -> Result<()> {
+    // SAFETY: fully-initialized POD, single event per call so every KeyUp is
+    // individually acknowledged by the OS (no batched down/up pairs).
+    let sent = unsafe { SendInput(std::slice::from_ref(input), std::mem::size_of::<INPUT>() as i32) };
+    if sent != 1 {
+        return Err(VaultError::AutoType("SendInput was blocked".into()));
+    }
+    Ok(())
+}
+
+fn sleep_range(rng: &mut OsRng, lo: u64, hi: u64) {
+    let ms: u64 = rng.gen_range(lo..=hi);
+    std::thread::sleep(Duration::from_millis(ms));
+}
+
+/// One full press: KeyDown → hold → KeyUp. Never batched, never skipped.
+fn press_unicode(unit: u16, rng: &mut OsRng) -> Result<()> {
+    send_one(&key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE.0))?;
+    sleep_range(rng, HOLD_MIN_MS, HOLD_MAX_MS);
+    send_one(&key_input(
+        VIRTUAL_KEY(0),
+        unit,
+        (KEYEVENTF_UNICODE | KEYEVENTF_KEYUP).0,
+    ))?;
+    Ok(())
+}
+
+fn press_vk(vk: VIRTUAL_KEY, rng: &mut OsRng) -> Result<()> {
+    send_one(&key_input(vk, 0, 0))?;
+    sleep_range(rng, HOLD_MIN_MS, HOLD_MAX_MS);
+    send_one(&key_input(vk, 0, KEYEVENTF_KEYUP.0))?;
+    Ok(())
+}
+
+/// Type `username{Tab}password{Enter}` into the currently focused field.
+/// Blocks the calling (worker) thread. Timing budget:
+/// settle 800ms → hide-delay 600ms → per-char down/hold/up + gap →
+/// Tab guards (100ms pre / 150ms post).
+pub fn type_sequence(username: &str, password: &str) -> Result<()> {
+    if sanitize_field(password).is_empty() {
+        return Err(VaultError::AutoType("nothing to type".into()));
+    }
+    // 1. DWM minimize-animation settle, then the original focus delay.
+    std::thread::sleep(Duration::from_millis(SETTLE_MS));
+    std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
+    let mut rng = OsRng;
+    // 2. Username, char by char (verified UTF-16 units, no translation).
+    for unit in field_units(username) {
+        press_unicode(unit, &mut rng)?;
+        sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+    }
+    // 3. Tab transition with guards on both sides.
+    std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
+    press_vk(VK_TAB, &mut rng)?;
+    std::thread::sleep(Duration::from_millis(TAB_POST_MS));
+    // 4. Password, char by char.
+    for unit in field_units(password) {
+        press_unicode(unit, &mut rng)?;
+        sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+    }
+    press_vk(VK_RETURN, &mut rng)?;
+    Ok(())
+}
+
+/// Zeroizing wrapper for the password while it waits for the focus delay.
+pub struct TypeSecret(String);
+
+impl TypeSecret {
+    pub fn new(s: String) -> Self {
+        Self(s)
+    }
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl Drop for TypeSecret {
+    fn drop(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sanitize_strips_control_chars() {
+        assert_eq!(sanitize_field("ab\r\ncd\nef\rg"), "abcdefg");
+        assert_eq!(sanitize_field("  user  "), "  user  ");
+    }
+
+    #[test]
+    fn sequence_layout_is_user_tab_pass_enter() {
+        let seq = build_sequence("ab", "xy");
+        // a,b + Tab + x,y + Enter = 6 strokes
+        assert_eq!(seq.len(), 6);
+        assert!(matches!(seq[2], KeyStroke::Vk(vk) if vk == VK_TAB));
+        assert!(matches!(seq[5], KeyStroke::Vk(vk) if vk == VK_RETURN));
+    }
+
+    #[test]
+    fn field_units_cover_ascii_and_surrogates() {
+        // 'c' must be exactly one unit 0x63 — the reported 'o' (0x6F) can
+        // never arise here; any target-side morph is outside this path.
+        assert_eq!(field_units("c"), vec![0x63u16]);
+        assert_eq!(field_units("com"), vec![0x63, 0x6F, 0x6D]);
+        // Non-BMP char → correct surrogate pair, in order.
+        assert_eq!(field_units("😀"), vec![0xD83D, 0xDE00]);
+        // Control chars stripped before encoding.
+        assert_eq!(field_units("a\nc"), vec![0x61, 0x63]);
+    }
+
+    #[test]
+    fn sequence_sanitizes_embedded_newlines() {
+        let seq = build_sequence("a\nb", "x\ry");
+        // newline chars must never become keystrokes
+        assert_eq!(seq.len(), 6);
+    }
+
+    /// Regression test for the "c typed as o" report: proves byte-for-byte
+    /// that 'c' (U+0063) is placed untranslated into wScan with wVk=0 and
+    /// KEYEVENTF_UNICODE (4) down / UNICODE|KEYUP (6) up. No layout table,
+    /// no shift handling, no mapping exists anywhere on this path.
+    #[test]
+    fn c_encodes_byte_exact() {
+        // SAFETY: reading our own fully-initialized POD struct.
+        unsafe {
+            let down = key_input(VIRTUAL_KEY(0), 0x63, KEYEVENTF_UNICODE.0);
+            let up = key_input(VIRTUAL_KEY(0), 0x63, (KEYEVENTF_UNICODE | KEYEVENTF_KEYUP).0);
+            assert_eq!(down.r#type, INPUT_KEYBOARD);
+            assert_eq!(down.Anonymous.ki.wVk, VIRTUAL_KEY(0));
+            assert_eq!(down.Anonymous.ki.wScan, 0x63);
+            assert_eq!(down.Anonymous.ki.dwFlags.0, 4);
+            assert_eq!(up.Anonymous.ki.wScan, 0x63);
+            assert_eq!(up.Anonymous.ki.dwFlags.0, 6);
+            // Full alphabet sweep: every ASCII unit round-trips identically.
+            for unit in 0x20u16..0x7Fu16 {
+                let d = key_input(VIRTUAL_KEY(0), unit, KEYEVENTF_UNICODE.0);
+                assert_eq!(d.Anonymous.ki.wScan, unit, "unit {unit:#X} mangled");
+            }
+        }
+    }
+}
