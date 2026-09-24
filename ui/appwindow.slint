@@ -985,11 +985,12 @@ export component MainWindow inherits Window {
                 if root.d_kind == 3 : VerticalLayout {
                     spacing: 10px;
                     FieldLabel { text: "CONTENT"; }
-                    ScrollView {
-                        height: 140px;
-                        Text { text: root.d_secret; color: #eef1ff; font-size: 13px; wrap: word-wrap; width: parent.width; }
+                    HorizontalLayout {
+                        spacing: 8px;
+                        Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
                     }
-                    HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy Note"; width: 170px; clicked => { root.copy_password_requested(root.d_secret); } } }
                 }
                 // Card fields
                 if root.d_kind == 4 : VerticalLayout {
@@ -1000,8 +1001,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Text { text: root.d_secret_visible ? root.d_secret : "•••• •••• •••• ••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
                     }
                     FieldLabel { text: "EXPIRY + CVV"; }
                     Text { text: root.d_meta; color: #eef1ff; font-size: 14px; }
@@ -1015,8 +1016,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
                     }
                     if root.d_url != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "EMAIL"; } Text { text: root.d_url; color: #8e99c0; font-size: 12px; } }
                     if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "PHONE"; } Text { text: root.d_meta; color: #eef1ff; font-size: 14px; } }
@@ -1031,8 +1032,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout {
                         spacing: 8px;
                         Text { text: root.d_secret_visible ? root.d_secret : "••••••••"; color: #38e1ff; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { root.d_secret_visible = !root.d_secret_visible; } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
+                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } }
+                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
                     }
                     if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "FINGERPRINT"; } Text { text: root.d_meta; color: #8e99c0; font-size: 12px; } }
                 }
