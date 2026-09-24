@@ -42,7 +42,10 @@ pub fn plant_canary(vault: &mut Vault) -> String {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
         reprompt: false,
-    });
+    
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
     title
 }
 
@@ -92,7 +95,10 @@ mod tests {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         assert!(find_canary_by_password(&v, "p").is_none());
     }
 }

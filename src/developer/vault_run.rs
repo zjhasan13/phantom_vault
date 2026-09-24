@@ -219,7 +219,10 @@ mod tests {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         let maps = vec![
             EnvMap { title: "GitHub".into(), field_user: false, var: "GH_TOKEN".into() },
             EnvMap { title: "GitHub".into(), field_user: true, var: "GH_USER".into() },

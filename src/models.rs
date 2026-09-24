@@ -45,6 +45,19 @@ impl CustomFieldType {
     }
 }
 
+/// Encrypted file attachment (stored sealed inside the vault container).
+/// 5MB per-file cap enforced at ingestion; never written to disk plaintext.
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
+pub struct EncryptedAttachment {
+    pub id: String,
+    pub filename: String,
+    pub mime_type: String,
+    pub size_bytes: usize,
+    pub data: Vec<u8>,
+}
+
+pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
+
 /// Rich login item (Bitwarden parity).
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Credential {
@@ -65,17 +78,36 @@ pub struct Credential {
     pub folder: String,
     #[serde(default)]
     pub reprompt: bool,
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
-/// 2FA অথেনটিকেটর অ্যাকাউন্ট (Google/Proton TOTP)
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+/// 2FA authenticator account — algorithm/type/counter ride along so imports
+/// stay bit-identical to Google Authenticator (no silent SHA1 fallback).
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, PartialEq)]
 pub struct TotpAccount {
     pub id: String,
     pub account_name: String,
     pub issuer: String,
     pub secret: String, // Base32 Secret Key
-    pub digits: u32,    // 6 or 8 digits
-    pub period: u64,    // Default 30s
+    pub digits: u32,    // 6 or 8 (5 for Steam, rendered from its own path)
+    pub period: u64,    // Usually 30s
+    #[serde(default = "default_algorithm")]
+    pub algorithm: String, // "SHA1", "SHA256", "SHA512", "MD5"(→SHA1)
+    #[serde(default = "default_otp_type")]
+    pub otp_type: String, // "totp", "hotp", "steam"
+    #[serde(default)]
+    pub counter: u64, // HOTP moving factor
+}
+
+fn default_algorithm() -> String {
+    "SHA1".into()
+}
+
+fn default_otp_type() -> String {
+    "totp".into()
 }
 
 /// সফটওয়্যার ও গেম লাইসেন্স কি
@@ -87,6 +119,10 @@ pub struct SoftwareLicense {
     pub expiry_date: Option<String>,
     #[serde(default)]
     pub folder: String,
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
 /// সিকিউর নোটস
@@ -97,6 +133,8 @@ pub struct SecureNote {
     pub content: String,
     #[serde(default)]
     pub folder: String,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -112,6 +150,8 @@ pub struct PaymentCard {
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -127,6 +167,8 @@ pub struct IdentityItem {
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -140,10 +182,14 @@ pub struct SshKeyItem {
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    #[serde(default)]
+    pub travel_safe: bool,
 }
 
-/// সম্পূর্ণ মূল ভল্ট কন্টেইনার
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+/// সম্পূর্ণ মূল ভল্ট কন্টেইনার.
+/// C3 Hardening: Zeroize-derived so EVERY heap clone (snapshots, rollback
+/// copies, invoke payloads) is scrubbed on drop — no lingering plaintext.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 pub struct Vault {
     pub version: u32,
     #[serde(default)]
@@ -326,6 +372,9 @@ impl From<VaultLegacy> for Vault {
                     notes: c.notes,
                     folder: DEFAULT_FOLDER.to_string(),
                     reprompt: false,
+                
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 })
                 .collect(),
             totp_accounts: old.totp_accounts,
@@ -338,6 +387,8 @@ impl From<VaultLegacy> for Vault {
                     license_key: l.license_key,
                     expiry_date: l.expiry_date,
                     folder: DEFAULT_FOLDER.to_string(),
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 })
                 .collect(),
             notes: old
@@ -348,6 +399,7 @@ impl From<VaultLegacy> for Vault {
                     title: n.title,
                     content: n.content,
                     folder: DEFAULT_FOLDER.to_string(),
+                    travel_safe: false,
                 })
                 .collect(),
             cards: Vec::new(),
@@ -439,6 +491,9 @@ impl From<VaultGen1> for Vault {
                     notes: c.notes,
                     folder: c.folder,
                     reprompt: false,
+                
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 })
                 .collect(),
             totp_accounts: old.totp_accounts,
@@ -457,6 +512,7 @@ impl From<VaultGen1> for Vault {
                     cvv: k.cvv,
                     folder: k.folder,
                     notes: String::new(),
+                    travel_safe: false,
                 })
                 .collect(),
             identities: old
@@ -472,6 +528,7 @@ impl From<VaultGen1> for Vault {
                     address: i.address,
                     folder: i.folder,
                     notes: String::new(),
+                    travel_safe: false,
                 })
                 .collect(),
             ssh_keys: old
@@ -485,8 +542,253 @@ impl From<VaultGen1> for Vault {
                     fingerprint: s.fingerprint,
                     folder: s.folder,
                     notes: String::new(),
+                    travel_safe: false,
                 })
                 .collect(),
+        };
+        v.ensure_folders();
+        v
+    }
+}
+
+/// Gen-2 shape: everything current EXCEPT attachments, travel_safe flags,
+/// and the folders registry additions that followed. (Field-for-field
+/// identical to the structs above minus those additions.)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2Credential {
+    id: String,
+    title: String,
+    username: String,
+    password: String,
+    totp_secret: String,
+    urls: Vec<String>,
+    backup_codes: Vec<String>,
+    custom_fields: Vec<CustomField>,
+    notes: String,
+    folder: String,
+    reprompt: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2License {
+    id: String,
+    app_name: String,
+    license_key: String,
+    expiry_date: Option<String>,
+    folder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2Note {
+    id: String,
+    title: String,
+    content: String,
+    folder: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2Card {
+    id: String,
+    title: String,
+    cardholder_name: String,
+    card_number: String,
+    exp_month: String,
+    exp_year: String,
+    cvv: String,
+    folder: String,
+    notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2Identity {
+    id: String,
+    title: String,
+    full_name: String,
+    nid_or_passport: String,
+    email: String,
+    phone: String,
+    address: String,
+    folder: String,
+    notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Gen2Ssh {
+    id: String,
+    title: String,
+    public_key: String,
+    private_key: String,
+    fingerprint: String,
+    folder: String,
+    notes: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultGen2 {
+    version: u32,
+    folders: Vec<String>,
+    credentials: Vec<Gen2Credential>,
+    totp_accounts: Vec<TotpAccount>,
+    licenses: Vec<Gen2License>,
+    notes: Vec<Gen2Note>,
+    cards: Vec<Gen2Card>,
+    identities: Vec<Gen2Identity>,
+    ssh_keys: Vec<Gen2Ssh>,
+}
+
+impl From<VaultGen2> for Vault {
+    fn from(old: VaultGen2) -> Self {
+        let mut v = Vault {
+            version: old.version,
+            folders: old.folders,
+            credentials: old
+                .credentials
+                .into_iter()
+                .map(|c| Credential {
+                    id: c.id,
+                    title: c.title,
+                    username: c.username,
+                    password: c.password,
+                    totp_secret: c.totp_secret,
+                    urls: c.urls,
+                    backup_codes: c.backup_codes,
+                    custom_fields: c.custom_fields,
+                    notes: c.notes,
+                    folder: c.folder,
+                    reprompt: c.reprompt,
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                })
+                .collect(),
+            totp_accounts: old.totp_accounts,
+            licenses: old
+                .licenses
+                .into_iter()
+                .map(|l| SoftwareLicense {
+                    id: l.id,
+                    app_name: l.app_name,
+                    license_key: l.license_key,
+                    expiry_date: l.expiry_date,
+                    folder: l.folder,
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                })
+                .collect(),
+            notes: old
+                .notes
+                .into_iter()
+                .map(|n| SecureNote {
+                    id: n.id,
+                    title: n.title,
+                    content: n.content,
+                    folder: n.folder,
+                    travel_safe: false,
+                })
+                .collect(),
+            cards: old
+                .cards
+                .into_iter()
+                .map(|k| PaymentCard {
+                    id: k.id,
+                    title: k.title,
+                    cardholder_name: k.cardholder_name,
+                    card_number: k.card_number,
+                    exp_month: k.exp_month,
+                    exp_year: k.exp_year,
+                    cvv: k.cvv,
+                    folder: k.folder,
+                    notes: k.notes,
+                    travel_safe: false,
+                })
+                .collect(),
+            identities: old
+                .identities
+                .into_iter()
+                .map(|i| IdentityItem {
+                    id: i.id,
+                    title: i.title,
+                    full_name: i.full_name,
+                    nid_or_passport: i.nid_or_passport,
+                    email: i.email,
+                    phone: i.phone,
+                    address: i.address,
+                    folder: i.folder,
+                    notes: i.notes,
+                    travel_safe: false,
+                })
+                .collect(),
+            ssh_keys: old
+                .ssh_keys
+                .into_iter()
+                .map(|s| SshKeyItem {
+                    id: s.id,
+                    title: s.title,
+                    public_key: s.public_key,
+                    private_key: s.private_key,
+                    fingerprint: s.fingerprint,
+                    folder: s.folder,
+                    notes: s.notes,
+                    travel_safe: false,
+                })
+                .collect(),
+        };
+        v.ensure_folders();
+        v
+    }
+}
+
+/// Gen-3 shape: identical to current EXCEPT the lean pre-dynamic TotpAccount
+/// (no algorithm/otp_type/counter). Added when the 2FA engine went dynamic;
+/// old vaults upgrade with SHA1/totp/0 defaults (exactly their old behavior).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct OldTotp {
+    id: String,
+    account_name: String,
+    issuer: String,
+    secret: String,
+    digits: u32,
+    period: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultGen3 {
+    version: u32,
+    folders: Vec<String>,
+    credentials: Vec<Credential>,
+    totp_accounts: Vec<OldTotp>,
+    licenses: Vec<SoftwareLicense>,
+    notes: Vec<SecureNote>,
+    cards: Vec<PaymentCard>,
+    identities: Vec<IdentityItem>,
+    ssh_keys: Vec<SshKeyItem>,
+}
+
+impl From<VaultGen3> for Vault {
+    fn from(old: VaultGen3) -> Self {
+        let mut v = Vault {
+            version: old.version,
+            folders: old.folders,
+            credentials: old.credentials,
+            totp_accounts: old
+                .totp_accounts
+                .into_iter()
+                .map(|t| TotpAccount {
+                    id: t.id,
+                    account_name: t.account_name,
+                    issuer: t.issuer,
+                    secret: t.secret,
+                    digits: t.digits,
+                    period: t.period,
+                    algorithm: default_algorithm(),
+                    otp_type: default_otp_type(),
+                    counter: 0,
+                })
+                .collect(),
+            licenses: old.licenses,
+            notes: old.notes,
+            cards: old.cards,
+            identities: old.identities,
+            ssh_keys: old.ssh_keys,
         };
         v.ensure_folders();
         v
@@ -512,7 +814,10 @@ mod tests {
             notes: String::new(),
             folder: "General".into(),
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         v.cards.push(PaymentCard {
             id: "k1".into(),
             title: "Bank".into(),
@@ -523,6 +828,7 @@ mod tests {
             cvv: "123".into(),
             folder: "Finance".into(),
             notes: String::new(),
+            travel_safe: false,
         });
         assert!(v.delete_item(1, "c1"));
         assert!(v.credentials.is_empty());
@@ -580,7 +886,10 @@ mod tests {
             notes: String::new(),
             folder: "SecretLab".into(),
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         v.ensure_folders();
         assert!(v.folders.contains(&"SecretLab".to_string()));
         assert!(v.folders.contains(&"General".to_string()));

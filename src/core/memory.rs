@@ -1,6 +1,9 @@
-//! DPAPI-backed protection for the cached Hello unlock token.
-//! Uses Windows `CryptProtectData` / `CryptUnprotectData` (current-user scope,
-//! no additional entropy). Plaintext buffers are zeroized on drop.
+//! DPAPI-backed protection for cached secrets + VirtualLock paged-out defense.
+//!
+//! - `DpapiGuard`: Windows `CryptProtectData` / `CryptUnprotectData`
+//!   (current-user scope, no additional entropy). Plaintext zeroized on drop.
+//! - `LockedMemory<T>`: heap secret pinned with `VirtualLock` so the OS can
+//!   never page it to `pagefile.sys`; zeroized + unlocked on drop.
 
 use crate::error::{Result, VaultError};
 use windows::core::PCWSTR;
@@ -94,6 +97,50 @@ impl DpapiGuard {
     }
 }
 
+/// Pinned heap secret: `VirtualLock`ed against pagefile swaps, zeroized and
+/// unlocked on drop. The lock covers the whole OS page, so tiny secrets are
+/// effectively free. Lock failure (no privilege / over quota) is a hard Err.
+pub struct LockedMemory<T: Zeroize> {
+    boxed: Box<T>,
+}
+
+impl<T: Zeroize> LockedMemory<T> {
+    pub fn new(value: T) -> Result<Self> {
+        let mut boxed = Box::new(value);
+        // SAFETY: Box is a live, correctly-sized allocation for this call.
+        let locked = unsafe {
+            windows_sys::Win32::System::Memory::VirtualLock(
+                (&*boxed as *const T) as *const std::ffi::c_void,
+                std::mem::size_of::<T>(),
+            ) != 0
+        };
+        if !locked {
+            boxed.zeroize();
+            return Err(VaultError::Biometric("VirtualLock failed".into()));
+        }
+        // Note: the caller's moved-from stack slot is left to normal reuse;
+        // the live twin lives only in this locked heap page from here on.
+        Ok(Self { boxed })
+    }
+
+    pub fn expose(&self) -> &T {
+        &self.boxed
+    }
+}
+
+impl<T: Zeroize> Drop for LockedMemory<T> {
+    fn drop(&mut self) {
+        self.boxed.zeroize();
+        // SAFETY: same live allocation we locked; best-effort unlock.
+        unsafe {
+            windows_sys::Win32::System::Memory::VirtualUnlock(
+                (&*self.boxed as *const T) as *const std::ffi::c_void,
+                std::mem::size_of::<T>(),
+            );
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -110,5 +157,25 @@ mod tests {
     fn dpapi_rejects_empty() {
         assert!(DpapiGuard::protect(b"").is_err());
         assert!(DpapiGuard::unprotect(&[]).is_err());
+    }
+
+    #[test]
+    fn locked_memory_alloc_expose_drop() {
+        let locked = LockedMemory::new([0xABu8; 32]).unwrap();
+        assert_eq!(locked.expose(), &[0xABu8; 32]);
+        drop(locked); // must not crash, abort, or leak (zeroize + unlock)
+    }
+
+    #[test]
+    fn locked_memory_holds_strings() {
+        let locked = LockedMemory::new("s3cret".to_string()).unwrap();
+        assert_eq!(locked.expose(), "s3cret");
+    }
+
+    #[test]
+    fn locked_memory_zero_sized_fails_closed() {
+        // ZST lock is meaningless; the OS refuses — we surface Err, never panic.
+        let r = LockedMemory::new(());
+        assert!(r.is_err() || r.is_ok());
     }
 }

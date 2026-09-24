@@ -195,6 +195,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     license_key: r.a,
                     expiry_date: (!r.b.trim().is_empty()).then(|| r.b.clone()),
                     folder,
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 });
                 summary.licenses += 1;
             }
@@ -203,7 +205,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
-                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder });
+                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, travel_safe: false });
                 summary.notes += 1;
             }
             4 => {
@@ -224,6 +226,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     cvv: r.d,
                     folder,
                     notes: r.notes,
+                    travel_safe: false,
                 });
                 summary.cards += 1;
             }
@@ -245,6 +248,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     address: r.e,
                     folder,
                     notes: r.notes,
+                    travel_safe: false,
                 });
                 summary.identities += 1;
             }
@@ -261,6 +265,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     fingerprint: r.c,
                     folder,
                     notes: r.notes,
+                    travel_safe: false,
                 });
                 summary.ssh_keys += 1;
             }
@@ -285,6 +290,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     notes: r.notes,
                     folder,
                     reprompt: false,
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 });
                 summary.logins += 1;
             }
