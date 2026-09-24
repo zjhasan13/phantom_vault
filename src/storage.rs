@@ -12,6 +12,41 @@ use std::path::Path;
 /// one final time during migration. New saves never create it.
 const PQ_DK_FILE: &str = "pq_decapsulation.dpapi";
 
+/// Cross-process save guard: atomic `create_new` lockfile beside the vault.
+/// A second instance waits up to ~500ms, then fails LOUD instead of
+/// interleaving two ciphertexts into one corrupt file. RAII — removed on drop.
+struct FileLock {
+    path: std::path::PathBuf,
+}
+
+impl FileLock {
+    fn acquire(vault_path: &Path) -> Result<Self, String> {
+        let dir = vault_path.parent().filter(|p| !p.as_os_str().is_empty());
+        let mut lock_path = dir.map(|d| d.to_path_buf()).unwrap_or_else(|| std::path::PathBuf::from("."));
+        lock_path.push("vault.lock");
+        for _ in 0..50 {
+            match std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(_) => return Ok(Self { path: lock_path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                Err(e) => return Err(format!("Vault lock failed: {e}")),
+            }
+        }
+        Err("Vault file currently busy in another instance".to_string())
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 fn load_legacy_pq_dk() -> Result<PqDecapsulationBytes, String> {
     let blob = fs::read(PQ_DK_FILE).map_err(|_| {
         "Legacy hybrid vault needs pq_decapsulation.dpapi (restore its backup)".to_string()
@@ -31,7 +66,8 @@ pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_pat
     // ২. পোর্টেবল হাইব্রিড এনক্রিপ্ট (Argon2id × ML-KEM-768 → HKDF-SHA256 → XChaCha20)
     let encrypted_payload = encrypt_vault_portable(master_password, &serialized_bytes)?;
 
-    // ৩. হার্ডডিস্কে shredder-guarded রাইট: পুরনো সেক্টর 3-pass overwrite, তারপর নতুন কনটেন্ট
+    // ৩. Cross-process lock, তারপর shredder-guarded রাইট
+    let _guard = FileLock::acquire(std::path::Path::new(file_path.as_ref()))?;
     crate::security::shredder::secure_write(std::path::Path::new(file_path.as_ref()), &encrypted_payload)?;
 
     Ok(())
@@ -63,14 +99,22 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     };
     let vault: Vault = match bincode::deserialize(&decrypted) {
         Ok(v) => v,
-        // Older generations: Gen1 (folders, lean credential) then Gen0.
-        Err(_) => match bincode::deserialize::<crate::models::VaultGen1>(&decrypted) {
-            Ok(g1) => g1.into(),
-            Err(_) => {
-                let legacy: crate::models::VaultLegacy = bincode::deserialize(&decrypted)
-                    .map_err(|e| format!("Deserialization error: {}", e))?;
-                legacy.into()
-            }
+        // Older generations, newest-first: Gen3 (pre-dynamic-TOTP),
+        // Gen2 (pre-attachments/travel), Gen1 (folders, lean credential), Gen0.
+        Err(_) => match bincode::deserialize::<crate::models::VaultGen3>(&decrypted) {
+            Ok(g3) => g3.into(),
+            Err(_) => match bincode::deserialize::<crate::models::VaultGen2>(&decrypted) {
+                Ok(g2) => g2.into(),
+                Err(_) => match bincode::deserialize::<crate::models::VaultGen1>(&decrypted) {
+                    Ok(g1) => g1.into(),
+                    Err(_) => {
+                        let legacy: crate::models::VaultLegacy =
+                            bincode::deserialize(&decrypted)
+                                .map_err(|e| format!("Deserialization error: {}", e))?;
+                        legacy.into()
+                    }
+                },
+            },
         },
     };
     let needs_migration = !matches!(detect_version(&payload), VaultVersion::V2Portable);
@@ -102,7 +146,10 @@ mod tests {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         v
     }
 
@@ -119,6 +166,23 @@ mod tests {
         assert!(!needs_migration);
         assert_eq!(vault.credentials[0].password, "s3cret!");
         assert!(load_vault_versioned("wrong-pass!!", &path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn concurrent_save_is_rejected_not_corrupted() {
+        let dir = std::env::temp_dir().join("pv_lock_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        // Hold the lock like a second instance would…
+        let _held = FileLock::acquire(&path).unwrap();
+        // …then a save must fail LOUD (~500ms) instead of interleaving bytes.
+        let err = save_vault(&demo_vault(), "lock-pass-1", &path).unwrap_err();
+        assert!(err.contains("busy"));
+        drop(_held);
+        // …and succeed once released, with no lockfile left behind.
+        save_vault(&demo_vault(), "lock-pass-1", &path).unwrap();
+        assert!(!dir.join("vault.lock").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -17,7 +17,6 @@ use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE,
     VIRTUAL_KEY, VK_RETURN, VK_TAB,
 };
-use zeroize::Zeroize;
 
 const FOCUS_DELAY_MS: u64 = 600;
 /// Phase 17 fix: DWM minimize-animation settle before the FIRST keystroke.
@@ -131,6 +130,20 @@ fn press_vk(vk: VIRTUAL_KEY, rng: &mut OsRng) -> Result<()> {
     Ok(())
 }
 
+/// Type arbitrary text (e.g. a live TOTP code) with the same per-key
+/// down/hold/up discipline. Used by the 2FA auto-chain watcher.
+pub fn type_text_raw(text: &str, press_enter: bool) -> Result<()> {
+    let mut rng = OsRng;
+    for unit in field_units(text) {
+        press_unicode(unit, &mut rng)?;
+        sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+    }
+    if press_enter {
+        press_vk(VK_RETURN, &mut rng)?;
+    }
+    Ok(())
+}
+
 /// Type `username{Tab}password{Enter}` into the currently focused field.
 /// Blocks the calling (worker) thread. Timing budget:
 /// settle 800ms → hide-delay 600ms → per-char down/hold/up + gap →
@@ -159,24 +172,6 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     }
     press_vk(VK_RETURN, &mut rng)?;
     Ok(())
-}
-
-/// Zeroizing wrapper for the password while it waits for the focus delay.
-pub struct TypeSecret(String);
-
-impl TypeSecret {
-    pub fn new(s: String) -> Self {
-        Self(s)
-    }
-    pub fn expose(&self) -> &str {
-        &self.0
-    }
-}
-
-impl Drop for TypeSecret {
-    fn drop(&mut self) {
-        self.0.zeroize();
-    }
 }
 
 #[cfg(test)]

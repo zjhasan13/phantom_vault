@@ -341,7 +341,10 @@ mod tests {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
             reprompt: false,
-        });
+        
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
         assert!(collect_keys(&v).is_empty());
     }
 }

@@ -199,7 +199,109 @@ fn hunt_username(auto: &IUIAutomation, focused: &IUIAutomationElement) -> String
     }
 }
 
-/// Inspect the active desktop context. Never fails hard: worst case returns
+/// OTP-screen matcher: names, labels, or automation IDs containing any of
+/// these (case-insensitive) mark a 2FA/OTP input. Pure — unit tested.
+pub fn otp_like(name: &str, automation_id: &str) -> bool {
+    const KEYS: &[&str] = &[
+        "2fa",
+        "otp",
+        "onetime",
+        "one-time",
+        "verification",
+        "verify",
+        "authenticator",
+        "2-step",
+        "twostep",
+        "two-factor",
+        "twofactor",
+        "securitycode",
+        "security-code",
+        "mfacode",
+    ];
+    // Bare "code" only counts with an auth-ish neighbor word to avoid matching
+    // "postal code", "promo code", "country code", "area code", etc.
+    const CODE_NEIGHBORS: &[&str] = &[
+        "auth", "verif", "2fa", "otp", "factor", "token", "login", "sign", "secur",
+    ];
+    let hay = format!("{name} {automation_id}").to_lowercase();
+    if KEYS.iter().any(|k| hay.contains(k)) {
+        return true;
+    }
+    if hay.contains("code") {
+        let stripped = hay.replace("code", " ");
+        if CODE_NEIGHBORS.iter().any(|n| stripped.contains(n)) {
+            return true;
+        }
+        // "enter the 6-digit code" style prompts.
+        if stripped.contains("digit") || stripped.contains("6") {
+            return true;
+        }
+    }
+    false
+}
+
+/// Scan the foreground window subtree (capped) for an OTP input.
+/// Returns true on the first match. Best-effort; false = keep watching.
+pub fn otp_screen_visible() -> bool {
+    let Ok(_com) = ComGuard::enter() else {
+        return false;
+    };
+    let auto = match automation() {
+        Ok(a) => a,
+        Err(_) => return false,
+    };
+    // SAFETY: every UIA step is fallible and degrades to false.
+    unsafe {
+        let hwnd = match foreground_window() {
+            Some(h) => h,
+            None => return false,
+        };
+        let root: IUIAutomationElement = match auto.ElementFromHandle(hwnd) {
+            Ok(el) => el,
+            Err(_) => return false,
+        };
+        let walker = match auto
+            .CreateTrueCondition()
+            .and_then(|c| auto.CreateTreeWalker(&c))
+        {
+            Ok(w) => w,
+            Err(_) => return false,
+        };
+        // Iterative DFS with a hard cap (never hang the watcher thread).
+        let mut stack = vec![root];
+        let mut visited = 0usize;
+        while let Some(el) = stack.pop() {
+            visited += 1;
+            if visited > 400 {
+                break;
+            }
+            let name: String = el
+                .CurrentName()
+                .map(bstr_to_string)
+                .unwrap_or_default();
+            let aid: String = el
+                .CurrentAutomationId()
+                .map(bstr_to_string)
+                .unwrap_or_default();
+            if otp_like(&name, &aid) && (is_edit(&el) || is_password(&el)) {
+                return true;
+            }
+            // Children via first/next sibling walk (bounded).
+            let mut child = match walker.GetFirstChildElement(&el) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            for _ in 0..32 {
+                stack.push(child.clone());
+                child = match walker.GetNextSiblingElement(&child) {
+                    Ok(n) => n,
+                    Err(_) => break,
+                };
+            }
+        }
+        false
+    }
+}
 /// app name + title with empty username and `is_password_focused = false`.
 pub fn inspect_active_context() -> Result<DesktopContext> {
     let _com = ComGuard::enter()?;
@@ -247,5 +349,26 @@ mod tests {
         assert_eq!(pretty_service_name("", "Steam Login | Steam"), "Steam Login");
         assert_eq!(pretty_service_name("spotify", ""), "Spotify");
         assert_eq!(pretty_service_name("", ""), "");
+    }
+
+    #[test]
+    fn otp_matcher_hits() {
+        assert!(otp_like("Enter verification code", ""));
+        assert!(otp_like("", "otp-input"));
+        assert!(otp_like("2FA Token", ""));
+        assert!(otp_like("Authenticator app code", ""));
+        assert!(otp_like("Security Code", ""));
+        assert!(otp_like("6-digit passcode", ""));
+        assert!(otp_like("One-time password", ""));
+    }
+
+    #[test]
+    fn otp_matcher_rejects_lookalikes() {
+        assert!(!otp_like("Postal code", ""));
+        assert!(!otp_like("Promo code", ""));
+        assert!(!otp_like("Username", ""));
+        assert!(!otp_like("Password", ""));
+        assert!(!otp_like("Country", ""));
+        assert!(!otp_like("", ""));
     }
 }

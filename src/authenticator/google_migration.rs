@@ -98,6 +98,24 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
         _ => 6,
     };
 
+    // Algorithm mapping — preserved bit-for-bit (the old code dropped this,
+    // silently forcing SHA1 and diverging from Google on SHA256/512).
+    let algorithm = match Algorithm::try_from(otp.algorithm).unwrap_or(Algorithm::Invalid) {
+        Algorithm::Sha256 => "SHA256",
+        Algorithm::Sha512 => "SHA512",
+        Algorithm::Md5 => "MD5",
+        _ => "SHA1",
+    }
+    .to_string();
+
+    // OTP type + counter — HOTP accounts keep their moving factor instead of
+    // being misrouted into time-based generation.
+    let otp_type_num = OtpType::try_from(otp.r#type).unwrap_or(OtpType::Invalid);
+    let (otp_type, counter) = match otp_type_num {
+        OtpType::Hotp => ("hotp".to_string(), otp.counter.max(0) as u64),
+        _ => ("totp".to_string(), 0),
+    };
+
     // Name may be "Issuer:Account" — split if issuer field empty
     let mut issuer = otp.issuer.clone();
     let mut account_name = otp.name.clone();
@@ -125,6 +143,9 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
         secret: secret_b32,
         digits,
         period: 30,
+        algorithm,
+        otp_type,
+        counter,
     })
 }
 
@@ -147,6 +168,8 @@ fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
     let mut issuer_opt: Option<String> = None;
     let mut digits = 6u32;
     let mut period = 30u64;
+    let mut algorithm = "SHA1".to_string();
+    let mut counter = 0u64;
 
     for (k, v) in url.query_pairs() {
         match k.as_ref() {
@@ -160,6 +183,20 @@ fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
             "period" => {
                 if let Ok(p) = v.parse::<u64>() {
                     period = p;
+                }
+            }
+            "algorithm" => {
+                algorithm = match v.to_uppercase().as_str() {
+                    "SHA256" => "SHA256",
+                    "SHA512" => "SHA512",
+                    "MD5" => "MD5",
+                    _ => "SHA1",
+                }
+                .to_string();
+            }
+            "counter" => {
+                if let Ok(c) = v.parse::<u64>() {
+                    counter = c;
                 }
             }
             _ => {}
@@ -195,6 +232,18 @@ fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
         account_name
     };
 
+    // Steam Guard links look like otpauth://totp/...&digits=5 — tag them so the
+    // dispatcher renders the 5-char alphabet instead of decimal truncation.
+    let is_steam = issuer_final.eq_ignore_ascii_case("steam")
+        || label.to_lowercase().contains("steam");
+    let otp_type = if host == "hotp" {
+        "hotp".to_string()
+    } else if is_steam || digits == 5 {
+        "steam".to_string()
+    } else {
+        "totp".to_string()
+    };
+
     Ok(TotpAccount {
         id: new_id(),
         account_name: account_final,
@@ -202,6 +251,9 @@ fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
         secret: secret.replace([' ', '-'], "").to_uppercase(),
         digits,
         period,
+        algorithm,
+        otp_type,
+        counter,
     })
 }
 
@@ -330,5 +382,80 @@ mod urlencoding {
                     .map(|s| std::borrow::Cow::Owned(s.into_owned()))
                     .map_err(|e| format!("Percent decode error: {}", e))
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn otp(secret: &[u8], algorithm: Algorithm, digit: Digit, r#type: OtpType, counter: i64) -> OtpParameters {
+        OtpParameters {
+            secret: secret.to_vec(),
+            name: "Test:user@example.com".into(),
+            issuer: String::new(),
+            algorithm: algorithm as i32,
+            digit: digit as i32,
+            r#type: r#type as i32,
+            counter,
+        }
+    }
+
+    #[test]
+    fn sha256_import_preserved() {
+        let acc = map_otp_to_account(&otp(b"12345678901234567890123456789012", Algorithm::Sha256, Digit::Six, OtpType::Totp, 0)).unwrap();
+        assert_eq!(acc.algorithm, "SHA256");
+        assert_eq!(acc.digits, 6);
+        assert_eq!(acc.otp_type, "totp");
+        assert_eq!(acc.counter, 0);
+        assert_eq!(acc.issuer, "Test");
+        assert_eq!(acc.account_name, "user@example.com");
+    }
+
+    #[test]
+    fn eight_digits_imported() {
+        let acc = map_otp_to_account(&otp(b"12345678901234567890", Algorithm::Sha1, Digit::Eight, OtpType::Totp, 0)).unwrap();
+        assert_eq!(acc.digits, 8);
+    }
+
+    #[test]
+    fn hotp_import_keeps_counter() {
+        let acc = map_otp_to_account(&otp(b"12345678901234567890", Algorithm::Sha1, Digit::Six, OtpType::Hotp, 7)).unwrap();
+        assert_eq!(acc.otp_type, "hotp");
+        assert_eq!(acc.counter, 7);
+    }
+
+    #[test]
+    fn end_to_end_protobuf_roundtrip() {
+        // Build a real MigrationPayload, encode, wrap in migration URL, parse.
+        let payload = MigrationPayload {
+            otp_parameters: vec![OtpParameters {
+                secret: b"12345678901234567890".to_vec(),
+                name: "GitHub:me".into(),
+                issuer: "GitHub".into(),
+                algorithm: Algorithm::Sha512 as i32,
+                digit: Digit::Six as i32,
+                r#type: OtpType::Totp as i32,
+                counter: 0,
+            }],
+            version: 1,
+            batch_size: 1,
+            batch_index: 0,
+            batch_id: 1,
+        };
+        let mut buf = Vec::new();
+        payload.encode(&mut buf).unwrap();
+        use base64::Engine as _;
+        let b64 = base64::engine::general_purpose::URL_SAFE.encode(&buf);
+        let url = format!("otpauth-migration://offline?data={b64}");
+        let accs = parse_google_migration_url(&url).unwrap();
+        assert_eq!(accs.len(), 1);
+        assert_eq!(accs[0].algorithm, "SHA512");
+        assert_eq!(accs[0].issuer, "GitHub");
+        // Secret must be the exact Base32 of the raw bytes.
+        assert_eq!(
+            accs[0].secret,
+            data_encoding::BASE32_NOPAD.encode(b"12345678901234567890")
+        );
     }
 }

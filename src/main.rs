@@ -24,7 +24,6 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use storage::save_vault;
-use totp_engine::generate_live_code;
 
 slint::include_modules!();
 
@@ -38,21 +37,26 @@ fn tokio_rt() -> Option<tokio::runtime::Runtime> {
         .ok()
 }
 
-/// Phase 13 (+17 fix): minimize (NEVER hide) our windows, then keystroke-fill.
+/// Phase 13 (+23 chain): minimize (NEVER hide) our windows, then keystroke-fill.
 /// Clipboard is never touched. Runs fully on a worker thread.
 ///
-/// Crash root-cause: `MainWindow::hide()` left zero visible windows, so the
-/// Slint/winit event loop concluded the app was done and tore everything down
-/// (clean exit — hence no crash.log, no panic). Minimizing releases focus to
-/// the target app while keeping the loop alive.
+/// Crash root-cause (fixed): `MainWindow::hide()` left zero visible windows,
+/// so the Slint/winit event loop tore everything down. Minimizing releases
+/// focus while keeping the loop alive.
+///
+/// Phase 23: when `totp_secret` is non-empty, a 30s UIA watcher arms after the
+/// password Enter. If an OTP screen appears, the live code is typed + Enter,
+/// hands-free. Secrets ride zeroizing wrappers and die with the thread.
 fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
     qb_visible: Arc<std::sync::atomic::AtomicBool>,
     username: String,
     password: String,
+    totp_secret: String,
 ) {
-    use windows_native::autotype::{type_sequence, TypeSecret};
+    use core::memory::LockedMemory;
+    use windows_native::autotype::type_sequence;
     if let Some(ui) = main_weak.upgrade() {
         ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
         ui.window().set_minimized(true);
@@ -65,7 +69,9 @@ fn trigger_autotype(
         // Even an unexpected panic mid-typing must restore the window —
         // never leave the user staring at a vanished vault.
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let secret = TypeSecret::new(password);
+            // Batch-1: the password rides a VirtualLock-pinned page while typing.
+            let secret = LockedMemory::new(password)
+                .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
             let out = type_sequence(&username, secret.expose());
             drop(secret);
             out
@@ -74,20 +80,77 @@ fn trigger_autotype(
             crate::error::VaultError::AutoType("typing aborted unexpectedly".into())
         })
         .and_then(|r| r);
+        let chained = res.is_ok() && !totp_secret.trim().is_empty();
+        // Arm the 2FA watcher BEFORE restoring UI (overlaps the app's
+        // password-submit round-trip instead of serializing after it).
+        let chain_handle = chained.then(|| {
+            let weak = main_weak.clone();
+            let mut secret = totp_secret.trim().to_string();
+            thread::spawn(move || {
+                let code = chain_2fa_watch(&secret);
+                {
+                    use zeroize::Zeroize;
+                    secret.zeroize();
+                }
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        match code {
+                            Some(_) => ui.set_notification_text(
+                                "⚡ Auto-filled 2FA verification code hands-free!".into(),
+                            ),
+                            None => ui.set_notification_text(
+                                "⌨️ Typed — no OTP screen appeared within 30s.".into(),
+                            ),
+                        }
+                    }
+                });
+            })
+        });
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = main_weak.upgrade() {
                 // Restore BEFORE touching UI so the user sees the result.
                 ui.window().set_minimized(false);
                 ui.show().ok();
-                match res {
-                    Ok(()) => ui.set_notification_text(
-                        "⌨️ Typed — clipboard never touched.".into(),
-                    ),
+                match &res {
+                    Ok(()) => {
+                        if chain_handle.is_none() {
+                            ui.set_notification_text(
+                                "⌨️ Typed — clipboard never touched.".into(),
+                            );
+                        }
+                    }
                     Err(e) => ui.set_notification_text(format!("⚠️ Auto-Type: {e}").into()),
                 }
             }
         });
     });
+}
+
+/// Phase 23: 30s OTP watch. Polls for an OTP screen, then types the live
+/// code + Enter. Returns Some on success. All secrets zeroized on the way out.
+fn chain_2fa_watch(totp_secret: &str) -> Option<()> {
+    use core::memory::LockedMemory;
+    use windows_native::desktop_autofill::otp_screen_visible;
+    let secret = LockedMemory::new(totp_secret.trim().to_string()).ok()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(30);
+    while std::time::Instant::now() < deadline {
+        if otp_screen_visible() {
+            std::thread::sleep(Duration::from_millis(300));
+            let (code, _) = totp_engine::generate_live_code(secret.expose()).ok()?;
+            let mut code = code;
+            let typed =
+                windows_native::autotype::type_text_raw(&code, true).is_ok();
+            {
+                use zeroize::Zeroize;
+                code.zeroize();
+            }
+            drop(secret);
+            return typed.then_some(());
+        }
+        std::thread::sleep(Duration::from_secs(1));
+    }
+    drop(secret);
+    None
 }
 
 /// Phase 20: single choke-point for EVERY secret copy in the app.
@@ -139,6 +202,22 @@ fn secure_copy_with_feedback(main_weak: slint::Weak<MainWindow>, text: String, c
     }
 }
 
+/// C1 Hardening: poison-recovering lock helpers. A panic in one worker must
+/// never death-spiral the rest of the app — recover the inner state, warn
+/// once on stderr, and carry on.
+fn lock_vault(arc: &Arc<Mutex<Vault>>) -> std::sync::MutexGuard<'_, Vault> {
+    arc.lock().unwrap_or_else(|poisoned| {
+        eprintln!("⚠️ Warning: Vault mutex was poisoned, recovering inner state safely.");
+        poisoned.into_inner()
+    })
+}
+
+fn lock_master_pw(
+    arc: &Arc<Mutex<Option<String>>>,
+) -> std::sync::MutexGuard<'_, Option<String>> {
+    arc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
 /// Phase 15 (Option 1): best-effort RAM wipe of all vault secrets.
 /// Called by the Panic Nuke hotkey and the anti-debug watchdog, right
 /// before hard exit. OS reclaims the rest on process death.
@@ -153,6 +232,13 @@ fn panic_wipe(vault_arc: &Arc<Mutex<Vault>>, master_arc: &Arc<Mutex<Option<Strin
             c.totp_secret.zeroize();
             c.urls.zeroize();
             c.notes.zeroize();
+            for a in c.attachments.iter_mut() {
+                a.id.zeroize();
+                a.filename.zeroize();
+                a.mime_type.zeroize();
+                a.data.zeroize();
+            }
+            c.attachments.clear();
         }
         vault.credentials.clear();
         for t in vault.totp_accounts.iter_mut() {
@@ -167,6 +253,13 @@ fn panic_wipe(vault_arc: &Arc<Mutex<Vault>>, master_arc: &Arc<Mutex<Option<Strin
             l.app_name.zeroize();
             l.license_key.zeroize();
             l.expiry_date.zeroize();
+            for a in l.attachments.iter_mut() {
+                a.id.zeroize();
+                a.filename.zeroize();
+                a.mime_type.zeroize();
+                a.data.zeroize();
+            }
+            l.attachments.clear();
         }
         vault.licenses.clear();
         for n in vault.notes.iter_mut() {
@@ -299,8 +392,8 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         };
         let local = std::fs::read(VAULT_FILE).unwrap_or_default();
         if local.is_empty() {
-            // Fresh device: adopt the remote ciphertext as-is.
-            if std::fs::write(VAULT_FILE, &bytes).is_ok() {
+            // Fresh device: adopt the remote ciphertext as-is (shred-guarded).
+            if security::shredder::secure_write(std::path::Path::new(VAULT_FILE), &bytes).is_ok() {
                 sync::github_sync::store_head_sha(&sha);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = main_weak.upgrade() {
@@ -380,7 +473,10 @@ fn unlock_with_password(
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
                 reprompt: false,
-            });
+            
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
             init_vault.totp_accounts.push(TotpAccount {
                 id: "2".into(),
                 account_name: "Google Workspace".into(),
@@ -388,6 +484,9 @@ fn unlock_with_password(
                 secret: "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ".into(),
                 digits: 6,
                 period: 30,
+                algorithm: "SHA1".to_string(),
+                otp_type: "totp".to_string(),
+                counter: 0,
             });
 
             match save_vault(&init_vault, &pass, VAULT_FILE) {
@@ -421,7 +520,7 @@ fn unlock_with_password(
             };
             match loaded_result {
                 Ok(vault) => {
-                    *master_pw_arc.lock().unwrap() = Some(pass_for_store);
+                    *lock_master_pw(&master_pw_arc) = Some(pass_for_store);
                     *search_state.lock().unwrap() = FilterState::default();
                     ui.set_search_query("".into());
                     let mut vault = vault;
@@ -430,26 +529,73 @@ fn unlock_with_password(
                     let items = vault_to_items(&vault, &FilterState::default());
                     ui.set_credentials(items.clone());
                     if let Some(qb) = qb_weak.upgrade() {
-                        qb.set_filtered_results(vault_logins(&vault, ""));
+                        qb.set_filtered_results(vault_quickbar(&vault, "", search_state.lock().unwrap().travel_only));
                     }
-                    *vault_arc.lock().unwrap() = vault;
+                    *lock_vault(&vault_arc) = vault;
                     ui.set_is_unlocked(true);
                     ui.set_is_decoy(false);
                     ui.set_status_text("✅ Vault unlocked".into());
                     trigger_sync_push(ui.as_weak());
 
+                    // Phase 24: authenticator list now + live refresh ticker.
+                    // The same 1s loop drives the hero countdown and refreshes
+                    // all dynamic codes every 5s (cheap, few accounts).
+                    {
+                        let v = lock_vault(&vault_arc);
+                        ui.set_auth_accounts(rebuild_auth_list(&v));
+                    }
                     let window_for_totp = ui.as_weak();
+                    let vault_for_auth = Arc::clone(&vault_arc);
                     thread::spawn(move || {
-                        let google_secret = "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ";
+                        let mut tick = 0u64;
                         loop {
-                            if let Ok((code, remaining)) = generate_live_code(google_secret) {
-                                let code_copy = code.clone();
-                                let remaining_str = format!("{}s", remaining);
+                            // Phase 24+Hardening: hero renders the FIRST live
+                            // 2FA account dynamically (any algorithm/digits)
+                            // instead of a hardcoded demo secret.
+                            let hero: Option<(String, String, String)> = {
+                                let v = lock_vault(&vault_for_auth);
+                                v.totp_accounts.iter().find_map(|a| {
+                                    totp_engine::generate_code_for_account(a)
+                                        .ok()
+                                        .map(|(code, remaining)| {
+                                            let label = if a.issuer.is_empty() {
+                                                a.account_name.clone()
+                                            } else {
+                                                format!("{} ({})", a.account_name, a.issuer)
+                                            };
+                                            let when = if remaining == u64::MAX {
+                                                "HOTP".to_string()
+                                            } else {
+                                                format!("{remaining}s")
+                                            };
+                                            (label, code, when)
+                                        })
+                                })
+                            };
+                            let window_clone = window_for_totp.clone();
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = window_clone.upgrade() {
+                                    if let Some((label, code, when)) = hero {
+                                        ui.set_hero_account(label.into());
+                                        ui.set_live_totp_code(code.into());
+                                        ui.set_totp_countdown(when.into());
+                                    } else {
+                                        ui.set_hero_account("LIVE 2FA".into());
+                                        ui.set_live_totp_code("------".into());
+                                        ui.set_totp_countdown("--".into());
+                                    }
+                                }
+                            });
+                            tick += 1;
+                            if tick.is_multiple_of(5) {
+                                // ModelRc is !Send: move the vault handle in,
+                                // build the model on the event-loop thread.
+                                let vault_for_row = Arc::clone(&vault_for_auth);
                                 let window_clone = window_for_totp.clone();
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(ui) = window_clone.upgrade() {
-                                        ui.set_live_totp_code(code_copy.into());
-                                        ui.set_totp_countdown(remaining_str.into());
+                                        let v = lock_vault(&vault_for_row);
+                                        ui.set_auth_accounts(rebuild_auth_list(&v));
                                     }
                                 });
                             }
@@ -461,15 +607,15 @@ fn unlock_with_password(
                     // Duress path: verified decoy opens a believable fake vault.
                     // No migration, no Hello cache, no sync — pure read-mostly cover.
                     if let Some(decoy) = decoy_vault {
-                        *master_pw_arc.lock().unwrap() = Some(pass_for_store);
+                        *lock_master_pw(&master_pw_arc) = Some(pass_for_store);
                         *search_state.lock().unwrap() = FilterState::default();
                         ui.set_search_query("".into());
                         let items = vault_to_items(&decoy, &FilterState::default());
                         ui.set_credentials(items.clone());
                         if let Some(qb) = qb_weak.upgrade() {
-                            qb.set_filtered_results(vault_logins(&decoy, ""));
+                            qb.set_filtered_results(vault_quickbar(&decoy, "", search_state.lock().unwrap().travel_only));
                         }
-                        *vault_arc.lock().unwrap() = decoy;
+                        *lock_vault(&vault_arc) = decoy;
                         ui.set_is_unlocked(true);
                         ui.set_is_decoy(true);
                         ui.set_status_text("✅ Vault unlocked".into());
@@ -489,6 +635,33 @@ fn unlock_with_password(
     });
 }
 
+/// Phase 24: render every authenticator account through the dynamic engine.
+/// Failures render as "------" (never blank, never panics).
+fn rebuild_auth_list(vault: &Vault) -> ModelRc<AuthView> {
+    let rows: Vec<AuthView> = vault
+        .totp_accounts
+        .iter()
+        .map(|a| {
+            let (code, _) = totp_engine::generate_code_for_account(a)
+                .unwrap_or(("------".to_string(), 0));
+            let kind = match a.otp_type.trim().to_lowercase().as_str() {
+                "hotp" => "HOTP",
+                "steam" => "STEAM",
+                _ => "TOTP",
+            };
+            AuthView {
+                id: a.id.clone().into(),
+                name: a.account_name.clone().into(),
+                issuer: a.issuer.clone().into(),
+                code: code.into(),
+                kind: kind.into(),
+                is_hotp: kind == "HOTP",
+            }
+        })
+        .collect();
+    ModelRc::new(VecModel::from(rows))
+}
+
 /// Item-kind codes shared with Slint: 0 All, 1 login, 2 license, 3 note,
 /// 4 card, 5 identity, 6 ssh.
 #[derive(Clone)]
@@ -496,11 +669,12 @@ struct FilterState {
     query: String,
     kind: i32,
     folder: String,
+    travel_only: bool,
 }
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self { query: String::new(), kind: 0, folder: "All".to_string() }
+        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false }
     }
 }
 
@@ -515,7 +689,6 @@ fn eff_folder(folder: &str) -> &str {
 fn primary_url(urls: &[String]) -> String {
     urls.first().cloned().unwrap_or_default()
 }
-
 fn custom_to_ui(fields: &[models::CustomField]) -> ModelRc<CustomFieldView> {
     ModelRc::new(VecModel::from(
         fields
@@ -527,6 +700,45 @@ fn custom_to_ui(fields: &[models::CustomField]) -> ModelRc<CustomFieldView> {
             })
             .collect::<Vec<_>>(),
     ))
+}
+
+fn attachments_to_ui(files: &[models::EncryptedAttachment]) -> ModelRc<AttachmentView> {
+    ModelRc::new(VecModel::from(
+        files
+            .iter()
+            .map(|a| AttachmentView {
+                id: a.id.clone().into(),
+                filename: a.filename.clone().into(),
+                size: human_bytes(a.size_bytes).into(),
+            })
+            .collect::<Vec<_>>(),
+    ))
+}
+
+fn human_bytes(n: usize) -> String {
+    if n < 1024 {
+        format!("{n} B")
+    } else if n < 1024 * 1024 {
+        format!("{:.1} KB", n as f64 / 1024.0)
+    } else {
+        format!("{:.1} MB", n as f64 / (1024.0 * 1024.0))
+    }
+}
+
+fn guess_mime(filename: &str) -> String {
+    let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
+    match ext.as_str() {
+        "pdf" => "application/pdf",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "txt" | "md" => "text/plain",
+        "json" => "application/json",
+        "pem" | "key" => "application/x-pem-file",
+        "pfx" | "p12" => "application/x-pkcs12",
+        "zip" => "application/zip",
+        _ => "application/octet-stream",
+    }
+    .to_string()
 }
 
 /// Push the vault's folder registry into both folder models (form + filter).
@@ -567,8 +779,14 @@ fn push_item(
     url: &str,
     notes: &str,
     folder: &str,
+    totp: &str,
+    travel_safe: bool,
 ) {
     if f.kind != 0 && f.kind != kind {
+        return;
+    }
+    // Travel Mode: only travel-safe items survive in list, QuickBar, search.
+    if f.travel_only && !travel_safe {
         return;
     }
     if f.folder != "All" && eff_folder(folder) != f.folder {
@@ -590,7 +808,27 @@ fn push_item(
         url: url.into(),
         notes: notes.into(),
         folder: eff_folder(folder).into(),
+        totp: totp.into(),
+        health: health_badge_for(id).into(),
     });
+}
+
+/// Process-wide health badges from the last audit (id → badge text).
+/// Badge text carries counts only — never secrets. Written by the audit
+/// worker, read by every list builder, cleared on lock/unlock.
+fn health_registry() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    static REGISTRY: std::sync::OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn health_badge_for(id: &str) -> String {
+    health_registry()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(id)
+        .cloned()
+        .unwrap_or_default()
 }
 
 /// Unified list builder: search query + type + folder over all 6 vectors.
@@ -598,35 +836,38 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
     let q = f.query.trim().to_lowercase();
     let mut items = Vec::new();
     for c in &vault.credentials {
-        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder);
+        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe);
     }
     for l in &vault.licenses {
         push_item(&mut items, f, &q, &l.id, 2, &l.app_name, "Software license",
-            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder);
+            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe);
     }
     for n in &vault.notes {
         let preview: String = n.content.lines().next().unwrap_or("").chars().take(48).collect();
-        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder);
+        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe);
     }
     for k in &vault.cards {
         let exp = format!("{:0>2}/{:0>2}", k.exp_month, k.exp_year);
         let meta = format!("exp {exp}  CVV {}", k.cvv);
-        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder);
+        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe);
     }
     for i in &vault.identities {
-        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder);
+        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe);
     }
     for s in &vault.ssh_keys {
-        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder);
+        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe);
     }
     ModelRc::new(VecModel::from(items))
 }
 
 /// QuickBar feed: logins only, optional query.
-fn vault_logins(vault: &Vault, query: &str) -> ModelRc<CredentialView> {
+/// D6: Omni-Search QuickBar feed — ALL kinds (logins, cards, notes, licenses,
+/// identities, ssh). Rows display title + subtitle only (numbers/keys stay
+/// masked until Copy/Type), so screen-sharers see no secrets.
+fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
     vault_to_items(
         vault,
-        &FilterState { query: query.to_string(), kind: 1, folder: "All".to_string() },
+        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only },
     )
 }
 
@@ -704,46 +945,55 @@ fn main() -> Result<(), slint::PlatformError> {
     let pending_cf: Arc<Mutex<Vec<models::CustomField>>> = Arc::new(Mutex::new(Vec::new()));
     // Edit target: Some((kind, id)) when the form edits instead of creates.
     let editing_item: Arc<Mutex<Option<(i32, String)>>> = Arc::new(Mutex::new(None));
+    // Travel Mode: when true, only travel_safe items are listed anywhere.
+    let travel_mode: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    // Health badges keyed by credential id (audit results, cleared on lock).
+    let _health_state: Arc<Mutex<std::collections::HashMap<String, String>>> =
+        Arc::new(Mutex::new(std::collections::HashMap::new()));
 
-    // Phase 7: Windows Anti-Screen Capture / OBS Blackout
-    // Obtain native HWND via main_window.window().window_handle() and apply
-    // SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE = 0x00000011)
+    // Phase Batch-1: DWM Anti-Capture Guard (WDA_MONITOR, delayed 250ms).
+    // Covers MainWindow + QuickBar + QuickCapture so secrets never leak via
+    // ShareX/GDI-BitBlt OR OBS/Zoom/Discord WGC pipelines.
     #[cfg(windows)]
     {
-        use raw_window_handle::{HasWindowHandle, RawWindowHandle};
-        use windows_sys::Win32::UI::WindowsAndMessaging::{
-            SetWindowDisplayAffinity, WDA_EXCLUDEFROMCAPTURE,
-        };
-        // Spec requires: main_window.window().window_handle()
-        // Window::window_handle() returns slint::WindowHandle which implements HasWindowHandle
-        let slint_window_handle = main_window.window().window_handle();
-        if let Ok(handle) = slint_window_handle.window_handle() {
-            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                let hwnd = win32.hwnd.get() as *mut ::core::ffi::c_void;
-                unsafe {
-                    SetWindowDisplayAffinity(hwnd as _, WDA_EXCLUDEFROMCAPTURE);
+        let main_weak_guard = main_window.as_weak();
+        let qb_weak_guard = quick_bar.as_weak();
+        let cap_weak_guard = capture_window.as_weak();
+        // Delayed off-loop: DWM needs the top-level HWNDs fully adopted first.
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(250));
+            let _ = slint::invoke_from_event_loop(move || {
+                let mut guarded = 0;
+                if let Some(ui) = main_weak_guard.upgrade() {
+                    if windows_native::display_guard::guard_window(ui.window()) {
+                        guarded += 1;
+                    }
                 }
-            }
-        }
-        // Also apply to QuickBarWindow
-        let qb_handle = quick_bar.window().window_handle();
-        if let Ok(handle) = qb_handle.window_handle() {
-            if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-                let hwnd = win32.hwnd.get() as *mut ::core::ffi::c_void;
-                unsafe {
-                    SetWindowDisplayAffinity(hwnd as _, WDA_EXCLUDEFROMCAPTURE);
+                if let Some(qb) = qb_weak_guard.upgrade() {
+                    if windows_native::display_guard::guard_window(qb.window()) {
+                        guarded += 1;
+                    }
                 }
-            }
-        }
+                if let Some(cap) = cap_weak_guard.upgrade() {
+                    if windows_native::display_guard::guard_window(cap.window()) {
+                        guarded += 1;
+                    }
+                }
+                if guarded > 0 {
+                    println!("🛡️ DWM Anti-Capture Guard Active (WDA_MONITOR) on {guarded}/3 windows.");
+                }
+            });
+        });
     }
 
     // Phase 9: QuickBarWindow callbacks — query filtering, copy + auto-clear, dismiss
     let qb_weak_query = quick_bar.as_weak();
     let vault_arc_qb_query = Arc::clone(&active_vault);
+    let travel_qb_query = Arc::clone(&travel_mode);
     quick_bar.on_query_changed(move |query| {
         let q = query.as_str().to_string();
-        let vault = vault_arc_qb_query.lock().unwrap();
-        let filtered = vault_logins(&vault, &q);
+        let vault = lock_vault(&vault_arc_qb_query);
+        let filtered = vault_quickbar(&vault, &q, *travel_qb_query.lock().unwrap());
         if let Some(ui) = qb_weak_query.upgrade() {
             ui.set_filtered_results(filtered);
         }
@@ -772,7 +1022,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let type_qb_self = quick_bar.as_weak();
     let type_qb_vis = Arc::clone(&quickbar_visible);
     let type_qb_vault = Arc::clone(&active_vault);
-    quick_bar.on_type_selected(move |username, password| {
+    quick_bar.on_type_selected(move |username, password, totp| {
         if let Some(title) =
             check_canary_trip(&type_qb_vault, password.as_str(), "autotype-quickbar")
         {
@@ -788,6 +1038,7 @@ fn main() -> Result<(), slint::PlatformError> {
             Arc::clone(&type_qb_vis),
             username.as_str().to_string(),
             password.as_str().to_string(),
+            totp.as_str().to_string(),
         );
     });
 
@@ -837,9 +1088,12 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 // Ctrl+Alt+A opens the Quick Bar straight into Type flow.
                 // Independent registration: Alt+Space may be taken while this is free.
-                if manager.register(autotype_hk).is_ok() {
+                let auto_armed = if manager.register(autotype_hk).is_ok() {
                     ids.push(auto_id);
-                }
+                    Some(auto_id)
+                } else {
+                    None
+                };
                 let panic_armed = manager.register(panic_hk).is_ok();
                 let capture_armed = manager.register(capture_hk).is_ok();
                 // Prevent manager drop — leak for app lifetime.
@@ -850,7 +1104,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     );
                     None
                 } else {
-                    Some((ids, panic_armed.then_some(panic_id), capture_armed.then_some(capture_id)))
+                    Some((ids, panic_armed.then_some(panic_id), capture_armed.then_some(capture_id), auto_armed))
                 }
             }
             Err(_) => {
@@ -860,10 +1114,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 None
             }
         };
-        if let Some((hotkey_ids, panic_id, capture_id)) = hotkey_ready {
+        if let Some((hotkey_ids, panic_id, capture_id, auto_id)) = hotkey_ready {
             let main_weak_hk = main_window.as_weak();
             let qb_weak_hk = quick_bar.as_weak();
             let vault_arc_hk = Arc::clone(&active_vault);
+            let vault_arc_travel_hk = Arc::clone(&travel_mode);
             let master_pw_hk = Arc::clone(&active_master_pw);
             let qb_visible_hk = Arc::clone(&quickbar_visible);
             let vault_arc_nuke = Arc::clone(&active_vault);
@@ -886,7 +1141,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         let cap_weak = cap_weak_hk.clone();
                         let master_clone = Arc::clone(&master_pw_cap);
                         thread::spawn(move || {
-                            let unlocked = master_clone.lock().unwrap().is_some();
+                            let unlocked = lock_master_pw(&master_clone).is_some();
                             if !unlocked {
                                 let _ = slint::invoke_from_event_loop(move || {
                                     if let Some(main_ui) = main_weak.upgrade() {
@@ -907,6 +1162,8 @@ fn main() -> Result<(), slint::PlatformError> {
                                 if let Some(cap) = cap_weak.upgrade() {
                                     cap.set_cap_title(ctx.app_name.clone().into());
                                     cap.set_cap_user(ctx.detected_username.clone().into());
+                                    cap.set_cap_pass("".into());
+                                    cap.set_cap_totp("".into());
                                     cap.set_cap_hint(
                                         if ctx.is_password_focused {
                                             format!("🔑 Password field focused in {}", ctx.app_name).into()
@@ -928,11 +1185,25 @@ fn main() -> Result<(), slint::PlatformError> {
                     if !hotkey_ids.contains(&event.id) {
                         continue;
                     }
+                    // Phase 23: Ctrl+Alt+A pre-filters by the focused app —
+                    // the Quick Bar opens already matching (e.g. "Discord").
+                    // Self-focus (our own window) yields no filter.
+                    let mut app_prefilter = if Some(event.id) == auto_id {
+                        windows_native::desktop_autofill::inspect_active_context()
+                            .map(|c| c.app_name)
+                            .unwrap_or_default()
+                    } else {
+                        String::new()
+                    };
+                    if app_prefilter.eq_ignore_ascii_case("phantom_vault") {
+                        app_prefilter.clear();
+                    }
                     let main_weak = main_weak_hk.clone();
                     let qb_weak = qb_weak_hk.clone();
                     let vault_clone = Arc::clone(&vault_arc_hk);
                     let master_clone = Arc::clone(&master_pw_hk);
                     let qb_visible = Arc::clone(&qb_visible_hk);
+                    let travel_clone = Arc::clone(&vault_arc_travel_hk);
                     let _ = slint::invoke_from_event_loop(move || {
                         // Toggle visibility: if visible -> hide
                         if qb_visible.load(std::sync::atomic::Ordering::SeqCst) {
@@ -943,7 +1214,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             return;
                         }
                         // Not visible: check vault locked
-                        let is_unlocked = master_clone.lock().unwrap().is_some();
+                        let is_unlocked = lock_master_pw(&master_clone).is_some();
                         if !is_unlocked {
                             if let Some(main_ui) = main_weak.upgrade() {
                                 main_ui.show().ok();
@@ -951,11 +1222,13 @@ fn main() -> Result<(), slint::PlatformError> {
                             }
                             return;
                         }
-                        // Vault unlocked: populate QuickBarWindow and show
+                        // Vault unlocked: populate QuickBarWindow and show.
+                        // Ctrl+Alt+A arrives pre-filtered by app; Alt+Space is blank.
                         if let Some(qb) = qb_weak.upgrade() {
-                            let vault = vault_clone.lock().unwrap();
-                            let filtered = vault_logins(&vault, "");
-                            qb.set_quick_query("".into());
+                            let vault = lock_vault(&vault_clone);
+                            let travel = *travel_clone.lock().unwrap();
+                            let filtered = vault_quickbar(&vault, &app_prefilter, travel);
+                            qb.set_quick_query(app_prefilter.into());
                             qb.set_filtered_results(filtered);
                             qb.show().ok();
                             bring_to_foreground(qb.window());
@@ -981,10 +1254,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let cap_search_save = Arc::clone(&search_state);
     let cap_qb_save = quick_bar.as_weak();
     let cap_main_save = main_window.as_weak();
-    capture_window.on_capture_save(move |title, user, pass| {
+    capture_window.on_capture_save(move |title, user, pass, totp| {
         let title = title.as_str().trim().to_string();
         let user = user.as_str().trim().to_string();
         let pass = pass.as_str().to_string();
+        let totp = totp.as_str().trim().replace([' ', '-'], "");
         if title.is_empty() || user.is_empty() || pass.trim().is_empty() {
             if let Some(cap) = cap_weak_save.upgrade() {
                 cap.set_cap_hint("⚠️ Title + username + password required.".into());
@@ -1000,7 +1274,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let search_clone = Arc::clone(&cap_search_save);
         let qb_clone = cap_qb_save.clone();
         std::thread::spawn(move || {
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 return;
             };
@@ -1009,20 +1283,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 .map(|d| format!("cap{}", d.as_millis()))
                 .unwrap_or_else(|_| "cap0".to_string());
             let res: Result<Vault, String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
                 vault.credentials.push(Credential {
                     id: new_id,
                     title: title.clone(),
                     username: user.clone(),
                     password: pass.clone(),
-                    totp_secret: String::new(),
+                    totp_secret: totp.clone(),
                     urls: Vec::new(),
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: String::new(),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                     reprompt: false,
+                
+                    attachments: Vec::new(),
+                    travel_safe: false,
                 });
                 match save_vault(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
@@ -1040,10 +1317,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             ui.set_credentials(vault_to_items(&v, &f));
                             sync_folders_to_ui(&v, &ui);
                             if let Some(qb) = qb_clone.upgrade() {
-                                qb.set_filtered_results(vault_logins(&v, ""));
+                                qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                             }
                             ui.set_notification_text(
-                                format!("✅ Captured & encrypted login for {title}!").into(),
+                                "✅ Captured & encrypted login!".into(),
                             );
                             trigger_sync_push(ui.as_weak());
                         }
@@ -1063,14 +1340,33 @@ fn main() -> Result<(), slint::PlatformError> {
         }
     });
 
+    // Phase 23: capture password quick-generate (strong default policy).
+    let cap_weak_gen = capture_window.as_weak();
+    capture_window.on_capture_generate(move || {
+        let policy = PasswordPolicy::default();
+        if let Ok(secret) =
+            PasswordGenerator::generate_complex(&policy)
+        {
+            if let Some(cap) = cap_weak_gen.upgrade() {
+                cap.set_cap_pass(secret.expose_secret().to_owned().into());
+            }
+        }
+    });
+
     // 1. Unlock handler — delegates to the shared unlock pipeline
     let window_weak = main_window.as_weak();
     let vault_arc = Arc::clone(&active_vault);
     let master_pw_arc = Arc::clone(&active_master_pw);
     let search_state_unlock = Arc::clone(&search_state);
     let qb_weak_unlock = quick_bar.as_weak();
+    let travel_off = Arc::clone(&travel_mode);
     main_window.on_unlock_requested(move |entered_password| {
         let pass = entered_password.as_str().trim().to_string();
+        // Fresh unlock always starts with Travel Mode OFF.
+        *travel_off.lock().unwrap() = false;
+        if let Some(ui) = window_weak.upgrade() {
+            ui.set_is_travel_mode(false);
+        }
         unlock_with_password(
             pass,
             window_weak.clone(),
@@ -1233,6 +1529,8 @@ fn push_new_item(
             notes: notes.to_string(),
             folder: folder.to_string(),
             reprompt,
+            attachments: Vec::new(),
+            travel_safe: false,
         }),
         2 => vault.licenses.push(models::SoftwareLicense {
             id,
@@ -1240,12 +1538,15 @@ fn push_new_item(
             license_key: a.to_string(),
             expiry_date: (!b.trim().is_empty()).then(|| b.to_string()),
             folder: folder.to_string(),
+            attachments: Vec::new(),
+            travel_safe: false,
         }),
         3 => vault.notes.push(models::SecureNote {
             id,
             title: title.to_string(),
             content: a.to_string(),
             folder: folder.to_string(),
+            travel_safe: false,
         }),
         4 => vault.cards.push(models::PaymentCard {
             id,
@@ -1257,6 +1558,7 @@ fn push_new_item(
             cvv: dd.to_string(),
             folder: folder.to_string(),
             notes: notes.to_string(),
+            travel_safe: false,
         }),
         5 => vault.identities.push(models::IdentityItem {
             id,
@@ -1268,6 +1570,7 @@ fn push_new_item(
             address: ee.to_string(),
             folder: folder.to_string(),
             notes: String::new(),
+            travel_safe: false,
         }),
         6 => vault.ssh_keys.push(models::SshKeyItem {
             id,
@@ -1277,6 +1580,7 @@ fn push_new_item(
             fingerprint: cc.to_string(),
             folder: folder.to_string(),
             notes: notes.to_string(),
+            travel_safe: false,
         }),
         _ => {}
     }
@@ -1467,7 +1771,7 @@ fn replace_item(
             let pending_done = Arc::clone(&pending_cf_add);
 
             std::thread::spawn(move || {
-                let master_opt = master_clone.lock().unwrap().clone();
+                let master_opt = lock_master_pw(&master_clone).clone();
                 let Some(master_pw) = master_opt else {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
@@ -1486,7 +1790,7 @@ fn replace_item(
                 // Critical section + heavy crypto: push/replace + save_vault inside worker thread.
                 // Roll back the in-memory mutation if the disk write fails.
                 let save_result: Result<Vault, String> = {
-                    let mut vault = vault_clone.lock().unwrap();
+                    let mut vault = lock_vault(&vault_clone);
                     // Snapshot for rollback (cheap, in-RAM vaults are small).
                     let snapshot = vault.clone();
                     let urls: Vec<String> = cc
@@ -1540,10 +1844,10 @@ fn replace_item(
                             let items = vault_to_items(&vault_snapshot, &f);
                             ui.set_credentials(items.clone());
                             if let Some(qb) = qb_weak.upgrade() {
-                                qb.set_filtered_results(vault_logins(&vault_snapshot, ""));
+                                qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
                             }
                             ui.set_notification_text(
-                                format!("✅ '{title}' encrypted to disk!", title = title_for_thread).into(),
+                                "✅ Item encrypted to disk!".into(),
                             );
                             // Clear form, exit edit mode, drop pending custom fields
                             ui.set_f_title("".into());
@@ -1593,7 +1897,7 @@ fn replace_item(
         let search_clone = Arc::clone(&search_state_del);
         let qb_weak = qb_weak_del.clone();
         std::thread::spawn(move || {
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
@@ -1603,7 +1907,7 @@ fn replace_item(
                 return;
             };
             let save_result: Result<Vault, String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 if !vault.delete_item(kind, &id) {
                     Err("Item not found (already deleted?)".to_string())
                 } else {
@@ -1622,7 +1926,7 @@ fn replace_item(
                         let f = search_clone.lock().unwrap().clone();
                         ui.set_credentials(vault_to_items(&vault_snapshot, &f));
                         if let Some(qb) = qb_weak.upgrade() {
-                            qb.set_filtered_results(vault_logins(&vault_snapshot, ""));
+                            qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_notification_text("🗑️ Item deleted.".into());
                         ui.set_show_detail(false);
@@ -1644,7 +1948,7 @@ fn replace_item(
         let mut f = search_state_search.lock().unwrap().clone();
         f.query = query.as_str().to_string();
         *search_state_search.lock().unwrap() = f.clone();
-        let vault = vault_arc_search.lock().unwrap();
+        let vault = lock_vault(&vault_arc_search);
         if let Some(ui) = window_weak_search.upgrade() {
             ui.set_credentials(vault_to_items(&vault, &f));
         }
@@ -1657,7 +1961,7 @@ fn replace_item(
         let mut f = search_state_type.lock().unwrap().clone();
         f.kind = kind;
         *search_state_type.lock().unwrap() = f.clone();
-        let vault = vault_arc_type.lock().unwrap();
+        let vault = lock_vault(&vault_arc_type);
         if let Some(ui) = window_weak_type.upgrade() {
             ui.set_credentials(vault_to_items(&vault, &f));
         }
@@ -1670,7 +1974,7 @@ fn replace_item(
         let mut f = search_state_folder.lock().unwrap().clone();
         f.folder = folder.as_str().to_string();
         *search_state_folder.lock().unwrap() = f.clone();
-        let vault = vault_arc_folder.lock().unwrap();
+        let vault = lock_vault(&vault_arc_folder);
         if let Some(ui) = window_weak_folder.upgrade() {
             ui.set_credentials(vault_to_items(&vault, &f));
         }
@@ -1706,7 +2010,7 @@ fn replace_item(
                 let master_clone = Arc::clone(&master_pw_url);
                 let count = accounts.len();
                 std::thread::spawn(move || {
-                    let master_opt = master_clone.lock().unwrap().clone();
+                    let master_opt = lock_master_pw(&master_clone).clone();
                     let Some(master_pw) = master_opt else {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak.upgrade() {
@@ -1716,7 +2020,7 @@ fn replace_item(
                         return;
                     };
                     let save_result: Result<(), String> = {
-                        let mut vault = vault_clone.lock().unwrap();
+                        let mut vault = lock_vault(&vault_clone);
                         vault.totp_accounts.extend(accounts);
                         match save_vault(&vault, &master_pw, VAULT_FILE) {
                             Ok(()) => Ok(()),
@@ -1728,6 +2032,7 @@ fn replace_item(
                             }
                         }
                     };
+                    let vault_for_list = Arc::clone(&vault_clone);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             match save_result {
@@ -1738,6 +2043,10 @@ fn replace_item(
                                     );
                                     ui.set_import_input("".into());
                                     ui.set_show_2fa_import(false);
+                                    {
+                                        let v = lock_vault(&vault_for_list);
+                                        ui.set_auth_accounts(rebuild_auth_list(&v));
+                                    }
                                     trigger_sync_push(ui.as_weak());
                                 }
                                 Err(e) => {
@@ -1799,7 +2108,7 @@ fn replace_item(
                 }
             };
             let count = accounts.len();
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
@@ -1809,7 +2118,7 @@ fn replace_item(
                 return;
             };
             let save_result: Result<(), String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 vault.totp_accounts.extend(accounts);
                 match save_vault(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(()),
@@ -1821,6 +2130,7 @@ fn replace_item(
                     }
                 }
             };
+            let vault_for_list_qr = Arc::clone(&vault_clone);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     match save_result {
@@ -1829,6 +2139,10 @@ fn replace_item(
                                 format!("✅ Imported {} 2FA accounts successfully!", count).into(),
                             );
                             ui.set_show_2fa_import(false);
+                            {
+                                let v = lock_vault(&vault_for_list_qr);
+                                ui.set_auth_accounts(rebuild_auth_list(&v));
+                            }
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
@@ -1845,7 +2159,7 @@ fn replace_item(
     let type_main_qb = quick_bar.as_weak();
     let type_main_vis = Arc::clone(&quickbar_visible);
     let type_main_vault = Arc::clone(&active_vault);
-    main_window.on_type_credential_requested(move |username, password| {
+    main_window.on_type_credential_requested(move |username, password, totp| {
         if let Some(title) =
             check_canary_trip(&type_main_vault, password.as_str(), "autotype-list")
         {
@@ -1861,6 +2175,7 @@ fn replace_item(
             Arc::clone(&type_main_vis),
             username.as_str().to_string(),
             password.as_str().to_string(),
+            totp.as_str().to_string(),
         );
     });
 
@@ -2037,7 +2352,7 @@ fn replace_item(
             ui.set_sync_status("⛔ Decoy mode is read-only.".into());
             return;
         }
-        let master_opt = plant_master.lock().unwrap().clone();
+        let master_opt = lock_master_pw(&plant_master).clone();
         let Some(master_pw) = master_opt else {
             ui.set_sync_status("⚠️ Vault not unlocked.".into());
             return;
@@ -2048,28 +2363,28 @@ fn replace_item(
         let vault_clone = Arc::clone(&plant_vault);
         std::thread::spawn(move || {
             let title = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 security::canary::plant_canary(&mut vault)
             };
             // Persist (hybrid re-seal) — roll back the plant on disk failure.
             let saved = {
-                let vault = vault_clone.lock().unwrap();
+                let vault = lock_vault(&vault_clone);
                 save_vault(&vault, &master_pw, VAULT_FILE)
             };
             if saved.is_err() {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 vault.credentials.pop();
             }
             let saved_ok = saved.is_ok();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     if saved_ok {
-                        let vault = vault_clone.lock().unwrap();
+                        let vault = lock_vault(&vault_clone);
                         let f = search_clone.lock().unwrap().clone();
                         let items = vault_to_items(&vault, &f);
                         ui.set_credentials(items.clone());
                         if let Some(qb) = qb_clone.upgrade() {
-                            qb.set_filtered_results(vault_logins(&vault, ""));
+                            qb.set_filtered_results(vault_quickbar(&vault, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_sync_status(
                             format!("🐤 Honeytoken '{title}' planted — never touch it yourself.").into(),
@@ -2146,12 +2461,12 @@ fn replace_item(
         let vault_clone = Arc::clone(&folder_vault);
         let master_clone = Arc::clone(&folder_master);
         std::thread::spawn(move || {
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 return;
             };
             let res: Result<Vault, String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 if let Err(e) = vault.add_folder(&name) {
                     Err(e)
                 } else {
@@ -2267,12 +2582,12 @@ fn replace_item(
         let id = id.as_str().to_string();
         let idx = idx as usize;
         std::thread::spawn(move || {
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 return;
             };
             let res: Result<Vec<models::CustomField>, String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 let Some(cred) = vault.credentials.iter_mut().find(|c| c.id == id) else {
                     return;
                 };
@@ -2307,7 +2622,7 @@ fn replace_item(
         let Some(ui) = detail_weak.upgrade() else {
             return;
         };
-        let vault = detail_vault.lock().unwrap();
+        let vault = lock_vault(&detail_vault);
         let id = id.as_str();
         // Logins carry the richest payload (reprompt, totp, codes, customs).
         if let Some(c) = vault.credentials.iter().find(|c| c.id == id) {
@@ -2403,6 +2718,23 @@ fn replace_item(
         } else {
             return;
         }
+        // Travel flag + attachments ride along for every kind.
+        let (travel, files): (bool, Vec<models::EncryptedAttachment>) = match ui.get_d_kind() {
+            1 => vault.credentials.iter().find(|c| c.id == id)
+                .map(|c| (c.travel_safe, c.attachments.clone())).unwrap_or((false, Vec::new())),
+            2 => vault.licenses.iter().find(|l| l.id == id)
+                .map(|l| (l.travel_safe, l.attachments.clone())).unwrap_or((false, Vec::new())),
+            3 => vault.notes.iter().find(|n| n.id == id)
+                .map(|n| (n.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
+            4 => vault.cards.iter().find(|k| k.id == id)
+                .map(|k| (k.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
+            5 => vault.identities.iter().find(|i| i.id == id)
+                .map(|i| (i.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
+            _ => vault.ssh_keys.iter().find(|s| s.id == id)
+                .map(|s| (s.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
+        };
+        ui.set_d_travel(travel);
+        ui.set_d_attachments(attachments_to_ui(&files));
         ui.set_d_secret_visible(false);
         ui.set_d_revealed(-1);
         ui.set_show_detail(true);
@@ -2421,7 +2753,7 @@ fn replace_item(
             ui.set_notification_text("⛔ Decoy mode is read-only.".into());
             return;
         }
-        let vault = edit_vault.lock().unwrap();
+        let vault = lock_vault(&edit_vault);
         let id = id.as_str().to_string();
         *edit_target.lock().unwrap() = Some((kind, id.clone()));
         ui.set_new_kind(kind);
@@ -2504,6 +2836,9 @@ fn replace_item(
     let rp_del_vault = Arc::clone(&active_vault);
     let rp_del_search = Arc::clone(&search_state);
     let rp_del_qb = quick_bar.as_weak();
+    let rp_travel_off = Arc::clone(&travel_mode);
+    let rp_travel_vault = Arc::clone(&active_vault);
+    let rp_search = Arc::clone(&search_state);
     main_window.on_reprompt_confirm(move |password| {
         let Some(ui) = rp_weak.upgrade() else {
             return;
@@ -2530,12 +2865,24 @@ fn replace_item(
                 );
             }
             2 => {
+                // Look up the login's TOTP so the 2FA chain can arm.
+                let totp = rp_del_vault
+                    .lock()
+                    .ok()
+                    .and_then(|v| {
+                        v.credentials
+                            .iter()
+                            .find(|c| ui.get_rp_id() == c.id)
+                            .map(|c| c.totp_secret.clone())
+                    })
+                    .unwrap_or_default();
                 trigger_autotype(
                     rp_main.clone(),
                     rp_qb.clone(),
                     Arc::clone(&rp_vis),
                     ui.get_rp_user().to_string(),
                     ui.get_rp_secret().to_string(),
+                    totp,
                 );
             }
             3 => {
@@ -2548,12 +2895,12 @@ fn replace_item(
                 let kind = ui.get_rp_kind();
                 let id = ui.get_rp_id().to_string();
                 std::thread::spawn(move || {
-                    let master_opt = master_clone.lock().unwrap().clone();
+                    let master_opt = lock_master_pw(&master_clone).clone();
                     let Some(master_pw) = master_opt else {
                         return;
                     };
                     let res: Result<Vault, String> = {
-                        let mut vault = vault_clone.lock().unwrap();
+                        let mut vault = lock_vault(&vault_clone);
                         if !vault.delete_item(kind, &id) {
                             Err("Item not found".to_string())
                         } else {
@@ -2570,7 +2917,7 @@ fn replace_item(
                                     let f = search_clone.lock().unwrap().clone();
                                     ui.set_credentials(vault_to_items(&v, &f));
                                     if let Some(qb) = qb_clone.upgrade() {
-                                        qb.set_filtered_results(vault_logins(&v, ""));
+                                        qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                                     }
                                     ui.set_notification_text("🗑️ Item deleted.".into());
                                     ui.set_show_detail(false);
@@ -2583,6 +2930,19 @@ fn replace_item(
                         }
                     });
                 });
+            }
+            4 => {
+                // Travel Mode disarm (master already verified above): show all.
+                *rp_travel_off.lock().unwrap() = false;
+                if let Some(ui) = rp_main.upgrade() {
+                    ui.set_is_travel_mode(false);
+                    let vault = lock_vault(&rp_travel_vault);
+                    let mut f = rp_search.lock().unwrap().clone();
+                    f.travel_only = false;
+                    *rp_search.lock().unwrap() = f.clone();
+                    ui.set_credentials(vault_to_items(&vault, &f));
+                    ui.set_notification_text("Travel Mode OFF — full vault restored.".into());
+                }
             }
             _ => {}
         }
@@ -2599,7 +2959,7 @@ fn replace_item(
             ui.set_sync_status("⛔ Decoy mode has no recovery sheet.".into());
             return;
         }
-        let master_opt = shard_master.lock().unwrap().clone();
+        let master_opt = lock_master_pw(&shard_master).clone();
         let Some(master_pw) = master_opt else {
             ui.set_sync_status("⚠️ Vault not unlocked.".into());
             return;
@@ -2704,7 +3064,7 @@ fn replace_item(
                 });
                 return;
             };
-            let master_opt = master_clone.lock().unwrap().clone();
+            let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
@@ -2715,7 +3075,7 @@ fn replace_item(
             };
             // Merge + re-seal under one lock (rollback on disk failure).
             let res: Result<importer::ImportSummary, String> = {
-                let mut vault = vault_clone.lock().unwrap();
+                let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
                 match importer::import_any_file(&path, &mut vault) {
                     Ok(summary) => match save_vault(&vault, &master_pw, VAULT_FILE) {
@@ -2735,12 +3095,12 @@ fn replace_item(
                 match res {
                     Ok(summary) => {
                         {
-                            let vault = vault_clone.lock().unwrap();
+                            let vault = lock_vault(&vault_clone);
                             let f = search_clone.lock().unwrap().clone();
                             ui.set_credentials(vault_to_items(&vault, &f));
                             sync_folders_to_ui(&vault, &ui);
                             if let Some(qb) = qb_clone.upgrade() {
-                                qb.set_filtered_results(vault_logins(&vault, ""));
+                                qb.set_filtered_results(vault_quickbar(&vault, "", f.travel_only));
                             }
                         }
                         ui.set_import_status(summary.headline().into());
@@ -2878,7 +3238,452 @@ fn replace_item(
         });
     });
 
-    // Phase 12: startup pull (ciphertext-only, pre-unlock safe)
+    // --- Travel Mode toggle. ON is instant; OFF demands master reprompt. ---
+    let travel_weak = main_window.as_weak();
+    let travel_state = Arc::clone(&travel_mode);
+    let travel_vault = Arc::clone(&active_vault);
+    let travel_search = Arc::clone(&search_state);
+    main_window.on_set_travel_mode(move |on| {
+        let Some(ui) = travel_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if !on {
+            // Disarming exposes hidden items — gate behind master password.
+            ui.set_rp_action(4);
+            ui.set_rp_kind(0);
+            ui.set_rp_id("".into());
+            ui.set_rp_user("".into());
+            ui.set_rp_secret("".into());
+            ui.set_rp_error("".into());
+            ui.set_rp_show(true);
+            return;
+        }
+        *travel_state.lock().unwrap() = true;
+        ui.set_is_travel_mode(true);
+        let vault = travel_vault.lock().unwrap();
+        let mut f = travel_search.lock().unwrap().clone();
+        f.travel_only = true;
+        *travel_search.lock().unwrap() = f.clone();
+        ui.set_credentials(vault_to_items(&vault, &f));
+        ui.set_notification_text("✈️ TRAVEL MODE ACTIVE — only travel-safe items shown.".into());
+    });
+
+    // --- Attachments: pick / download / delete (logins + licenses) ---
+    let att_weak = main_window.as_weak();
+    let att_vault = Arc::clone(&active_vault);
+    let att_master = Arc::clone(&active_master_pw);
+    let att_search = Arc::clone(&search_state);
+    let att_qb = quick_bar.as_weak();
+    let att_main = main_window.as_weak();
+    main_window.on_pick_attachment(move |kind, id| {
+        let Some(ui) = att_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if kind != 1 && kind != 2 {
+            ui.set_notification_text("⚠️ Attachments live on logins + licenses.".into());
+            return;
+        }
+        let weak = att_weak.clone();
+        let weak_main = att_main.clone();
+        let vault_clone = Arc::clone(&att_vault);
+        let master_clone = Arc::clone(&att_master);
+        let search_clone = Arc::clone(&att_search);
+        let qb_clone = att_qb.clone();
+        let id = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let picked = rfd::FileDialog::new()
+                .set_title("Attach file (max 5MB, sealed into vault)")
+                .pick_file();
+            let Some(path) = picked else {
+                return;
+            };
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    let msg = format!("⚠️ Cannot read file: {e}");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_notification_text(msg.into());
+                        }
+                    });
+                    return;
+                }
+            };
+            if bytes.len() > models::MAX_ATTACHMENT_BYTES {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ File exceeds 5MB.".into());
+                    }
+                });
+                return;
+            }
+            let filename = path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("file.bin")
+                .to_string();
+            let mime = guess_mime(&filename);
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                return;
+            };
+            let new_id = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| format!("att{}", d.as_millis()))
+                .unwrap_or_else(|_| "att0".to_string());
+            let saved: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                let target: Option<&mut Vec<models::EncryptedAttachment>> = match kind {
+                    1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| &mut c.attachments),
+                    2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| &mut l.attachments),
+                    _ => None,
+                };
+                let Some(list) = target else {
+                    return;
+                };
+                if list.len() >= 10 {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_notification_text("⚠️ Max 10 attachments per item.".into());
+                        }
+                    });
+                    return;
+                }
+                list.push(models::EncryptedAttachment {
+                    id: new_id,
+                    filename,
+                    mime_type: mime,
+                    size_bytes: bytes.len(),
+                    data: bytes,
+                });
+                match save_vault(&vault, &master_pw, VAULT_FILE) {
+                    Ok(()) => Ok(vault.clone()),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak_main.upgrade() else {
+                    return;
+                };
+                match saved {
+                    Ok(v) => {
+                        // Refresh detail attachment list for this item.
+                        let files: Vec<models::EncryptedAttachment> = match kind {
+                            1 => v.credentials.iter().find(|c| c.id == id).map(|c| c.attachments.clone()).unwrap_or_default(),
+                            2 => v.licenses.iter().find(|l| l.id == id).map(|l| l.attachments.clone()).unwrap_or_default(),
+                            _ => Vec::new(),
+                        };
+                        ui.set_d_attachments(attachments_to_ui(&files));
+                        let f = search_clone.lock().unwrap().clone();
+                        ui.set_credentials(vault_to_items(&v, &f));
+                        if let Some(qb) = qb_clone.upgrade() {
+                            qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
+                        }
+                        ui.set_notification_text("📎 File sealed into vault.".into());
+                        trigger_sync_push(ui.as_weak());
+                    }
+                    Err(e) => {
+                        ui.set_notification_text(format!("❌ Attach failed: {e}").into());
+                    }
+                }
+            });
+        });
+    });
+
+    // Download = save dialog + plaintext write of that ONE file (user's explicit act).
+    let dl_weak = main_window.as_weak();
+    let dl_vault = Arc::clone(&active_vault);
+    main_window.on_download_attachment(move |kind, id, att_id| {
+        let Some(ui) = dl_weak.upgrade() else {
+            return;
+        };
+        let vault = lock_vault(&dl_vault);
+        let found: Option<(String, Vec<u8>)> = match kind {
+            1 => vault.credentials.iter().find(|c| c.id == id.as_str()).and_then(|c| {
+                c.attachments.iter().find(|a| a.id == att_id.as_str())
+                    .map(|a| (a.filename.clone(), a.data.clone()))
+            }),
+            2 => vault.licenses.iter().find(|l| l.id == id.as_str()).and_then(|l| {
+                l.attachments.iter().find(|a| a.id == att_id.as_str())
+                    .map(|a| (a.filename.clone(), a.data.clone()))
+            }),
+            _ => None,
+        };
+        drop(vault);
+        let Some((filename, data)) = found else {
+            ui.set_notification_text("⚠️ Attachment not found.".into());
+            return;
+        };
+        let weak = dl_weak.clone();
+        std::thread::spawn(move || {
+            let dest = rfd::FileDialog::new()
+                .set_title("Export attachment")
+                .set_file_name(&filename)
+                .save_file();
+            let Some(dest) = dest else {
+                return;
+            };
+            let msg = match std::fs::write(&dest, &data) {
+                Ok(()) => format!("💾 Exported '{}'.", filename),
+                Err(e) => format!("⚠️ Export failed: {e}"),
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_notification_text(msg.into());
+                }
+            });
+        });
+    });
+
+    // Delete attachment → re-seal → refresh detail list.
+    let del_weak = main_window.as_weak();
+    let del_vault = Arc::clone(&active_vault);
+    let del_master = Arc::clone(&active_master_pw);
+    let del_search = Arc::clone(&search_state);
+    let del_qb = quick_bar.as_weak();
+    let del_main = main_window.as_weak();
+    main_window.on_delete_attachment(move |kind, id, att_id| {
+        let Some(ui) = del_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let weak = del_main.clone();
+        let vault_clone = Arc::clone(&del_vault);
+        let master_clone = Arc::clone(&del_master);
+        let search_clone = Arc::clone(&del_search);
+        let qb_clone = del_qb.clone();
+        let (id, att_id) = (id.as_str().to_string(), att_id.as_str().to_string());
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                return;
+            };
+            let saved: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                let removed = match kind {
+                    1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| {
+                        let before = c.attachments.len();
+                        c.attachments.retain(|a| a.id != att_id);
+                        before != c.attachments.len()
+                    }),
+                    2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| {
+                        let before = l.attachments.len();
+                        l.attachments.retain(|a| a.id != att_id);
+                        before != l.attachments.len()
+                    }),
+                    _ => None,
+                };
+                if removed != Some(true) {
+                    Err("Attachment not found".to_string())
+                } else {
+                    match save_vault(&vault, &master_pw, VAULT_FILE) {
+                        Ok(()) => Ok(vault.clone()),
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match saved {
+                    Ok(v) => {
+                        let files: Vec<models::EncryptedAttachment> = match kind {
+                            1 => v.credentials.iter().find(|c| c.id == id).map(|c| c.attachments.clone()).unwrap_or_default(),
+                            2 => v.licenses.iter().find(|l| l.id == id).map(|l| l.attachments.clone()).unwrap_or_default(),
+                            _ => Vec::new(),
+                        };
+                        ui.set_d_attachments(attachments_to_ui(&files));
+                        let f = search_clone.lock().unwrap().clone();
+                        ui.set_credentials(vault_to_items(&v, &f));
+                        if let Some(qb) = qb_clone.upgrade() {
+                            qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
+                        }
+                        ui.set_notification_text("🗑️ Attachment deleted.".into());
+                        trigger_sync_push(ui.as_weak());
+                    }
+                    Err(e) => {
+                        ui.set_notification_text(format!("❌ Delete failed: {e}").into());
+                    }
+                }
+            });
+        });
+    });
+
+    // Travel-safe flag flip (any of the 6 kinds) → re-seal → refresh.
+    let trav_weak = main_window.as_weak();
+    let trav_vault = Arc::clone(&active_vault);
+    let trav_master = Arc::clone(&active_master_pw);
+    main_window.on_toggle_travel(move |kind, id| {
+        let Some(ui) = trav_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let weak = trav_weak.clone();
+        let vault_clone = Arc::clone(&trav_vault);
+        let master_clone = Arc::clone(&trav_master);
+        let id = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                return;
+            };
+            let saved: Result<(Vault, bool), String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                let flipped: Option<bool> = match kind {
+                    1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| { c.travel_safe = !c.travel_safe; c.travel_safe }),
+                    2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| { l.travel_safe = !l.travel_safe; l.travel_safe }),
+                    3 => vault.notes.iter_mut().find(|n| n.id == id).map(|n| { n.travel_safe = !n.travel_safe; n.travel_safe }),
+                    4 => vault.cards.iter_mut().find(|k| k.id == id).map(|k| { k.travel_safe = !k.travel_safe; k.travel_safe }),
+                    5 => vault.identities.iter_mut().find(|i| i.id == id).map(|i| { i.travel_safe = !i.travel_safe; i.travel_safe }),
+                    6 => vault.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| { s.travel_safe = !s.travel_safe; s.travel_safe }),
+                    _ => None,
+                };
+                let Some(now) = flipped else {
+                    return;
+                };
+                match save_vault(&vault, &master_pw, VAULT_FILE) {
+                    Ok(()) => Ok((vault.clone(), now)),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match saved {
+                        Ok((v, now)) => {
+                            ui.set_d_travel(now);
+                            ui.set_notification_text(
+                                if now { "✈️ Marked safe for travel.".into() } else { "Item hidden in Travel Mode.".into() },
+                            );
+                            let _ = v;
+                        }
+                        Err(e) => {
+                            ui.set_notification_text(format!("⚠️ {e}").into());
+                        }
+                    }
+                }
+            });
+        });
+    });
+    // Phase 24: HOTP counter advance — renders the NEXT code per RFC 4226.
+    let hotp_weak = main_window.as_weak();
+    let hotp_vault = Arc::clone(&active_vault);
+    let hotp_master = Arc::clone(&active_master_pw);
+    main_window.on_hotp_next(move |id| {
+        let weak = hotp_weak.clone();
+        let vault_clone = Arc::clone(&hotp_vault);
+        let master_clone = Arc::clone(&hotp_master);
+        let id = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                return;
+            };
+            let saved: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                let Some(acc) = vault.totp_accounts.iter_mut().find(|a| a.id == id) else {
+                    return;
+                };
+                if acc.otp_type.trim().to_lowercase() != "hotp" {
+                    return;
+                }
+                acc.counter = acc.counter.saturating_add(1);
+                match save_vault(&vault, &master_pw, VAULT_FILE) {
+                    Ok(()) => Ok(vault.clone()),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match saved {
+                        Ok(v) => {
+                            ui.set_auth_accounts(rebuild_auth_list(&v));
+                            ui.set_notification_text("🔢 HOTP advanced to next code.".into());
+                            trigger_sync_push(ui.as_weak());
+                        }
+                        Err(e) => {
+                            ui.set_notification_text(format!("⚠️ HOTP advance failed: {e}").into());
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    main_window.on_lock_now(move || {
+        std::process::exit(0);
+    });
+    let bb_weak = main_window.as_weak();
+    main_window.on_set_blackout(move |on| {
+        if let Some(ui) = bb_weak.upgrade() {
+            #[cfg(windows)]
+            {
+                let _ = on;
+                let _ = windows_native::display_guard::guard_window(ui.window());
+            }
+            ui.set_blackout_enabled(on);
+        }
+    });
+    let ct_weak = main_window.as_weak();
+    let ct_state = Arc::new(Mutex::new(15u64));
+    main_window.on_set_clipboard_timeout(move |secs| {
+        *ct_state.lock().unwrap() = secs as u64;
+        if let Some(ui) = ct_weak.upgrade() {
+            ui.set_clipboard_timeout(secs);
+            ui.set_notification_text(format!("Clipboard auto-clear: {secs}s").into());
+        }
+    });
+    let al_weak = main_window.as_weak();
+    main_window.on_set_autolock_timeout(move |mins| {
+        if let Some(ui) = al_weak.upgrade() {
+            ui.set_autolock_timeout(mins);
+            if mins == 0 { ui.set_notification_text("Auto-lock: Never".into()); } else { ui.set_notification_text(format!("Auto-lock: {mins} min").into()); }
+        }
+    });
+    let pill_weak = main_window.as_weak();
+    main_window.on_autofill_pill_clicked(move || {
+        if let Some(ui) = pill_weak.upgrade() {
+            ui.set_show_autofill_pill(false);
+            let _ = ui;
+        }
+    });
+    let sc_weak = main_window.as_weak();
+    main_window.on_scan_secrets(move || {
+        if let Some(ui) = sc_weak.upgrade() {
+            ui.set_notification_text("🔍 Scan started...".into());
+        }
+    });
+
     run_startup_pull(main_window.as_weak());
 
     // Phase 15 (Option 1): anti-debug watchdog — wipe + hard exit on trip.

@@ -49,7 +49,10 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
         reprompt: false,
-    });
+    
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
     vault.credentials.push(Credential {
         id: "d2".into(),
         title: "Facebook".into(),
@@ -63,7 +66,10 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
         reprompt: false,
-    });
+    
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                });
     vault.totp_accounts.push(TotpAccount {
         id: "d3".into(),
         account_name: "Old Yahoo".into(),
@@ -71,6 +77,9 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         secret: "JBSWY3DPEHPK3PXP".into(),
         digits: 6,
         period: 30,
+        algorithm: "SHA1".to_string(),
+        otp_type: "totp".to_string(),
+        counter: 0,
     });
     save_vault(&vault, &pw, DECOY_FILE)
         .map_err(|e| VaultError::Security(format!("decoy seal failed: {e}")))?;
