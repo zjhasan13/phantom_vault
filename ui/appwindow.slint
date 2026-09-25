@@ -543,6 +543,7 @@ export component MainWindow inherits Window {
     callback save_alias_config(int, string, string);
     callback import_url_requested(string);
     callback hotp_next(string);
+    callback delete_auth_account(string);
     callback request_biometric_unlock();
     callback type_credential_requested(string, string, string);
     callback save_sync_config(string, string, string);
@@ -766,7 +767,8 @@ export component MainWindow inherits Window {
                                     Text { text: acc.next; color: #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
                                     HorizontalLayout { spacing: 4px; alignment: center;
                                         if acc.is_hotp : AuraButton { label: "🔄"; width: 40px; height: 28px; clicked => { root.hotp_next(acc.id); } }
-                                        AuraButton { label: "📋"; width: 48px; height: 28px; clicked => { root.copy_password_requested(acc.code); } } }
+                                        AuraButton { label: "📋"; width: 48px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
+                                        AuraButton { label: "🗑️"; width: 40px; height: 28px; danger: true; clicked => { root.delete_auth_account(acc.id); } } }
                                 }
                             }
                         }

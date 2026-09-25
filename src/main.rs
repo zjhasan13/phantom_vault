@@ -982,6 +982,30 @@ fn unlock_with_password(
     });
 }
 
+/// Card expiry splitter: "MM/YY" (also tolerates "MM-YY", "MM YY", "MM.YY",
+/// bare "MM") into (month, year). Mirrors `importer::split_expiry` so the UI
+/// add/edit path stores exactly what the importer stores (the expiry year
+/// used to be dropped here). Pure — unit tested.
+fn split_card_expiry(raw: &str) -> (String, String) {
+    let t = raw.trim().replace([' ', '-', '.'], "/");
+    let mut parts = t.split('/');
+    let m = parts.next().unwrap_or("").trim().to_string();
+    let y = parts.next().unwrap_or("").trim().to_string();
+    (m, y)
+}
+
+/// Audit scope: only live (non-trashed) logins are health-checked.
+/// Trashed items are shredded within 30 days — scoring their stale/breached
+/// passwords only adds noise to the report and its badges. Pure — tested.
+fn audit_scope_credentials(vault: &Vault) -> Vec<Credential> {
+    vault
+        .credentials
+        .iter()
+        .filter(|c| c.deleted_at.is_none())
+        .cloned()
+        .collect()
+}
+
 /// Phase 24: render every authenticator account through the dynamic engine.
 /// Failures render as "------" (never blank, never panics).
 /// Group digits like the reference grid ("513710" → "513 710").
@@ -1052,6 +1076,14 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
             }
         })
         .collect()
+}
+
+/// Remove one authenticator account by id. Returns true when something was
+/// removed (the caller re-seals + refreshes). Pure — unit tested.
+fn remove_totp_account(vault: &mut Vault, id: &str) -> bool {
+    let before = vault.totp_accounts.len();
+    vault.totp_accounts.retain(|a| a.id != id);
+    vault.totp_accounts.len() != before
 }
 
 fn rebuild_auth_list(vault: &Vault) -> ModelRc<AuthView> {
@@ -2446,20 +2478,23 @@ fn push_new_item(
             favorite: fav,
             deleted_at: None,
         }),
-        4 => vault.cards.push(models::PaymentCard {
-            id,
-            title: title.to_string(),
-            cardholder_name: a.to_string(),
-            card_number: b.to_string(),
-            exp_month: cc.to_string(),
-            exp_year: String::new(),
-            cvv: dd.to_string(),
-            folder: folder.to_string(),
-            notes: notes.to_string(),
-            travel_safe: false,
-            favorite: fav,
-            deleted_at: None,
-        }),
+        4 => {
+            let (em, ey) = split_card_expiry(cc);
+            vault.cards.push(models::PaymentCard {
+                id,
+                title: title.to_string(),
+                cardholder_name: a.to_string(),
+                card_number: b.to_string(),
+                exp_month: em,
+                exp_year: ey,
+                cvv: dd.to_string(),
+                folder: folder.to_string(),
+                notes: notes.to_string(),
+                travel_safe: false,
+                favorite: fav,
+                deleted_at: None,
+            })
+        }
         5 => vault.identities.push(models::IdentityItem {
             id,
             title: title.to_string(),
@@ -2568,7 +2603,9 @@ fn replace_item(
             k.title = title.to_string();
             k.cardholder_name = a.to_string();
             k.card_number = b.to_string();
-            k.exp_month = cc.to_string();
+            let (em, ey) = split_card_expiry(cc);
+            k.exp_month = em;
+            k.exp_year = ey;
             k.cvv = dd.to_string();
             k.folder = folder.to_string();
             k.notes = notes.to_string();
@@ -4009,6 +4046,67 @@ fn replace_item(
                         ui.set_passkeys(rebuild_passkeys(&v));
                         ui.set_notification_text("🗑 Passkey deleted.".into());
                         security::access_log::log_event("passkey", "delete");
+                    }
+                    Err(e) => {
+                        ui.set_notification_text(format!("⚠️ {e}.").into());
+                    }
+                }
+            });
+        });
+    });
+
+    // 2FA Hub: delete one authenticator account by id, re-seal, refresh.
+    let auth_del_weak = main_window.as_weak();
+    let auth_del_vault = Arc::clone(&active_vault);
+    let auth_del_master = Arc::clone(&active_master_pw);
+    main_window.on_delete_auth_account(move |id| {
+        let Some(ui) = auth_del_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&auth_del_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_notification_text("❌ Vault not unlocked!".into());
+            return;
+        };
+        let weak = auth_del_weak.clone();
+        let vault_clone = Arc::clone(&auth_del_vault);
+        let target = id.as_str().to_string();
+        std::thread::spawn(move || {
+            // Roll back the in-memory removal if the disk re-seal fails.
+            let saved = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                if !remove_totp_account(&mut vault, &target) {
+                    Err("authenticator account not found".to_string())
+                } else {
+                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                        Ok(()) => Ok(vault.clone()),
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match saved {
+                    Ok(v) => {
+                        ui.set_auth_accounts(rebuild_auth_list(&v));
+                        ui.set_auth_rows(rebuild_auth_rows(&v));
+                        // Hero ticker rebuilds from the vault every second,
+                        // so it drops the deleted account on its next tick.
+                        ui.set_notification_text(
+                            "✅ Authenticator account deleted.".into(),
+                        );
+                        security::access_log::log_event("auth", "delete");
+                        trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
                         ui.set_notification_text(format!("⚠️ {e}.").into());
@@ -5717,7 +5815,10 @@ fn replace_item(
         let vault_clone = Arc::clone(&audit_vault_arc);
         let search_clone = Arc::clone(&audit_search);
         thread::spawn(move || {
-            let creds = lock_vault(&vault_clone).credentials.clone();
+            let creds = {
+                let v = lock_vault(&vault_clone);
+                audit_scope_credentials(&v)
+            };
             if creds.is_empty() {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
@@ -5886,5 +5987,81 @@ mod grid_tests {
             chunk_rows(vec![1, 2, 3, 4, 5, 6, 7]),
             vec![vec![1, 2, 3], vec![4, 5, 6], vec![7]]
         );
+    }
+
+    #[test]
+    fn card_expiry_split_roundtrip() {
+        // UI add/edit "MM/YY" must split into (month, year) — the year used
+        // to be dropped by push_new_item/replace_item (nested in main(), so
+        // this pins the splitter both paths now share with the importer).
+        assert_eq!(split_card_expiry("12/28"), ("12".to_string(), "28".to_string()));
+        assert_eq!(split_card_expiry("12-28"), ("12".to_string(), "28".to_string()));
+        assert_eq!(split_card_expiry("12.28"), ("12".to_string(), "28".to_string()));
+        assert_eq!(split_card_expiry(" 12 "), ("12".to_string(), "".to_string()));
+        assert_eq!(split_card_expiry(""), ("".to_string(), "".to_string()));
+        // Year survives a simulated edit round-trip: prefill joins with "/",
+        // the save path must split it back.
+        let (m, y) = split_card_expiry(&format!("{}/{}", "05", "31"));
+        assert_eq!((m, y), ("05".to_string(), "31".to_string()));
+    }
+
+    #[test]
+    fn audit_scope_skips_trash() {
+        fn login(id: &str, trashed: bool) -> Credential {
+            Credential {
+                id: id.into(),
+                title: "t".into(),
+                username: "u".into(),
+                password: "p".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 0,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: trashed.then_some(1000),
+            }
+        }
+        let mut v = Vault::new();
+        v.credentials.push(login("live", false));
+        v.credentials.push(login("old", true));
+        let scoped = audit_scope_credentials(&v);
+        assert_eq!(scoped.len(), 1);
+        assert_eq!(scoped[0].id, "live");
+        // All-trashed vault audits as empty (same "Vault is empty" path).
+        let mut only_trash = Vault::new();
+        only_trash.credentials.push(login("old", true));
+        assert!(audit_scope_credentials(&only_trash).is_empty());
+    }
+
+    #[test]
+    fn totp_delete_removes_by_id() {
+        fn acc(id: &str) -> TotpAccount {
+            TotpAccount {
+                id: id.into(),
+                account_name: "a".into(),
+                issuer: "i".into(),
+                secret: "JBSWY3DPEHPK3PXP".into(),
+                digits: 6,
+                period: 30,
+                algorithm: "SHA1".into(),
+                otp_type: "totp".into(),
+                counter: 0,
+            }
+        }
+        let mut v = Vault::new();
+        v.totp_accounts.push(acc("t1"));
+        v.totp_accounts.push(acc("t2"));
+        assert!(remove_totp_account(&mut v, "t1"));
+        assert_eq!(v.totp_accounts.len(), 1);
+        assert_eq!(v.totp_accounts[0].id, "t2");
+        assert!(!remove_totp_account(&mut v, "nope"));
+        assert!(!remove_totp_account(&mut Vault::new(), "t1"));
     }
 }
