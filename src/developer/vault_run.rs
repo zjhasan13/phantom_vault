@@ -222,6 +222,10 @@ mod tests {
         
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
         let maps = vec![
             EnvMap { title: "GitHub".into(), field_user: false, var: "GH_TOKEN".into() },

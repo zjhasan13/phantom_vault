@@ -1,7 +1,11 @@
+pub mod access_log;
 pub mod anti_debug;
+pub mod backoff;
 pub mod breach_check;
 pub mod canary;
 pub mod decoy;
+pub mod integrity;
+pub mod pdf_sheet;
 pub mod shamir;
 pub mod shredder;
 pub mod steganography;

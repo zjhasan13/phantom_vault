@@ -197,6 +197,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     folder,
                     attachments: Vec::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 });
                 summary.licenses += 1;
             }
@@ -205,7 +207,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
-                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, travel_safe: false });
+                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, travel_safe: false, favorite: false, deleted_at: None });
                 summary.notes += 1;
             }
             4 => {
@@ -227,6 +229,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     folder,
                     notes: r.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 });
                 summary.cards += 1;
             }
@@ -249,6 +253,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     folder,
                     notes: r.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 });
                 summary.identities += 1;
             }
@@ -266,6 +272,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     folder,
                     notes: r.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 });
                 summary.ssh_keys += 1;
             }
@@ -292,6 +300,11 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     reprompt: false,
                     attachments: Vec::new(),
                     travel_safe: false,
+                    // Imported now: rotation clock starts at import.
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
                 summary.logins += 1;
             }

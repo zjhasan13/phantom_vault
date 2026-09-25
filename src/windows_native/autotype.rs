@@ -34,10 +34,40 @@ const GAP_MAX_MS: u64 = 20;
 const TAB_PRE_MS: u64 = 100;
 const TAB_POST_MS: u64 = 150;
 
-/// Strip carriage returns / line feeds (pastejacking) and trim.
-/// Pure — unit tested.
+/// Pastejacking guard: strip CR/LF, NUL, DEL, ANSI escape sequences
+/// (`ESC[...letter`, `ESC(...)`, lone `ESC`), and all other C0/C1 control
+/// codes (including Tab — it is the field separator, never payload).
+/// Printable + Unicode pass through untouched. Pure — unit tested.
 pub fn sanitize_field(raw: &str) -> String {
-    raw.replace(['\r', '\n'], "")
+    let mut out = String::with_capacity(raw.len());
+    let mut chars = raw.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            // Consume ANSI escape sequence bodies so `ESC[31m` etc. vanish whole.
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    // Params/intermediates until the final command byte (@..~).
+                    for c in chars.by_ref() {
+                        if ('@'..='~').contains(&c) {
+                            break;
+                        }
+                    }
+                }
+                Some('(') | Some(')') | Some('#') => {
+                    chars.next();
+                    chars.next(); // single follow-up designator byte
+                }
+                _ => {} // lone ESC — dropped, body already consumed as ESC itself
+            }
+            continue;
+        }
+        if ch == '\u{7f}' || ch.is_control() {
+            continue;
+        }
+        out.push(ch);
+    }
+    out
 }
 
 /// Push one Rust `char` as its true UTF-16 code units — direct, untranslated.
@@ -182,6 +212,20 @@ mod tests {
     fn sanitize_strips_control_chars() {
         assert_eq!(sanitize_field("ab\r\ncd\nef\rg"), "abcdefg");
         assert_eq!(sanitize_field("  user  "), "  user  ");
+    }
+
+    #[test]
+    fn sanitize_strips_shell_traps_and_ansi() {
+        // NUL + DEL vanish.
+        assert_eq!(sanitize_field("ab\0cd\x7fef"), "abcdef");
+        // Full ANSI color sequence vanishes whole (no stray "[31m").
+        assert_eq!(sanitize_field("pw\x1b[31m;rm -rf ~"), "pw;rm -rf ~");
+        // Lone ESC + charset designator vanish.
+        assert_eq!(sanitize_field("a\x1bb"), "ab");
+        // Tab is the field separator, never payload.
+        assert_eq!(sanitize_field("a\tb"), "ab");
+        // C1 control vanishes, real Unicode survives.
+        assert_eq!(sanitize_field("pässwörd\u{85}!"), "pässwörd!");
     }
 
     #[test]

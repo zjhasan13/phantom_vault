@@ -143,6 +143,36 @@ pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
     }
 }
 
+/// Screenshot-parity "Next" code for the grid's right column.
+/// HOTP → counter+1 (RFC 4226 vector-provable, clock-free).
+/// Steam/TOTP → next time window. Pure at fixed `now` — unit tested.
+pub fn next_code_for_account(acc: &TotpAccount) -> Result<String> {
+    next_code_for_account_at(acc, now_secs()?)
+}
+
+fn next_code_for_account_at(acc: &TotpAccount, now: u64) -> Result<String> {
+    let secret = secret_bytes(&acc.secret)?;
+    let algo_name = acc.algorithm.trim().to_uppercase();
+    let digits = acc.digits.clamp(1, 10) as usize;
+    match acc.otp_type.trim().to_lowercase().as_str() {
+        "hotp" => {
+            let full = hotp_full(&secret, &algo_name, acc.counter.saturating_add(1))?;
+            Ok(format!("{:0>width$}", full % 10u32.pow(digits as u32), width = digits))
+        }
+        "steam" => {
+            let period = if acc.period == 0 { 30 } else { acc.period };
+            steam_code(&secret, &algo_name, now / period + 1)
+        }
+        _ => {
+            let algo = parse_totp_algorithm(&algo_name)?;
+            let period = if acc.period == 0 { 30 } else { acc.period };
+            let totp = TOTP::new(algo, digits, 1, period, secret)
+                .map_err(|e| VaultError::Crypto(format!("TOTP init error: {}", e)))?;
+            Ok(totp.generate(now + period))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -177,6 +207,31 @@ mod tests {
         for (c, want) in expected.iter().enumerate() {
             assert_eq!(hotp_full(secret, "SHA1", c as u64).unwrap() % 1_000_000, *want);
         }
+    }
+
+    #[test]
+    fn next_hotp_is_counter_plus_one_rfc_vector() {
+        // Counter 0 → current "755224"; NEXT must be counter-1 "287082".
+        let acc = account("12345678901234567890", "SHA1", 6, "hotp", 0);
+        assert_eq!(next_code_for_account_at(&acc, 1_700_000_000).unwrap(), "287082");
+        // Saturating tail never panics.
+        let acc_max = account("12345678901234567890", "SHA1", 6, "hotp", u64::MAX);
+        assert_eq!(next_code_for_account_at(&acc_max, 0).unwrap().len(), 6);
+    }
+
+    #[test]
+    fn next_totp_and_steam_shapes() {
+        let totp = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        let next = next_code_for_account_at(&totp, 1_700_000_000).unwrap();
+        assert_eq!(next.len(), 6);
+        assert!(next.bytes().all(|b| b.is_ascii_digit()));
+        let steam = account("12345678901234567890", "SHA1", 5, "steam", 0);
+        let snext = next_code_for_account_at(&steam, 1_700_000_000).unwrap();
+        assert_eq!(snext.len(), 5);
+        assert!(snext.bytes().all(|b| STEAM_ALPHABET.contains(&b)));
+        // MD5 refuses loudly here too.
+        let md5 = account("12345678901234567890", "MD5", 6, "totp", 0);
+        assert!(next_code_for_account_at(&md5, 1_700_000_000).is_err());
     }
 
     #[test]

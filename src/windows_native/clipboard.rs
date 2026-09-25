@@ -132,6 +132,20 @@ fn read_text_locked() -> Option<String> {
     }
 }
 
+/// Unconditional flush: empties the clipboard NOW regardless of content.
+/// Used on vault lock / process exit so a copied secret never outlives the
+/// session. Best effort — a busy clipboard simply stays as-is.
+pub fn flush_now() {
+    if open_guarded().is_err() {
+        return;
+    }
+    // SAFETY: classic empty+close sequence; nothing retained.
+    unsafe {
+        EmptyClipboard();
+        CloseClipboard();
+    }
+}
+
 /// Copy `text` with Win+V + cloud exclusion, then auto-clear after
 /// `auto_clear_secs` — but ONLY if our secret is still on top.
 /// `on_cleared` runs on the worker thread (route UI via invoke_from_event_loop).

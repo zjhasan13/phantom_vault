@@ -23,6 +23,22 @@ fn split_hash(password: &str) -> (String, String) {
     (hex[..5].to_string(), hex[5..].to_string())
 }
 
+/// HTTP client with EXPLICIT proxy routing (HTTPS_PROXY → HTTP_PROXY →
+/// ALL_PROXY, Tor-friendly). reqwest defaults already auto-route, but pinning
+/// it here keeps the privacy contract visible, tested, and immune to
+/// default changes. `Proxy::all` still honors NO_PROXY from the environment.
+fn hibp_client() -> Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(15));
+    if let Some(proxy_url) = crate::sync::github_sync::effective_proxy() {
+        let proxy = reqwest::Proxy::all(proxy_url)
+            .map_err(|e| VaultError::Sync(format!("invalid proxy URL: {e}")))?;
+        builder = builder.proxy(proxy);
+    }
+    builder
+        .build()
+        .map_err(|e| VaultError::Sync(format!("HTTP client init failed: {e}")))
+}
+
 /// Query one password. Ok(Some(n)) = seen n times, Ok(None) = clean.
 pub async fn check_password(password: &str) -> Result<Option<u64>> {
     if password.is_empty() {
@@ -30,7 +46,9 @@ pub async fn check_password(password: &str) -> Result<Option<u64>> {
     }
     let (prefix, suffix) = split_hash(password);
     let url = format!("{RANGE_URL}{prefix}");
-    let body = reqwest::get(&url)
+    let body = hibp_client()?
+        .get(&url)
+        .send()
         .await
         .map_err(|e| VaultError::Sync(format!("breach API unreachable: {e}")))?
         .text()
@@ -79,6 +97,7 @@ pub struct BreachResult {
     pub breached: Option<u64>,
     pub reused: bool,
     pub weak: bool,
+    pub stale: bool,
 }
 
 #[derive(Debug, Default)]
@@ -88,17 +107,18 @@ pub struct HealthReport {
     pub breached: usize,
     pub reused: usize,
     pub weak: usize,
+    pub stale: usize,
 }
 
 impl HealthReport {
     pub fn headline(&self) -> String {
         format!(
-            "🛡️ Audited {} passwords — 🚨 {} breached, ⚠️ {} reused, ⚠️ {} weak",
-            self.audited, self.breached, self.reused, self.weak
+            "🛡️ Audited {} passwords — 🚨 {} breached, ⚠️ {} reused, ⚠️ {} weak, 🕰️ {} stale",
+            self.audited, self.breached, self.reused, self.weak, self.stale
         )
     }
 
-    /// Row badge per credential id (breach wins over reuse/weak).
+    /// Row badge per credential id (breach > reuse > weak > stale).
     pub fn badges(&self) -> HashMap<String, String> {
         let mut map = HashMap::new();
         for r in &self.results {
@@ -108,6 +128,8 @@ impl HealthReport {
                 "⚠️ Reused password".to_string()
             } else if r.weak {
                 "⚠️ Weak password".to_string()
+            } else if r.stale {
+                "🕰️ Over 6 months old".to_string()
             } else {
                 continue;
             };
@@ -165,6 +187,7 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
         let b = breached.get(&c.password).copied().flatten();
         let reused = freq.get(&c.password).copied().unwrap_or(0) > 1;
         let weak = is_weak(&c.password);
+        let stale = crate::models::is_stale(c.last_changed, crate::models::current_timestamp());
         if b.is_some() {
             report.breached += 1;
         }
@@ -174,12 +197,56 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
         if weak {
             report.weak += 1;
         }
+        if stale {
+            report.stale += 1;
+        }
         report.results.push(BreachResult {
             credential_id: c.id.clone(),
             title: c.title.clone(),
             breached: b,
             reused,
             weak,
+            stale,
+        });
+    }
+    report.audited = report.results.len();
+    report
+}
+
+/// Fully offline audit: reuse + weakness + staleness, zero network calls.
+/// Breach verdicts stay `None` (unknown) — badges surface reuse/weak/stale.
+/// Pure except for no I/O at all; safe for air-gapped machines.
+pub fn scan_vault_health_offline(credentials: &[Credential]) -> HealthReport {
+    let now = crate::models::current_timestamp();
+    let mut freq: HashMap<String, usize> = HashMap::new();
+    for c in credentials {
+        *freq.entry(c.password.clone()).or_insert(0) += 1;
+    }
+    let mut report = HealthReport::default();
+    let mut seen_ids = HashSet::new();
+    for c in credentials {
+        if !seen_ids.insert(c.id.clone()) {
+            continue;
+        }
+        let reused = freq.get(&c.password).copied().unwrap_or(0) > 1;
+        let weak = is_weak(&c.password);
+        let stale = crate::models::is_stale(c.last_changed, now);
+        if reused {
+            report.reused += 1;
+        }
+        if weak {
+            report.weak += 1;
+        }
+        if stale {
+            report.stale += 1;
+        }
+        report.results.push(BreachResult {
+            credential_id: c.id.clone(),
+            title: c.title.clone(),
+            breached: None,
+            reused,
+            weak,
+            stale,
         });
     }
     report.audited = report.results.len();
@@ -207,6 +274,59 @@ mod tests {
     }
 
     #[test]
+    fn offline_audit_never_marks_breach() {
+        use crate::models::{Credential, current_timestamp};
+        let creds = vec![
+            Credential {
+                id: "a".into(),
+                title: "A".into(),
+                username: "u".into(),
+                password: "password".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 1, // ancient → stale
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            },
+            Credential {
+                id: "b".into(),
+                title: "B".into(),
+                username: "u".into(),
+                password: "password".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: current_timestamp(),
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            },
+        ];
+        let r = scan_vault_health_offline(&creds);
+        assert_eq!(r.audited, 2);
+        assert_eq!(r.breached, 0);
+        assert_eq!(r.reused, 2);
+        assert_eq!(r.weak, 2);
+        assert_eq!(r.stale, 1);
+        assert!(r.results.iter().all(|x| x.breached.is_none()));
+        assert!(r.headline().contains("stale"));
+    }
+
+    #[test]
     fn badges_prefer_breach() {
         let r = HealthReport {
             results: vec![BreachResult {
@@ -215,15 +335,37 @@ mod tests {
                 breached: Some(3_200_000),
                 reused: true,
                 weak: true,
+                stale: true,
             }],
             audited: 1,
             breached: 1,
             reused: 1,
             weak: 1,
+            stale: 1,
         };
         let b = r.badges();
         assert_eq!(b["a"], "🚨 Leaked in 3.2M breaches! Change now");
         assert!(r.headline().contains('1'));
+    }
+
+    #[test]
+    fn stale_only_gets_time_badge() {
+        let r = HealthReport {
+            results: vec![BreachResult {
+                credential_id: "s".into(),
+                title: "Old".into(),
+                breached: None,
+                reused: false,
+                weak: false,
+                stale: true,
+            }],
+            audited: 1,
+            breached: 0,
+            reused: 0,
+            weak: 0,
+            stale: 1,
+        };
+        assert_eq!(r.badges()["s"], "🕰️ Over 6 months old");
     }
 
     // Live-API test, ignored by default (needs network).

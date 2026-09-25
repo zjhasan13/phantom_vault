@@ -45,6 +45,28 @@ impl CustomFieldType {
     }
 }
 
+/// Base64 codec for raw byte fields, used via `#[serde(with = "serde_b64")]`.
+/// serde_json has no native bytes type — without this, JSON would balloon
+/// every byte into a JSON number (~4-6x). STANDARD alphabet is JSON-safe.
+/// Bincode ignores the attribute harmlessly (still length-prefixed bytes).
+pub mod serde_b64 {
+    use base64::Engine as _;
+
+    const ENGINE: base64::engine::general_purpose::GeneralPurpose =
+        base64::engine::general_purpose::STANDARD;
+
+    pub fn serialize<S: serde::Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&ENGINE.encode(v))
+    }
+
+    pub fn deserialize<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
+        let s: String = serde::Deserialize::deserialize(d)?;
+        ENGINE
+            .decode(s.trim())
+            .map_err(|e| serde::de::Error::custom(format!("base64 bytes: {e}")))
+    }
+}
+
 /// Encrypted file attachment (stored sealed inside the vault container).
 /// 5MB per-file cap enforced at ingestion; never written to disk plaintext.
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -53,10 +75,65 @@ pub struct EncryptedAttachment {
     pub filename: String,
     pub mime_type: String,
     pub size_bytes: usize,
+    #[serde(with = "serde_b64")]
     pub data: Vec<u8>,
 }
 
 pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
+
+/// One retired password + when it was replaced. Cap enforced by `push_history`.
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default, PartialEq)]
+pub struct PasswordHistoryEntry {
+    pub password: String,
+    pub changed_at: u64,
+}
+
+/// Rotation depth: how many retired passwords a login remembers.
+pub const PASSWORD_HISTORY_KEEP: usize = 5;
+
+/// Prepend `old_pw` (with `now`) and trim to the newest KEEP entries.
+/// Empty passwords are never recorded. Pure — unit tested.
+pub fn push_history(
+    hist: &mut Vec<PasswordHistoryEntry>,
+    old_pw: &str,
+    now: u64,
+) {
+    if old_pw.is_empty() {
+        return;
+    }
+    hist.insert(
+        0,
+        PasswordHistoryEntry {
+            password: old_pw.to_string(),
+            changed_at: now,
+        },
+    );
+    hist.truncate(PASSWORD_HISTORY_KEEP);
+}
+
+/// Human "Changed … ago" for history rows. Pure — unit tested.
+pub fn ago(ts: u64, now: u64) -> String {
+    let d = now.saturating_sub(ts);
+    const MIN: u64 = 60;
+    const HOUR: u64 = 3600;
+    const DAY: u64 = 86400;
+    const WEEK: u64 = 7 * DAY;
+    if d < MIN {
+        "just now".to_string()
+    } else if d < HOUR {
+        format!("{} min ago", d / MIN)
+    } else if d < DAY {
+        format!("{}h ago", d / HOUR)
+    } else if d < WEEK {
+        format!("{}d ago", d / DAY)
+    } else if d < 30 * DAY {
+        format!("{}w ago", d / WEEK)
+    } else if d < 365 * DAY {
+        format!("{}mo ago", d / (30 * DAY))
+    } else {
+        format!("{}y ago", d / (365 * DAY))
+    }
+}
 
 /// Rich login item (Bitwarden parity).
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
@@ -82,6 +159,37 @@ pub struct Credential {
     pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Unix seconds of the last password set. Refreshed on add/edit;
+    /// unknown-age legacy items stamp the migration moment (rotation clock
+    /// starts at upgrade rather than mass-flagging everything stale).
+    #[serde(default = "current_timestamp")]
+    pub last_changed: u64,
+    /// Retired passwords, newest first (capped by `push_history`).
+    #[serde(default)]
+    pub password_history: Vec<PasswordHistoryEntry>,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
+}
+
+/// Seconds in 180 days — past this a password is "stale" (rotation nudge).
+pub const STALE_AFTER_SECS: u64 = 180 * 24 * 3600;
+
+/// Current Unix timestamp (seconds). Zero only when the clock is broken.
+pub fn current_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// True when `now - last_changed` exceeds the 180-day rotation window.
+/// A zero stamp (clock failure) never counts as stale. Pure — unit tested.
+pub fn is_stale(last_changed: u64, now: u64) -> bool {
+    last_changed != 0 && now.saturating_sub(last_changed) > STALE_AFTER_SECS
 }
 
 /// 2FA authenticator account — algorithm/type/counter ride along so imports
@@ -123,6 +231,12 @@ pub struct SoftwareLicense {
     pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
 }
 
 /// সিকিউর নোটস
@@ -135,6 +249,12 @@ pub struct SecureNote {
     pub folder: String,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -152,6 +272,12 @@ pub struct PaymentCard {
     pub notes: String,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -169,6 +295,32 @@ pub struct IdentityItem {
     pub notes: String,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
+}
+
+/// Resident WebAuthn/FIDO2 credential (Ed25519). The private seed never
+/// leaves the encrypted container; assertions are signed in-process and the
+/// counter bumps + re-seals on every use (clone detection by the RP).
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default, PartialEq)]
+pub struct PasskeyItem {
+    pub id: String,
+    pub rp_id: String, // Relying party (e.g. "github.com", "google.com")
+    pub user_name: String,
+    #[serde(with = "serde_b64")]
+    pub user_handle: Vec<u8>,
+    #[serde(with = "serde_b64")]
+    pub credential_id: Vec<u8>,
+    #[serde(with = "serde_b64")]
+    pub private_key_pkcs8: Vec<u8>,
+    #[serde(with = "serde_b64")]
+    pub public_key_der: Vec<u8>,
+    pub sign_count: u32,
+    pub created_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -184,6 +336,12 @@ pub struct SshKeyItem {
     pub notes: String,
     #[serde(default)]
     pub travel_safe: bool,
+    /// Pinned by the user (sidebar ⭐ filter).
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
 }
 
 /// সম্পূর্ণ মূল ভল্ট কন্টেইনার.
@@ -204,6 +362,10 @@ pub struct Vault {
     pub identities: Vec<IdentityItem>,
     #[serde(default)]
     pub ssh_keys: Vec<SshKeyItem>,
+    /// Resident passkeys. `serde(default)` + Gen-chain `From` keep pre-passkey
+    /// vaults loading (same pattern as cards/identities/ssh_keys).
+    #[serde(default)]
+    pub passkeys: Vec<PasskeyItem>,
 }
 
 impl Vault {
@@ -218,6 +380,7 @@ impl Vault {
             cards: Vec::new(),
             identities: Vec::new(),
             ssh_keys: Vec::new(),
+            passkeys: Vec::new(),
         }
     }
 
@@ -284,6 +447,7 @@ impl Vault {
 
     /// Remove any item by (kind, id). Kinds: 1 login, 2 license, 3 note,
     /// 4 card, 5 identity, 6 ssh. Returns true if something was removed.
+    /// Permanent removal (Trash second phase + empty-trash internals).
     /// Pure — unit tested.
     pub fn delete_item(&mut self, kind: i32, id: &str) -> bool {
         fn drop_by_id<T>(v: &mut Vec<T>, id: &str, get: impl Fn(&T) -> &str) -> bool {
@@ -301,7 +465,106 @@ impl Vault {
             _ => false,
         }
     }
+
+    /// Trash state lookup: None = missing item, Some(false) = active,
+    /// Some(true) = in trash. Pure.
+    pub fn is_trashed(&self, kind: i32, id: &str) -> Option<bool> {
+        let flag = match kind {
+            1 => self.credentials.iter().find(|c| c.id == id)?.deleted_at,
+            2 => self.licenses.iter().find(|l| l.id == id)?.deleted_at,
+            3 => self.notes.iter().find(|n| n.id == id)?.deleted_at,
+            4 => self.cards.iter().find(|k| k.id == id)?.deleted_at,
+            5 => self.identities.iter().find(|i| i.id == id)?.deleted_at,
+            6 => self.ssh_keys.iter().find(|s| s.id == id)?.deleted_at,
+            _ => return None,
+        };
+        Some(flag.is_some())
+    }
+
+    /// Soft-delete: stamp `deleted_at`, keep the bytes. Pure — unit tested.
+    pub fn trash_item(&mut self, kind: i32, id: &str, now: u64) -> bool {
+        let slot: Option<&mut Option<u64>> = match kind {
+            1 => self.credentials.iter_mut().find(|c| c.id == id).map(|c| &mut c.deleted_at),
+            2 => self.licenses.iter_mut().find(|l| l.id == id).map(|l| &mut l.deleted_at),
+            3 => self.notes.iter_mut().find(|n| n.id == id).map(|n| &mut n.deleted_at),
+            4 => self.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.deleted_at),
+            5 => self.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.deleted_at),
+            6 => self.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.deleted_at),
+            _ => None,
+        };
+        match slot {
+            Some(s) => {
+                *s = Some(now);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Restore a trashed item to the active vault. Pure — unit tested.
+    pub fn restore_item(&mut self, kind: i32, id: &str) -> bool {
+        let slot: Option<&mut Option<u64>> = match kind {
+            1 => self.credentials.iter_mut().find(|c| c.id == id).map(|c| &mut c.deleted_at),
+            2 => self.licenses.iter_mut().find(|l| l.id == id).map(|l| &mut l.deleted_at),
+            3 => self.notes.iter_mut().find(|n| n.id == id).map(|n| &mut n.deleted_at),
+            4 => self.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.deleted_at),
+            5 => self.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.deleted_at),
+            6 => self.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.deleted_at),
+            _ => None,
+        };
+        match slot {
+            Some(s) if s.is_some() => {
+                *s = None;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Total items with `deleted_at.is_some()` across all 6 vectors.
+    pub fn trash_count(&self) -> usize {
+        self.credentials.iter().filter(|c| c.deleted_at.is_some()).count()
+            + self.licenses.iter().filter(|l| l.deleted_at.is_some()).count()
+            + self.notes.iter().filter(|n| n.deleted_at.is_some()).count()
+            + self.cards.iter().filter(|k| k.deleted_at.is_some()).count()
+            + self.identities.iter().filter(|i| i.deleted_at.is_some()).count()
+            + self.ssh_keys.iter().filter(|s| s.deleted_at.is_some()).count()
+    }
+
+    /// Drop every trashed item (empty-trash / 30-day purge share this).
+    /// Returns the number destroyed. Pure — unit tested.
+    pub fn empty_trash(&mut self) -> usize {
+        let before = self.trash_count();
+        self.credentials.retain(|c| c.deleted_at.is_none());
+        self.licenses.retain(|l| l.deleted_at.is_none());
+        self.notes.retain(|n| n.deleted_at.is_none());
+        self.cards.retain(|k| k.deleted_at.is_none());
+        self.identities.retain(|i| i.deleted_at.is_none());
+        self.ssh_keys.retain(|s| s.deleted_at.is_none());
+        before
+    }
+
+    /// Destroy trashed items older than `retention_secs`. Pure — unit tested.
+    pub fn purge_expired_trash(&mut self, now: u64, retention_secs: u64) -> usize {
+        let fresh = |t: Option<u64>| -> bool {
+            match t {
+                None => true, // active items always survive
+                Some(ts) => now.saturating_sub(ts) < retention_secs,
+            }
+        };
+        let before = self.trash_count();
+        self.credentials.retain(|c| fresh(c.deleted_at));
+        self.licenses.retain(|l| fresh(l.deleted_at));
+        self.notes.retain(|n| fresh(n.deleted_at));
+        self.cards.retain(|k| fresh(k.deleted_at));
+        self.identities.retain(|i| fresh(i.deleted_at));
+        self.ssh_keys.retain(|s| fresh(s.deleted_at));
+        before - self.trash_count()
+    }
 }
+
+/// Trash retention: trashed items are shredded after 30 days.
+pub const TRASH_RETENTION_SECS: u64 = 30 * 24 * 3600;
 
 pub fn eff_folder_name(folder: &str) -> &str {
     if folder.trim().is_empty() {
@@ -375,6 +638,11 @@ impl From<VaultLegacy> for Vault {
                 
                     attachments: Vec::new(),
                     travel_safe: false,
+                    // Unknown age: rotation clock starts at migration.
+                    last_changed: current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             totp_accounts: old.totp_accounts,
@@ -389,6 +657,8 @@ impl From<VaultLegacy> for Vault {
                     folder: DEFAULT_FOLDER.to_string(),
                     attachments: Vec::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             notes: old
@@ -400,11 +670,15 @@ impl From<VaultLegacy> for Vault {
                     content: n.content,
                     folder: DEFAULT_FOLDER.to_string(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             cards: Vec::new(),
             identities: Vec::new(),
             ssh_keys: Vec::new(),
+            // Pre-passkey generation: nothing to migrate, start empty.
+            passkeys: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -494,6 +768,11 @@ impl From<VaultGen1> for Vault {
                 
                     attachments: Vec::new(),
                     travel_safe: false,
+                    // Unknown age: rotation clock starts at migration.
+                    last_changed: current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             totp_accounts: old.totp_accounts,
@@ -513,6 +792,8 @@ impl From<VaultGen1> for Vault {
                     folder: k.folder,
                     notes: String::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             identities: old
@@ -529,6 +810,8 @@ impl From<VaultGen1> for Vault {
                     folder: i.folder,
                     notes: String::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             ssh_keys: old
@@ -543,8 +826,12 @@ impl From<VaultGen1> for Vault {
                     folder: s.folder,
                     notes: String::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
+            // Pre-passkey generation: nothing to migrate, start empty.
+            passkeys: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -658,6 +945,11 @@ impl From<VaultGen2> for Vault {
                     reprompt: c.reprompt,
                     attachments: Vec::new(),
                     travel_safe: false,
+                    // Unknown age: rotation clock starts at migration.
+                    last_changed: current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             totp_accounts: old.totp_accounts,
@@ -672,6 +964,8 @@ impl From<VaultGen2> for Vault {
                     folder: l.folder,
                     attachments: Vec::new(),
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             notes: old
@@ -683,6 +977,8 @@ impl From<VaultGen2> for Vault {
                     content: n.content,
                     folder: n.folder,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             cards: old
@@ -699,6 +995,8 @@ impl From<VaultGen2> for Vault {
                     folder: k.folder,
                     notes: k.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             identities: old
@@ -715,6 +1013,8 @@ impl From<VaultGen2> for Vault {
                     folder: i.folder,
                     notes: i.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
             ssh_keys: old
@@ -729,8 +1029,12 @@ impl From<VaultGen2> for Vault {
                     folder: s.folder,
                     notes: s.notes,
                     travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
                 })
                 .collect(),
+            // Pre-passkey generation: nothing to migrate, start empty.
+            passkeys: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -789,6 +1093,8 @@ impl From<VaultGen3> for Vault {
             cards: old.cards,
             identities: old.identities,
             ssh_keys: old.ssh_keys,
+            // Pre-passkey generation: nothing to migrate, start empty.
+            passkeys: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -817,6 +1123,10 @@ mod tests {
         
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
         v.cards.push(PaymentCard {
             id: "k1".into(),
@@ -829,6 +1139,8 @@ mod tests {
             folder: "Finance".into(),
             notes: String::new(),
             travel_safe: false,
+            favorite: false,
+            deleted_at: None,
         });
         assert!(v.delete_item(1, "c1"));
         assert!(v.credentials.is_empty());
@@ -861,6 +1173,73 @@ mod tests {
     }
 
     #[test]
+    fn trash_lifecycle_trash_restore_empty() {
+        let mut v = Vault::new();
+        v.credentials.push(Credential {
+            id: "t1".into(),
+            title: "t".into(),
+            username: "u".into(),
+            password: "p".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        assert_eq!(v.is_trashed(1, "t1"), Some(false));
+        assert_eq!(v.is_trashed(1, "nope"), None);
+        assert_eq!(v.is_trashed(9, "t1"), None);
+        assert!(v.trash_item(1, "t1", 1000));
+        assert!(!v.trash_item(1, "nope", 1000));
+        assert_eq!(v.is_trashed(1, "t1"), Some(true));
+        assert_eq!(v.trash_count(), 1);
+        // Restoring an active item is a no-op false.
+        assert!(v.restore_item(1, "t1"));
+        assert_eq!(v.is_trashed(1, "t1"), Some(false));
+        assert!(!v.restore_item(1, "t1"));
+        assert_eq!(v.trash_count(), 0);
+        // Re-trash + empty destroys.
+        assert!(v.trash_item(1, "t1", 2000));
+        assert_eq!(v.empty_trash(), 1);
+        assert!(v.credentials.is_empty());
+        assert_eq!(v.trash_count(), 0);
+    }
+
+    #[test]
+    fn purge_expired_keeps_fresh_trash() {
+        let mut v = Vault::new();
+        // Old trashed at T0, fresh 2 days later: a 29d/31d window splits them.
+        const T0: u64 = 1_000_000;
+        const DAY: u64 = 24 * 3600;
+        for (id, ts) in [("old", T0), ("fresh", T0 + 2 * DAY)] {
+            v.notes.push(SecureNote {
+                id: id.into(),
+                title: "t".into(),
+                content: "c".into(),
+                folder: "General".into(),
+                travel_safe: false,
+                favorite: false,
+                deleted_at: Some(ts),
+            });
+        }
+        // Old is 29d old, fresh 27d: nothing expires yet.
+        assert_eq!(v.purge_expired_trash(T0 + 29 * DAY, TRASH_RETENTION_SECS), 0);
+        assert_eq!(v.trash_count(), 2);
+        // Old hits 31d (fresh only 29d): only the old one is shredded.
+        assert_eq!(v.purge_expired_trash(T0 + 31 * DAY, TRASH_RETENTION_SECS), 1);
+        assert_eq!(v.notes.len(), 1);
+        assert_eq!(v.notes[0].id, "fresh");
+    }
+
+    #[test]
     fn folder_engine_validates() {
         let mut v = Vault::new();
         assert!(v.add_folder("Side").is_ok());
@@ -889,10 +1268,77 @@ mod tests {
         
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
         v.ensure_folders();
         assert!(v.folders.contains(&"SecretLab".to_string()));
         assert!(v.folders.contains(&"General".to_string()));
+    }
+
+    #[test]
+    fn history_caps_at_five_and_skips_empty() {
+        let mut h = Vec::new();
+        push_history(&mut h, "", 100);
+        assert!(h.is_empty());
+        for i in 1..=7u64 {
+            push_history(&mut h, &format!("pw{i}"), 1000 + i);
+        }
+        assert_eq!(h.len(), PASSWORD_HISTORY_KEEP);
+        assert_eq!(h[0].password, "pw7");
+        assert_eq!(h[0].changed_at, 1007);
+        assert_eq!(h[4].password, "pw3");
+    }
+
+    #[test]
+    fn ago_buckets() {
+        let now = 2_000_000_000u64;
+        assert_eq!(ago(now, now), "just now");
+        assert_eq!(ago(now - 90, now), "1 min ago");
+        assert_eq!(ago(now - 7200, now), "2h ago");
+        assert_eq!(ago(now - 3 * 86400, now), "3d ago");
+        assert_eq!(ago(now - 14 * 86400, now), "2w ago");
+        assert_eq!(ago(now - 60 * 86400, now), "2mo ago");
+        assert_eq!(ago(now - 400 * 86400, now), "1y ago");
+    }
+
+    #[test]
+    fn staleness_window() {
+        let now = current_timestamp();
+        assert!(now > 0);
+        assert!(!is_stale(now, now));
+        assert!(!is_stale(now.saturating_sub(STALE_AFTER_SECS), now));
+        assert!(is_stale(now.saturating_sub(STALE_AFTER_SECS + 1), now));
+        assert!(is_stale(1, now));
+        assert!(!is_stale(0, now), "zero stamp (broken clock) never counts");
+    }
+
+    #[test]
+    fn gen1_migration_stamps_rotation_clock() {
+        // Pre-age-tracking vaults must load AND enter the rotation scheme.
+        let old = VaultGen1 {
+            version: 1,
+            credentials: vec![Gen1Credential {
+                id: "g".into(),
+                title: "t".into(),
+                username: "u".into(),
+                password: "p".into(),
+                url: String::new(),
+                notes: String::new(),
+                folder: "General".into(),
+            }],
+            totp_accounts: Vec::new(),
+            licenses: Vec::new(),
+            notes: Vec::new(),
+            cards: Vec::new(),
+            identities: Vec::new(),
+            ssh_keys: Vec::new(),
+        };
+        let v: Vault = old.into();
+        assert!(v.credentials[0].last_changed > 0);
+        assert!(!is_stale(v.credentials[0].last_changed, current_timestamp()));
     }
 
     #[test]

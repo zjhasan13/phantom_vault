@@ -11,3 +11,6 @@ crash.log
 canary_alert.log
 duress.dpapi
 *.bak.enc
+# Runtime artifacts: access trail (metadata) + dev debug logs. Never push.
+access.log
+debug.log

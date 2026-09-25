@@ -65,6 +65,7 @@ phantom_vault/
 │   │   ├── pq_hybrid.rs       # NIST FIPS 203 ML-KEM-768 hybrid engine (PV2 envelope)
 │   │   ├── generator.rs       # Complex symbol + 7776-word EFF Diceware generator
 │   │   ├── memory.rs          # Zeroize allocators, DPAPI guard, VirtualLock paging protection
+│   │   ├── passkey.rs         # Ed25519 resident WebAuthn keys, RFC 8410 DER codec, assertions
 │   │   ├── storage.rs         # Portable versioned save/load, auto-migration, DoD shredder hook
 │   │   └── models.rs          # Credential, PaymentCard, IdentityItem, SshKeyItem, Passkey, Folder
 │   ├── authenticator/
@@ -85,6 +86,7 @@ phantom_vault/
 │   │   ├── mod.rs
 │   │   ├── hello.rs           # Windows Hello biometrics (WinRT UserConsentVerifier bridge)
 │   │   ├── display_guard.rs   # SetWindowDisplayAffinity (WDA_MONITOR GDI/OBS/ShareX blackout)
+│   │   ├── device_bind.rs     # DPAPI-sealed MachineGuid binding check (warn-only anti-clone tripwire)
 │   │   ├── clipboard.rs       # Win+V exclusion formats, busy-retry, guarded 15s auto-clear
 │   │   ├── autotype.rs        # Win32 SendInput unicode keystroke engine with settle timing
 │   │   ├── desktop_autofill.rs# Windows UI Automation (UIA) focused field probe
@@ -109,6 +111,7 @@ phantom_vault/
 │   │   ├── steganography.rs   # LSB PNG image locker (hide vault in carrier PNG)
 │   │   ├── shredder.rs        # DoD 5220.22-M 3-pass disk overwrite (0x00, 0xFF, OsRng)
 │   │   ├── shamir.rs          # Shamir's Secret Sharing (3-of-5 threshold, GF(2^8) + EFF words)
+│   │   ├── pdf_sheet.rs       # Offline 1-page printable emergency recovery sheet (raw PDF 1.4)
 │   │   └── travel_mode.rs     # Temporary vault stripping/hiding for border crossing
 │   └── sync/
 │       ├── mod.rs
@@ -130,6 +133,8 @@ Linked: Live mirror referencing username or password without duplicating secrets
 Dynamic Custom Folders: Built-in folders + dynamic user-created folders (+ Folder), folder assignment, folder filter.
 Item Detail & Inspection Modal: Full modal view on item click, eye toggles, copy buttons, ⚡ Fill button, ✏️ Edit, and 🗑️ Delete.
 Master Password Reprompt: Gate sensitive items behind an in-memory master password re-prompt before viewing/copying.
+Favorites & Trash: Star pins with sidebar filter; two-phase soft-delete (30-day DoD-shredded Trash with restore).
+Password History & Rotation: Last-5 retired passwords per login with 6-month stale warnings.
 Passkey Support (FIDO2 / WebAuthn): Store and manage resident credentials / passkeys for passwordless web authentication.
 Multi-Type Vault Items:
 📜 Software Licenses: App name, license key, purchase date, expiry date, notes, receipt attachments.
@@ -196,6 +201,7 @@ Secure File Shredder (DoD 5220.22-M): 3-pass disk overwrite (0x00, 0xFF, OsRng) 
 Travel Mode: Border-control mode temporarily hiding flagged vaults/items.
 Category 7: Privacy, Sync & Disaster Recovery
 Private GitHub Repo Sync: Zero-knowledge encrypted sync using octocrab. Automate commit & push on changes, giving free unlimited version history.
+Sync Proxy & Metadata Minimization: Fixed generic commit messages (no timestamps/counts/names); sync and HIBP traffic honor HTTPS_PROXY/HTTP_PROXY/ALL_PROXY (Tor-friendly) with proxy presence surfaced in sync status, never the URL.
 Shamir's Secret Sharing (3-of-5): Mathematical Galois Field 
 G
 F
@@ -216,6 +222,30 @@ Privacy Email Aliases: Addy.io / SimpleLogin API integration for throwaway forwa
 Zero-Footprint Portable Mode: Run completely within a RAM-disk from a USB drive without leaving temporary SSD artifacts.
 Private Metadata / Favicon Fetcher: Anonymous logo downloading via DNS-over-HTTPS (DoH) or Tor.
 Password Health & Breach Checker: HaveIBeenPwned k-Anonymity API (first 5 SHA-1 characters, no plaintext leakage).
+Offline Health Audit: Fully local reuse/weakness scan with zero network calls for air-gapped machines (breach verdicts reported as unknown).
+Category 8: Extended Session, Process & Lifecycle Hardening (Architect's Addenda)
+Session & Locking:
+Workstation-Lock Auto-Lock: Vault locks instantly on Win+L / WTS session-lock events, not only on timer expiry.
+RDP & Screensaver Auto-Lock: Remote-desktop disconnect and screensaver activation trigger the same RAM-wiping lock path.
+Clipboard Flush on Lock/Exit: Locking the vault or exiting the process guarded-clears any resident secret from the clipboard.
+Blur on Focus Loss: Secrets auto-mask the moment the window loses focus (Alt+Tab / shoulder-surfing defense).
+Process & OS Hardening:
+DLL-Injection Block: SetProcessMitigationPolicy (Microsoft-only binary signatures) refuses non-Microsoft DLLs in our process.
+Crash-Dump Exclusion: WerAddExcludedApplication keeps full-memory crash dumps (and embedded secrets) off Microsoft servers.
+Admin-Elevation Warning: Loud startup warning when running elevated, with portable-mode guidance (elevated = larger blast radius).
+Startup Self-Integrity Check: DPAPI-sealed binary hash verified at launch; tampering raises a blocking warning.
+IME Off in Password Fields: Cloud-IME keystroke leakage disabled in every password input (bank-grade practice).
+Authentication Strength:
+KDF Pepper: DPAPI-sealed machine-bound pepper mixed into the Argon2id input with transparent legacy re-seal migration (stolen-file brute-force resistance).
+Password + Hello AND-Mode: Optional toggle requiring BOTH master password and Windows Hello (default remains OR-mode).
+Brute-Force Backoff: Persisted wrong-attempt counter with growing unlock delay (plaintext counter, never secrets).
+Secure Desktop Unlock: KeePass-style isolated-desktop master-password prompt immune to user-mode keyloggers and scrapers.
+Data Lifecycle & Visibility:
+Versioned Backup Rotation: Last N encrypted backups retained with DoD shred-rotation of expired generations.
+Shred Import Source: After successful plaintext import (CSV/JSON), prompt to DoD-shred the lingering source file.
+Password Age Reminders: Per-item last-changed tracking with stale-password (>1yr) warning badges in audit reports.
+Tamper-Evident Access Log: Hash-chained append-only log of unlock/copy/export events (metadata only, never secrets) for coercion detection.
+Global Offline Kill-Switch: Single master toggle silencing ALL network traffic (sync + HIBP) for hostile networks and border crossings.
 4. CODING CONVENTIONS FOR AI AGENTS
 DEPENDENCY SPECIFICATIONS (Must use current stable versions):
 argon2 = "0.5"
@@ -263,5 +293,6 @@ AGENT WORKFLOW & VERIFICATION:
 Build iteratively module by module.
 Run cargo check and cargo test after implementing each module.
 Always retain existing passing unit tests.
+Supply-chain audit: `cargo audit` (RustSec) runs in CI on every push/PR (`.github/workflows/security.yml`); no known-RUSTSEC-vulnerable dependency may ship.
 Never stub out security functions with "TODO" or insecure dummy fallbacks.
 Keep comments concise and maintain maximum code clarity.
