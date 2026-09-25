@@ -1,5 +1,10 @@
 pub mod autotype;
 pub mod clipboard;
 pub mod desktop_autofill;
+pub mod device_bind;
 pub mod display_guard;
 pub mod hello;
+pub mod ime_guard;
+pub mod native_host;
+pub mod process_guard;
+pub mod session_lock;

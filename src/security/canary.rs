@@ -45,6 +45,10 @@ pub fn plant_canary(vault: &mut Vault) -> String {
     
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
     title
 }
@@ -98,6 +102,10 @@ mod tests {
         
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
         assert!(find_canary_by_password(&v, "p").is_none());
     }

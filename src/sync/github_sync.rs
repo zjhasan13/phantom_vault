@@ -29,6 +29,35 @@ fn clean(s: &str) -> String {
     s.trim().to_string()
 }
 
+/// Proxy env lookup (pure — unit tested). Precedence: HTTPS_PROXY,
+/// HTTP_PROXY, ALL_PROXY (upper- then lower-case). Returns the proxy URL.
+/// Both sync (octocrab → reqwest defaults) and the HIBP client route
+/// through it; Tor works by pointing these at a local tor proxy.
+pub fn proxy_from_vars(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    for key in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+    ] {
+        if let Some(v) = get(key) {
+            let v = v.trim().to_string();
+            if !v.is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Live proxy detection for status display. Never logged with credentials —
+/// callers must only show presence, never the URL (it may embed user:pass).
+pub fn effective_proxy() -> Option<String> {
+    proxy_from_vars(|k| std::env::var(k).ok())
+}
+
 /// Persist `owner/repo` (not sensitive) as plain `owner/repo` text.
 pub fn save_repo(owner: &str, repo: &str) -> Result<()> {
     let owner = clean(owner);
@@ -222,4 +251,42 @@ pub fn load_head_sha() -> Option<String> {
 
 pub fn store_head_sha(sha: &str) {
     let _ = std::fs::write(SHA_FILE, sha);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn vars<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        move |k| {
+            pairs
+                .iter()
+                .find(|(key, _)| *key == k)
+                .map(|(_, v)| v.to_string())
+        }
+    }
+
+    #[test]
+    fn proxy_prefers_https_over_http() {
+        let get = vars(&[
+            ("HTTPS_PROXY", "http://127.0.0.1:8080"),
+            ("HTTP_PROXY", "http://127.0.0.1:9090"),
+        ]);
+        assert_eq!(
+            proxy_from_vars(get).as_deref(),
+            Some("http://127.0.0.1:8080")
+        );
+    }
+
+    #[test]
+    fn proxy_falls_back_and_skips_blanks() {
+        let get = vars(&[("HTTPS_PROXY", "   "), ("all_proxy", "socks5h://127.0.0.1:9050")]);
+        assert_eq!(
+            proxy_from_vars(get).as_deref(),
+            Some("socks5h://127.0.0.1:9050")
+        );
+        let empty = HashMap::<String, String>::new();
+        assert!(proxy_from_vars(|k| empty.get(k).cloned()).is_none());
+    }
 }

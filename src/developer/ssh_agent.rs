@@ -20,6 +20,36 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 pub const DEFAULT_PIPE: &str = r"\\.\pipe\phantom-vault-ssh-agent";
 const MAX_MSG: usize = 1024 * 1024;
 
+/// Resolve the pipe name (env override mirrors `serve_cli`).
+pub fn pipe_name() -> String {
+    std::env::var("PHANTOM_SSH_PIPE").unwrap_or_else(|_| DEFAULT_PIPE.to_string())
+}
+
+/// Probe whether an agent is listening (status badge only — connects and
+/// drops immediately, no auth, no requests sent). The open runs on a blocking
+/// thread under a 400 ms timeout (a busy pipe would otherwise block); builds
+/// its own throwaway runtime, so plain `#[test]` callers never nest runtimes.
+pub fn is_serving(pipe_name: &str) -> bool {
+    let rt = match tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(_) => return false,
+    };
+    rt.block_on(async {
+        let name = pipe_name.to_string();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(400),
+            tokio::task::spawn_blocking(move || {
+                tokio::net::windows::named_pipe::ClientOptions::new().open(&name)
+            }),
+        )
+        .await
+        .is_ok_and(|r| matches!(r, Ok(Ok(_))))
+    })
+}
+
 const MSG_FAILURE: u8 = 5;
 const MSG_REQ_IDENTITIES: u8 = 11;
 const MSG_IDENTITIES_ANSWER: u8 = 12;
@@ -214,7 +244,7 @@ pub fn serve_cli() -> i32 {
         eprintln!("ssh-agent: no ed25519 keys found — add a credential titled \"SSH: <name>\" holding the OpenSSH private key.");
         return 2;
     }
-    let pipe_name = std::env::var("PHANTOM_SSH_PIPE").unwrap_or_else(|_| DEFAULT_PIPE.to_string());
+    let pipe_name = pipe_name();
     let rt = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
@@ -325,6 +355,35 @@ mod tests {
     }
 
     #[test]
+    fn probe_reports_absent_pipe() {
+        assert!(!is_serving(r"\\.\pipe\pv-test-definitely-absent-9f3k2"));
+    }
+
+    #[test]
+    fn probe_sees_live_pipe() {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        let name = format!(r"\\.\pipe\pv-test-live-{}", std::process::id());
+        // A client open() only completes once the server accepts — mirror a
+        // real agent with a background acceptor thread.
+        let name_in_thread = name.clone();
+        let server_thread = std::thread::spawn(move || {
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap();
+            rt.block_on(async {
+                // NOTE: create() itself needs the reactor context in tokio 1.53+.
+                let server = ServerOptions::new().create(&name_in_thread).unwrap();
+                let _ = server.connect().await;
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            });
+        });
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        assert!(is_serving(&name));
+        let _ = server_thread.join();
+    }
+
+    #[test]
     fn collect_skips_non_ssh_titles() {
         use crate::models::{Credential, Vault};
         let mut v = Vault::new();
@@ -344,6 +403,10 @@ mod tests {
         
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
         assert!(collect_keys(&v).is_empty());
     }

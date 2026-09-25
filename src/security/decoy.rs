@@ -52,6 +52,10 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
     
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
     vault.credentials.push(Credential {
         id: "d2".into(),
@@ -69,6 +73,10 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
     
                     attachments: Vec::new(),
                     travel_safe: false,
+                    last_changed: crate::models::current_timestamp(),
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
                 });
     vault.totp_accounts.push(TotpAccount {
         id: "d3".into(),

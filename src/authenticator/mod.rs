@@ -1,3 +1,4 @@
+pub mod camera_scanner;
 pub mod google_migration;
 pub mod qr_scanner;
 
