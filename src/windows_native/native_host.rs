@@ -149,11 +149,13 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let Some(chal) = b64_any(challenge) else {
                 return no("challenge is not base64");
             };
+            // Trashed passkeys never sign: a soft-deleted credential is
+            // out of the authentication set until restored in the hub.
             let mut matches: Vec<usize> = vault
                 .passkeys
                 .iter()
                 .enumerate()
-                .filter(|(_, p)| p.rp_id.to_lowercase() == rp)
+                .filter(|(_, p)| p.deleted_at.is_none() && p.rp_id.to_lowercase() == rp)
                 .map(|(i, _)| i)
                 .collect();
             if matches.is_empty() {
@@ -559,6 +561,30 @@ mod tests {
         )
         .unwrap();
         assert!(crate::core::passkey::verify_bytes(&pubkey, &chal_raw, &sig_arr));
+    }
+
+    #[test]
+    fn assert_refuses_trashed_passkey() {
+        use base64::Engine as _;
+        let mut v = vault_with_passkey();
+        let chal = base64::engine::general_purpose::STANDARD.encode(b"c");
+        // Active key signs fine…
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        // …but once trashed it leaves the auth set (same as missing).
+        v.passkeys[0].deleted_at = Some(1000);
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+        );
+        assert_eq!(r.reply["ok"], false);
+        assert_eq!(r.reply["error"], "no passkey for rp_id");
+        assert!(!r.persist);
     }
 
     #[test]

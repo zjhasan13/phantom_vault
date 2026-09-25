@@ -66,6 +66,7 @@ struct PasskeyView {
     rp: string,
     user: string,
     meta: string,
+    fav: bool,
 }
 
 // --- Phantom palette (single source of truth) ---
@@ -360,12 +361,15 @@ export component MainWindow inherits Window {
     in-out property <[AuthView]> auth_accounts;
     // Grid rows of 3 for the authenticator page (nested model, rebuilt together).
     in-out property <[[AuthView]]> auth_rows;
-    // Resident WebAuthn passkeys (hub list + register form).
+    // Resident WebAuthn passkeys (hub list + register form + hub trash).
     in-out property <[PasskeyView]> passkeys;
+    in-out property <[PasskeyView]> passkeys_trash;
     in-out property <string> pk_rp;
     in-out property <string> pk_user;
     callback register_passkey(string, string);
     callback delete_passkey(string);
+    callback restore_passkey(string);
+    callback toggle_passkey_fav(string);
     callback copy_passkey_pub(string);
     callback export_recovery_sheet();
     in-out property <string> notification_text: "";
@@ -780,10 +784,19 @@ export component MainWindow inherits Window {
                         for pk in root.passkeys : Rectangle { background: #0d1430; border-radius: 12px; border-width: 1px; border-color: #26315c; height: 64px;
                             HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                 VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "📋 Pub"; width: 80px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: "🗑"; width: 44px; height: 32px; danger: true; clicked => { root.delete_passkey(pk.id); } } }
+                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: pk.fav ? "⭐" : "☆"; width: 44px; height: 32px; clicked => { root.toggle_passkey_fav(pk.id); } } AuraButton { label: "📋 Pub"; width: 80px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: "🗑"; width: 44px; height: 32px; danger: true; clicked => { root.delete_passkey(pk.id); } } }
                             }
                         }
                         if root.passkeys.length == 0 : Text { text: "No passkeys yet — register one above."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
+                        if root.passkeys_trash.length > 0 : VerticalLayout { spacing: 8px;
+                            Text { text: "🗑️ Passkey Trash (shredded after 30 days)"; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
+                            for pk in root.passkeys_trash : Rectangle { background: #0d1430; border-radius: 12px; border-width: 1px; border-color: #fb718555; height: 64px;
+                                HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
+                                    VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #8e99c0; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
+                                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: "🔥"; width: 44px; height: 32px; danger: true; clicked => { root.delete_passkey(pk.id); } } }
+                                }
+                            }
+                        }
                     }
                 }}
             }

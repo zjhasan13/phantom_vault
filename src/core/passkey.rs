@@ -119,6 +119,9 @@ pub fn register(rp_id: &str, user_name: &str, now_unix: u64) -> PasskeyItem {
         public_key_der: spki_encode_public(&pubkey),
         sign_count: 0,
         created_at: now_unix,
+        // Fresh credentials start active in the vault, unpinned.
+        favorite: false,
+        deleted_at: None,
     }
 }
 
