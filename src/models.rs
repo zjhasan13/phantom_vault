@@ -321,6 +321,14 @@ pub struct PasskeyItem {
     pub public_key_der: Vec<u8>,
     pub sign_count: u32,
     pub created_at: u64,
+    /// Pinned by the user (hub ⭐ toggle + Favorites filter).
+    /// `serde(default)` keeps pre-favorite JSON vaults loading.
+    #[serde(default)]
+    pub favorite: bool,
+    /// Soft-delete timestamp (None = active vault). Trash = Some(..).
+    /// `serde(default)` keeps pre-trash JSON vaults loading.
+    #[serde(default)]
+    pub deleted_at: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
@@ -446,8 +454,8 @@ impl Vault {
     }
 
     /// Remove any item by (kind, id). Kinds: 1 login, 2 license, 3 note,
-    /// 4 card, 5 identity, 6 ssh. Returns true if something was removed.
-    /// Permanent removal (Trash second phase + empty-trash internals).
+    /// 4 card, 5 identity, 6 ssh, 7 passkey. Returns true if something was
+    /// removed. Permanent removal (Trash second phase + empty-trash internals).
     /// Pure — unit tested.
     pub fn delete_item(&mut self, kind: i32, id: &str) -> bool {
         fn drop_by_id<T>(v: &mut Vec<T>, id: &str, get: impl Fn(&T) -> &str) -> bool {
@@ -462,6 +470,7 @@ impl Vault {
             4 => drop_by_id(&mut self.cards, id, |c| &c.id),
             5 => drop_by_id(&mut self.identities, id, |i| &i.id),
             6 => drop_by_id(&mut self.ssh_keys, id, |s| &s.id),
+            7 => drop_by_id(&mut self.passkeys, id, |p| &p.id),
             _ => false,
         }
     }
@@ -476,6 +485,7 @@ impl Vault {
             4 => self.cards.iter().find(|k| k.id == id)?.deleted_at,
             5 => self.identities.iter().find(|i| i.id == id)?.deleted_at,
             6 => self.ssh_keys.iter().find(|s| s.id == id)?.deleted_at,
+            7 => self.passkeys.iter().find(|p| p.id == id)?.deleted_at,
             _ => return None,
         };
         Some(flag.is_some())
@@ -490,6 +500,7 @@ impl Vault {
             4 => self.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.deleted_at),
             5 => self.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.deleted_at),
             6 => self.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.deleted_at),
+            7 => self.passkeys.iter_mut().find(|p| p.id == id).map(|p| &mut p.deleted_at),
             _ => None,
         };
         match slot {
@@ -510,6 +521,7 @@ impl Vault {
             4 => self.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.deleted_at),
             5 => self.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.deleted_at),
             6 => self.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.deleted_at),
+            7 => self.passkeys.iter_mut().find(|p| p.id == id).map(|p| &mut p.deleted_at),
             _ => None,
         };
         match slot {
@@ -521,7 +533,8 @@ impl Vault {
         }
     }
 
-    /// Total items with `deleted_at.is_some()` across all 6 vectors.
+    /// Total items with `deleted_at.is_some()` across all 7 vectors
+    /// (logins, licenses, notes, cards, identities, ssh keys, passkeys).
     pub fn trash_count(&self) -> usize {
         self.credentials.iter().filter(|c| c.deleted_at.is_some()).count()
             + self.licenses.iter().filter(|l| l.deleted_at.is_some()).count()
@@ -529,6 +542,7 @@ impl Vault {
             + self.cards.iter().filter(|k| k.deleted_at.is_some()).count()
             + self.identities.iter().filter(|i| i.deleted_at.is_some()).count()
             + self.ssh_keys.iter().filter(|s| s.deleted_at.is_some()).count()
+            + self.passkeys.iter().filter(|p| p.deleted_at.is_some()).count()
     }
 
     /// Drop every trashed item (empty-trash / 30-day purge share this).
@@ -541,6 +555,7 @@ impl Vault {
         self.cards.retain(|k| k.deleted_at.is_none());
         self.identities.retain(|i| i.deleted_at.is_none());
         self.ssh_keys.retain(|s| s.deleted_at.is_none());
+        self.passkeys.retain(|p| p.deleted_at.is_none());
         before
     }
 
@@ -559,6 +574,7 @@ impl Vault {
         self.cards.retain(|k| fresh(k.deleted_at));
         self.identities.retain(|i| fresh(i.deleted_at));
         self.ssh_keys.retain(|s| fresh(s.deleted_at));
+        self.passkeys.retain(|p| fresh(p.deleted_at));
         before - self.trash_count()
     }
 }
@@ -1339,6 +1355,68 @@ mod tests {
         let v: Vault = old.into();
         assert!(v.credentials[0].last_changed > 0);
         assert!(!is_stale(v.credentials[0].last_changed, current_timestamp()));
+    }
+
+    #[test]
+    fn passkey_trash_and_fav_lifecycle() {
+        let mut v = Vault::new();
+        v.passkeys.push(PasskeyItem {
+            id: "pk1".into(),
+            rp_id: "github.com".into(),
+            user_name: "octo".into(),
+            user_handle: Vec::new(),
+            credential_id: Vec::new(),
+            private_key_pkcs8: Vec::new(),
+            public_key_der: Vec::new(),
+            sign_count: 0,
+            created_at: 0,
+            favorite: false,
+            deleted_at: None,
+        });
+        // Favorite flag flips without touching trash state.
+        assert_eq!(v.is_trashed(7, "pk1"), Some(false));
+        v.passkeys[0].favorite = true;
+        assert!(v.passkeys[0].favorite);
+        // Soft-delete → restore → permanent shred, like the other 6 kinds.
+        assert!(v.trash_item(7, "pk1", 1000));
+        assert_eq!(v.is_trashed(7, "pk1"), Some(true));
+        assert_eq!(v.trash_count(), 1);
+        assert!(v.restore_item(7, "pk1"));
+        assert_eq!(v.is_trashed(7, "pk1"), Some(false));
+        assert!(v.trash_item(7, "pk1", 2000));
+        assert!(v.delete_item(7, "pk1"));
+        assert!(v.passkeys.is_empty());
+        assert!(!v.delete_item(7, "gone"));
+        assert_eq!(v.is_trashed(7, "gone"), None);
+    }
+
+    #[test]
+    fn passkey_old_json_defaults_to_active_unpinned() {
+        // Pre-trash vaults carry no favorite/deleted_at keys — serde(default)
+        // must fill them so old containers keep loading AND stay usable.
+        let old = serde_json::json!({
+            "id": "pk-old",
+            "rp_id": "example.com",
+            "user_name": "u",
+            "user_handle": "",
+            "credential_id": "",
+            "private_key_pkcs8": "",
+            "public_key_der": "",
+            "sign_count": 3,
+            "created_at": 1700000000u64
+        });
+        let pk: PasskeyItem = serde_json::from_value(old).unwrap();
+        assert!(!pk.favorite);
+        assert_eq!(pk.deleted_at, None);
+        assert_eq!(pk.sign_count, 3);
+        // And a full round-trip preserves the new flags.
+        let mut full = pk;
+        full.favorite = true;
+        full.deleted_at = Some(1000);
+        let back: PasskeyItem =
+            serde_json::from_value(serde_json::to_value(&full).unwrap()).unwrap();
+        assert!(back.favorite);
+        assert_eq!(back.deleted_at, Some(1000));
     }
 
     #[test]

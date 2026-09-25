@@ -384,6 +384,7 @@ fn lock_vault_now(
         ui.set_auth_accounts(ModelRc::new(VecModel::from(Vec::<AuthView>::new())));
         ui.set_auth_rows(ModelRc::new(VecModel::from(Vec::<ModelRc<AuthView>>::new())));
         ui.set_passkeys(ModelRc::new(VecModel::from(Vec::<PasskeyView>::new())));
+        ui.set_passkeys_trash(ModelRc::new(VecModel::from(Vec::<PasskeyView>::new())));
         ui.set_d_custom(ModelRc::new(VecModel::from(Vec::<CustomFieldView>::new())));
         ui.set_d_attachments(ModelRc::new(VecModel::from(Vec::<AttachmentView>::new())));
         ui.set_d_history(ModelRc::new(VecModel::from(Vec::<HistoryView>::new())));
@@ -879,7 +880,11 @@ fn unlock_with_password(
                         let v = lock_vault(&vault_arc);
                             ui.set_auth_accounts(rebuild_auth_list(&v));
                             ui.set_auth_rows(rebuild_auth_rows(&v));
-                        ui.set_passkeys(rebuild_passkeys(&v));
+                        // Fresh unlock resets the filter (see above), so the
+                        // hub starts unfiltered; trashed keys get their own
+                        // hub section instead of the sidebar Trash view.
+                        ui.set_passkeys(rebuild_passkeys(&v, false));
+                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
                     }
                     let window_for_totp = ui.as_weak();
                     let vault_for_auth = Arc::clone(&vault_arc);
@@ -1133,11 +1138,12 @@ fn fav_flag_mut<'a>(vault: &'a mut Vault, kind: i32, id: &str) -> Option<&'a mut
         4 => vault.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.favorite),
         5 => vault.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.favorite),
         6 => vault.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.favorite),
+        7 => vault.passkeys.iter_mut().find(|p| p.id == id).map(|p| &mut p.favorite),
         _ => None,
     }
 }
 
-/// Read-only favorite flag for any of the 6 kinds (refresh path).
+/// Read-only favorite flag for any of the 7 kinds (refresh path).
 fn fav_flag(vault: &Vault, kind: i32, id: &str) -> Option<bool> {
     match kind {
         1 => vault.credentials.iter().find(|c| c.id == id).map(|c| c.favorite),
@@ -1146,6 +1152,7 @@ fn fav_flag(vault: &Vault, kind: i32, id: &str) -> Option<bool> {
         4 => vault.cards.iter().find(|k| k.id == id).map(|k| k.favorite),
         5 => vault.identities.iter().find(|i| i.id == id).map(|i| i.favorite),
         6 => vault.ssh_keys.iter().find(|s| s.id == id).map(|s| s.favorite),
+        7 => vault.passkeys.iter().find(|p| p.id == id).map(|p| p.favorite),
         _ => None,
     }
 }
@@ -1178,22 +1185,43 @@ fn set_trash_label(ui: &MainWindow, vault: &Vault) {
 }
 
 /// Resident passkey rows for the hub (`meta` preformatted — no Slint typing risk).
-fn rebuild_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
+/// Trashed keys never surface here (hub trash section lists them via
+/// `rebuild_trashed_passkeys`); `fav_only` mirrors the sidebar ⭐ filter.
+fn rebuild_passkeys(vault: &Vault, fav_only: bool) -> ModelRc<PasskeyView> {
     let rows: Vec<PasskeyView> = vault
         .passkeys
         .iter()
+        .filter(|p| p.deleted_at.is_none() && (!fav_only || p.favorite))
         .map(|p| PasskeyView {
             id: p.id.clone().into(),
             rp: p.rp_id.clone().into(),
             user: p.user_name.clone().into(),
             meta: format!("{} signs", p.sign_count).into(),
+            fav: p.favorite,
+        })
+        .collect();
+    ModelRc::new(VecModel::from(rows))
+}
+
+/// Trashed passkey rows for the hub trash section (restore/shred actions).
+fn rebuild_trashed_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
+    let rows: Vec<PasskeyView> = vault
+        .passkeys
+        .iter()
+        .filter(|p| p.deleted_at.is_some())
+        .map(|p| PasskeyView {
+            id: p.id.clone().into(),
+            rp: p.rp_id.clone().into(),
+            user: p.user_name.clone().into(),
+            meta: format!("{} signs", p.sign_count).into(),
+            fav: p.favorite,
         })
         .collect();
     ModelRc::new(VecModel::from(rows))
 }
 
 /// Item-kind codes shared with Slint: 0 All, 1 login, 2 license, 3 note,
-/// 4 card, 5 identity, 6 ssh.
+/// 4 card, 5 identity, 6 ssh, 7 passkey.
 #[derive(Clone)]
 struct FilterState {
     query: String,
@@ -3135,6 +3163,8 @@ fn replace_item(
                 ui.set_showing_trash(false);
             }
             ui.set_credentials(vault_to_items(&vault, &f));
+            // Hub parity: the passkey list honors the same ⭐ filter.
+            ui.set_passkeys(rebuild_passkeys(&vault, f.fav_only));
         }
     });
 
@@ -3988,7 +4018,8 @@ fn replace_item(
                 };
                 match saved {
                     Ok(v) => {
-                        ui.set_passkeys(rebuild_passkeys(&v));
+                        ui.set_passkeys(rebuild_passkeys(&v, ui.get_show_fav_only()));
+                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
                         ui.set_pk_rp("".into());
                         ui.set_pk_user("".into());
                         ui.set_notification_text(
@@ -4007,6 +4038,7 @@ fn replace_item(
     let pk_del_weak = main_window.as_weak();
     let pk_del_vault = Arc::clone(&active_vault);
     let pk_del_master = Arc::clone(&active_master_pw);
+    let pk_del_search = Arc::clone(&search_state);
     main_window.on_delete_passkey(move |id| {
         let Some(ui) = pk_del_weak.upgrade() else {
             return;
@@ -4022,18 +4054,29 @@ fn replace_item(
         };
         let weak = pk_del_weak.clone();
         let vault_clone = Arc::clone(&pk_del_vault);
+        let search_clone = Arc::clone(&pk_del_search);
         let target = id.as_str().to_string();
         std::thread::spawn(move || {
-            let saved = {
+            // Two-phase delete like the other 6 kinds: active → Trash stamp,
+            // Trash → permanent shred. Disk failure rolls RAM back.
+            let saved: Result<(Vault, bool), String> = {
                 let mut vault = lock_vault(&vault_clone);
-                let before = vault.passkeys.len();
-                vault.passkeys.retain(|p| p.id != target);
-                if vault.passkeys.len() == before {
+                let snapshot = vault.clone();
+                let already = vault.is_trashed(7, &target).unwrap_or(false);
+                let ok = if already {
+                    vault.delete_item(7, &target)
+                } else {
+                    vault.trash_item(7, &target, crate::models::current_timestamp())
+                };
+                if !ok {
                     Err("passkey not found".to_string())
                 } else {
                     match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                        Ok(()) => Ok(vault.clone()),
-                        Err(e) => Err(e),
+                        Ok(()) => Ok((vault.clone(), already)),
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
                     }
                 }
             };
@@ -4042,10 +4085,21 @@ fn replace_item(
                     return;
                 };
                 match saved {
-                    Ok(v) => {
-                        ui.set_passkeys(rebuild_passkeys(&v));
-                        ui.set_notification_text("🗑 Passkey deleted.".into());
-                        security::access_log::log_event("passkey", "delete");
+                    Ok((v, permanent)) => {
+                        let f = search_clone.lock().unwrap().clone();
+                        ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
+                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
+                        set_trash_label(&ui, &v);
+                        if permanent {
+                            ui.set_notification_text("🔥 Passkey permanently shredded.".into());
+                            security::access_log::log_event("passkey", "delete");
+                        } else {
+                            ui.set_notification_text(
+                                "🗑️ Passkey moved to Trash (restorable 30 days).".into(),
+                            );
+                            security::access_log::log_event("passkey", "trash");
+                        }
+                        trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
                         ui.set_notification_text(format!("⚠️ {e}.").into());
@@ -4112,6 +4166,127 @@ fn replace_item(
                         ui.set_notification_text(format!("⚠️ {e}.").into());
                     }
                 }
+            });
+        });
+    });
+
+    // Hub trash section: restore one trashed passkey + re-seal.
+    let pk_res_weak = main_window.as_weak();
+    let pk_res_vault = Arc::clone(&active_vault);
+    let pk_res_master = Arc::clone(&active_master_pw);
+    let pk_res_search = Arc::clone(&search_state);
+    main_window.on_restore_passkey(move |id| {
+        let Some(ui) = pk_res_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let weak = pk_res_weak.clone();
+        let vault_clone = Arc::clone(&pk_res_vault);
+        let master_clone = Arc::clone(&pk_res_master);
+        let search_clone = Arc::clone(&pk_res_search);
+        let target = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                    }
+                });
+                return;
+            };
+            let saved: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                if !vault.restore_item(7, &target) {
+                    Err("passkey is not in Trash (already active?)".to_string())
+                } else {
+                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                        Ok(()) => Ok(vault.clone()),
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match saved {
+                    Ok(v) => {
+                        let f = search_clone.lock().unwrap().clone();
+                        ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
+                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
+                        set_trash_label(&ui, &v);
+                        ui.set_notification_text("♻️ Passkey restored to the hub.".into());
+                        security::access_log::log_event("passkey", "restore");
+                        trigger_sync_push(ui.as_weak());
+                    }
+                    Err(e) => {
+                        ui.set_notification_text(format!("⚠️ {e}.").into());
+                    }
+                }
+            });
+        });
+    });
+
+    // Hub ⭐ toggle: flip, re-seal, refresh (same pattern as item favorites).
+    let pk_fav_weak = main_window.as_weak();
+    let pk_fav_vault = Arc::clone(&active_vault);
+    let pk_fav_master = Arc::clone(&active_master_pw);
+    let pk_fav_search = Arc::clone(&search_state);
+    main_window.on_toggle_passkey_fav(move |id| {
+        let Some(ui) = pk_fav_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&pk_fav_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_notification_text("❌ Vault not unlocked!".into());
+            return;
+        };
+        let weak = pk_fav_weak.clone();
+        let vault_clone = Arc::clone(&pk_fav_vault);
+        let search_clone = Arc::clone(&pk_fav_search);
+        let target = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let flipped: Option<bool> = (|| {
+                let mut vault = lock_vault(&vault_clone);
+                let state = match fav_flag_mut(&mut vault, 7, &target) {
+                    Some(f) => {
+                        *f = !*f;
+                        *f
+                    }
+                    None => return None,
+                };
+                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                    if let Some(f) = fav_flag_mut(&mut vault, 7, &target) {
+                        *f = !*f; // roll back the flip on disk failure
+                    }
+                    return None;
+                }
+                Some(state)
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                let f = search_clone.lock().unwrap().clone();
+                let v = lock_vault(&vault_clone);
+                ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
+                ui.set_notification_text(match flipped {
+                    Some(true) => "⭐ Passkey pinned to Favorites.".into(),
+                    Some(false) => "☆ Passkey unpinned.".into(),
+                    None => "⚠️ Toggle failed (missing passkey or save error).".into(),
+                });
             });
         });
     });
@@ -6063,5 +6238,28 @@ mod grid_tests {
         assert_eq!(v.totp_accounts[0].id, "t2");
         assert!(!remove_totp_account(&mut v, "nope"));
         assert!(!remove_totp_account(&mut Vault::new(), "t1"));
+    }
+
+    #[test]
+    fn passkey_fav_flag_kind_seven() {
+        let mut v = Vault::new();
+        v.passkeys.push(models::PasskeyItem {
+            id: "pk".into(),
+            rp_id: String::new(),
+            user_name: String::new(),
+            user_handle: Vec::new(),
+            credential_id: Vec::new(),
+            private_key_pkcs8: Vec::new(),
+            public_key_der: Vec::new(),
+            sign_count: 0,
+            created_at: 0,
+            favorite: false,
+            deleted_at: None,
+        });
+        assert_eq!(fav_flag(&v, 7, "pk"), Some(false));
+        *fav_flag_mut(&mut v, 7, "pk").unwrap() = true;
+        assert_eq!(fav_flag(&v, 7, "pk"), Some(true));
+        assert_eq!(fav_flag(&v, 7, "nope"), None);
+        assert_eq!(fav_flag(&v, 9, "pk"), None);
     }
 }
