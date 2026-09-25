@@ -167,9 +167,13 @@ pub fn import_any_file(
     Ok(summary)
 }
 
+/// Duplicate probe for the login dedup path. Trashed items never block:
+/// the user may re-add (or re-import) a credential whose older copy sits in
+/// Trash awaiting its 30-day shred. Pure — unit tested.
 fn dup_login(vault: &Vault, title: &str, user: &str) -> bool {
     vault.credentials.iter().any(|c| {
-        c.title.to_lowercase() == title.to_lowercase()
+        c.deleted_at.is_none()
+            && c.title.to_lowercase() == title.to_lowercase()
             && c.username.to_lowercase() == user.to_lowercase()
     })
 }
@@ -184,7 +188,9 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
         match r.kind {
             2 => {
                 if vault.licenses.iter().any(|l| {
-                    l.app_name.to_lowercase() == title.to_lowercase() && l.license_key == r.a
+                    l.deleted_at.is_none()
+                        && l.app_name.to_lowercase() == title.to_lowercase()
+                        && l.license_key == r.a
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -203,7 +209,9 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                 summary.licenses += 1;
             }
             3 => {
-                if vault.notes.iter().any(|n| n.title.to_lowercase() == title.to_lowercase()) {
+                if vault.notes.iter().any(|n| {
+                    n.deleted_at.is_none() && n.title.to_lowercase() == title.to_lowercase()
+                }) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
@@ -212,7 +220,9 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
             }
             4 => {
                 if vault.cards.iter().any(|k| {
-                    k.title.to_lowercase() == title.to_lowercase() && k.card_number == r.b
+                    k.deleted_at.is_none()
+                        && k.title.to_lowercase() == title.to_lowercase()
+                        && k.card_number == r.b
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -236,7 +246,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
             }
             5 => {
                 if vault.identities.iter().any(|i| {
-                    i.title.to_lowercase() == title.to_lowercase()
+                    i.deleted_at.is_none()
+                        && i.title.to_lowercase() == title.to_lowercase()
                         && i.full_name.to_lowercase() == r.a.to_lowercase()
                 }) {
                     summary.duplicates_skipped += 1;
@@ -259,7 +270,9 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                 summary.identities += 1;
             }
             6 => {
-                if vault.ssh_keys.iter().any(|s| s.title.to_lowercase() == title.to_lowercase()) {
+                if vault.ssh_keys.iter().any(|s| {
+                    s.deleted_at.is_none() && s.title.to_lowercase() == title.to_lowercase()
+                }) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
@@ -320,4 +333,85 @@ fn split_expiry(raw: &str) -> (String, String) {
     let m = parts.next().unwrap_or("").trim().to_string();
     let y = parts.next().unwrap_or("").trim().to_string();
     (m, y)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::Credential;
+
+    fn trashed_login(title: &str, user: &str) -> Credential {
+        Credential {
+            id: "old".into(),
+            title: title.into(),
+            username: user.into(),
+            password: "oldpw".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: crate::models::DEFAULT_FOLDER.to_string(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: Some(1000),
+        }
+    }
+
+    fn login_raw(title: &str, user: &str) -> RawItem {
+        RawItem {
+            kind: 1,
+            title: title.into(),
+            a: user.into(),
+            b: "newpw".into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn trashed_dupes_do_not_block_reimport() {
+        let mut v = Vault::new();
+        v.credentials.push(trashed_login("GitHub", "me"));
+        // Same title+user as the trashed copy must IMPORT (not skip).
+        let mut s = ImportSummary::default();
+        merge(&mut v, vec![login_raw("GitHub", "me")], &mut s);
+        assert_eq!(s.logins, 1);
+        assert_eq!(s.duplicates_skipped, 0);
+        // ...but the now-LIVE copy still dedups a second import.
+        let mut s2 = ImportSummary::default();
+        merge(&mut v, vec![login_raw("github", "ME")], &mut s2);
+        assert_eq!(s2.logins, 0);
+        assert_eq!(s2.duplicates_skipped, 1);
+    }
+
+    #[test]
+    fn trashed_notes_and_cards_reimport() {
+        let mut v = Vault::new();
+        v.notes.push(crate::models::SecureNote {
+            id: "n-old".into(),
+            title: "Memo".into(),
+            content: "gone".into(),
+            folder: "General".into(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: Some(1000),
+        });
+        let mut s = ImportSummary::default();
+        merge(
+            &mut v,
+            vec![RawItem {
+                kind: 3,
+                title: "Memo".into(),
+                a: "fresh".into(),
+                ..Default::default()
+            }],
+            &mut s,
+        );
+        assert_eq!(s.notes, 1);
+        assert_eq!(s.duplicates_skipped, 0);
+    }
 }
