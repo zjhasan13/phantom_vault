@@ -33,6 +33,18 @@ fn set_affinity(window: &slint::Window, affinity: u32) -> bool {
     unsafe { SetWindowDisplayAffinity(hwnd as _, affinity) != 0 }
 }
 
+/// Persisted user choice (`blackout.pref` = "1"/"0"). Missing file = OFF.
+pub fn load_blackout_pref() -> bool {
+    std::fs::read_to_string("blackout.pref")
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
+/// Best-effort persist of the toggle (never blocks the UI thread caller).
+pub fn save_blackout_pref(on: bool) {
+    let _ = std::fs::write("blackout.pref", if on { "1" } else { "0" });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
