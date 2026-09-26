@@ -3,7 +3,16 @@
   "name": "PhantomVault AutoFill",
   "version": "1.0.0",
   "description": "Zero-knowledge autofill via the PhantomVault native bridge (vault-gated, no cloud).",
-  "permissions": ["nativeMessaging", "activeTab", "scripting", "storage"],
+  "permissions": ["nativeMessaging", "activeTab", "scripting", "storage", "contextMenus"],
+  "commands": {
+    "autofill_active_tab": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+L",
+        "mac": "Command+Shift+L"
+      },
+      "description": "Auto-fill current login, card, or 2FA"
+    }
+  },
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_popup": "popup.html",

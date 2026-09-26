@@ -120,10 +120,95 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "username": c.username,
                         "password": c.password,
                         "totp": live_totp(&c.totp_secret),
+                        "urls": c.urls,
+                        "reprompt": c.reprompt,
+                        "last_changed": c.last_changed,
                     })
                 })
                 .collect();
             crate::security::access_log::log_event("bridge-query", &q);
+            Answer {
+                reply: serde_json::json!({"ok": true, "entries": entries}),
+                persist: false,
+            }
+        }
+        // Smart-autofill: payment cards matching the query (checkout fill).
+        "cards" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let q = req
+                .get("app")
+                .or_else(|| req.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if q.is_empty() {
+                return no("empty query (refusing vault dump)");
+            }
+            let entries: Vec<serde_json::Value> = vault
+                .cards
+                .iter()
+                .filter(|k| {
+                    k.deleted_at.is_none()
+                        && (k.title.to_lowercase().contains(&q)
+                            || k.cardholder_name.to_lowercase().contains(&q))
+                })
+                .map(|k| {
+                    serde_json::json!({
+                        "id": k.id,
+                        "title": k.title,
+                        "cardholder": k.cardholder_name,
+                        "number": k.card_number,
+                        "exp_month": k.exp_month,
+                        "exp_year": k.exp_year,
+                        "cvv": k.cvv,
+                    })
+                })
+                .collect();
+            crate::security::access_log::log_event("bridge-cards", &q);
+            Answer {
+                reply: serde_json::json!({"ok": true, "entries": entries}),
+                persist: false,
+            }
+        }
+        // Smart-autofill: identities matching the query (address-form fill).
+        "identities" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let q = req
+                .get("app")
+                .or_else(|| req.get("url"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if q.is_empty() {
+                return no("empty query (refusing vault dump)");
+            }
+            let entries: Vec<serde_json::Value> = vault
+                .identities
+                .iter()
+                .filter(|i| {
+                    i.deleted_at.is_none()
+                        && (i.title.to_lowercase().contains(&q)
+                            || i.full_name.to_lowercase().contains(&q)
+                            || i.email.to_lowercase().contains(&q))
+                })
+                .map(|i| {
+                    serde_json::json!({
+                        "id": i.id,
+                        "title": i.title,
+                        "full_name": i.full_name,
+                        "email": i.email,
+                        "phone": i.phone,
+                        "address": i.address,
+                    })
+                })
+                .collect();
+            crate::security::access_log::log_event("bridge-identities", &q);
             Answer {
                 reply: serde_json::json!({"ok": true, "entries": entries}),
                 persist: false,
@@ -235,6 +320,148 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             }
         }
         "" => no("missing cmd"),
+        // Smart-autofill: record a fill (audit sidecar only, no vault write).
+        "filled" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let id = req
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            if id.is_empty() {
+                return no("id required");
+            }
+            let mut st = read_ext_stats();
+            let now = crate::models::current_timestamp();
+            st["total_fills"] = serde_json::json!(st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
+            st["last_filled"][id] = serde_json::json!(now);
+            write_ext_stats(&st);
+            Answer {
+                reply: serde_json::json!({"ok": true}),
+                persist: false,
+            }
+        }
+        // Smart-autofill: dashboard stats (counts + heuristic security score).
+        "stats" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let now = crate::models::current_timestamp();
+            let active: Vec<&crate::models::Credential> = vault
+                .credentials
+                .iter()
+                .filter(|c| c.deleted_at.is_none())
+                .collect();
+            let stale = active
+                .iter()
+                .filter(|c| crate::models::is_stale(c.last_changed, now))
+                .count();
+            let mut seen: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+            for c in &active {
+                if !c.password.is_empty() {
+                    *seen.entry(c.password.as_str()).or_insert(0) += 1;
+                }
+            }
+            let reused_groups = seen.values().filter(|&&n| n > 1).count();
+            let st = read_ext_stats();
+            let mut score: i64 = 100 - (stale.min(10) as i64) * 3 - (reused_groups.min(6) as i64) * 5;
+            if score < 0 {
+                score = 0;
+            }
+            Answer {
+                reply: serde_json::json!({
+                    "ok": true,
+                    "logins": active.len(),
+                    "cards": vault.cards.iter().filter(|k| k.deleted_at.is_none()).count(),
+                    "notes": vault.notes.iter().filter(|n| n.deleted_at.is_none()).count(),
+                    "identities": vault.identities.iter().filter(|i| i.deleted_at.is_none()).count(),
+                    "ssh_keys": vault.ssh_keys.iter().filter(|s| s.deleted_at.is_none()).count(),
+                    "licenses": vault.licenses.iter().filter(|l| l.deleted_at.is_none()).count(),
+                    "passkeys": vault.passkeys.iter().filter(|p| p.deleted_at.is_none()).count(),
+                    "totp_accounts": vault.totp_accounts.len(),
+                    "stale": stale,
+                    "reused_groups": reused_groups,
+                    "score": score,
+                    "total_fills": st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0),
+                    "last_filled": st.get("last_filled").cloned().unwrap_or_else(|| serde_json::json!({})),
+                }),
+                persist: false,
+            }
+        }
+        // Smart-autofill: save a freshly submitted login (update or append).
+        // persist:true → the serve loop re-seals to disk; cloud sync follows
+        // on the next desktop-app save (the host never pushes directly).
+        "save_login" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let username = req.get("username").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let password = req.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let url = req.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            if username.is_empty() || password.is_empty() || url.is_empty() {
+                return no("username, password and url required");
+            }
+            let title = req.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let totp = req.get("totp").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let now = crate::models::current_timestamp();
+            let dom = url_domain(&url);
+            let existing = vault.credentials.iter_mut().find(|c| {
+                c.deleted_at.is_none()
+                    && c.username.to_lowercase() == username.to_lowercase()
+                    && (c.urls.iter().any(|u| {
+                        let d = url_domain(u);
+                        !d.is_empty() && (d == dom || dom.contains(&d) || d.contains(&dom))
+                    }) || c.title.to_lowercase() == dom)
+            });
+            let updated;
+            if let Some(c) = existing {
+                if c.password != password {
+                    let retired = c.password.clone();
+                    crate::models::push_history(&mut c.password_history, &retired, now);
+                    c.password = password;
+                    c.last_changed = now;
+                }
+                if !c.urls.iter().any(|u| u.to_lowercase() == url.to_lowercase()) {
+                    c.urls.push(url);
+                }
+                updated = true;
+            } else {
+                let id = format!(
+                    "ext{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                vault.credentials.push(crate::models::Credential {
+                    id,
+                    title: if title.is_empty() { dom.clone() } else { title },
+                    username,
+                    password,
+                    totp_secret: totp,
+                    urls: vec![url],
+                    backup_codes: Vec::new(),
+                    custom_fields: Vec::new(),
+                    notes: String::from("Saved via browser extension"),
+                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    reprompt: false,
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                    last_changed: now,
+                    password_history: Vec::new(),
+                    favorite: false,
+                    deleted_at: None,
+                });
+                updated = false;
+            }
+            crate::security::access_log::log_event("bridge-save", &dom);
+            Answer {
+                reply: serde_json::json!({"ok": true, "updated": updated}),
+                persist: true,
+            }
+        }
         other => no(&format!("unknown cmd: {other}")),
     }
 }
@@ -260,26 +487,105 @@ pub fn print_manifest(allowed_origin: &str) {
     println!("{}", manifest_json(allowed_origin, &path));
 }
 
-/// Install the native-messaging manifests for Chrome + Edge under HKCU and
-/// return the manifest path. `allowed_origins` starts EMPTY (secure default —
-/// no extension can connect until the user adds its ID, e.g. via
-/// `vault native-host --print-manifest <origin>` as a editing guide).
-/// Registry work is real Win32 (create key, set default REG_SZ, close).
-pub fn register_native_host() -> Result<String, crate::error::VaultError> {
-    use crate::error::VaultError;
-
-    let dir = std::env::var("LOCALAPPDATA")
+/// `%LOCALAPPDATA%\PhantomVault` — home of the host manifest, the recorded
+/// data dir, and the debug log. Single choke-point so register + serve agree.
+fn bridge_dir() -> std::path::PathBuf {
+    std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::env::temp_dir())
-        .join("PhantomVault");
+        .join("PhantomVault")
+}
+
+/// Best-effort debug log (no secrets, ever). Chrome hides the host's stderr,
+// so this file is the only window into launch/CWD failures.
+fn bridge_log(line: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(bridge_dir().join("native_host.log"))
+    {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let _ = writeln!(f, "[{ts}] {line}");
+    }
+}
+
+/// Resolve the vault data dir: recorded at install time by
+/// `register_native_host` (the app's CWD *is* the data dir). Falls back to
+/// the current CWD so unit tests and manual runs keep working.
+fn resolve_data_dir() -> Option<std::path::PathBuf> {
+    let marker = bridge_dir().join("project_dir.txt");
+    let recorded = std::fs::read_to_string(&marker).ok()?;
+    let dir = std::path::PathBuf::from(recorded.trim());
+    if dir.is_dir() {
+        Some(dir)
+    } else {
+        None
+    }
+}
+
+/// Extension sidecar (NOT encrypted — metadata only, no secrets):
+/// `{"total_fills":N,"last_filled":{"<id>":<unix_ts>}}`. Lives beside the
+/// vault so fill-audit + stats survive restarts without touching the model.
+const EXT_STATS_FILE: &str = "pv_ext_stats.json";
+
+fn read_ext_stats() -> serde_json::Value {
+    std::fs::read_to_string(EXT_STATS_FILE)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({"total_fills": 0, "last_filled": {}}))
+}
+
+fn write_ext_stats(v: &serde_json::Value) {
+    if let Ok(s) = serde_json::to_string(v) {
+        let _ = std::fs::write(EXT_STATS_FILE, s);
+    }
+}
+
+/// Lowercased registrable-ish domain of a URL (mirrors the extension's
+/// base-domain matcher closely enough for save dedup).
+fn url_domain(raw: &str) -> String {
+    let h = raw.trim().to_lowercase();
+    let h = h.rsplit("://").next().unwrap_or(&h);
+    let h = h.split('/').next().unwrap_or(h);
+    let h = h.split('?').next().unwrap_or(h);
+    let h = h.split('#').next().unwrap_or(h);
+    let h = h.split(':').next().unwrap_or(h);
+    let parts: Vec<&str> = h.split('.').filter(|p| !p.is_empty()).collect();
+    if parts.len() <= 2 {
+        parts.join(".")
+    } else {
+        parts[parts.len() - 2..].join(".")
+    }
+}
+/// Install the native-messaging manifests for Chrome + Edge under HKCU and
+/// return the manifest path. `allowed_origin` must be the real extension
+/// origin (`chrome-extension://<32-char-id>/`) — Chrome refuses to connect
+/// ("host not found" / "forbidden") when the calling extension is absent
+/// from `allowed_origins`, so a placeholder default is no longer written.
+pub fn register_native_host(
+    allowed_origin: &str,
+) -> Result<String, crate::error::VaultError> {
+    use crate::error::VaultError;
+
+    let origin = allowed_origin.trim().to_string();
+    if !origin.starts_with("chrome-extension://") || !origin.ends_with('/') {
+        return Err(VaultError::Sync(
+            "allowed origin must look like chrome-extension://<id>/".into(),
+        ));
+    }
+    let dir = bridge_dir();
     std::fs::create_dir_all(&dir)
         .map_err(|e| VaultError::Sync(format!("bridge dir: {e}")))?;
     let manifest_path = dir.join("native-host.json");
     let exe = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "phantom_vault.exe".to_string());
-    // Empty origins: locked down until the user adds their extension ID.
-    let doc = manifest_json("chrome-extension://__FILL_YOUR_EXTENSION_ID__/", &exe);
+    // Locked to the user's real extension ID — no placeholder.
+    let doc = manifest_json(&origin, &exe);
     std::fs::write(
         &manifest_path,
         serde_json::to_string_pretty(&doc)
@@ -296,6 +602,17 @@ pub fn register_native_host() -> Result<String, crate::error::VaultError> {
         "Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.phantomvault.host",
     ] {
         write_host_key(root, manifest_str)?;
+    }
+    // Chrome launches the host with CWD=System32/browser dir: record the
+    // app's CWD (the vault data dir) so serve_cli can chdir back to it.
+    match std::env::current_dir() {
+        Ok(cwd) => {
+            if let Err(e) = std::fs::write(dir.join("project_dir.txt"), cwd.to_string_lossy().as_bytes()) {
+                return Err(VaultError::Sync(format!("project dir record: {e}")));
+            }
+            bridge_log(&format!("registered; data dir = {}", cwd.to_string_lossy()));
+        }
+        Err(e) => return Err(VaultError::Sync(format!("current dir: {e}"))),
     }
     Ok(manifest_path.to_string_lossy().into_owned())
 }
@@ -346,6 +663,18 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
 /// (stdin is the protocol pipe), then serve frames until EOF.
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
+    // Chrome spawns us with CWD=System32: jump back to the recorded data
+    // dir so vault_hello.dpapi / my_secure_vault.enc resolve correctly.
+    match resolve_data_dir() {
+        Some(d) => {
+            if let Err(e) = std::env::set_current_dir(&d) {
+                bridge_log(&format!("WARN set_current_dir({}) failed: {e}", d.to_string_lossy()));
+            } else {
+                bridge_log(&format!("cwd -> {}", d.to_string_lossy()));
+            }
+        }
+        None => bridge_log("WARN no project_dir.txt; using launch CWD"),
+    }
     let emit_err = |msg: &str| {
         let frame = encode_frame(&err(msg));
         let _ = std::io::stdout().write_all(&frame);
@@ -354,7 +683,8 @@ pub fn serve_cli() -> i32 {
     // No TTY prompt possible here — stdin belongs to the browser.
     let blob = match std::fs::read(HELLO_TOKEN_FILE) {
         Ok(b) => b,
-        Err(_) => {
+        Err(e) => {
+            bridge_log(&format!("Hello token missing: {e}"));
             emit_err("no Hello-cached credential — unlock the app with Hello once first");
             return 2;
         }
@@ -368,18 +698,30 @@ pub fn serve_cli() -> i32 {
     };
     let master = String::from_utf8_lossy(secret.expose()).into_owned();
     drop(secret);
+    // Real vault first; on failure the cached passphrase may be the duress
+    // password (cached by the decoy unlock path) — then serve ONLY the decoy
+    // container. Real credentials never cross into the decoy branch.
+    let mut serving_decoy = false;
     let (mut vault, _) = match crate::storage::load_vault_versioned(
         &master,
         crate::developer::vault_run::VAULT_FILE,
     ) {
         Ok(v) => v,
-        Err(e) => {
-            use zeroize::Zeroize;
-            let mut m = master;
-            m.zeroize();
-            emit_err(&format!("unlock failed: {e}"));
-            return 1;
-        }
+        Err(_) => match crate::security::decoy::try_open_decoy(&master) {
+            Some(d) => {
+                bridge_log("decoy cover served (duress credential)");
+                serving_decoy = true;
+                (d, false)
+            }
+            None => {
+                use zeroize::Zeroize;
+                let mut m = master;
+                m.zeroize();
+                bridge_log("vault unlock failed");
+                emit_err("unlock failed: wrong passphrase");
+                return 1;
+            }
+        },
     };
     let master = secrecy::SecretString::new(master);
     let stdin = std::io::stdin();
@@ -400,6 +742,15 @@ pub fn serve_cli() -> i32 {
                 continue;
             }
         };
+        // Cover integrity: a coerced session must never write into the decoy
+        // (which would prove the cover is fake) — refuse saves silently.
+        if serving_decoy && req.get("cmd").and_then(|c| c.as_str()).unwrap_or("") == "save_login" {
+            let frame = encode_frame(&err("save refused"));
+            if output.write_all(&frame).and(output.flush()).is_err() {
+                break;
+            }
+            continue;
+        }
         let ans = answer(&mut vault, true, &req);
         if ans.persist {
             // Clone-detection honesty: a bumped counter MUST reach disk.
@@ -513,6 +864,110 @@ mod tests {
         // Miss → ok with empty list.
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "bank"}));
         assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
+        // Login entries now carry urls for extension-side match-mode filtering.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "url": "git"}));
+        assert_eq!(r.reply["entries"][0]["urls"][0], "https://github.com/login");
+    }
+
+    #[test]
+    fn cards_and_identities_match_without_dumping() {
+        use crate::models::{IdentityItem, PaymentCard};
+        let mut v = Vault::new();
+        v.cards.push(PaymentCard {
+            id: "k1".into(),
+            title: "Visa Gold".into(),
+            cardholder_name: "Ada L".into(),
+            card_number: "4111111111111111".into(),
+            exp_month: "01".into(),
+            exp_year: "30".into(),
+            cvv: "123".into(),
+            folder: String::new(),
+            notes: String::new(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.identities.push(IdentityItem {
+            id: "i1".into(),
+            title: "Home".into(),
+            full_name: "Ada Lovelace".into(),
+            nid_or_passport: String::new(),
+            email: "ada@example.com".into(),
+            phone: "123".into(),
+            address: "1 Analytic Way".into(),
+            folder: String::new(),
+            notes: String::new(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        // Locked / empty → deny, never dump.
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "cards", "app": "visa"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": ""}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "identities", "app": ""}));
+        assert_eq!(r.reply["ok"], false);
+        // Happy paths expose fill fields, never anything else.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": "visa"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["entries"][0]["cvv"], "123");
+        assert!(r.reply["entries"][0].get("password").is_none());
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "identities", "app": "ada"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["entries"][0]["address"], "1 Analytic Way");
+        // Miss → ok with empty list.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": "bank"}));
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn save_login_appends_updates_and_validates() {
+        let mut v = vault_with_login();
+        // Validation: missing fields refused, nothing persisted.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "save_login", "username": "a"}));
+        assert_eq!(r.reply["ok"], false);
+        assert!(!r.persist);
+        // Locked → deny.
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "save_login", "username": "a", "password": "b", "url": "https://x.com"}));
+        assert_eq!(r.reply["ok"], false);
+        // New site → append.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "save_login", "username": "neo", "password": "pw1", "url": "https://example.com/login", "title": "Example"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["updated"], false);
+        assert!(r.persist);
+        assert_eq!(v.credentials.len(), 2);
+        // Same username + domain → update in place, history grows.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "save_login", "username": "NEO", "password": "pw2", "url": "https://example.com/other"}));
+        assert_eq!(r.reply["updated"], true);
+        let c = v.credentials.iter().find(|c| c.username == "neo").unwrap();
+        assert_eq!(c.password, "pw2");
+        assert_eq!(c.password_history.len(), 1);
+        assert_eq!(v.credentials.len(), 2);
+    }
+
+    #[test]
+    fn stats_reports_counts_and_score() {
+        let mut v = vault_with_login();
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["logins"], 1);
+        assert_eq!(r.reply["totp_accounts"], 0);
+        assert!(r.reply["score"].as_i64().unwrap() >= 0);
+        assert_eq!(r.reply["total_fills"], 0);
+        // filled bumps the counter and stamps the id.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "filled", "id": "c1"}));
+        assert_eq!(r.reply["ok"], true);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
+        assert_eq!(r.reply["total_fills"], 1);
+        assert!(r.reply["last_filled"]["c1"].as_u64().unwrap() > 0);
+        // Locked → deny both.
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "stats"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "filled", "id": "c1"}));
+        assert_eq!(r.reply["ok"], false);
+        // Sidecar lives in CWD during tests — never leave it behind.
+        let _ = std::fs::remove_file(EXT_STATS_FILE);
     }
 
     #[test]
