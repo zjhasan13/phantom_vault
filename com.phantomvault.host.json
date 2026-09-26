@@ -1,0 +1,9 @@
+{
+  "name": "com.phantomvault.host",
+  "description": "PhantomVault Native Messaging Host",
+  "path": "C:\\Users\\Admin\\Desktop\\New folder\\dekstop app\\phantom_vault\\target\\debug\\phantom_vault.exe",
+  "type": "stdio",
+  "allowed_origins": [
+    "chrome-extension://goegfnjadkancnkldlamofedndcppafo/"
+  ]
+}

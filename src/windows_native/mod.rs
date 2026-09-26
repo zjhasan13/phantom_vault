@@ -7,4 +7,5 @@ pub mod hello;
 pub mod ime_guard;
 pub mod native_host;
 pub mod process_guard;
+pub mod proximity_lock;
 pub mod session_lock;

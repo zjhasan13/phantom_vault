@@ -69,6 +69,7 @@ octocrab = "0.38"
 http = "1"
 
 # Phase 11: Windows Hello (WinRT) + async bridge
+# Phase 25: BLE proximity auto-lock (WinRT advertisement watcher + radio probe)
 windows = { version = "0.58", features = [
     "Win32_Foundation",
     "Win32_System_Com",
@@ -82,6 +83,8 @@ windows = { version = "0.58", features = [
     "Win32_System_Memory",
     "Win32_System_Threading",
     "Security_Credentials_UI",
+    "Foundation",
+    "Devices_Bluetooth_Advertisement",
 ] }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "net", "io-util", "time"] }
 
