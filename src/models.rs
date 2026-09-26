@@ -374,6 +374,14 @@ pub struct Vault {
     /// vaults loading (same pattern as cards/identities/ssh_keys).
     #[serde(default)]
     pub passkeys: Vec<PasskeyItem>,
+    /// Optional vault-unlock second factor. STRICTLY default OFF — plain
+    /// password/Hello unlock stays untouched unless the user arms this.
+    #[serde(default)]
+    pub totp_unlock_enabled: bool,
+    /// Base32 TOTP secret guarding unlock when enabled. Verified locally
+    /// against the device clock (same dispatcher as authenticator codes).
+    #[serde(default)]
+    pub totp_unlock_secret: String,
 }
 
 impl Vault {
@@ -389,6 +397,8 @@ impl Vault {
             identities: Vec::new(),
             ssh_keys: Vec::new(),
             passkeys: Vec::new(),
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
         }
     }
 
@@ -695,6 +705,8 @@ impl From<VaultLegacy> for Vault {
             ssh_keys: Vec::new(),
             // Pre-passkey generation: nothing to migrate, start empty.
             passkeys: Vec::new(),
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
         };
         v.ensure_folders();
         v
@@ -848,6 +860,8 @@ impl From<VaultGen1> for Vault {
                 .collect(),
             // Pre-passkey generation: nothing to migrate, start empty.
             passkeys: Vec::new(),
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
         };
         v.ensure_folders();
         v
@@ -1051,6 +1065,8 @@ impl From<VaultGen2> for Vault {
                 .collect(),
             // Pre-passkey generation: nothing to migrate, start empty.
             passkeys: Vec::new(),
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
         };
         v.ensure_folders();
         v
@@ -1111,6 +1127,46 @@ impl From<VaultGen3> for Vault {
             ssh_keys: old.ssh_keys,
             // Pre-passkey generation: nothing to migrate, start empty.
             passkeys: Vec::new(),
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
+        };
+        v.ensure_folders();
+        v
+    }
+}
+
+/// Gen-4 shape: identical to current EXCEPT the vault-unlock 2FA pair
+/// (`totp_unlock_enabled`, `totp_unlock_secret`). Pre-gate vaults upgrade
+/// with the gate strictly OFF (old unlock behavior preserved bit-for-bit).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VaultGen4 {
+    version: u32,
+    folders: Vec<String>,
+    credentials: Vec<Credential>,
+    totp_accounts: Vec<TotpAccount>,
+    licenses: Vec<SoftwareLicense>,
+    notes: Vec<SecureNote>,
+    cards: Vec<PaymentCard>,
+    identities: Vec<IdentityItem>,
+    ssh_keys: Vec<SshKeyItem>,
+    passkeys: Vec<PasskeyItem>,
+}
+
+impl From<VaultGen4> for Vault {
+    fn from(old: VaultGen4) -> Self {
+        let mut v = Vault {
+            version: old.version,
+            folders: old.folders,
+            credentials: old.credentials,
+            totp_accounts: old.totp_accounts,
+            licenses: old.licenses,
+            notes: old.notes,
+            cards: old.cards,
+            identities: old.identities,
+            ssh_keys: old.ssh_keys,
+            passkeys: old.passkeys,
+            totp_unlock_enabled: false,
+            totp_unlock_secret: String::new(),
         };
         v.ensure_folders();
         v
@@ -1186,6 +1242,29 @@ mod tests {
         assert_eq!(v.credentials[0].folder, "General");
         assert!(v.credentials[0].custom_fields.is_empty());
         assert!(v.folders.contains(&"Work".to_string()));
+    }
+
+    #[test]
+    fn gen4_upgrades_with_gate_strictly_off() {
+        // Simulate a pre-Phase-27 vault: full current shape minus the gate.
+        let old = VaultGen4 {
+            version: 1,
+            folders: vec!["General".into()],
+            credentials: Vec::new(),
+            totp_accounts: Vec::new(),
+            licenses: Vec::new(),
+            notes: Vec::new(),
+            cards: Vec::new(),
+            identities: Vec::new(),
+            ssh_keys: Vec::new(),
+            passkeys: Vec::new(),
+        };
+        // Bincode round-trip through the OLD shape, then upgrade.
+        let bytes = bincode::serialize(&old).unwrap();
+        let decoded: VaultGen4 = bincode::deserialize(&bytes).unwrap();
+        let v: Vault = decoded.into();
+        assert!(!v.totp_unlock_enabled);
+        assert!(v.totp_unlock_secret.is_empty());
     }
 
     #[test]

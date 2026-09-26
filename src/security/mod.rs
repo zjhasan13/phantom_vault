@@ -1,4 +1,5 @@
 pub mod access_log;
+pub mod anti_camera;
 pub mod anti_debug;
 pub mod backoff;
 pub mod breach_check;

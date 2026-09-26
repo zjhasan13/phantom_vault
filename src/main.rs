@@ -16,6 +16,8 @@ mod windows_native;
 
 use arboard::Clipboard;
 use core::generator::{PasswordGenerator, PasswordPolicy};
+use data_encoding::BASE32_NOPAD;
+use rand_core::{OsRng, RngCore};
 use secrecy::{ExposeSecret, SecretString};
 use models::{Credential, TotpAccount, Vault};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -24,6 +26,7 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use storage::save_vault;
+use zeroize::Zeroize;
 
 slint::include_modules!();
 
@@ -632,9 +635,168 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
 /// and only chains the full publish pipeline after Windows Hello succeeds —
 /// so `active_vault`, the UI list, and the master store stay untouched until
 /// BOTH factors pass. Costs one extra KDF (~0.3s), never a partial unlock.
+/// Phase 27: shared publish pipeline — moves a decrypted vault + proven
+/// password into live UI state (lists, folders, QuickBar, sync, tickers).
+/// Called by the password arm AND by the TOTP-gate verifier, so both factors
+/// converge on one code path. `master_store: None` keeps an already-stashed
+/// master (verify path); `Some` stores a fresh one (password path).
 #[allow(clippy::too_many_arguments)]
-fn unlock_with_password(
-    pass: String,
+fn publish_unlocked_vault(
+    ui: &MainWindow,
+    qb_weak: &slint::Weak<QuickBarWindow>,
+    vault_arc: &Arc<Mutex<Vault>>,
+    master_pw_arc: &Arc<Mutex<Option<SecretString>>>,
+    search_state: &Arc<Mutex<FilterState>>,
+    vault: Vault,
+    master_store: Option<String>,
+    purged_n: usize,
+    and_downgrade: bool,
+) {
+    if let Some(pw) = master_store {
+        *lock_master_pw(master_pw_arc) = Some(SecretString::new(pw));
+    }
+    *search_state.lock().unwrap() = FilterState::default();
+    ui.set_search_query("".into());
+    // View props must mirror the reset filter — otherwise a
+    // pre-lock Trash/Favorites view desyncs from the list.
+    ui.set_showing_trash(false);
+    ui.set_show_fav_only(false);
+    ui.set_show_empty_confirm(false);
+    ui.set_type_filter(0);
+    ui.set_folder_filter("All".into());
+    let mut vault = vault;
+    vault.ensure_folders();
+    sync_folders_to_ui(&vault, ui);
+    let items = vault_to_items(&vault, &FilterState::default());
+    ui.set_credentials(items.clone());
+    set_trash_label(ui, &vault);
+    if let Some(qb) = qb_weak.upgrade() {
+        qb.set_filtered_results(vault_quickbar(&vault, "", search_state.lock().unwrap().travel_only));
+    }
+    // Phase 27 mirror: settings card reflects the armed gate (never the secret).
+    ui.set_totp2fa_on(vault.totp_unlock_enabled);
+    ui.set_totp2fa_secret("".into());
+    *lock_vault(vault_arc) = vault;
+    ui.set_is_unlocked(true);
+    ui.set_is_decoy(false);
+    ui.set_show_totp_step(false);
+    ui.set_totp_step_error("".into());
+    ui.set_status_text("✅ Vault unlocked".into());
+    // Hardware binding (rules Cat 6): warn-only machine check.
+    // Registry + DPAPI read is milliseconds — safe inline.
+    if windows_native::device_bind::check_device() {
+        ui.set_notification_text(
+            "⚠️ Bound to a different machine (ignore for portable USB).".into(),
+        );
+    }
+    if and_downgrade {
+        ui.set_notification_text(
+            "⚠️ Two-factor unlock is ON but Hello isn't enrolled — password-only this time.".into(),
+        );
+    }
+    if purged_n > 0 {
+        ui.set_notification_text(
+            format!("🗑️ {purged_n} expired trash items shredded.").into(),
+        );
+    }
+    security::access_log::log_event("unlock", "password ok");
+    trigger_sync_push(ui.as_weak());
+
+    // Phase 24: authenticator list now + live refresh ticker.
+    // The same 1s loop drives the hero countdown and refreshes
+    // all dynamic codes every 5s (cheap, few accounts).
+    {
+        let v = lock_vault(vault_arc);
+        ui.set_auth_accounts(rebuild_auth_list(&v));
+        ui.set_auth_rows(rebuild_auth_rows(&v));
+        // Fresh unlock resets the filter (see above), so the
+        // hub starts unfiltered; trashed keys get their own
+        // hub section instead of the sidebar Trash view.
+        ui.set_passkeys(rebuild_passkeys(&v, false));
+        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
+    }
+    let window_for_totp = ui.as_weak();
+    let vault_for_auth = Arc::clone(vault_arc);
+    thread::spawn(move || {
+        let mut tick = 0u64;
+        loop {
+            // Phase 24+Hardening: hero renders the FIRST live
+            // 2FA account dynamically (any algorithm/digits)
+            // instead of a hardcoded demo secret.
+            let hero: Option<(String, String, String)> = {
+                let v = lock_vault(&vault_for_auth);
+                v.totp_accounts.iter().find_map(|a| {
+                    totp_engine::generate_code_for_account(a)
+                        .ok()
+                        .map(|(code, remaining)| {
+                            let label = if a.issuer.is_empty() {
+                                a.account_name.clone()
+                            } else {
+                                format!("{} ({})", a.account_name, a.issuer)
+                            };
+                            let when = if remaining == u64::MAX {
+                                "HOTP".to_string()
+                            } else {
+                                format!("{remaining}s")
+                            };
+                            (label, code, when)
+                        })
+                })
+            };
+            let window_clone = window_for_totp.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = window_clone.upgrade() {
+                    // Prefer the selected item's embedded TOTP so the
+                    // Column 3 per-item hero shows a live code; fall back
+                    // to the first vault 2FA account otherwise.
+                    let selected: Option<(String, String, String)> = {
+                        let secret = ui.get_d_totp().to_string();
+                        if secret.trim().is_empty() {
+                            None
+                        } else {
+                            totp_engine::generate_live_code(secret.trim()).ok().map(
+                                |(code, remaining)| {
+                                    let when = if remaining == u64::MAX {
+                                        "HOTP".to_string()
+                                    } else {
+                                        format!("{remaining}s")
+                                    };
+                                    (ui.get_d_title().to_string(), code, when)
+                                },
+                            )
+                        }
+                    };
+                    if let Some((label, code, when)) = selected.or(hero) {
+                        ui.set_hero_account(label.into());
+                        ui.set_live_totp_code(code.into());
+                        ui.set_totp_countdown(when.into());
+                    } else {
+                        ui.set_hero_account("LIVE 2FA".into());
+                        ui.set_live_totp_code("------".into());
+                        ui.set_totp_countdown("--".into());
+                    }
+                }
+            });
+            tick += 1;
+            if tick.is_multiple_of(5) {
+                // ModelRc is !Send: move the vault handle in,
+                // build the model on the event-loop thread.
+                let vault_for_row = Arc::clone(&vault_for_auth);
+                let window_clone = window_for_totp.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = window_clone.upgrade() {
+                        let v = lock_vault(&vault_for_row);
+                        ui.set_auth_accounts(rebuild_auth_list(&v));
+                        ui.set_auth_rows(rebuild_auth_rows(&v));
+                    }
+                });
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
+fn unlock_with_password(    pass: String,
     main_weak: slint::Weak<MainWindow>,
     vault_arc: Arc<Mutex<Vault>>,
     master_pw_arc: Arc<Mutex<Option<SecretString>>>,
@@ -850,121 +1012,30 @@ fn unlock_with_password(
             };
             match loaded_result {
                 Ok(vault) => {
-                    *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
-                    *search_state.lock().unwrap() = FilterState::default();
-                    ui.set_search_query("".into());
-                    // View props must mirror the reset filter — otherwise a
-                    // pre-lock Trash/Favorites view desyncs from the list.
-                    ui.set_showing_trash(false);
-                    ui.set_show_fav_only(false);
-                    ui.set_show_empty_confirm(false);
-                    ui.set_type_filter(0);
-                    ui.set_folder_filter("All".into());
-                    let mut vault = vault;
-                    vault.ensure_folders();
-                    sync_folders_to_ui(&vault, &ui);
-                    let items = vault_to_items(&vault, &FilterState::default());
-                    ui.set_credentials(items.clone());
-                    set_trash_label(&ui, &vault);
-                    if let Some(qb) = qb_weak.upgrade() {
-                        qb.set_filtered_results(vault_quickbar(&vault, "", search_state.lock().unwrap().travel_only));
+                    if vault.totp_unlock_enabled {
+                        // Phase 27 gate: password proven — park the decrypted
+                        // vault + master WITHOUT publishing any UI state, then
+                        // demand the authenticator code. Decoy vaults never
+                        // carry the flag (provisioned fresh), so no cover leak.
+                        *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
+                        *lock_vault(&vault_arc) = vault;
+                        ui.set_show_totp_step(true);
+                        ui.set_totp_step_error("".into());
+                        ui.set_status_text("✅ Password OK — enter authenticator code".into());
+                        security::access_log::log_event("unlock", "password ok, totp pending");
+                        return;
                     }
-                    *lock_vault(&vault_arc) = vault;
-                    ui.set_is_unlocked(true);
-                    ui.set_is_decoy(false);
-                    ui.set_status_text("✅ Vault unlocked".into());
-                    // Hardware binding (rules Cat 6): warn-only machine check.
-                    // Registry + DPAPI read is milliseconds — safe inline.
-                    if windows_native::device_bind::check_device() {
-                        ui.set_notification_text(
-                            "⚠️ Bound to a different machine (ignore for portable USB).".into(),
-                        );
-                    }
-                    if and_downgrade {
-                        ui.set_notification_text(
-                            "⚠️ Two-factor unlock is ON but Hello isn't enrolled — password-only this time.".into(),
-                        );
-                    }
-                    if purged_n > 0 {
-                        ui.set_notification_text(
-                            format!("🗑️ {purged_n} expired trash items shredded.").into(),
-                        );
-                    }
-                    security::access_log::log_event("unlock", "password ok");
-                    trigger_sync_push(ui.as_weak());
-
-                    // Phase 24: authenticator list now + live refresh ticker.
-                    // The same 1s loop drives the hero countdown and refreshes
-                    // all dynamic codes every 5s (cheap, few accounts).
-                    {
-                        let v = lock_vault(&vault_arc);
-                            ui.set_auth_accounts(rebuild_auth_list(&v));
-                            ui.set_auth_rows(rebuild_auth_rows(&v));
-                        // Fresh unlock resets the filter (see above), so the
-                        // hub starts unfiltered; trashed keys get their own
-                        // hub section instead of the sidebar Trash view.
-                        ui.set_passkeys(rebuild_passkeys(&v, false));
-                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
-                    }
-                    let window_for_totp = ui.as_weak();
-                    let vault_for_auth = Arc::clone(&vault_arc);
-                    thread::spawn(move || {
-                        let mut tick = 0u64;
-                        loop {
-                            // Phase 24+Hardening: hero renders the FIRST live
-                            // 2FA account dynamically (any algorithm/digits)
-                            // instead of a hardcoded demo secret.
-                            let hero: Option<(String, String, String)> = {
-                                let v = lock_vault(&vault_for_auth);
-                                v.totp_accounts.iter().find_map(|a| {
-                                    totp_engine::generate_code_for_account(a)
-                                        .ok()
-                                        .map(|(code, remaining)| {
-                                            let label = if a.issuer.is_empty() {
-                                                a.account_name.clone()
-                                            } else {
-                                                format!("{} ({})", a.account_name, a.issuer)
-                                            };
-                                            let when = if remaining == u64::MAX {
-                                                "HOTP".to_string()
-                                            } else {
-                                                format!("{remaining}s")
-                                            };
-                                            (label, code, when)
-                                        })
-                                })
-                            };
-                            let window_clone = window_for_totp.clone();
-                            let _ = slint::invoke_from_event_loop(move || {
-                                if let Some(ui) = window_clone.upgrade() {
-                                    if let Some((label, code, when)) = hero {
-                                        ui.set_hero_account(label.into());
-                                        ui.set_live_totp_code(code.into());
-                                        ui.set_totp_countdown(when.into());
-                                    } else {
-                                        ui.set_hero_account("LIVE 2FA".into());
-                                        ui.set_live_totp_code("------".into());
-                                        ui.set_totp_countdown("--".into());
-                                    }
-                                }
-                            });
-                            tick += 1;
-                            if tick.is_multiple_of(5) {
-                                // ModelRc is !Send: move the vault handle in,
-                                // build the model on the event-loop thread.
-                                let vault_for_row = Arc::clone(&vault_for_auth);
-                                let window_clone = window_for_totp.clone();
-                                let _ = slint::invoke_from_event_loop(move || {
-                                    if let Some(ui) = window_clone.upgrade() {
-                                        let v = lock_vault(&vault_for_row);
-                                        ui.set_auth_accounts(rebuild_auth_list(&v));
-                                        ui.set_auth_rows(rebuild_auth_rows(&v));
-                                    }
-                                });
-                            }
-                            thread::sleep(Duration::from_secs(1));
-                        }
-                    });
+                    publish_unlocked_vault(
+                        &ui,
+                        &qb_weak,
+                        &vault_arc,
+                        &master_pw_arc,
+                        &search_state,
+                        vault,
+                        Some(pass_for_store),
+                        purged_n,
+                        and_downgrade,
+                    );
                 }
                 Err(e) => {
                     // Duress path: verified decoy opens a believable fake vault.
@@ -1823,9 +1894,9 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // Phase Batch-1: DWM Anti-Capture Guard (WDA_MONITOR, delayed 250ms).
-    // Covers MainWindow + QuickBar + QuickCapture so secrets never leak via
-    // ShareX/GDI-BitBlt OR OBS/Zoom/Discord WGC pipelines.
+    // Blackout is OFF by default on startup (dev-friendly: screenshots work).
+    // It only engages when the user toggles it ON in Settings, and the
+    // persisted choice in blackout.pref is honored across restarts.
     #[cfg(windows)]
     {
         let main_weak_guard = main_window.as_weak();
@@ -1834,21 +1905,34 @@ fn main() -> Result<(), slint::PlatformError> {
         // Delayed off-loop: DWM needs the top-level HWNDs fully adopted first.
         std::thread::spawn(move || {
             std::thread::sleep(std::time::Duration::from_millis(250));
+            let enabled = windows_native::display_guard::load_blackout_pref();
             let _ = slint::invoke_from_event_loop(move || {
                 let mut guarded = 0;
-                if let Some(ui) = main_weak_guard.upgrade() {
-                    if windows_native::display_guard::guard_window(ui.window()) {
-                        guarded += 1;
+                if enabled {
+                    if let Some(ui) = main_weak_guard.upgrade() {
+                        if windows_native::display_guard::guard_window(ui.window()) {
+                            guarded += 1;
+                        }
                     }
-                }
-                if let Some(qb) = qb_weak_guard.upgrade() {
-                    if windows_native::display_guard::guard_window(qb.window()) {
-                        guarded += 1;
+                    if let Some(qb) = qb_weak_guard.upgrade() {
+                        if windows_native::display_guard::guard_window(qb.window()) {
+                            guarded += 1;
+                        }
                     }
-                }
-                if let Some(cap) = cap_weak_guard.upgrade() {
-                    if windows_native::display_guard::guard_window(cap.window()) {
-                        guarded += 1;
+                    if let Some(cap) = cap_weak_guard.upgrade() {
+                        if windows_native::display_guard::guard_window(cap.window()) {
+                            guarded += 1;
+                        }
+                    }
+                } else if let Some(ui) = main_weak_guard.upgrade() {
+                    // Mirror the persisted OFF state onto the toggle + HWNDs.
+                    ui.set_blackout_enabled(false);
+                    windows_native::display_guard::clear_window(ui.window());
+                    if let Some(qb) = qb_weak_guard.upgrade() {
+                        windows_native::display_guard::clear_window(qb.window());
+                    }
+                    if let Some(cap) = cap_weak_guard.upgrade() {
+                        windows_native::display_guard::clear_window(cap.window());
                     }
                 }
                 if guarded > 0 {
@@ -2383,9 +2467,259 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
+    // Phase 27: optional vault-unlock TOTP gate (DEFAULT OFF).
+    // Pending setup secret lives here between [Enable] and [Confirm] —
+    // never in a Slint prop, never on disk until the user proves enrollment.
+    let pending_totp_secret: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+
+    // Verify path: password already proven + vault stashed; a matching live
+    // code completes the SAME publish pipeline (no second KDF, no dup logic).
+    let verify_weak = main_window.as_weak();
+    let verify_vault = Arc::clone(&active_vault);
+    let verify_master = Arc::clone(&active_master_pw);
+    let verify_search = Arc::clone(&search_state);
+    let verify_qb = quick_bar.as_weak();
+    main_window.on_verify_totp_unlock(move |code| {
+        let Some(ui) = verify_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_unlocked() || !ui.get_show_totp_step() {
+            return;
+        }
+        let code = code.trim().replace([' ', '-'], "");
+        if code.is_empty() {
+            ui.set_totp_step_error("Enter the 6-digit code.".into());
+            return;
+        }
+        let expected = {
+            let vault = lock_vault(&verify_vault);
+            if !vault.totp_unlock_enabled || vault.totp_unlock_secret.trim().is_empty() {
+                None
+            } else {
+                let probe = TotpAccount {
+                    id: "unlock-gate".into(),
+                    account_name: "vault-unlock".into(),
+                    issuer: "PhantomVault".into(),
+                    secret: vault.totp_unlock_secret.clone(),
+                    digits: 6,
+                    period: 30,
+                    algorithm: "SHA1".into(),
+                    otp_type: "totp".into(),
+                    counter: 0,
+                };
+                totp_engine::generate_code_for_account(&probe).ok().map(|(c, _)| c)
+            }
+        };
+        let Some(expected) = expected else {
+            // Gate misconfigured mid-flight — fail closed, full reset.
+            *lock_vault(&verify_vault) = Vault::new();
+            *lock_master_pw(&verify_master) = None;
+            ui.set_show_totp_step(false);
+            ui.set_totp_step_error("Unlock 2FA misconfigured — signed out.".into());
+            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+            return;
+        };
+        // Constant-time-ish compare (length gate + OR-fold, no early exit).
+        let ok = expected.len() == code.len()
+            && expected
+                .as_bytes()
+                .iter()
+                .zip(code.as_bytes())
+                .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                == 0;
+        if !ok {
+            ui.set_totp_step_error("❌ Wrong code — try the current one.".into());
+            return;
+        }
+        let vault = std::mem::replace(&mut *lock_vault(&verify_vault), Vault::new());
+        publish_unlocked_vault(
+            &ui,
+            &verify_qb,
+            &verify_vault,
+            &verify_master,
+            &verify_search,
+            vault,
+            None,
+            0,
+            false,
+        );
+    });
+
+    // Gate cancelled: scrub the stashed vault + master, back to password.
+    let cancel_weak = main_window.as_weak();
+    let cancel_vault = Arc::clone(&active_vault);
+    let cancel_master = Arc::clone(&active_master_pw);
+    main_window.on_cancel_totp_step(move || {
+        *lock_vault(&cancel_vault) = Vault::new();
+        *lock_master_pw(&cancel_master) = None;
+        if let Some(ui) = cancel_weak.upgrade() {
+            ui.set_show_totp_step(false);
+            ui.set_totp_step_error("".into());
+            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+        }
+    });
+
+    // Setup step 1 [Enable]: mint a fresh secret, show it ONCE for enrollment.
+    let setup_weak = main_window.as_weak();
+    let setup_pending = Arc::clone(&pending_totp_secret);
+    main_window.on_setup_totp_unlock(move || {
+        let Some(ui) = setup_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let mut raw = [0u8; 20];
+        OsRng.fill_bytes(&mut raw);
+        let secret = BASE32_NOPAD.encode(&raw);
+        raw.zeroize();
+        *setup_pending.lock().unwrap() = Some(secret.clone());
+        ui.set_totp2fa_secret(secret.into());
+        ui.set_notification_text(
+            "📱 Scan/type this secret into your authenticator, then Confirm.".into(),
+        );
+    });
+
+    // Setup step 2 [Confirm]: code must verify before anything is persisted.
+    let confirm_weak = main_window.as_weak();
+    let confirm_vault = Arc::clone(&active_vault);
+    let confirm_master = Arc::clone(&active_master_pw);
+    let confirm_pending = Arc::clone(&pending_totp_secret);
+    main_window.on_confirm_totp_unlock(move |code| {
+        let Some(ui) = confirm_weak.upgrade() else {
+            return;
+        };
+        let pending = confirm_pending.lock().unwrap().clone();
+        let Some(secret) = pending else {
+            ui.set_notification_text("⚠️ Press Enable first.".into());
+            return;
+        };
+        let probe = TotpAccount {
+            id: "unlock-gate".into(),
+            account_name: "vault-unlock".into(),
+            issuer: "PhantomVault".into(),
+            secret: secret.clone(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+        };
+        let ok = totp_engine::generate_code_for_account(&probe)
+            .map(|(c, _)| {
+                let entered = code.trim().replace([' ', '-'], "");
+                c.len() == entered.len()
+                    && c.as_bytes()
+                        .iter()
+                        .zip(entered.as_bytes())
+                        .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+                        == 0
+            })
+            .unwrap_or(false);
+        if !ok {
+            ui.set_notification_text("❌ Code doesn't match — check the secret + clock.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&confirm_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_notification_text("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        let weak = confirm_weak.clone();
+        let vault_clone = Arc::clone(&confirm_vault);
+        let pending_done = Arc::clone(&confirm_pending);
+        std::thread::spawn(move || {            let res: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                vault.totp_unlock_enabled = true;
+                vault.totp_unlock_secret = secret.clone();
+                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    Ok(()) => Ok(vault.clone()),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match res {
+                        Ok(_) => {
+                            *pending_done.lock().unwrap() = None;
+                            ui.set_totp2fa_on(true);
+                            ui.set_totp2fa_secret("".into());
+                            ui.set_notification_text(
+                                "🔐 Unlock 2FA armed — password + code from now on.".into(),
+                            );
+                            trigger_sync_push(ui.as_weak());
+                        }
+                        Err(e) => {
+                            ui.set_notification_text(format!("❌ Enable failed: {e}").into());
+                        }
+                    }
+                }
+            });
+        });
+    });
+
+    // Disarm: wipe secret + flag, re-seal, mirror OFF.
+    let disable_weak = main_window.as_weak();
+    let disable_vault = Arc::clone(&active_vault);
+    let disable_master = Arc::clone(&active_master_pw);
+    let disable_pending = Arc::clone(&pending_totp_secret);
+    main_window.on_disable_totp_unlock(move || {
+        let Some(ui) = disable_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&disable_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_notification_text("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        let weak = disable_weak.clone();
+        let vault_clone = Arc::clone(&disable_vault);
+        let pending_done = Arc::clone(&disable_pending);
+        std::thread::spawn(move || {
+            let res: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                vault.totp_unlock_enabled = false;
+                vault.totp_unlock_secret.zeroize();
+                vault.totp_unlock_secret = String::new();
+                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    Ok(()) => Ok(vault.clone()),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match res {
+                        Ok(_) => {
+                            *pending_done.lock().unwrap() = None;
+                            ui.set_totp2fa_on(false);
+                            ui.set_totp2fa_secret("".into());
+                            ui.set_notification_text("Unlock 2FA disarmed.".into());
+                            trigger_sync_push(ui.as_weak());
+                        }
+                        Err(e) => {
+                            ui.set_notification_text(format!("❌ Disarm failed: {e}").into());
+                        }
+                    }
+                }
+            });
+        });
+    });
+
     // Phase 11: Windows Hello — biometric unlock request
-    let bio_weak = main_window.as_weak();
-    let bio_vault = Arc::clone(&active_vault);
+    let bio_weak = main_window.as_weak();    let bio_vault = Arc::clone(&active_vault);
     let bio_master = Arc::clone(&active_master_pw);
     let bio_search = Arc::clone(&search_state);
     let bio_qb = quick_bar.as_weak();
@@ -2507,6 +2841,7 @@ fn push_new_item(
     totp: &str,
     reprompt: bool,
     fav: bool,
+    travel: bool,
 ) {
     match kind {
         1 => vault.credentials.push(Credential {
@@ -2522,7 +2857,7 @@ fn push_new_item(
             folder: folder.to_string(),
             reprompt,
             attachments: Vec::new(),
-            travel_safe: false,
+            travel_safe: travel,
             last_changed: crate::models::current_timestamp(),
             password_history: Vec::new(),
             favorite: fav,
@@ -2535,7 +2870,7 @@ fn push_new_item(
             expiry_date: (!b.trim().is_empty()).then(|| b.to_string()),
             folder: folder.to_string(),
             attachments: Vec::new(),
-            travel_safe: false,
+            travel_safe: travel,
             favorite: fav,
             deleted_at: None,
         }),
@@ -2544,7 +2879,7 @@ fn push_new_item(
             title: title.to_string(),
             content: a.to_string(),
             folder: folder.to_string(),
-            travel_safe: false,
+            travel_safe: travel,
             favorite: fav,
             deleted_at: None,
         }),
@@ -2560,7 +2895,7 @@ fn push_new_item(
                 cvv: dd.to_string(),
                 folder: folder.to_string(),
                 notes: notes.to_string(),
-                travel_safe: false,
+                travel_safe: travel,
                 favorite: fav,
                 deleted_at: None,
             })
@@ -2575,7 +2910,7 @@ fn push_new_item(
             address: ee.to_string(),
             folder: folder.to_string(),
             notes: String::new(),
-            travel_safe: false,
+            travel_safe: travel,
             favorite: fav,
             deleted_at: None,
         }),
@@ -2587,7 +2922,7 @@ fn push_new_item(
             fingerprint: cc.to_string(),
             folder: folder.to_string(),
             notes: notes.to_string(),
-            travel_safe: false,
+            travel_safe: travel,
             favorite: fav,
             deleted_at: None,
         }),
@@ -2615,6 +2950,7 @@ fn replace_item(
     totp: &str,
     reprompt: bool,
     fav: bool,
+    travel: bool,
 ) -> bool {
     match kind {
         1 => {
@@ -2643,6 +2979,7 @@ fn replace_item(
             c.folder = folder.to_string();
             c.reprompt = reprompt;
             c.favorite = fav;
+            c.travel_safe = travel;
             true
         }
         2 => {
@@ -2654,6 +2991,7 @@ fn replace_item(
             l.expiry_date = (!b.trim().is_empty()).then(|| b.to_string());
             l.folder = folder.to_string();
             l.favorite = fav;
+            l.travel_safe = travel;
             true
         }
         3 => {
@@ -2664,6 +3002,7 @@ fn replace_item(
             n.content = a.to_string();
             n.folder = folder.to_string();
             n.favorite = fav;
+            n.travel_safe = travel;
             true
         }
         4 => {
@@ -2680,6 +3019,7 @@ fn replace_item(
             k.folder = folder.to_string();
             k.notes = notes.to_string();
             k.favorite = fav;
+            k.travel_safe = travel;
             true
         }
         5 => {
@@ -2694,6 +3034,7 @@ fn replace_item(
             i.address = ee.to_string();
             i.folder = folder.to_string();
             i.favorite = fav;
+            i.travel_safe = travel;
             true
         }
         6 => {
@@ -2707,6 +3048,7 @@ fn replace_item(
             s.folder = folder.to_string();
             s.notes = notes.to_string();
             s.favorite = fav;
+            s.travel_safe = travel;
             true
         }
         _ => false,
@@ -2726,7 +3068,7 @@ fn replace_item(
     let pending_cf_add = Arc::clone(&pending_cf);
     let editing_add = Arc::clone(&editing_item);
     main_window.on_add_item_requested(
-        move |kind, title, a, b, c, d, e, notes, folder, totp, backup, reprompt, fav| {
+        move |kind, title, a, b, c, d, e, notes, folder, totp, backup, reprompt, fav, travel| {
             if let Some(ui) = window_weak_add.upgrade() {
                 // Decoy vaults are read-mostly cover: never write through them.
                 if ui.get_is_decoy() {
@@ -2796,6 +3138,7 @@ fn replace_item(
             let backup_for_thread = backup_for_cb.clone();
             let totp_for_thread = totp_for_cb.clone();
             let reprompt_for_thread = reprompt;
+            let travel_for_thread = travel;
             let custom_for_thread = pending_cf_add.lock().unwrap().clone();
             let editing_for_thread = editing_add.lock().unwrap().clone();
             let editing_done = Arc::clone(&editing_add);
@@ -2843,7 +3186,7 @@ fn replace_item(
                             &mut vault, ekind, &eid, &title_for_thread,
                             &a, &b, &cc, &dd, &ee, &notes, &folder,
                             &urls, &backup, &custom, &totp_for_thread, reprompt_for_thread,
-                            fav_for_thread,
+                            fav_for_thread, travel_for_thread,
                         )
                     } else {
                         false
@@ -2853,7 +3196,7 @@ fn replace_item(
                             &mut vault, kind, new_id, &title_for_thread,
                             &a, &b, &cc, &dd, &ee, &notes, &folder,
                             urls, backup, custom, &totp_for_thread, reprompt_for_thread,
-                            fav_for_thread,
+                            fav_for_thread, travel_for_thread,
                         );
                     }
 
@@ -2894,6 +3237,7 @@ fn replace_item(
                             ui.set_f_backup("".into());
                             ui.set_f_reprompt(false);
                             ui.set_f_fav(false);
+                            ui.set_f_travel(false);
                             ui.set_show_add_form(false);
                             *editing_done.lock().unwrap() = None;
                             *pending_done.lock().unwrap() = Vec::new();
@@ -4446,6 +4790,7 @@ fn replace_item(
         ui.set_f_backup("".into());
         ui.set_f_reprompt(false);
         ui.set_f_fav(false);
+        ui.set_f_travel(false);
         ui.set_show_new_menu(false);
         ui.set_show_detail(false);
         ui.set_show_add_form(true);
@@ -4823,6 +5168,7 @@ fn replace_item(
                     ui.set_f_folder(c.folder.clone().into());
                     ui.set_f_reprompt(c.reprompt);
                     ui.set_f_fav(c.favorite);
+                    ui.set_f_travel(c.travel_safe);
                     *edit_pending.lock().unwrap() = c.custom_fields.clone();
                     ui.set_custom_fields(custom_to_ui(&c.custom_fields));
                 }
@@ -4834,6 +5180,7 @@ fn replace_item(
                     ui.set_f_b(l.expiry_date.clone().unwrap_or_default().into());
                     ui.set_f_folder(l.folder.clone().into());
                     ui.set_f_fav(l.favorite);
+                    ui.set_f_travel(l.travel_safe);
                 }
             }
             3 => {
@@ -4842,6 +5189,7 @@ fn replace_item(
                     ui.set_f_a(n.content.clone().into());
                     ui.set_f_folder(n.folder.clone().into());
                     ui.set_f_fav(n.favorite);
+                    ui.set_f_travel(n.travel_safe);
                 }
             }
             4 => {
@@ -4854,6 +5202,7 @@ fn replace_item(
                     ui.set_f_notes(k.notes.clone().into());
                     ui.set_f_folder(k.folder.clone().into());
                     ui.set_f_fav(k.favorite);
+                    ui.set_f_travel(k.travel_safe);
                 }
             }
             5 => {
@@ -4866,6 +5215,7 @@ fn replace_item(
                     ui.set_f_e(i.address.clone().into());
                     ui.set_f_folder(i.folder.clone().into());
                     ui.set_f_fav(i.favorite);
+                    ui.set_f_travel(i.travel_safe);
                 }
             }
             6 => {
@@ -4877,6 +5227,7 @@ fn replace_item(
                     ui.set_f_notes(s.notes.clone().into());
                     ui.set_f_folder(s.folder.clone().into());
                     ui.set_f_fav(s.favorite);
+                    ui.set_f_travel(s.travel_safe);
                 }
             }
             _ => {}
@@ -5792,6 +6143,7 @@ fn replace_item(
                 // Force repaint so DWM flushes its visual cache instantly —
                 // no manual window move needed to unmask.
                 ui.window().request_redraw();
+                windows_native::display_guard::save_blackout_pref(on);
             }
             println!("🛡️ Blackout Guard set to: {}", on);
             ui.set_blackout_enabled(on);
@@ -5968,6 +6320,31 @@ fn replace_item(
             ui.set_show_access_log(true);
         }
     });
+    // Phase 26: anti-photography toggles (persist + mirror to Slint).
+    let peep_weak = main_window.as_weak();
+    main_window.on_set_peep_mode(move |on| {
+        let mut cfg = security::anti_camera::load_config();
+        cfg.peep_hole_enabled = on;
+        security::anti_camera::save_config(&cfg);
+        if let Some(ui) = peep_weak.upgrade() {
+            ui.set_peep_hole_mode(on);
+        }
+    });
+    let moire_weak = main_window.as_weak();
+    main_window.on_set_moire(move |on| {
+        let mut cfg = security::anti_camera::load_config();
+        cfg.moire_enabled = on;
+        security::anti_camera::save_config(&cfg);
+        if let Some(ui) = moire_weak.upgrade() {
+            ui.set_moire_guard_active(on);
+        }
+    });
+    // Mirror persisted guards onto the UI at startup (both default OFF).
+    {
+        let cfg = security::anti_camera::load_config();
+        main_window.set_peep_hole_mode(cfg.peep_hole_enabled);
+        main_window.set_moire_guard_active(cfg.moire_enabled);
+    }
     // Wire-up #4: pill click → auto-type the matched credential, hide pill.
     let pill_weak = main_window.as_weak();
     let pill_qb = quick_bar.as_weak();

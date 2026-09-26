@@ -154,23 +154,26 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     if let Ok(vault) = serde_json::from_slice::<Vault>(&decrypted) {
         return Ok((vault, false));
     }
-    // Legacy bincode Gen-chain (pre-JSON vaults), newest-first: Gen3
-    // (pre-dynamic-TOTP), Gen2 (pre-attachments/travel), Gen1 (folders, lean
-    // credential), Gen0. Always flags migration into JSON.
+    // Legacy bincode Gen-chain (pre-JSON vaults), newest-first: Gen4
+    // (pre-unlock-2FA), Gen3 (pre-dynamic-TOTP), Gen2 (pre-attachments/
+    // travel), Gen1 (folders, lean credential), Gen0. Always migrates to JSON.
     let vault: Vault = match bincode::deserialize(&decrypted) {
         Ok(v) => v,
-        Err(_) => match bincode::deserialize::<crate::models::VaultGen3>(&decrypted) {
-            Ok(g3) => g3.into(),
-            Err(_) => match bincode::deserialize::<crate::models::VaultGen2>(&decrypted) {
-                Ok(g2) => g2.into(),
-                Err(_) => match bincode::deserialize::<crate::models::VaultGen1>(&decrypted) {
-                    Ok(g1) => g1.into(),
-                    Err(_) => {
-                        let legacy: crate::models::VaultLegacy =
-                            bincode::deserialize(&decrypted)
-                                .map_err(|e| format!("Deserialization error: {}", e))?;
-                        legacy.into()
-                    }
+        Err(_) => match bincode::deserialize::<crate::models::VaultGen4>(&decrypted) {
+            Ok(g4) => g4.into(),
+            Err(_) => match bincode::deserialize::<crate::models::VaultGen3>(&decrypted) {
+                Ok(g3) => g3.into(),
+                Err(_) => match bincode::deserialize::<crate::models::VaultGen2>(&decrypted) {
+                    Ok(g2) => g2.into(),
+                    Err(_) => match bincode::deserialize::<crate::models::VaultGen1>(&decrypted) {
+                        Ok(g1) => g1.into(),
+                        Err(_) => {
+                            let legacy: crate::models::VaultLegacy =
+                                bincode::deserialize(&decrypted)
+                                    .map_err(|e| format!("Deserialization error: {}", e))?;
+                            legacy.into()
+                        }
+                    },
                 },
             },
         },
