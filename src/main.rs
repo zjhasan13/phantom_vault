@@ -5784,9 +5784,16 @@ fn replace_item(
         if let Some(ui) = bb_weak.upgrade() {
             #[cfg(windows)]
             {
-                let _ = on;
-                let _ = windows_native::display_guard::guard_window(ui.window());
+                if on {
+                    windows_native::display_guard::guard_window(ui.window());
+                } else {
+                    windows_native::display_guard::clear_window(ui.window());
+                }
+                // Force repaint so DWM flushes its visual cache instantly —
+                // no manual window move needed to unmask.
+                ui.window().request_redraw();
             }
+            println!("🛡️ Blackout Guard set to: {}", on);
             ui.set_blackout_enabled(on);
         }
     });

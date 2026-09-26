@@ -11,6 +11,16 @@ use windows_sys::Win32::UI::WindowsAndMessaging::{SetWindowDisplayAffinity, WDA_
 
 /// Apply WDA_MONITOR to a Slint window. Returns true when the OS accepted it.
 pub fn guard_window(window: &slint::Window) -> bool {
+    set_affinity(window, WDA_MONITOR)
+}
+
+/// Clear the affinity back to WDA_NONE (0) so screenshots work again.
+/// Returns true when the OS accepted it.
+pub fn clear_window(window: &slint::Window) -> bool {
+    set_affinity(window, 0)
+}
+
+fn set_affinity(window: &slint::Window, affinity: u32) -> bool {
     let handle_wrapper = window.window_handle();
     let Ok(handle) = handle_wrapper.window_handle() else {
         return false;
@@ -20,7 +30,7 @@ pub fn guard_window(window: &slint::Window) -> bool {
     };
     let hwnd = win32.hwnd.get() as *mut std::ffi::c_void;
     // SAFETY: HWND came from our own live window; constant affinity flag.
-    unsafe { SetWindowDisplayAffinity(hwnd as _, WDA_MONITOR) != 0 }
+    unsafe { SetWindowDisplayAffinity(hwnd as _, affinity) != 0 }
 }
 
 #[cfg(test)]
