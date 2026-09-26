@@ -488,6 +488,14 @@ export component MainWindow inherits Window {
     in-out property <string> access_log_text: "No events yet.";
     callback set_offline_mode(bool);
     callback view_access_log();
+    // Phase 25: BLE proximity auto-lock (0 Close/-75, 1 Medium/-85, 2 Far/-95)
+    in-out property <bool> prox_enabled: false;
+    in-out property <string> prox_device: "";
+    in-out property <int> prox_sensitivity: 1;
+    in-out property <string> prox_status: "⚪ Proximity Inactive";
+    callback set_prox_enabled(bool);
+    callback save_prox_device(string);
+    callback set_prox_sensitivity(int);
     // Phase 18: Omni-Importer vault view
     in-out property <string> import_status: "No import yet — pick any export file.";
     // Cat 8: plaintext import-source shred offer
@@ -834,6 +842,19 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline kill-switch (no network)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📜  Access Log"; width: 180px; clicked => { root.view_access_log(); } } }
+                }}
+                Rectangle { background: #0d1430; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "📱 Bluetooth Proximity Auto-Lock"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: "Locks the vault when your paired phone/watch walks away (passive BLE scan, 4s heartbeat)."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Enable proximity lock"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.prox_enabled ? "ON" : "OFF"; primary: root.prox_enabled; width: 90px; clicked => { root.set_prox_enabled(!root.prox_enabled); } } }
+                    LineEdit { placeholder-text: "Target Bluetooth device name (e.g. Galaxy S24)"; text <=> root.prox_device; height: 36px; accepted(text) => { root.save_prox_device(text); } }
+                    HorizontalLayout { spacing: 6px;
+                        AuraButton { label: "Close"; primary: root.prox_sensitivity == 0; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(0); } }
+                        AuraButton { label: "Medium"; primary: root.prox_sensitivity == 1; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(1); } }
+                        AuraButton { label: "Far"; primary: root.prox_sensitivity == 2; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(2); } }
+                        AuraButton { label: "Save device"; primary: true; width: 110px; height: 30px; clicked => { root.save_prox_device(root.prox_device); } }
+                    }
+                    Text { text: root.prox_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d1430; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "GitHub Sync"; color: #8b7cf6; font-size: 12px; font-weight: 800; }

@@ -1,22 +1,64 @@
 // Popup: credentials matching the active tab, 1-click Fill / Copy.
+//
+// Hang-proof: every bridge round-trip races a 10s timeout, so the popup can
+// NEVER stick on "Loading…" — a dead bridge, a locked vault, or a sleeping
+// service worker all land on one actionable message + a Retry button.
 (async () => {
   const list = document.getElementById("list");
   const status = document.getElementById("status");
+  const LOCKED_MSG = "🔒 Vault is locked. Please unlock PhantomVault desktop app.";
+  const QUERY_TIMEOUT_MS = 10000;
+
+  function showLocked(hint) {
+    status.textContent = LOCKED_MSG + (hint ? " (" + hint + ")" : "");
+    const retry = document.createElement("button");
+    retry.textContent = "🔄 Retry";
+    retry.addEventListener("click", () => window.location.reload());
+    status.append(document.createElement("br"), retry);
+  }
+
+  function withTimeout(promise, ms, label) {
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(label + " timed out")), ms);
+    });
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+  }
+
   let host = "";
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const [tab] = await withTimeout(
+      chrome.tabs.query({ active: true, currentWindow: true }),
+      QUERY_TIMEOUT_MS,
+      "tab lookup"
+    );
     host = tab && tab.url ? new URL(tab.url).host : "";
-  } catch (_) { /* no tab access */ }
+  } catch (_) {
+    showLocked("no active tab");
+    return;
+  }
 
   let res;
   try {
-    res = await chrome.runtime.sendMessage({ type: "PV_QUERY", app: host });
+    res = await withTimeout(
+      chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }),
+      QUERY_TIMEOUT_MS,
+      "vault bridge"
+    );
   } catch (e) {
-    status.textContent = "Bridge unreachable — install the native host first.";
+    // Bridge unreachable / host missing / worker asleep — one clean message.
+    showLocked("bridge unreachable");
     return;
   }
   if (!res || !res.ok) {
-    status.textContent = (res && res.error) || "Vault locked — unlock PhantomVault first.";
+    const err = (res && res.error) || "";
+    if (/lock/i.test(err)) {
+      showLocked();
+    } else if (err) {
+      status.textContent = "⚠️ " + err;
+    } else {
+      showLocked();
+    }
     return;
   }
   const entries = res.entries || [];

@@ -292,6 +292,7 @@ pub fn register_native_host() -> Result<String, crate::error::VaultError> {
         .ok_or_else(|| VaultError::Sync("manifest path not unicode".into()))?;
     for root in [
         "Software\\Google\\Chrome\\NativeMessagingHosts\\com.phantomvault.host",
+        "Software\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\com.phantomvault.host",
         "Software\\Microsoft\\Edge\\NativeMessagingHosts\\com.phantomvault.host",
     ] {
         write_host_key(root, manifest_str)?;

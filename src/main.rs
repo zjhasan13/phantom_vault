@@ -30,6 +30,15 @@ slint::include_modules!();
 const VAULT_FILE: &str = "my_secure_vault.enc";
 const HELLO_TOKEN_FILE: &str = "vault_hello.dpapi";
 
+/// Native-host launch detector: humans type `native-host`, but Chromium
+/// launches the bridge as `<exe> chrome-extension://<id>/ [...]` (origin URL
+/// as argv[1]). Both spellings must enter the stdio serve loop — otherwise
+/// Chrome sees a code-2 exit and the popup hangs on "Loading…".
+/// Pure — unit tested.
+fn is_native_host_launch(arg: &str) -> bool {
+    arg == "native-host" || arg.starts_with("chrome-extension://")
+}
+
 fn tokio_rt() -> Option<tokio::runtime::Runtime> {
     tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -236,6 +245,17 @@ fn lock_master_pw(
     arc: &Arc<Mutex<Option<SecretString>>>,
 ) -> std::sync::MutexGuard<'_, Option<SecretString>> {
     arc.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Phase 25: poison-recovering lock for the proximity config (same pattern
+/// as `lock_vault` — a panicked worker must never wedge the Settings page).
+fn prox_config_lock(
+    arc: &Arc<Mutex<windows_native::proximity_lock::ProximityConfig>>,
+) -> std::sync::MutexGuard<'_, windows_native::proximity_lock::ProximityConfig> {
+    arc.lock().unwrap_or_else(|poisoned| {
+        eprintln!("⚠️ Warning: proximity config mutex was poisoned, recovering.");
+        poisoned.into_inner()
+    })
 }
 
 /// Phase 15 (Option 1): best-effort RAM wipe of all vault secrets.
@@ -1470,7 +1490,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let res: std::io::Result<()> =
                 std::fs::create_dir_all(&dir).and_then(|()| std::env::set_current_dir(&dir));
             match res {
-                Ok(()) => println!("📦 Portable mode: data dir = {dir}"),
+                Ok(()) => eprintln!("📦 Portable mode: data dir = {dir}"),
                 Err(e) => eprintln!("⚠️ Portable dir unusable ({dir}): {e} — using default."),
             }
         }
@@ -1480,11 +1500,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let dll_guarded = windows_native::process_guard::block_injected_dlls();
     let wer_excluded = windows_native::process_guard::exclude_from_crash_dumps();
     let elevated = windows_native::process_guard::is_elevated();
+    // NOTE: stderr only — stdout belongs to the Native Messaging frame
+    // protocol when Chromium launches us (any println here corrupts the
+    // length-prefixed pipe and the popup hangs on "Loading…").
     if dll_guarded {
-        println!("🛡️ DLL-injection block active (Microsoft-only binaries).");
+        eprintln!("🛡️ DLL-injection block active (Microsoft-only binaries).");
     }
     if wer_excluded {
-        println!("🛡️ Crash-dump upload excluded (WER).");
+        eprintln!("🛡️ Crash-dump upload excluded (WER).");
     }
     if elevated {
         eprintln!("⚠️ Running as Administrator — larger blast radius. Prefer portable user mode.");
@@ -1495,13 +1518,15 @@ fn main() -> Result<(), slint::PlatformError> {
     //   vault ssh-agent                       (named-pipe agent, foreground)
     //   vault shred <file>...                (DoD 3-pass shred + delete)
     //   vault native-host [--print-manifest <origin>]  (browser bridge: Hello-cached unlock, stdio framing)
+    //   <exe> chrome-extension://<id>/ [...]  (Chromium launches the bridge
+    //     with the origin URL as argv[1] — never the "native-host" word)
     let argv: Vec<String> = std::env::args().collect();
     if argv.len() > 1 {
         let code = match argv[1].as_str() {
             "run" => developer::vault_run::run_cli(&argv[2..]),
             "scan" => developer::vault_run::scan_cli(&argv[2..]),
             "ssh-agent" => developer::ssh_agent::serve_cli(),
-            "native-host" => {
+            origin if is_native_host_launch(origin) => {
                 if let Some(pos) = argv.iter().position(|a| a == "--print-manifest") {
                     let origin = argv.get(pos + 1).cloned().unwrap_or_else(|| {
                         "chrome-extension://<YOUR-EXTENSION-ID>/".to_string()
@@ -1583,6 +1608,23 @@ fn main() -> Result<(), slint::PlatformError> {
     let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
     // Wire-up #4: last UIA-detected app for the autofill pill.
     let pill_app: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
+    // Phase 25: BLE proximity auto-lock state (config persisted to
+    // proximity.json; monitor holds the debounce across heartbeats).
+    let prox_config: Arc<Mutex<windows_native::proximity_lock::ProximityConfig>> =
+        Arc::new(Mutex::new(windows_native::proximity_lock::ProximityConfig::load()));
+    let prox_monitor: Arc<Mutex<windows_native::proximity_lock::ProximityMonitor>> =
+        Arc::new(Mutex::new(windows_native::proximity_lock::ProximityMonitor::new()));
+    {
+        let cfg = prox_config.lock().map(|c| c.clone()).unwrap_or_default();
+        main_window.set_prox_enabled(cfg.enabled);
+        main_window.set_prox_device(cfg.device_name.into());
+        main_window.set_prox_sensitivity(
+            windows_native::proximity_lock::sensitivity_for_threshold(cfg.rssi_threshold),
+        );
+        if !cfg.enabled {
+            main_window.set_prox_status("⚪ Proximity Inactive".into());
+        }
+    }
 
     // Surface the elevation warning where the user WILL see it: lock screen.
     if elevated {
@@ -5804,6 +5846,75 @@ fn replace_item(
             });
         }
     });
+    // Phase 25: BLE proximity auto-lock settings. Persisted to proximity.json
+    // on every change; the monitor resets so a renamed device never inherits
+    // the old device's sightings (no false lock, no missed walk-away).
+    let prox_weak_en = main_window.as_weak();
+    let prox_cfg_en = Arc::clone(&prox_config);
+    let prox_mon_en = Arc::clone(&prox_monitor);
+    main_window.on_set_prox_enabled(move |on| {
+        let Some(ui) = prox_weak_en.upgrade() else {
+            return;
+        };
+        {
+            let mut cfg = prox_config_lock(&prox_cfg_en);
+            cfg.enabled = on;
+            cfg.save();
+        }
+        if let Ok(mut m) = prox_mon_en.lock() {
+            m.reset();
+        }
+        ui.set_prox_enabled(on);
+        ui.set_notification_text(if on {
+            "📱 Proximity lock ON — walk away to test it.".into()
+        } else {
+            "📱 Proximity lock OFF.".into()
+        });
+    });
+    let prox_weak_dev = main_window.as_weak();
+    let prox_cfg_dev = Arc::clone(&prox_config);
+    let prox_mon_dev = Arc::clone(&prox_monitor);
+    main_window.on_save_prox_device(move |name| {
+        let Some(ui) = prox_weak_dev.upgrade() else {
+            return;
+        };
+        let name = name.as_str().trim().to_string();
+        if name.is_empty() {
+            ui.set_notification_text("⚠️ Enter your phone's Bluetooth name first.".into());
+            return;
+        }
+        if name.len() > 64 {
+            ui.set_notification_text("⚠️ Device name too long (64 max).".into());
+            return;
+        }
+        {
+            let mut cfg = prox_config_lock(&prox_cfg_dev);
+            cfg.device_name = name.clone();
+            cfg.save();
+        }
+        if let Ok(mut m) = prox_mon_dev.lock() {
+            m.reset();
+        }
+        ui.set_prox_device(name.into());
+        ui.set_notification_text("📱 Tracking device saved.".into());
+    });
+    let prox_weak_sen = main_window.as_weak();
+    let prox_cfg_sen = Arc::clone(&prox_config);
+    main_window.on_set_prox_sensitivity(move |level| {
+        let Some(ui) = prox_weak_sen.upgrade() else {
+            return;
+        };
+        let threshold = windows_native::proximity_lock::threshold_for_sensitivity(level);
+        {
+            let mut cfg = prox_config_lock(&prox_cfg_sen);
+            cfg.rssi_threshold = threshold;
+            cfg.save();
+        }
+        ui.set_prox_sensitivity(level);
+        ui.set_notification_text(
+            format!("📱 Sensitivity: {threshold} dBm cutoff.").into(),
+        );
+    });
     // Batch-4: SSH agent status badge — real named-pipe probe, off-thread.
     let ssh_weak = main_window.as_weak();
     main_window.on_refresh_ssh_status(move || {
@@ -6064,6 +6175,51 @@ fn replace_item(
 
     run_startup_pull(main_window.as_weak());
 
+    // Phase 25: BLE proximity auto-lock service. Passive scan + 4s heartbeat
+    // on a worker thread; the fire path reuses the standard lock pipeline
+    // (RAM wipe + clipboard flush + access log + lock screen).
+    {
+        let main_weak_prox = main_window.as_weak();
+        let cap_weak_prox = capture_window.as_weak();
+        let vault_prox = Arc::clone(&active_vault);
+        let master_prox = Arc::clone(&active_master_pw);
+        let pending_prox = Arc::clone(&pending_cf);
+        let editing_prox = Arc::clone(&editing_item);
+        let master_is_open: Arc<dyn Fn() -> bool + Send + Sync> = Arc::new({
+            let master_prox = Arc::clone(&active_master_pw);
+            move || master_prox.lock().map(|m| m.is_some()).unwrap_or(false)
+        });
+        let status_weak = main_window.as_weak();
+        windows_native::proximity_lock::start_proximity_service(
+            Arc::clone(&prox_config),
+            Arc::clone(&prox_monitor),
+            master_is_open,
+            move |status| {
+                let weak = status_weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_prox_status(status.into());
+                    }
+                });
+            },
+            // Direct call like the auto-lock ticker: `lock_vault_now` wipes
+            // RAM + flushes the clipboard inline and dispatches UI work to
+            // the event loop itself.
+            move || {
+                lock_vault_now(
+                    main_weak_prox.clone(),
+                    cap_weak_prox.clone(),
+                    &vault_prox,
+                    &master_prox,
+                    &pending_prox,
+                    &editing_prox,
+                    "📱 Proximity Lock: Device walked away.",
+                    "proximity-lock",
+                );
+            },
+        );
+    }
+
     // Phase 15 (Option 1): anti-debug watchdog — wipe + hard exit on trip.
     let watch_vault = Arc::clone(&active_vault);
     let watch_master = Arc::clone(&active_master_pw);
@@ -6238,6 +6394,20 @@ mod grid_tests {
         assert_eq!(v.totp_accounts[0].id, "t2");
         assert!(!remove_totp_account(&mut v, "nope"));
         assert!(!remove_totp_account(&mut Vault::new(), "t1"));
+    }
+
+    #[test]
+    fn native_host_launch_detection() {
+        assert!(is_native_host_launch("native-host"));
+        assert!(is_native_host_launch(
+            "chrome-extension://goegfnjadkancnkldlamofedndcppafo/"
+        ));
+        // Extra Chromium args (parent-window handle) must not matter: only
+        // argv[1] is inspected, so any origin-shaped first arg serves.
+        assert!(!is_native_host_launch("run"));
+        assert!(!is_native_host_launch(""));
+        assert!(!is_native_host_launch("chrome-extension"));
+        assert!(!is_native_host_launch("https://github.com/"));
     }
 
     #[test]
