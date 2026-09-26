@@ -547,6 +547,7 @@ export component MainWindow inherits Window {
     in-out property <string> sync_repo;
     in-out property <string> sync_token_input;
     in-out property <string> sync_status: "";
+    in-out property <string> ext_host_id: "";
     in-out property <bool> show_generator: false;
     in-out property <int> gen_length: 20;
     in-out property <bool> gen_uppercase: true;
@@ -592,7 +593,7 @@ export component MainWindow inherits Window {
     callback save_sync_config(string, string, string);
     callback sync_now();
     callback pick_import_file();
-    callback install_browser_host();
+    callback install_browser_host(string);
     callback set_blackout(bool);
     callback set_clipboard_timeout(int);
     callback set_autolock_timeout(int);
@@ -666,7 +667,10 @@ export component MainWindow inherits Window {
                         border-radius: 10px;
                         border-width: 1px;
                         border-color: #fb7185;
-                        Text { text: root.integrity_warning; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                        clip: true;
+                        VerticalLayout { padding: 10px; spacing: 0px;
+                        Text { text: root.integrity_warning; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+                        }
                     }
                     password_input := LineEdit {
                         placeholder-text: "Master password…";
@@ -930,8 +934,10 @@ export component MainWindow inherits Window {
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Browser Bridge (headless)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
-                    Text { text: "Run `phantom_vault native-host` and point your extension manifest at it (print one via `--print-manifest <origin>`). Unlocks via Hello cache only; every query is access-logged."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🌐 Install Browser Extension Host"; primary: true; width: 280px; clicked => { root.install_browser_host(); } } }
+                    Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "🌐 Install Browser Extension Host"; primary: true; width: 280px; clicked => { root.install_browser_host(root.ext_host_id); } } }
+                    Text { text: root.sync_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Paranoia & Recovery"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
@@ -1060,8 +1066,14 @@ export component MainWindow inherits Window {
                     // LIVE 2FA hero (hidden while the create/edit form is open to avoid overlap)
                     if !root.show_add_form && root.d_id == "" : Rectangle { background: #0d131f; border-radius: 14px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 14px; spacing: 10px; alignment: space-between; VerticalLayout { Text { text: root.hero_account; color: #8e99c0; font-size: 11px; font-weight: 700; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 28px; font-weight: 900; } } Rectangle { width: 56px; height: 56px; border-radius: 28px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 13px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } } }
                     // SELECTED ITEM DETAIL
+                    // Peep pad stays instantiated (detail rows bind
+                    // peep_hold_col.pressed) but visible:false collapses it
+                    // from layout AND skips rendering: a zero-height
+                    // Rectangle + border + Text child bleeds a half-clipped
+                    // ghost line under the hero on some backends.
                     Rectangle {
-                        height: root.peep_hole_mode ? 40px : 0px;
+                        visible: root.peep_hole_mode;
+                        height: 40px;
                         background: peep_hold_col.pressed ? #8b7cf6 : #1a2450;
                         border-radius: 10px;
                         border-width: 1px;

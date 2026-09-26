@@ -1041,6 +1041,13 @@ fn unlock_with_password(    pass: String,
                     // Duress path: verified decoy opens a believable fake vault.
                     // No migration, no Hello cache, no sync — pure read-mostly cover.
                     if let Some(decoy) = decoy_vault {
+                        // Decoy-aware bridge: seal the duress passphrase so the
+                        // extension host serves ONLY the decoy container while
+                        // this cover is active. The next real-password unlock
+                        // re-seals the true master, restoring Hello.
+                        if let Ok(blob) = core::memory::DpapiGuard::protect(pass_for_store.as_bytes()) {
+                            let _ = std::fs::write(HELLO_TOKEN_FILE, blob);
+                        }
                         *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
                         *search_state.lock().unwrap() = FilterState::default();
                         ui.set_search_query("".into());
@@ -4157,22 +4164,28 @@ fn replace_item(
 
     // Batch-4: registry-install the browser native host (HKCU, both browsers).
     let host_weak = main_window.as_weak();
-    main_window.on_install_browser_host(move || {
+    main_window.on_install_browser_host(move |ext_id| {
         let Some(ui) = host_weak.upgrade() else {
             return;
         };
+        let id = ext_id.as_str().trim().to_string();
+        if id.is_empty() {
+            ui.set_sync_status("⚠️ Paste your extension ID first (chrome://extensions → Developer mode).".into());
+            return;
+        }
+        let origin = format!("chrome-extension://{id}/");
         ui.set_sync_status("⏳ Installing browser extension host…".into());
         let weak = host_weak.clone();
         std::thread::spawn(move || {
             // Registry writes are milliseconds; kept off-thread for uniformity.
-            let res = windows_native::native_host::register_native_host();
+            let res = windows_native::native_host::register_native_host(&origin);
             if res.is_ok() {
                 security::access_log::log_event("bridge", "host installed");
             }
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_sync_status(match res {
-                        Ok(path) => format!("🌐 Host installed → {path} (add your extension ID to allowed_origins).").into(),
+                        Ok(path) => format!("🌐 Host installed → {path} (locked to {origin}). Reload the extension and retry.").into(),
                         Err(e) => format!("⚠️ Host install failed: {e}").into(),
                     });
                 }
