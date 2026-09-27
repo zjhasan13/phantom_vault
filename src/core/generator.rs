@@ -6,6 +6,10 @@ use std::str::FromStr;
 use crate::error::{Result, VaultError};
 
 const EFF_WORDLIST: &str = include_str!("../../assets/eff_large_wordlist.txt");
+/// Offline Bengali diceware list (everyday memorable words, one per line).
+const BN_WORDLIST: &str = include_str!("../../assets/bengali_words.txt");
+/// Bengali digits for the 2-digit diceware suffix (০–৯).
+const BN_DIGITS: &[char] = &['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
 const AMBIGUOUS: &[char] = &['0', 'O', 'o', 'l', '1', 'I', '|'];
 const SYMBOLS: &str = "!@#$%^&*()-_=+[]{};:,.<>?/";
 
@@ -124,6 +128,46 @@ impl PasswordGenerator {
     pub fn entropy_bits_diceware(word_count: usize) -> f64 {
         word_count as f64 * 7776f64.log2()
     }
+
+    /// Bengali diceware: 4–8 everyday words + a 2-digit Bengali suffix
+    /// (e.g. `মেঘ-বৃষ্টি-পাহাড়-নদী-২৬`). Words via OsRng uniform sampling.
+    pub fn generate_diceware_bn(word_count: usize, separator: char) -> Result<SecretString> {
+        if !(4..=8).contains(&word_count) {
+            return Err(VaultError::GeneratorInvalidParams("word count out of range".into()));
+        }
+        let words: Vec<&str> = BN_WORDLIST.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        if words.len() < 100 {
+            return Err(VaultError::GeneratorInvalidParams("wordlist corrupted".into()));
+        }
+        let mut rng = OsRng;
+        let picked: Vec<&str> = (0..word_count)
+            .map(|_| {
+                words.choose(&mut rng).copied().ok_or_else(|| {
+                    VaultError::GeneratorInvalidParams("wordlist corrupted".into())
+                })
+            })
+            .collect::<Result<Vec<&str>>>()?;
+        // 2-digit suffix in Bengali numerals (00–99).
+        let mut suffix = String::new();
+        for _ in 0..2 {
+            let mut b = [0u8; 4];
+            use rand_core::RngCore as _;
+            rng.fill_bytes(&mut b);
+            suffix.push(BN_DIGITS[(u32::from_le_bytes(b) % 10) as usize]);
+        }
+        // Join words, then append separator + suffix.
+        let mut s = picked.join(&separator.to_string());
+        s.push(separator);
+        s.push_str(&suffix);
+        SecretString::from_str(&s)
+            .map_err(|_| VaultError::GeneratorInvalidParams("failed to wrap secret".into()))
+    }
+
+    /// True Shannon bits: words × log2(list) + log2(100) for the suffix.
+    pub fn entropy_bits_diceware_bn(word_count: usize) -> f64 {
+        let n = BN_WORDLIST.lines().map(str::trim).filter(|l| !l.is_empty()).count().max(1) as f64;
+        word_count as f64 * n.log2() + 100f64.log2()
+    }
 }
 
 #[cfg(test)]
@@ -184,5 +228,32 @@ mod tests {
         let a = PasswordGenerator::generate_complex(&policy).unwrap();
         let b = PasswordGenerator::generate_complex(&policy).unwrap();
         assert_ne!(a.expose_secret(), b.expose_secret());
+    }
+
+    #[test]
+    fn bengali_wordlist_is_healthy() {
+        let words: Vec<&str> = BN_WORDLIST.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+        assert!(words.len() >= 100, "need 100+ words, got {}", words.len());
+        let mut seen = std::collections::HashSet::new();
+        for w in &words {
+            assert!(seen.insert(*w), "duplicate word: {w}");
+        }
+    }
+
+    #[test]
+    fn bengali_diceware_shape_and_entropy() {
+        let pwd = PasswordGenerator::generate_diceware_bn(4, '-').unwrap();
+        let s = pwd.expose_secret();
+        // 4 words + 2-digit suffix = 5 dash-separated parts.
+        let parts: Vec<&str> = s.split('-').collect();
+        assert_eq!(parts.len(), 5);
+        assert!(parts[4].chars().all(|c| ('০'..='৯').contains(&c)));
+        assert_eq!(parts[4].chars().count(), 2);
+        assert!(PasswordGenerator::generate_diceware_bn(3, '-').is_err());
+        assert!(PasswordGenerator::generate_diceware_bn(9, '-').is_err());
+        let bits = PasswordGenerator::entropy_bits_diceware_bn(4);
+        let n = BN_WORDLIST.lines().map(str::trim).filter(|l| !l.is_empty()).count() as f64;
+        assert!((bits - (4.0 * n.log2() + 100f64.log2())).abs() < 1e-9);
+        assert!(bits > 30.0);
     }
 }
