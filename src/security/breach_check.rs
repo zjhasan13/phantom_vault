@@ -108,9 +108,52 @@ pub struct HealthReport {
     pub reused: usize,
     pub weak: usize,
     pub stale: usize,
+    /// Distinct non-empty passwords shared by 2+ accounts.
+    pub reused_groups: usize,
+    /// Audited logins carrying an embedded TOTP secret.
+    pub with_totp: usize,
 }
 
 impl HealthReport {
+    /// 2FA coverage % over audited logins.
+    pub fn coverage_pct(&self) -> u32 {
+        if self.audited == 0 {
+            return 0;
+        }
+        ((self.with_totp as u64 * 100) / self.audited as u64).min(100) as u32
+    }
+
+    /// 0–100 score: −25/breached, −10/reused group, −5/weak, −2/stale,
+    /// +10 bonus when 2FA coverage exceeds 50%. Clamped, pure.
+    pub fn score(&self) -> i64 {
+        let mut s: i64 = 100
+            - (self.breached as i64) * 25
+            - (self.reused_groups as i64) * 10
+            - (self.weak as i64) * 5
+            - (self.stale as i64) * 2;
+        if self.coverage_pct() > 50 {
+            s += 10;
+        }
+        s.clamp(0, 100)
+    }
+
+    /// Dashboard headline for the current score.
+    pub fn health_line(&self) -> String {
+        let s = self.score();
+        if s >= 90 {
+            "Good Security Health".to_string()
+        } else if self.breached > 0 {
+            format!(
+                "Action Required: {} Breached Password{} Found!",
+                self.breached,
+                if self.breached == 1 { "" } else { "s" }
+            )
+        } else if s >= 70 {
+            "Fair — rotate reused and weak passwords".to_string()
+        } else {
+            "Action Required: rotate weak, reused and stale passwords!".to_string()
+        }
+    }
     pub fn headline(&self) -> String {
         format!(
             "🛡️ Audited {} passwords — 🚨 {} breached, ⚠️ {} reused, ⚠️ {} weak, 🕰️ {} stale",
@@ -134,6 +177,27 @@ impl HealthReport {
                 continue;
             };
             map.insert(r.credential_id.clone(), badge);
+        }
+        map
+    }
+
+    /// Metric category per credential id, same priority as badges.
+    /// Drives click-to-filter on the dashboard ("", breached/reused/weak/stale).
+    pub fn kinds(&self) -> HashMap<String, String> {
+        let mut map = HashMap::new();
+        for r in &self.results {
+            let kind = if r.breached.is_some() {
+                "breached"
+            } else if r.reused {
+                "reused"
+            } else if r.weak {
+                "weak"
+            } else if r.stale {
+                "stale"
+            } else {
+                continue;
+            };
+            map.insert(r.credential_id.clone(), kind.to_string());
         }
         map
     }
@@ -200,6 +264,9 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
         if stale {
             report.stale += 1;
         }
+        if !c.totp_secret.trim().is_empty() {
+            report.with_totp += 1;
+        }
         report.results.push(BreachResult {
             credential_id: c.id.clone(),
             title: c.title.clone(),
@@ -210,6 +277,10 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
         });
     }
     report.audited = report.results.len();
+    report.reused_groups = freq
+        .iter()
+        .filter(|(pw, n)| !pw.is_empty() && **n > 1)
+        .count();
     report
 }
 
@@ -248,8 +319,15 @@ pub fn scan_vault_health_offline(credentials: &[Credential]) -> HealthReport {
             weak,
             stale,
         });
+        if !c.totp_secret.trim().is_empty() {
+            report.with_totp += 1;
+        }
     }
     report.audited = report.results.len();
+    report.reused_groups = freq
+        .iter()
+        .filter(|(pw, n)| !pw.is_empty() && **n > 1)
+        .count();
     report
 }
 
@@ -271,6 +349,29 @@ mod tests {
         assert!(is_weak("12345678"));
         assert!(is_weak("password"));
         assert!(!is_weak("9f#ZmQ2$vL8x!qW4z"));
+    }
+
+    #[test]
+    fn score_math_and_headline() {
+        let mut r = HealthReport::default();
+        assert_eq!(r.score(), 100);
+        assert_eq!(r.coverage_pct(), 0);
+        assert_eq!(r.health_line(), "Good Security Health");
+        r.audited = 4;
+        r.breached = 1;
+        r.reused_groups = 1;
+        r.weak = 1;
+        r.stale = 2;
+        r.with_totp = 1; // 25% — no bonus
+        assert_eq!(r.score(), 100 - 25 - 10 - 5 - 4);
+        assert_eq!(r.coverage_pct(), 25);
+        assert!(r.health_line().contains("1 Breached Password Found"));
+        r.with_totp = 3; // 75% — +10 bonus
+        assert_eq!(r.coverage_pct(), 75);
+        assert_eq!(r.score(), 100 - 25 - 10 - 5 - 4 + 10);
+        // Floor at zero, never negative.
+        r.breached = 10;
+        assert_eq!(r.score(), 0);
     }
 
     #[test]
@@ -342,6 +443,8 @@ mod tests {
             reused: 1,
             weak: 1,
             stale: 1,
+            reused_groups: 1,
+            with_totp: 0,
         };
         let b = r.badges();
         assert_eq!(b["a"], "🚨 Leaked in 3.2M breaches! Change now");
@@ -364,6 +467,8 @@ mod tests {
             reused: 0,
             weak: 0,
             stale: 1,
+            reused_groups: 0,
+            with_totp: 0,
         };
         assert_eq!(r.badges()["s"], "🕰️ Over 6 months old");
     }
