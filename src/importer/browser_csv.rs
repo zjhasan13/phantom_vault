@@ -90,13 +90,14 @@ pub fn parse(bytes: &[u8], format: &Format, summary: &mut ImportSummary) -> Resu
             summary.rows_failed += 1;
             continue;
         }
+        let (totp, notes) = super::apply_totp(&totp, &title, notes, summary);
         out.push(RawItem {
             kind: 1,
             title,
             a: user,
             b: pass,
             c: url,
-            totp: super::normalize_totp(&totp),
+            totp,
             notes,
             folder,
             ..Default::default()

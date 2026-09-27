@@ -124,7 +124,10 @@
       setTimeout(() => {
         navigator.clipboard.writeText("").catch(() => {});
       }, ms);
-    }).catch(() => {});
+    }).catch(() => {
+      // http://, file://, or denied permission: say so, don't fake success.
+      toast("⚠️ Copy blocked by the page — click 📋 again or copy manually.");
+    });
   }
 
   function findFields() {
@@ -140,11 +143,18 @@
       'input[name*="address" i], input[autocomplete="tel"], input[name*="phone" i]');
     return { pass, newPass, users, otp, cards, addr };
   }
-  function queryHost(type, q) {
-    return chrome.runtime.sendMessage({ type, app: q }).then((res) => {
+  function queryHost(type, q, ms = 10000) {
+    // Dead-bridge hang guard: every round-trip races a timeout (popup and
+    // background already do; content must not dangle promises forever).
+    const req = chrome.runtime.sendMessage({ type, app: q }).then((res) => {
       if (!res || !res.ok) throw new Error((res && res.error) || "bridge failed");
       return filterEntries(res.entries);
     });
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("vault bridge timed out")), ms);
+    });
+    return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
   }
 
   // ---------- fill primitives ----------
@@ -315,7 +325,12 @@
     if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
     if (!location.host) return;
     const f = findFields();
-    const isCard = f.cards.includes(anchor) || !!anchor.closest("form") && /check|pay|card/i.test((anchor.closest("form").id || "") + " " + location.pathname);
+    // Explicit parens: card-field OR checkout-form context (was `a || b && c`
+    // which misclassified address inputs on /checkout as card fields).
+    const form = anchor.closest("form");
+    const inCheckoutForm = !!form &&
+      /check|pay|card/i.test(((form.id || "") + " " + location.pathname));
+    const isCard = f.cards.includes(anchor) || inCheckoutForm;
     const isAddr = f.addr.includes(anchor);
     try {
       if (isCard && settings.suggest_cards) {
@@ -534,6 +549,9 @@
     (async () => {
       if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
       if (msg.type === "PV_MENU") {
+        // Same guards as every other fill path: blocked domains, punycode /
+        // spoofed hosts, and host-less pages (file://, about:blank) refuse.
+        if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
         const f = findFields();
         if (msg.menu === "pv_fill_login") {
           const l = await queryHost("PV_QUERY", pageBase());

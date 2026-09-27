@@ -243,7 +243,7 @@ pub fn executable_spoof_brand(exe: &str) -> Option<&'static str> {
     if raw.is_empty() {
         return None;
     }
-    let has_non_ascii = raw.chars().any(|c| !c.is_ascii());
+    let has_non_ascii = !raw.is_ascii();
     // Genuine check on the RAW ascii stem (no leet, no collapse): an exact
     // match is the real binary — or an exact-name collision, which is the
     // OS's problem, not ours.

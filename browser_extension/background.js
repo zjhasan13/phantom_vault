@@ -141,11 +141,22 @@ async function refreshBadge(tabId, url) {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
-  if (info.status === "complete" && tab && tab.url) refreshBadge(tabId, tab.url);
+  if (info.status === "complete" && tab && tab.url) scheduleBadge(tabId, tab.url);
 });
 chrome.tabs.onActivated.addListener(async (info) => {
   try {
     const tab = await chrome.tabs.get(info.tabId);
-    if (tab && tab.url) refreshBadge(info.tabId, tab.url);
+    if (tab && tab.url) scheduleBadge(info.tabId, tab.url);
   } catch (_) {}
 });
+
+// Debounced badge refresh: rapid tab switches queue ONE native-host spawn
+// per tab (500ms trailing), not a process storm.
+const badgeTimers = new Map();
+function scheduleBadge(tabId, url) {
+  if (badgeTimers.has(tabId)) clearTimeout(badgeTimers.get(tabId));
+  badgeTimers.set(tabId, setTimeout(() => {
+    badgeTimers.delete(tabId);
+    refreshBadge(tabId, url);
+  }, 500));
+}

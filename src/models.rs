@@ -200,8 +200,10 @@ pub struct TotpAccount {
     pub account_name: String,
     pub issuer: String,
     pub secret: String, // Base32 Secret Key
-    pub digits: u32,    // 6 or 8 (5 for Steam, rendered from its own path)
-    pub period: u64,    // Usually 30s
+    #[serde(default = "default_digits")]
+    pub digits: u32, // 6 or 8 (5 for Steam, rendered from its own path)
+    #[serde(default = "default_period")]
+    pub period: u64, // Usually 30s
     #[serde(default = "default_algorithm")]
     pub algorithm: String, // "SHA1", "SHA256", "SHA512", "MD5"(→SHA1)
     #[serde(default = "default_otp_type")]
@@ -212,6 +214,14 @@ pub struct TotpAccount {
 
 fn default_algorithm() -> String {
     "SHA1".into()
+}
+
+fn default_digits() -> u32 {
+    6
+}
+
+fn default_period() -> u64 {
+    30
 }
 
 fn default_otp_type() -> String {

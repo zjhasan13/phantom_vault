@@ -173,6 +173,15 @@ pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
 /// live one, restarts the app, and deletes itself.
 pub fn stage_swap_script(staged_exe: &std::path::Path, tag: &str) -> Result<std::path::PathBuf> {
     let live = std::env::current_exe().map_err(|e| VaultError::Sync(format!("current exe: {e}")))?;
+    // Batch injection guard: a `"` or line-break in either path would break
+    // out of the quoted `move`/`start` lines. TEMP/exe paths with quotes are
+    // pathological — fail LOUD instead of writing a weaponizable script.
+    for p in [staged_exe, live.as_path()] {
+        let s = p.to_string_lossy();
+        if s.contains(['"', '\n', '\r']) {
+            return Err(VaultError::Sync("refusing to stage: path contains quote/newline".into()));
+        }
+    }
     let pid = std::process::id();
     let bat = std::env::temp_dir().join(format!("phantom-vault-apply-{}.bat", tag.replace(['/', '\\', ':'], "_")));
     let script = format!(

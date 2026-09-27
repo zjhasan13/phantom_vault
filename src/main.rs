@@ -173,7 +173,6 @@ fn trigger_autotype(
     qb_visible: Arc<std::sync::atomic::AtomicBool>,
     req: TypeRequest,
 ) {
-    use core::memory::LockedMemory;
     use windows_native::autotype::{type_card, type_fields, type_identity, type_sequence};
     // Spoof guard FIRST (before minimizing — minimizing changes foreground).
     // A typosquat/leet executable refuses the keystrokes entirely.
@@ -224,9 +223,14 @@ fn trigger_autotype(
                 ),
                 _ => {
                     if req.press_enter && req.fields.len() == 2 {
-                        let secret = LockedMemory::new(req.fields[1].clone())
-                            .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
-                        let out = type_sequence(&req.fields[0], secret.expose());
+                        // Heap-pinned: LockedBytes locks the actual password
+                        // bytes (generic LockedMemory would pin only the
+                        // 24-byte String fat pointer).
+                        let secret = core::memory::LockedBytes::new(
+                            req.fields[1].clone().into_bytes(),
+                        )
+                        .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
+                        let out = type_sequence(&req.fields[0], secret.expose_str());
                         drop(secret);
                         out
                     } else {
@@ -303,14 +307,14 @@ fn trigger_autotype(
 /// Phase 23: 30s OTP watch. Polls for an OTP screen, then types the live
 /// code + Enter. Returns Some on success. All secrets zeroized on the way out.
 fn chain_2fa_watch(totp_secret: &str) -> Option<()> {
-    use core::memory::LockedMemory;
+    use core::memory::LockedBytes;
     use windows_native::desktop_autofill::otp_screen_visible;
-    let secret = LockedMemory::new(totp_secret.trim().to_string()).ok()?;
+    let secret = LockedBytes::new(totp_secret.trim().to_string().into_bytes()).ok()?;
     let deadline = std::time::Instant::now() + Duration::from_secs(30);
     while std::time::Instant::now() < deadline {
         if otp_screen_visible() {
             std::thread::sleep(Duration::from_millis(300));
-            let (code, _) = totp_engine::generate_live_code(secret.expose()).ok()?;
+            let (code, _) = totp_engine::generate_live_code(secret.expose_str()).ok()?;
             let mut code = code;
             let typed =
                 windows_native::autotype::type_text_raw(&code, true).is_ok();
@@ -865,12 +869,13 @@ fn publish_unlocked_vault(
     trigger_sync_push(ui.as_weak());
 
     // Phase 24: authenticator list now + live refresh ticker.
-    // The same 1s loop drives the hero countdown and refreshes
-    // all dynamic codes every 5s (cheap, few accounts).
+    // The same 1s loop drives the hero countdown AND rebuilds every grid
+    // row each tick, so per-card rings count down in real time (TOTP gen is
+    // a few HMACs — negligible; models are built on the event-loop thread).
     {
         let v = lock_vault(vault_arc);
         ui.set_auth_accounts(rebuild_auth_list(&v));
-        ui.set_auth_rows(rebuild_auth_rows(&v));
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
         // Fresh unlock resets the filter (see above), so the
         // hub starts unfiltered; trashed keys get their own
         // hub section instead of the sidebar Trash view.
@@ -880,7 +885,6 @@ fn publish_unlocked_vault(
     let window_for_totp = ui.as_weak();
     let vault_for_auth = Arc::clone(vault_arc);
     thread::spawn(move || {
-        let mut tick = 0u64;
         loop {
             // Phase 24+Hardening: hero renders the FIRST live
             // 2FA account dynamically (any algorithm/digits)
@@ -939,20 +943,19 @@ fn publish_unlocked_vault(
                     }
                 }
             });
-            tick += 1;
-            if tick.is_multiple_of(5) {
-                // ModelRc is !Send: move the vault handle in,
-                // build the model on the event-loop thread.
-                let vault_for_row = Arc::clone(&vault_for_auth);
-                let window_clone = window_for_totp.clone();
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = window_clone.upgrade() {
-                        let v = lock_vault(&vault_for_row);
-                        ui.set_auth_accounts(rebuild_auth_list(&v));
-                        ui.set_auth_rows(rebuild_auth_rows(&v));
-                    }
-                });
-            }
+            // Every tick rebuilds the grid models (per-card countdown rings
+            // stay live); vault locking is a mutex grab, TOTP gen is trivial.
+            // ModelRc is !Send: move the vault handle in,
+            // build the model on the event-loop thread.
+            let vault_for_row = Arc::clone(&vault_for_auth);
+            let window_clone = window_for_totp.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = window_clone.upgrade() {
+                    let v = lock_vault(&vault_for_row);
+                    ui.set_auth_accounts(rebuild_auth_list(&v));
+                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                }
+            });
             thread::sleep(Duration::from_secs(1));
         }
     });
@@ -1318,7 +1321,7 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
         .totp_accounts
         .iter()
         .map(|a| {
-            let (code, _) = totp_engine::generate_code_for_account(a)
+            let (code, remaining) = totp_engine::generate_code_for_account(a)
                 .unwrap_or(("------".to_string(), 0));
             let next = totp_engine::next_code_for_account(a).unwrap_or_else(|_| "------".to_string());
             let kind = match a.otp_type.trim().to_lowercase().as_str() {
@@ -1326,6 +1329,14 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 "steam" => "STEAM",
                 _ => "TOTP",
             };
+            let is_hotp = kind == "HOTP";
+            // HOTP has no clock (remaining == u64::MAX): ring shows static badge.
+            let secs = if is_hotp || remaining == u64::MAX {
+                -1
+            } else {
+                remaining.min(i32::MAX as u64) as i32
+            };
+            let countdown = if secs < 0 { "HOTP".to_string() } else { format!("{secs}s") };
             let (icon, tint) = brand_of(&a.issuer, &a.account_name);
             AuthView {
                 id: a.id.clone().into(),
@@ -1337,7 +1348,9 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 icon: icon.to_string().into(),
                 tint,
                 kind: kind.into(),
-                is_hotp: kind == "HOTP",
+                is_hotp,
+                secs,
+                countdown: countdown.into(),
             }
         })
         .collect()
@@ -1355,18 +1368,39 @@ fn rebuild_auth_list(vault: &Vault) -> ModelRc<AuthView> {
     ModelRc::new(VecModel::from(build_auth_rows(vault)))
 }
 
-/// Chunk a flat row vec into grid rows of 3 (last row may be short).
-/// Pure — unit tested.
+/// 2FA Hub search predicate (issuer + account, case-insensitive).
+/// Empty query matches everything. Pure — unit tested.
+fn totp_matches(name: &str, issuer: &str, query: &str) -> bool {
+    let q = query.trim().to_lowercase();
+    if q.is_empty() {
+        return true;
+    }
+    issuer.to_lowercase().contains(&q) || name.to_lowercase().contains(&q)
+}
+
+/// Chunk a flat row vec into grid rows of 2 (last row may be short —
+/// the Slint grid pads it with a stretch spacer so single cards never
+/// stretch full-width). Pure — unit tested.
 fn chunk_rows<T: Clone>(items: Vec<T>) -> Vec<Vec<T>> {
     items
-        .chunks(3)
+        .chunks(2)
         .map(|c| c.to_vec())
         .collect()
 }
 
-/// Grid model for the authenticator page: `[[AuthView]]` rows of 3.
-fn rebuild_auth_rows(vault: &Vault) -> ModelRc<ModelRc<AuthView>> {
-    let rows: Vec<ModelRc<AuthView>> = chunk_rows(build_auth_rows(vault))
+/// Grid model for the authenticator page: `[[AuthView]]` rows of 2,
+/// filtered by the ISOLATED hub query (never the vault `search_query`).
+fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
+    let q = query.trim().to_lowercase();
+    let flat: Vec<AuthView> = if q.is_empty() {
+        build_auth_rows(vault)
+    } else {
+        build_auth_rows(vault)
+            .into_iter()
+            .filter(|r| totp_matches(r.name.as_str(), r.issuer.as_str(), &q))
+            .collect()
+    };
+    let rows: Vec<ModelRc<AuthView>> = chunk_rows(flat)
         .into_iter()
         .map(|r| ModelRc::new(VecModel::from(r)))
         .collect();
@@ -3857,6 +3891,18 @@ fn replace_item(
         }
     });
 
+    // Isolated 2FA Hub search: filters ONLY the authenticator grid.
+    // The vault `search_query`, list, and filters are never touched here
+    // (and vice versa) — the 1s ticker re-applies this same query.
+    let window_weak_totp = main_window.as_weak();
+    let vault_arc_totp = Arc::clone(&active_vault);
+    main_window.on_totp_search_changed(move |query| {
+        let vault = lock_vault(&vault_arc_totp);
+        if let Some(ui) = window_weak_totp.upgrade() {
+            ui.set_auth_rows(rebuild_auth_rows(&vault, query.as_str()));
+        }
+    });
+
     let window_weak_type = main_window.as_weak();
     let vault_arc_type = Arc::clone(&active_vault);
     let search_state_type = Arc::clone(&search_state);
@@ -4069,7 +4115,77 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     ui.set_ga_show(true);
 }
 
-    // 8a: Manual URL paste (otpauth-migration:// or otpauth://)
+    // 8a: Universal 2FA ingestion (multi-line URIs + every JSON schema).
+    // Shared save path: smart-dedup merge, rollback on disk failure, hub
+    // repaint, result card. Used by paste, file browse, and (unchanged)
+    // single-QR scan paths below.
+    fn save_2fa_accounts(
+        weak: slint::Weak<MainWindow>,
+        vault_arc: Arc<Mutex<Vault>>,
+        master_arc: Arc<Mutex<Option<SecretString>>>,
+        source_label: String,
+        accounts: Vec<models::TotpAccount>,
+        warnings: Vec<String>,
+    ) {
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_arc).clone();
+            let Some(master_pw) = master_opt else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                    }
+                });
+                return;
+            };
+            let save_result: Result<authenticator::universal_2fa::Import2faSummary, String> = {
+                let mut vault = lock_vault(&vault_arc);
+                let snapshot = vault.clone();
+                let (imported, skipped) =
+                    authenticator::universal_2fa::merge_2fa(&mut vault, accounts);
+                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    Ok(()) => Ok(authenticator::universal_2fa::Import2faSummary {
+                        accounts_imported: imported,
+                        duplicates_skipped: skipped,
+                        source_detected: source_label,
+                        warnings,
+                    }),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let vault_for_list = Arc::clone(&vault_arc);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match save_result {
+                        Ok(s) => {
+                            let mut msg = format!(
+                                "✅ {}: {} imported, {} dupes skipped",
+                                s.source_detected, s.accounts_imported, s.duplicates_skipped
+                            );
+                            if !s.warnings.is_empty() {
+                                msg.push_str(&format!(" | ⚠️ {}", s.warnings.join(" | ")));
+                            }
+                            ui.set_notification_text(format!("✅ Imported {} 2FA accounts!", s.accounts_imported).into());
+                            ui.set_import_2fa_status(msg.into());
+                            ui.set_import_input("".into());
+                            {
+                                let v = lock_vault(&vault_for_list);
+                                ui.set_auth_accounts(rebuild_auth_list(&v));
+                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                            }
+                            trigger_sync_push(ui.as_weak());
+                        }
+                        Err(e) => {
+                            ui.set_notification_text(format!("❌ Import save failed: {e}").into());
+                            ui.set_import_2fa_status(format!("❌ Save failed: {e}").into());
+                        }
+                    }
+                }
+            });
+        });
+    }
     let window_weak_url = main_window.as_weak();
     let vault_arc_url = Arc::clone(&active_vault);
     let master_pw_url = Arc::clone(&active_master_pw);
@@ -4091,70 +4207,90 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_notification_text("⏳ Decoding & encrypting 2FA…".into());
         }
         let weak = window_weak_url.clone();
-        // Parse synchronously (fast prost decode) then delegate to background save
-        match authenticator::parse_google_migration_url(&input) {
-            Ok(accounts) => {
-                // Reuse helper logic — spawn save in background
-                let vault_clone = Arc::clone(&vault_arc_url);
-                let master_clone = Arc::clone(&master_pw_url);
-                let count = accounts.len();
-                std::thread::spawn(move || {
-                    let master_opt = lock_master_pw(&master_clone).clone();
-                    let Some(master_pw) = master_opt else {
-                        let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = weak.upgrade() {
-                                ui.set_notification_text("❌ Vault not unlocked!".into());
-                            }
-                        });
-                        return;
-                    };
-                    let save_result: Result<(), String> = {
-                        let mut vault = lock_vault(&vault_clone);
-                        vault.totp_accounts.extend(accounts);
-                        match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                            Ok(()) => Ok(()),
-                            Err(e) => {
-                                for _ in 0..count {
-                                    vault.totp_accounts.pop();
-                                }
-                                Err(e)
-                            }
-                        }
-                    };
-                    let vault_for_list = Arc::clone(&vault_clone);
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = weak.upgrade() {
-                            match save_result {
-                                Ok(()) => {
-                                    ui.set_notification_text(
-                                        format!("✅ Imported {} 2FA accounts successfully!", count)
-                                            .into(),
-                                    );
-                                    ui.set_import_input("".into());
-                                    ui.set_show_2fa_import(false);
-                                    {
-                                        let v = lock_vault(&vault_for_list);
-                                        ui.set_auth_accounts(rebuild_auth_list(&v));
-                                        ui.set_auth_rows(rebuild_auth_rows(&v));
-                                    }
-                                    trigger_sync_push(ui.as_weak());
-                                }
-                                Err(e) => {
-                                    ui.set_notification_text(
-                                        format!("❌ Import save failed: {}", e).into(),
-                                    );
-                                }
-                            }
-                        }
-                    });
-                });
+        // Universal pipeline: multi-line URIs + 2FAS/Aegis/Steam/andOTP/FreeOTP JSON.
+        match authenticator::universal_2fa::sniff_and_parse_text(&input) {
+            Ok((source, accounts, warnings)) => {
+                save_2fa_accounts(
+                    weak,
+                    Arc::clone(&vault_arc_url),
+                    Arc::clone(&master_pw_url),
+                    source.label().to_string(),
+                    accounts,
+                    warnings,
+                );
             }
             Err(e) => {
                 if let Some(ui) = window_weak_url.upgrade() {
-                    ui.set_notification_text(format!("❌ Import failed: {}", e).into());
+                    ui.set_notification_text(format!("❌ Import failed: {e}").into());
+                    ui.set_import_2fa_status(format!("❌ {e}").into());
                 }
             }
         }
+    });
+
+    // 8a2: Browse & import 2FA file (json/2fas/maFile/txt/png/jpg).
+    let window_weak_2faf = main_window.as_weak();
+    let vault_arc_2faf = Arc::clone(&active_vault);
+    let master_pw_2faf = Arc::clone(&active_master_pw);
+    main_window.on_import_2fa_file(move || {
+        if let Some(ui) = window_weak_2faf.upgrade() {
+            if ui.get_is_decoy() {
+                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                return;
+            }
+            ui.set_import_2fa_status("⏳ Waiting for file picker…".into());
+        }
+        let weak = window_weak_2faf.clone();
+        let vault_clone = Arc::clone(&vault_arc_2faf);
+        let master_clone = Arc::clone(&master_pw_2faf);
+        std::thread::spawn(move || {
+            let picked = rfd::FileDialog::new()
+                .set_title("Import 2FA file")
+                .add_filter("2FA exports", &["json", "2fas", "maFile", "txt", "png", "jpg", "jpeg"])
+                .add_filter("all files", &["*"])
+                .pick_file();
+            let Some(path) = picked else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_import_2fa_status("No file chosen.".into());
+                    }
+                });
+                return;
+            };
+            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_string();
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    let msg = format!("❌ Cannot read file: {e}");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_import_2fa_status(msg.into());
+                        }
+                    });
+                    return;
+                }
+            };
+            match authenticator::universal_2fa::parse_file_bytes(&bytes, &ext) {
+                Ok((source, accounts, warnings)) => {
+                    save_2fa_accounts(
+                        weak,
+                        vault_clone,
+                        master_clone,
+                        format!("{} ({})", source.label(), path.file_name().and_then(|n| n.to_str()).unwrap_or("file")),
+                        accounts,
+                        warnings,
+                    );
+                }
+                Err(e) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_import_2fa_status(format!("❌ {e}").into());
+                            ui.set_notification_text(format!("❌ 2FA import failed: {e}").into());
+                        }
+                    });
+                }
+            }
+        });
     });
 
     // 8b: Clipboard QR scan (Win+Shift+S)
@@ -4232,7 +4368,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             {
                                 let v = lock_vault(&vault_for_list_qr);
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                                ui.set_auth_rows(rebuild_auth_rows(&v));
+                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                             }
                             trigger_sync_push(ui.as_weak());
                         }
@@ -4316,7 +4452,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                 {
                                     let v = lock_vault(&vault_for_list);
                                     ui.set_auth_accounts(rebuild_auth_list(&v));
-                                ui.set_auth_rows(rebuild_auth_rows(&v));
+                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                                 }
                                 trigger_sync_push(ui.as_weak());
                             }
@@ -4893,11 +5029,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         };
         let id = ext_id.as_str().trim().to_string();
         if id.is_empty() {
-            ui.set_sync_status("⚠️ Paste your extension ID first (chrome://extensions → Developer mode).".into());
+            ui.set_bridge_status("⚠️ Paste your extension ID first (chrome://extensions → Developer mode).".into());
             return;
         }
         let origin = format!("chrome-extension://{id}/");
-        ui.set_sync_status("⏳ Installing browser extension host…".into());
+        ui.set_bridge_status("⏳ Installing browser extension host…".into());
         let weak = host_weak.clone();
         std::thread::spawn(move || {
             // Registry writes are milliseconds; kept off-thread for uniformity.
@@ -4907,7 +5043,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             }
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_sync_status(match res {
+                    ui.set_bridge_status(match res {
                         Ok(path) => format!("🌐 Host installed → {path} (locked to {origin}). Reload the extension and retry.").into(),
                         Err(e) => format!("⚠️ Host install failed: {e}").into(),
                     });
@@ -5055,19 +5191,20 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let qb_clone = plant_qb.clone();
         let vault_clone = Arc::clone(&plant_vault);
         std::thread::spawn(move || {
-            let title = {
+            // Plant + persist under ONE lock scope with a snapshot: a disk
+            // failure restores the exact prior vault (no pop() guessing).
+            let (title, saved): (String, Result<(), String>) = {
                 let mut vault = lock_vault(&vault_clone);
-                security::canary::plant_canary(&mut vault)
+                let snapshot = vault.clone();
+                let title = security::canary::plant_canary(&mut vault);
+                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    Ok(()) => (title, Ok(())),
+                    Err(e) => {
+                        *vault = snapshot;
+                        (title, Err(e))
+                    }
+                }
             };
-            // Persist (hybrid re-seal) — roll back the plant on disk failure.
-            let saved = {
-                let vault = lock_vault(&vault_clone);
-                save_vault(&vault, master_pw.expose_secret(), VAULT_FILE)
-            };
-            if saved.is_err() {
-                let mut vault = lock_vault(&vault_clone);
-                vault.credentials.pop();
-            }
             let saved_ok = saved.is_ok();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
@@ -5275,7 +5412,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 match saved {
                     Ok(v) => {
                         ui.set_auth_accounts(rebuild_auth_list(&v));
-                        ui.set_auth_rows(rebuild_auth_rows(&v));
+                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                         // Hero ticker rebuilds from the vault every second,
                         // so it drops the deleted account on its next tick.
                         ui.set_notification_text(
@@ -5704,12 +5841,16 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             };
             let res: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
                 if let Err(e) = vault.add_folder(&name) {
                     Err(e)
                 } else {
                     match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
-                        Err(e) => Err(e),
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
                     }
                 }
             };
@@ -5832,6 +5973,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             };
             let res: Result<Vec<models::CustomField>, String> = {
                 let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
                 let Some(cred) = vault.credentials.iter_mut().find(|c| c.id == id) else {
                     return;
                 };
@@ -5846,7 +5988,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let fields = cred.custom_fields.clone();
                 match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
                     Ok(()) => Ok(fields),
-                    Err(_) => return,
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
                 }
             };
             let _ = slint::invoke_from_event_loop(move || {
@@ -6133,6 +6278,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         }
         ui.set_rp_show(false);
         ui.set_rp_error("".into());
+        // Capture BEFORE clearing: action 1 copies this below.
+        let gated_secret = ui.get_rp_secret().to_string();
         ui.set_rp_secret("".into());
         match ui.get_rp_action() {
             1 => {
@@ -6140,7 +6287,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let secs = rp_ct.load(std::sync::atomic::Ordering::SeqCst);
                 secure_copy_with_feedback(
                     ui.as_weak(),
-                    ui.get_rp_secret().to_string(),
+                    gated_secret,
                     &format!("📋 Copied! (Masked from Win+V, auto-clearing in {secs}s)"),
                     secs,
                 );
@@ -7061,7 +7208,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     match saved {
                         Ok(v) => {
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                            ui.set_auth_rows(rebuild_auth_rows(&v));
+                            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                             ui.set_notification_text("🔢 HOTP advanced to next code.".into());
                             trigger_sync_push(ui.as_weak());
                         }
@@ -7735,14 +7882,23 @@ mod grid_tests {
     }
 
     #[test]
-    fn grid_chunks_in_threes() {
+    fn grid_chunks_in_pairs() {
         assert!(chunk_rows::<u8>(vec![]).is_empty());
-        assert_eq!(chunk_rows(vec![1, 2, 3]), vec![vec![1, 2, 3]]);
-        // 7 items → 3 + 3 + 1, like the photo's last row.
+        assert_eq!(chunk_rows(vec![1, 2]), vec![vec![1, 2]]);
+        // 5 items → 2 + 2 + 1; the lone card gets a stretch spacer.
         assert_eq!(
-            chunk_rows(vec![1, 2, 3, 4, 5, 6, 7]),
-            vec![vec![1, 2, 3], vec![4, 5, 6], vec![7]]
+            chunk_rows(vec![1, 2, 3, 4, 5]),
+            vec![vec![1, 2], vec![3, 4], vec![5]]
         );
+    }
+
+    #[test]
+    fn totp_search_is_isolated_and_case_insensitive() {
+        assert!(totp_matches("me@gmail.com", "Google", ""));
+        assert!(totp_matches("me@gmail.com", "Google", "goog"));
+        assert!(totp_matches("me@gmail.com", "Google", "GMAIL"));
+        assert!(!totp_matches("me@gmail.com", "Google", "discord"));
+        assert!(!totp_matches("a", "b", "zzz"));
     }
 
     #[test]

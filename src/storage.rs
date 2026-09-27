@@ -18,8 +18,22 @@ const PQ_DK_FILE: &str = "pq_decapsulation.dpapi";
 /// Cross-process save guard: atomic `create_new` lockfile beside the vault.
 /// A second instance waits up to ~500ms, then fails LOUD instead of
 /// interleaving two ciphertexts into one corrupt file. RAII — removed on drop.
+/// Crash-stale locks (mtime older than STALE_LOCK_SECS, e.g. killed process)
+/// are reclaimed after one grace wait instead of wedging saves forever.
 struct FileLock {
     path: std::path::PathBuf,
+}
+
+/// A lockfile older than this is presumed orphaned (crashed holder).
+const STALE_LOCK_SECS: u64 = 60;
+
+fn lock_is_stale(lock_path: &Path) -> bool {
+    std::fs::metadata(lock_path)
+        .ok()
+        .and_then(|m| m.modified().ok())
+        .and_then(|t| t.elapsed().ok())
+        .map(|age| age.as_secs() > STALE_LOCK_SECS)
+        .unwrap_or(false)
 }
 
 impl FileLock {
@@ -35,6 +49,11 @@ impl FileLock {
             {
                 Ok(_) => return Ok(Self { path: lock_path }),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    if lock_is_stale(&lock_path) {
+                        // Orphaned by a crash — reclaim once, then retry.
+                        let _ = std::fs::remove_file(&lock_path);
+                        continue;
+                    }
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
                 Err(e) => return Err(format!("Vault lock failed: {e}")),
@@ -379,6 +398,21 @@ mod tests {
         // …and succeed once released, with no lockfile left behind.
         save_vault(&demo_vault(), "lock-pass-1", &path).unwrap();
         assert!(!dir.join("vault.lock").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn fresh_lock_is_not_stale_but_acquire_recovers() {
+        let dir = std::env::temp_dir().join("pv_lock_stale");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        // A just-created lock is fresh: a second acquire must wait, not steal.
+        let _held = FileLock::acquire(&path).unwrap();
+        assert!(!lock_is_stale(&dir.join("vault.lock")));
+        drop(_held);
+        // Released lock reacquires cleanly.
+        let _held2 = FileLock::acquire(&path).unwrap();
+        drop(_held2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

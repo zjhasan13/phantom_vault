@@ -40,6 +40,13 @@
       never_filled: "Never filled yet",
       just_now: "just now", min_ago: (n) => `${n}m ago`, hour_ago: (n) => `${n}h ago`, day_ago: (n) => `${n}d ago`,
       score: "Security Score", fills: "Total Fills", stale_n: "Stale passwords", reused_n: "Reused groups",
+      suggest_show: "Show autofill suggestions on form fields",
+      suggest_cards: "Display Cards as suggestions on checkout",
+      suggest_ids: "Display Identities as suggestions on forms",
+      autofill_load: "Enable Auto-fill on Page Load",
+      auto_totp: "Hands-free 2FA / TOTP injection",
+      ctx_menu: "Show context menu options (Right-click)",
+      auto_submit: "Automatically submit form after autofill",
     },
     bn: {
       vault: "🔑 ভল্ট", stats: "📊 পরিসংখ্যান", settings: "⚙️ অটোফিল সেটিংস",
@@ -53,6 +60,13 @@
       never_filled: "এখনো পূরণ হয়নি",
       just_now: "এক্ষুনি", min_ago: (n) => `${n} মি আগে`, hour_ago: (n) => `${n} ঘ আগে`, day_ago: (n) => `${n} দি আগে`,
       score: "নিরাপত্তা স্কোর", fills: "মোট পূরণ", stale_n: "পুরনো পাসওয়ার্ড", reused_n: "পুনর্ব্যবহৃত গ্রুপ",
+      suggest_show: "ফর্মে অটোফিল পরামর্শ দেখাও",
+      suggest_cards: "চেকআউটে কার্ড পরামর্শ দেখাও",
+      suggest_ids: "ফর্মে পরিচয় পরামর্শ দেখাও",
+      autofill_load: "পেজ লোডে অটো-ফিল চালু",
+      auto_totp: "হ্যান্ডস-ফ্রি 2FA / TOTP ইনজেকশন",
+      ctx_menu: "রাইট-ক্লিক মেনু দেখাও",
+      auto_submit: "অটোফিলের পর ফর্ম সাবমিট করো",
     },
   };
   let lang = "en";
@@ -237,11 +251,39 @@
     const [tab] = await withTimeout(
       chrome.tabs.query({ active: true, currentWindow: true }),
       QUERY_TIMEOUT_MS, "tab lookup");
-    host = tab && tab.url ? new URL(tab.url).host : "";
+    // hostname (no port): content.js queries base-domains, and "app:8080"
+    // would miss the same entry the page itself would match.
+    host = tab && tab.url ? new URL(tab.url).hostname : "";
   } catch (_) { showLocked("no active tab"); return; }
   if (!host) { status.textContent = t("open_site"); return; }
 
+  function pageBase(h) {
+    const parts = String(h || "").toLowerCase().split(".").filter(Boolean);
+    return parts.length <= 2 ? parts.join(".") : parts.slice(-2).join(".");
+  }
+  function entryAllowed(e) {
+    // Mirror of content.js: entries WITH stored urls must share the page's
+    // registrable domain (or explicit host/exact per saved match mode);
+    // url-less legacy entries pass through.
+    const urls = e.urls || [];
+    if (!urls.length) return true;
+    return urls.some((raw) => {
+      try {
+        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
+        return pageBase(u.hostname) === pageBase(host);
+      } catch (_) { return false; }
+    });
+  }
   async function doFill(entry) {
+    // Popup-side guards (content.js can't interpose here): reprompt needs
+    // explicit presence; mismatched domains refuse like the page path.
+    if (entry.reprompt) {
+      if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return;
+    }
+    if (!entryAllowed(entry)) {
+      status.textContent = "⚠️ Phishing Hazard: Domain mismatch, autofill refused!";
+      return;
+    }
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
     await chrome.scripting.executeScript({

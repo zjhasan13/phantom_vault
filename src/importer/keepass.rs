@@ -12,6 +12,7 @@ struct KEntry {
     url: String,
     notes: String,
     otp: String,
+    custom: Vec<(String, String)>,
 }
 
 /// Parse KeePass XML. Group hierarchy becomes `Parent / Child` folders;
@@ -38,6 +39,7 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
         url: String::new(),
         notes: String::new(),
         otp: String::new(),
+        custom: Vec::new(),
     };
     let mut group_name_pending = false;
     let mut buf = Vec::new();
@@ -68,6 +70,7 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
                                 url: String::new(),
                                 notes: String::new(),
                                 otp: String::new(),
+                                custom: Vec::new(),
                             };
                         } else {
                             entry_depth += 1;
@@ -131,7 +134,16 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
                                 "URL" => cur.url = cur_val.clone(),
                                 "Notes" => cur.notes = cur_val.clone(),
                                 "otp" | "TOTP" | "totp" => cur.otp = cur_val.clone(),
-                                _ => {}
+                                // KeePass custom String fields ride as Text
+                                // customs (protected values arrive decrypted
+                                // from the XML — same trust as the password).
+                                _ => {
+                                    let k = cur_key.trim();
+                                    let v = cur_val.trim();
+                                    if !k.is_empty() && !v.is_empty() {
+                                        cur.custom.push((k.to_string(), v.to_string()));
+                                    }
+                                }
                             }
                         }
                         in_string = false;
@@ -150,15 +162,22 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
                                 summary.rows_failed += 1;
                             } else {
                                 let folder = group_stack.join(" / ");
+                                let (totp, notes) = super::apply_totp(
+                                    &cur.otp,
+                                    &cur.title,
+                                    cur.notes.clone(),
+                                    summary,
+                                );
                                 out.push(RawItem {
                                     kind: 1,
                                     title: cur.title.clone(),
                                     a: cur.user.clone(),
                                     b: cur.pass.clone(),
                                     c: cur.url.clone(),
-                                    totp: super::normalize_totp(&cur.otp),
-                                    notes: cur.notes.clone(),
+                                    totp,
+                                    notes,
                                     folder,
+                                    custom_text: cur.custom.clone(),
                                     ..Default::default()
                                 });
                             }
@@ -177,7 +196,7 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
 }
 
 /// KeePass CSV: Group,Title,Username,Password,URL,Notes (+Account/Login Name variants).
-pub fn parse_csv(bytes: &[u8], _summary: &mut ImportSummary) -> Result<Vec<RawItem>> {
+pub fn parse_csv(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawItem>> {
     let text = super::sniffer::decode_text(bytes);
     let header = text.lines().next().unwrap_or("");
     let delim = super::sniffer::detect_delimiter(header);
@@ -217,15 +236,23 @@ pub fn parse_csv(bytes: &[u8], _summary: &mut ImportSummary) -> Result<Vec<RawIt
         let user = col(&m, &["username", "loginname"]);
         let pass = col(&m, &["password"]);
         if title.is_empty() && user.is_empty() && pass.is_empty() {
+            summary.rows_failed += 1;
             continue;
         }
+        let (totp, notes) = super::apply_totp(
+            &col(&m, &["totp", "otp", "onetimepassword", "2fa"]),
+            &title,
+            col(&m, &["notes", "comments"]),
+            summary,
+        );
         out.push(RawItem {
             kind: 1,
             title,
             a: user,
             b: pass,
             c: col(&m, &["url", "website"]),
-            notes: col(&m, &["notes", "comments"]),
+            totp,
+            notes,
             folder: col(&m, &["group"]),
             ..Default::default()
         });
@@ -253,5 +280,32 @@ mod tests {
         assert_eq!(items[0].folder, "Mail");
         assert_eq!(items[0].totp, "SECRET");
         assert_eq!(items[0].a, "me");
+    }
+
+    #[test]
+    fn keepass_xml_custom_fields_survive() {
+        let data = br#"<?xml version="1.0"?><KeePassFile><Root><Group><Name>G</Name>
+<Entry><String><Key>Title</Key><Value>T</Value></String>
+<String><Key>UserName</Key><Value>u</Value></String>
+<String><Key>Password</Key><Value>p</Value></String>
+<String><Key>SecurityQ</Key><Value>pet?</Value></String>
+<String><Key>Empty</Key><Value></Value></String>
+</Entry></Group></Root></KeePassFile>"#;
+        let mut s = ImportSummary::default();
+        let items = parse_xml(data, &mut s).unwrap();
+        assert_eq!(items.len(), 1);
+        // Custom String field preserved; empty value dropped.
+        assert!(items[0].custom_text.iter().any(|(n, v)| n == "SecurityQ" && v == "pet?"));
+        assert!(!items[0].custom_text.iter().any(|(n, _)| n == "Empty"));
+    }
+
+    #[test]
+    fn keepass_csv_totp_and_row_count() {
+        let data = b"Title,Username,Password,TOTP\nT,u,p,ABC\n,,,\n";
+        let mut s = ImportSummary::default();
+        let items = parse_csv(data, &mut s).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].totp, "ABC");
+        assert_eq!(s.rows_failed, 1);
     }
 }

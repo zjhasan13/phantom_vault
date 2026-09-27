@@ -188,6 +188,17 @@ pub fn route(
         if sha == local_sha {
             return (200, r#"{"ok":true,"adopted":false,"reason":"already in sync"}"#.into(), None);
         }
+        // Server-side freshness gate: adopt ONLY strictly-newer pushes.
+        // Older-or-equal mtime = stale replay or same-age divergence → 409,
+        // local kept. (A LAN attacker can still lie about mtime — pairing
+        // trusts the LAN; enable discovery only on networks you trust.)
+        let remote_mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0);
+        if remote_mtime == 0 {
+            return (400, r#"{"ok":false,"error":"mtime required"}"#.into(), None);
+        }
+        if remote_mtime <= local_mtime {
+            return (409, r#"{"ok":false,"error":"stale or conflicting head — local kept"}"#.into(), None);
+        }
         return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, blob)));
     }
     (404, r#"{"ok":false,"error":"unknown route"}"#.into(), None)
@@ -316,16 +327,13 @@ pub fn run_discover_responder(stop: Arc<AtomicBool>) {
     let _ = sock.set_read_timeout(Some(Duration::from_millis(500)));
     let mut buf = [0u8; 2048];
     while !stop.load(Ordering::Relaxed) {
-        match sock.recv_from(&mut buf) {
-            Ok((n, from)) => {
-                let text = String::from_utf8_lossy(&buf[..n]);
-                if text.contains("\"DISCOVER\"") || text.contains("phantom_vault") {
-                    let (sha, _) = local_head();
-                    let reply = beacon_json(env!("CARGO_PKG_VERSION"), &sha);
-                    let _ = sock.send_to(reply.as_bytes(), from);
-                }
+        if let Ok((n, from)) = sock.recv_from(&mut buf) {
+            let text = String::from_utf8_lossy(&buf[..n]);
+            if text.contains("\"DISCOVER\"") || text.contains("phantom_vault") {
+                let (sha, _) = local_head();
+                let reply = beacon_json(env!("CARGO_PKG_VERSION"), &sha);
+                let _ = sock.send_to(reply.as_bytes(), from);
             }
-            Err(_) => {}
         }
     }
 }
@@ -344,16 +352,13 @@ pub fn scan_peers(wait: Duration) -> Vec<Peer> {
     let mut peers = Vec::new();
     let mut buf = [0u8; 2048];
     while std::time::Instant::now() < deadline {
-        match sock.recv_from(&mut buf) {
-            Ok((n, from)) => {
-                let text = String::from_utf8_lossy(&buf[..n]).into_owned();
-                if let Some(p) = parse_beacon(&text, &from.ip().to_string()) {
-                    if !peers.iter().any(|q: &Peer| q.ip == p.ip) {
-                        peers.push(p);
-                    }
+        if let Ok((n, from)) = sock.recv_from(&mut buf) {
+            let text = String::from_utf8_lossy(&buf[..n]).into_owned();
+            if let Some(p) = parse_beacon(&text, &from.ip().to_string()) {
+                if !peers.iter().any(|q: &Peer| q.ip == p.ip) {
+                    peers.push(p);
                 }
             }
-            Err(_) => {}
         }
     }
     peers
@@ -385,12 +390,12 @@ pub fn pull_peer(addr: SocketAddr) -> Result<(String, u64, Vec<u8>), String> {
     Ok((sha, mtime, blob))
 }
 
-/// Push our ciphertext blob to a peer (it SHA-verifies + adopts).
-pub fn push_peer(addr: SocketAddr, sha: &str, blob: &[u8]) -> Result<bool, String> {
+/// Push our ciphertext blob to a peer (it SHA-verifies + freshness-gates).
+pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8]) -> Result<bool, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let body = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob)}).to_string();
+    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string();
     let req = format!(
         "POST /p2p/sync HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -436,7 +441,7 @@ pub fn sync_with_peer(
         return Ok("📡 Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
     }
     if local_mtime > remote_mtime {
-        push_peer(addr, &local_sha, &local_blob)?;
+        push_peer(addr, &local_sha, local_mtime, &local_blob)?;
         crate::security::access_log::log_event("p2p", &format!("pushed {local_sha} to {ip}"));
         return Ok("📡 Synced with local peer via Wi-Fi! (pushed newer local)".to_string());
     }
@@ -486,15 +491,23 @@ mod tests {
         let (st, _, adopt) = route("POST", "/p2p/sync", push.as_bytes(), blob, &sha, 1);
         assert_eq!(st, 200);
         assert!(adopt.is_none());
-        // New blob → adopt with verified SHA.
+        // Newer blob → adopt with verified SHA (mtime must be strictly newer).
         let blob2 = b"newer-ciphertext";
         let sha2 = sha_hex(blob2);
-        let push2 = serde_json::json!({"sha": sha2, "blob_b64": base64_encode(blob2)}).to_string();
+        let push2 = serde_json::json!({"sha": sha2, "mtime": 2, "blob_b64": base64_encode(blob2)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", push2.as_bytes(), blob, &sha, 1);
         assert_eq!(st, 200);
         let (got_sha, got_blob) = adopt.unwrap();
         assert_eq!(got_sha, sha2);
         assert_eq!(got_blob, blob2);
+        // Stale push (older mtime) → 409, local kept.
+        let stale = serde_json::json!({"sha": sha2, "mtime": 1, "blob_b64": base64_encode(blob2)}).to_string();
+        let (st, _, adopt) = route("POST", "/p2p/sync", stale.as_bytes(), blob, &sha, 5);
+        assert_eq!(st, 409);
+        assert!(adopt.is_none());
+        // Missing mtime → 400.
+        let no_ts = serde_json::json!({"sha": sha2, "blob_b64": base64_encode(blob2)}).to_string();
+        assert_eq!(route("POST", "/p2p/sync", no_ts.as_bytes(), blob, &sha, 1).0, 400);
         // Tampered body (sha lies) → 400, nothing adopted.
         let evil = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob2)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", evil.as_bytes(), blob, &sha, 1);

@@ -30,11 +30,8 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         return Err(VaultError::Security("duress password too short".into()));
     }
     // Verifier = DPAPI seal of the password itself (constant-time-ish compare on open).
-    let blob = DpapiGuard::protect(pw.as_bytes())
-        .map_err(|e| VaultError::Security(format!("duress seal failed: {e}")))?;
-    std::fs::write(DURESS_VERIFIER_FILE, blob)
-        .map_err(|e| VaultError::Security(format!("duress store failed: {e}")))?;
-
+    // NOTE: sealed ONLY after the container below persists — a failed seal
+    // must never leave a valid verifier pointing at a missing/stale decoy.
     let mut vault = Vault::new();
     vault.credentials.push(Credential {
         id: "d1".into(),
@@ -91,6 +88,11 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
     });
     save_vault(&vault, &pw, DECOY_FILE)
         .map_err(|e| VaultError::Security(format!("decoy seal failed: {e}")))?;
+    // Verifier LAST: only a persisted container gets a valid verifier.
+    let blob = DpapiGuard::protect(pw.as_bytes())
+        .map_err(|e| VaultError::Security(format!("duress seal failed: {e}")))?;
+    std::fs::write(DURESS_VERIFIER_FILE, blob)
+        .map_err(|e| VaultError::Security(format!("duress store failed: {e}")))?;
     pw.zeroize();
     Ok(())
 }

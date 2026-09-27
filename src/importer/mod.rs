@@ -172,21 +172,51 @@ pub fn import_any_file(
 
 /// Duplicate probe for the login dedup path. Trashed items never block:
 /// the user may re-add (or re-import) a credential whose older copy sits in
-/// Trash awaiting its 30-day shred. Pure — unit tested.
-fn dup_login(vault: &Vault, title: &str, user: &str) -> bool {
+/// Trash awaiting its 30-day shred. Key = title + username + (password OR
+/// URL overlap): a rotation (new password, new URL) imports visibly instead
+/// of vanishing as a "duplicate". Pure — unit tested.
+fn dup_login(vault: &Vault, title: &str, user: &str, password: &str, urls: &[String]) -> bool {
     vault.credentials.iter().any(|c| {
-        c.deleted_at.is_none()
-            && c.title.to_lowercase() == title.to_lowercase()
-            && c.username.to_lowercase() == user.to_lowercase()
+        if c.deleted_at.is_some()
+            || c.title.to_lowercase() != title.to_lowercase()
+            || c.username.to_lowercase() != user.to_lowercase()
+        {
+            return false;
+        }
+        if c.password == password {
+            return true;
+        }
+        let want: Vec<String> = urls.iter().map(|u| u.to_lowercase()).collect();
+        !want.is_empty()
+            && c.urls.iter().any(|u| {
+                let have = u.to_lowercase();
+                want.iter().any(|w| w == &have || have.contains(w.as_str()) || w.contains(have.as_str()))
+            })
     })
 }
 
 pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
+    // Intra-batch fingerprints: the same row twice in ONE file imports once.
+    let mut seen_batch: std::collections::HashSet<String> = std::collections::HashSet::new();
     for r in raws {
         let title = if r.title.trim().is_empty() { "(untitled)" } else { r.title.trim() }.to_string();
         let folder = folder_of(&r.folder);
         if !vault.folders.iter().any(|f| f == &folder) {
             vault.folders.push(folder.clone());
+        }
+        // Login-shaped rows (kind 1 + fallback arm) dedup within the batch.
+        if r.kind != 2 && r.kind != 3 && r.kind != 4 && r.kind != 5 && r.kind != 6 {
+            let fp = format!(
+                "L\x00{}\x00{}\x00{}\x00{}",
+                title.to_lowercase(),
+                r.a.to_lowercase(),
+                r.b,
+                r.c
+            );
+            if !seen_batch.insert(fp) {
+                summary.duplicates_skipped += 1;
+                continue;
+            }
         }
         match r.kind {
             2 => {
@@ -212,8 +242,11 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                 summary.licenses += 1;
             }
             3 => {
+                // Notes: same title AND same content (retitled edits re-import).
                 if vault.notes.iter().any(|n| {
-                    n.deleted_at.is_none() && n.title.to_lowercase() == title.to_lowercase()
+                    n.deleted_at.is_none()
+                        && n.title.to_lowercase() == title.to_lowercase()
+                        && n.content == r.a
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -222,15 +255,18 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                 summary.notes += 1;
             }
             4 => {
+                // Cards: same number AND same expiry (renewals re-import).
+                let (em, ey) = split_expiry(&r.c);
                 if vault.cards.iter().any(|k| {
                     k.deleted_at.is_none()
                         && k.title.to_lowercase() == title.to_lowercase()
                         && k.card_number == r.b
+                        && k.exp_month == em
+                        && k.exp_year == ey
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
-                let (em, ey) = split_expiry(&r.c);
                 vault.cards.push(PaymentCard {
                     id: new_id(),
                     title,
@@ -248,10 +284,12 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                 summary.cards += 1;
             }
             5 => {
+                // Identities: same name AND same email (changed email re-imports).
                 if vault.identities.iter().any(|i| {
                     i.deleted_at.is_none()
                         && i.title.to_lowercase() == title.to_lowercase()
                         && i.full_name.to_lowercase() == r.a.to_lowercase()
+                        && i.email.to_lowercase() == r.c.to_lowercase()
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -273,8 +311,11 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                 summary.identities += 1;
             }
             6 => {
+                // SSH: same title AND same private key (re-keys re-import).
                 if vault.ssh_keys.iter().any(|s| {
-                    s.deleted_at.is_none() && s.title.to_lowercase() == title.to_lowercase()
+                    s.deleted_at.is_none()
+                        && s.title.to_lowercase() == title.to_lowercase()
+                        && s.private_key == r.b
                 }) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -298,7 +339,8 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     summary.rows_failed += 1;
                     continue;
                 }
-                if dup_login(vault, &title, &r.a) {
+                let urls: Vec<String> = r.c.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+                if dup_login(vault, &title, &r.a, &r.b, &urls) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
@@ -316,7 +358,7 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     username: r.a,
                     password: r.b,
                     totp_secret: r.totp,
-                    urls: r.c.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
+                    urls,
                     // Backup auto-sort: named fields + notes sniff, capped/deduped.
                     backup_codes,
                     custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
@@ -347,22 +389,69 @@ fn split_expiry(raw: &str) -> (String, String) {
     (m, y)
 }
 
-/// Normalize a TOTP secret: bare base32 passes through; an `otpauth://`
-/// URI (Bitwarden/Proton sometimes export the full URL) is parsed down to
-/// the pure secret so live rendering never breaks on a stored URL.
-pub(crate) fn normalize_totp(raw: &str) -> String {
+/// Normalize + report non-default parameters (HOTP counter, SHA256/512,
+/// 8 digits, 60s period) that the login `totp_secret` slot CANNOT carry
+/// (bare secret only). Callers stash the warning in notes + summary so the
+/// user can verify codes instead of silently mistyping them as plain TOTP.
+pub(crate) fn normalize_totp_with_meta(raw: &str) -> (String, Option<String>) {
     let t = raw.trim();
     if t.is_empty() {
-        return String::new();
+        return (String::new(), None);
     }
     if t.to_lowercase().starts_with("otpauth://") {
-        if let Ok(acc) = crate::authenticator::google_migration::parse_otpauth_url(t) {
-            if !acc.secret.is_empty() {
-                return acc.secret.clone();
+        match crate::authenticator::google_migration::parse_otpauth_url(t) {
+            Ok(acc) => {
+                let mut flags = Vec::new();
+                if acc.otp_type.eq_ignore_ascii_case("hotp") {
+                    flags.push(format!("HOTP counter {}", acc.counter));
+                }
+                if acc.algorithm.to_uppercase() != "SHA1" {
+                    flags.push(acc.algorithm.clone());
+                }
+                if acc.period != 30 {
+                    flags.push(format!("{}s period", acc.period));
+                }
+                if acc.digits != 6 {
+                    flags.push(format!("{} digits", acc.digits));
+                }
+                let warn = if flags.is_empty() {
+                    None
+                } else {
+                    Some(format!(
+                        "non-default TOTP params ({}) imported as standard TOTP — verify codes",
+                        flags.join(", ")
+                    ))
+                };
+                (acc.secret.clone(), warn)
             }
+            Err(_) => (
+                t.to_string(),
+                Some("unparseable otpauth URL kept verbatim".to_string()),
+            ),
         }
+    } else {
+        (t.to_string(), None)
     }
-    t.to_string()
+}
+
+/// Apply `normalize_totp_with_meta` at a login parse site: returns the
+/// (secret, notes) pair with any parameter warning preserved inline AND in
+/// the summary (the original URL's counter/algo would otherwise vanish).
+pub(crate) fn apply_totp(
+    raw: &str,
+    title: &str,
+    mut notes: String,
+    summary: &mut ImportSummary,
+) -> (String, String) {
+    let (secret, warn) = normalize_totp_with_meta(raw);
+    if let Some(w) = warn {
+        if !notes.is_empty() {
+            notes.push('\n');
+        }
+        notes.push_str(&format!("[TOTP import note: {w}]"));
+        summary.warnings.push(format!("{title}: {w}"));
+    }
+    (secret, notes)
 }
 
 /// Field-name gate for backup auto-sort: "backup"/"recovery" (+ plurals,
@@ -614,5 +703,42 @@ mod tests {
         assert!(sniff_backup_in_notes("My recovery\nonlyone").is_empty());
         assert!(!looks_like_backup_name("Username"));
         assert!(looks_like_backup_name("recovery_codes"));
+    }
+
+    #[test]
+    fn rotation_reimports_but_identical_skips() {
+        let mut v = Vault::new();
+        let mut s = ImportSummary::default();
+        merge(&mut v, vec![login_raw("GitHub", "me")], &mut s);
+        assert_eq!(s.logins, 1);
+        // Same title+user but ROTATED password (no shared URL) → visible import.
+        let mut rotated = login_raw("GitHub", "me");
+        rotated.b = "rotated-pw".into();
+        let mut s2 = ImportSummary::default();
+        merge(&mut v, vec![rotated], &mut s2);
+        assert_eq!(s2.logins, 1);
+        assert_eq!(s2.duplicates_skipped, 0);
+        assert_eq!(v.credentials.len(), 2);
+        // Identical row twice in ONE batch → second skipped in-batch.
+        let mut s3 = ImportSummary::default();
+        merge(&mut v, vec![login_raw("GitHub", "me"), login_raw("GitHub", "me")], &mut s3);
+        assert_eq!(s3.logins, 0);
+        assert_eq!(s3.duplicates_skipped, 2);
+    }
+
+    #[test]
+    fn totp_meta_flags_non_default_params() {
+        // Plain secret: clean.
+        let (s, w) = normalize_totp_with_meta("JBSWY3DPEHPK3PXP");
+        assert_eq!(s, "JBSWY3DPEHPK3PXP");
+        assert!(w.is_none());
+        // otpauth URL with HOTP counter + SHA256 → secret + loud warning.
+        let (s2, w2) = normalize_totp_with_meta(
+            "otpauth://hotp/X:a@x?secret=JBSWY3DPEHPK3PXP&issuer=X&algorithm=SHA256&counter=7",
+        );
+        assert_eq!(s2, "JBSWY3DPEHPK3PXP");
+        let w2 = w2.unwrap();
+        assert!(w2.contains("HOTP counter 7"));
+        assert!(w2.contains("SHA256"));
     }
 }
