@@ -22,6 +22,8 @@ use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowText
 #[derive(Debug, Default, Clone)]
 pub struct DesktopContext {
     pub app_name: String,
+    /// Raw executable stem (no `.exe`, e.g. `chrome`) for spoof checks.
+    pub exe_name: String,
     pub window_title: String,
     pub detected_username: String,
     pub is_password_focused: bool,
@@ -199,6 +201,80 @@ fn hunt_username(auto: &IUIAutomation, focused: &IUIAutomationElement) -> String
     }
 }
 
+/// Executable typosquat / leetspeak guard (desktop phishing parity).
+/// Normalizes leet-speak (`0→o`, `1→l`, …), collapses doubled letters
+/// (`diiscord→discord`), and flags non-ASCII homoglyph stems. Returns the
+/// impersonated brand when the stem is NOT the genuine name itself.
+/// Pure — unit tested. `Some` means "refuse autofill".
+pub fn executable_spoof_brand(exe: &str) -> Option<&'static str> {
+    const KNOWN: &[(&str, &str)] = &[
+        ("chrome", "Chrome"), ("chromium", "Chromium"), ("firefox", "Firefox"),
+        ("msedge", "Edge"), ("edge", "Edge"), ("brave", "Brave"), ("opera", "Opera"),
+        ("vivaldi", "Vivaldi"), ("discord", "Discord"), ("steam", "Steam"),
+        ("spotify", "Spotify"), ("telegram", "Telegram"), ("whatsapp", "WhatsApp"),
+        ("slack", "Slack"), ("zoom", "Zoom"), ("teams", "Teams"), ("outlook", "Outlook"),
+        ("code", "VS Code"), ("vscode", "VS Code"), ("bitwarden", "Bitwarden"),
+        ("1password", "1Password"), ("keepass", "KeePass"), ("keepassxc", "KeePassXC"),
+        ("protonvpn", "Proton VPN"), ("github", "GitHub Desktop"),
+    ];
+    fn leet(c: char, one_as_i: bool) -> char {
+        match c {
+            // '1' is ambiguous (l vs i): callers try both readings.
+            '1' if one_as_i => 'i',
+            '1' => 'l',
+            '0' => 'o', '3' => 'e', '4' => 'a',
+            '5' => 's', '7' => 't', '8' => 'b', '@' => 'a', '$' => 's',
+            _ => c,
+        }
+    }
+    fn normalize(raw: &str, one_as_i: bool) -> String {
+        let mut out = String::with_capacity(raw.len());
+        let mut prev = '\0';
+        for c in raw.chars().filter(|c| c.is_alphanumeric()) {
+            let c = leet(c.to_ascii_lowercase(), one_as_i);
+            if c != prev {
+                out.push(c);
+            }
+            prev = c;
+        }
+        out
+    }
+    let raw = exe.trim().trim_end_matches(".exe").to_lowercase();
+    if raw.is_empty() {
+        return None;
+    }
+    let has_non_ascii = raw.chars().any(|c| !c.is_ascii());
+    // Genuine check on the RAW ascii stem (no leet, no collapse): an exact
+    // match is the real binary — or an exact-name collision, which is the
+    // OS's problem, not ours.
+    let ascii_raw: String = raw.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    // Leet-normalized + doubles-collapsed attacker views (both '1' readings).
+    let norms = [normalize(&raw, false), normalize(&raw, true)];
+    // Homoglyph skeleton: non-ASCII lookalikes stripped (сhrome → hrome).
+    let skeleton: String = norms[0].chars().filter(|c| c.is_ascii()).collect();
+    fn is_subsequence(needle: &str, hay: &str) -> bool {
+        let mut hn = hay.chars();
+        needle.chars().all(|n| hn.any(|h| h == n))
+    }
+    for (stem, brand) in KNOWN {
+        if ascii_raw == *stem && !has_non_ascii {
+            return None;
+        }
+        if norms.iter().any(|n| n == stem) {
+            return Some(brand);
+        }
+        // сhrome-style: non-ASCII present and the skeleton is the brand
+        // minus ≤2 smuggled glyphs.
+        if has_non_ascii
+            && skeleton.len() + 2 >= stem.len()
+            && is_subsequence(&skeleton, stem)
+        {
+            return Some(brand);
+        }
+    }
+    None
+}
+
 /// OTP-screen matcher: names, labels, or automation IDs containing any of
 /// these (case-insensitive) mark a 2FA/OTP input. Pure — unit tested.
 pub fn otp_like(name: &str, automation_id: &str) -> bool {
@@ -314,6 +390,7 @@ pub fn inspect_active_context() -> Result<DesktopContext> {
     // Never capture from ourselves (would offer to save our own fields).
     let me = exe.eq_ignore_ascii_case("phantom_vault");
     ctx.app_name = pretty_service_name(&exe, &title);
+    ctx.exe_name = exe;
     ctx.window_title = title;
     if me {
         return Ok(ctx);
@@ -370,5 +447,32 @@ mod tests {
         assert!(!otp_like("Password", ""));
         assert!(!otp_like("Country", ""));
         assert!(!otp_like("", ""));
+    }
+
+    #[test]
+    fn spoof_guard_catches_typosquats() {
+        assert_eq!(executable_spoof_brand("chr0me"), Some("Chrome"));
+        assert_eq!(executable_spoof_brand("chr0me.exe"), Some("Chrome"));
+        assert_eq!(executable_spoof_brand("g00gle"), None); // unknown brand, not our list
+        assert_eq!(executable_spoof_brand("diiscord"), Some("Discord"));
+        assert_eq!(executable_spoof_brand("steamm"), Some("Steam"));
+        assert_eq!(executable_spoof_brand("d1scord"), Some("Discord"));
+        assert_eq!(executable_spoof_brand("f1refox"), Some("Firefox"));
+        // Cyrillic 'с' smuggled into chrome → homoglyph spoof.
+        assert_eq!(executable_spoof_brand("сhrome"), Some("Chrome"));
+    }
+
+    #[test]
+    fn spoof_guard_allows_genuine_and_unrelated() {
+        assert_eq!(executable_spoof_brand("chrome"), None);
+        assert_eq!(executable_spoof_brand("CHROME.EXE"), None);
+        assert_eq!(executable_spoof_brand("discord"), None);
+        assert_eq!(executable_spoof_brand("steam"), None);
+        assert_eq!(executable_spoof_brand("notepad"), None);
+        assert_eq!(executable_spoof_brand("myapp"), None);
+        assert_eq!(executable_spoof_brand(""), None);
+        // Helper processes that merely contain a brand are NOT flagged.
+        assert_eq!(executable_spoof_brand("steamwebhelper"), None);
+        assert_eq!(executable_spoof_brand("chrome_updater"), None);
     }
 }

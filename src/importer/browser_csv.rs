@@ -96,7 +96,7 @@ pub fn parse(bytes: &[u8], format: &Format, summary: &mut ImportSummary) -> Resu
             a: user,
             b: pass,
             c: url,
-            totp,
+            totp: super::normalize_totp(&totp),
             notes,
             folder,
             ..Default::default()

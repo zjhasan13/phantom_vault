@@ -6,6 +6,7 @@
 
 pub mod bitwarden;
 pub mod browser_csv;
+pub mod exporter;
 pub mod fuzzy;
 pub mod keepass;
 pub mod onepassword;
@@ -31,6 +32,8 @@ pub struct RawItem {
     pub folder: String,
     pub totp: String,
     pub backup: Vec<String>,
+    /// Bitwarden login.passwordHistory (newest-first, capped at KEEP on merge).
+    pub history: Vec<crate::models::PasswordHistoryEntry>,
     pub custom_text: Vec<(String, String)>,
     pub custom_hidden: Vec<(String, String)>,
     pub custom_check: Vec<(String, bool)>,
@@ -178,7 +181,7 @@ fn dup_login(vault: &Vault, title: &str, user: &str) -> bool {
     })
 }
 
-fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
+pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
     for r in raws {
         let title = if r.title.trim().is_empty() { "(untitled)" } else { r.title.trim() }.to_string();
         let folder = folder_of(&r.folder);
@@ -299,6 +302,14 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
+                // Backup auto-sort + history are computed BEFORE the struct
+                // move (both borrow `r` while other fields move out of it).
+                let backup_codes = collect_backup(&r);
+                let history: Vec<crate::models::PasswordHistoryEntry> = r
+                    .history
+                    .into_iter()
+                    .take(crate::models::PASSWORD_HISTORY_KEEP)
+                    .collect();
                 vault.credentials.push(Credential {
                     id: new_id(),
                     title,
@@ -306,7 +317,8 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     password: r.b,
                     totp_secret: r.totp,
                     urls: r.c.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect(),
-                    backup_codes: r.backup,
+                    // Backup auto-sort: named fields + notes sniff, capped/deduped.
+                    backup_codes,
                     custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
                     notes: r.notes,
                     folder,
@@ -315,7 +327,7 @@ fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
                     travel_safe: false,
                     // Imported now: rotation clock starts at import.
                     last_changed: crate::models::current_timestamp(),
-                    password_history: Vec::new(),
+                    password_history: history,
                     favorite: false,
                     deleted_at: None,
                 });
@@ -333,6 +345,169 @@ fn split_expiry(raw: &str) -> (String, String) {
     let m = parts.next().unwrap_or("").trim().to_string();
     let y = parts.next().unwrap_or("").trim().to_string();
     (m, y)
+}
+
+/// Normalize a TOTP secret: bare base32 passes through; an `otpauth://`
+/// URI (Bitwarden/Proton sometimes export the full URL) is parsed down to
+/// the pure secret so live rendering never breaks on a stored URL.
+pub(crate) fn normalize_totp(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    if t.to_lowercase().starts_with("otpauth://") {
+        if let Ok(acc) = crate::authenticator::google_migration::parse_otpauth_url(t) {
+            if !acc.secret.is_empty() {
+                return acc.secret.clone();
+            }
+        }
+    }
+    t.to_string()
+}
+
+/// Field-name gate for backup auto-sort: "backup"/"recovery" (+ plurals,
+/// underscores, spaces) match. Compound names ("backupemail") also match —
+/// the code-like line filter below is the real false-positive guard.
+pub(crate) fn looks_like_backup_name(name: &str) -> bool {
+    let n: String = name
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .collect();
+    n.contains("backup") || n.contains("recover") || n == "otpbackupcodes"
+}
+
+/// One line is code-like: 6–16 alnum chars after stripping spaces/dashes
+/// (covers 8/10-digit authenticator codes, hex recovery keys, xxx-xxx).
+fn code_like(line: &str) -> bool {
+    let s: String = line.chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+    (6..=16).contains(&s.len()) && s.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
+/// Pull code-like lines out of a blob (named-field path).
+fn code_lines(text: &str) -> Vec<String> {
+    text.lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && code_like(l))
+        .take(50)
+        .map(str::to_string)
+        .collect()
+}
+
+/// Scan free-text notes for a backup header ("Backup codes:", "Recovery—")
+/// and harvest the code block beneath it. Header-with-colon needs ≥1 code,
+/// bare headers need ≥2 (avoids "Backup: yes" false positives).
+pub(crate) fn sniff_backup_in_notes(notes: &str) -> Vec<String> {
+    let lines: Vec<&str> = notes.lines().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        let t = lines[i].trim();
+        let flat: String = t.to_lowercase().chars().filter(|c| c.is_ascii_alphanumeric()).collect();
+        let is_header = (flat.contains("backup") || flat.contains("recover")) && t.len() < 80;
+        if is_header {
+            let strict = !t.ends_with(':');
+            let mut block = Vec::new();
+            let mut j = i + 1;
+            while j < lines.len() && out.len() + block.len() < 50 {
+                let u = lines[j].trim();
+                if u.is_empty() {
+                    j += 1;
+                    continue;
+                }
+                if code_like(u) {
+                    block.push(u.to_string());
+                    j += 1;
+                } else {
+                    break;
+                }
+            }
+            if block.len() >= if strict { 2 } else { 1 } {
+                out.extend(block);
+                i = j;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Uniform backup harvest for the login merge arm: named custom fields
+/// (text + hidden) plus the notes sniff. Values stay where they are —
+/// codes are COPIED into backup_codes, never moved.
+pub(crate) fn collect_backup(r: &RawItem) -> Vec<String> {
+    let mut out: Vec<String> = r.backup.clone();
+    for (name, value) in r.custom_text.iter().chain(r.custom_hidden.iter()) {
+        if !looks_like_backup_name(name) {
+            continue;
+        }
+        let mut lines = code_lines(value);
+        if lines.is_empty() {
+            // Single-code field ("Backup PIN: 482917"): keep the raw value.
+            let v = value.trim();
+            if !v.is_empty() && v.len() <= 64 {
+                lines.push(v.to_string());
+            }
+        }
+        out.extend(lines);
+        if out.len() >= 50 {
+            break;
+        }
+    }
+    out.extend(sniff_backup_in_notes(&r.notes));
+    out.truncate(50);
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|c| seen.insert(c.clone()));
+    out
+}
+
+/// Bitwarden `passwordHistory[].lastUsedDate` ISO8601 → unix seconds.
+/// Handles `Z` and `±hh:mm` offsets, fractional seconds ignored.
+/// Returns None when the stamp is unreadable (caller skips the entry).
+pub(crate) fn parse_bw_datetime(raw: &str) -> Option<u64> {
+    let t = raw.trim();
+    let (head, off_secs) = if let Some(stripped) = t.strip_suffix(['Z', 'z']) {
+        (stripped, 0i64)
+    } else if t.len() >= 6 {
+        let (h, tail) = t.split_at(t.len() - 6);
+        let sign = match tail.as_bytes()[0] {
+            b'+' => 1i64,
+            b'-' => -1i64,
+            _ => return None,
+        };
+        let hh: i64 = tail[1..3].parse().ok()?;
+        let mm: i64 = tail[4..6].parse().ok()?;
+        if tail.as_bytes()[3] != b':' {
+            return None;
+        }
+        (h, sign * (hh * 3600 + mm * 60))
+    } else {
+        return None;
+    };
+    let head = head.split('.').next().unwrap_or(head); // drop .000
+    let (date, time) = head.split_once(['T', ' '])?;
+    let mut d = date.split('-');
+    let (y, m, day): (i64, i64, i64) =
+        (d.next()?.parse().ok()?, d.next()?.parse().ok()?, d.next()?.parse().ok()?);
+    let mut tm = time.split(':');
+    let (hh, mm, ss): (i64, i64, i64) =
+        (tm.next()?.parse().ok()?, tm.next()?.parse().ok()?, tm.next()?.parse().ok()?);
+    if !(1..=12).contains(&m) || !(1..=31).contains(&day) || hh > 23 || mm > 59 || ss > 60 {
+        return None;
+    }
+    // Howard Hinnant days-from-civil → unix days.
+    let (y2, m2) = if m <= 2 { (y - 1, m + 12) } else { (y, m) };
+    let era = y2.div_euclid(400);
+    let yoe = y2 - era * 400;
+    let doy = (153 * (m2 - 3) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe.div_euclid(4) - yoe.div_euclid(100) + doy;
+    let days = era * 146097 + doe - 719468;
+    let ts = days * 86400 + hh * 3600 + mm * 60 + ss - off_secs;
+    if ts < 0 {
+        return None;
+    }
+    Some(ts as u64)
 }
 
 #[cfg(test)]
@@ -413,5 +588,31 @@ mod tests {
         );
         assert_eq!(s.notes, 1);
         assert_eq!(s.duplicates_skipped, 0);
+    }
+
+    #[test]
+    fn bw_datetime_handles_z_and_offsets() {
+        // 2024-06-01T12:00:00Z == 2024-06-01T14:00:00+02:00.
+        let a = parse_bw_datetime("2024-06-01T12:00:00.000Z").unwrap();
+        let b = parse_bw_datetime("2024-06-01T14:00:00+02:00").unwrap();
+        assert_eq!(a, b);
+        assert_eq!(a, 1_717_243_200);
+        assert!(parse_bw_datetime("garbage").is_none());
+        assert!(parse_bw_datetime("2024-13-01T00:00:00Z").is_none());
+    }
+
+    #[test]
+    fn backup_sniff_avoids_false_positives() {
+        // "Backup: yes" (bare header, single non-code) → nothing.
+        assert!(sniff_backup_in_notes("Notes here\nBackup: yes\nDone").is_empty());
+        // Colon header + one code → harvest.
+        assert_eq!(
+            sniff_backup_in_notes("Recovery codes:\nAB12CD34"),
+            vec!["AB12CD34".to_string()]
+        );
+        // Bare header needs 2+ codes.
+        assert!(sniff_backup_in_notes("My recovery\nonlyone").is_empty());
+        assert!(!looks_like_backup_name("Username"));
+        assert!(looks_like_backup_name("recovery_codes"));
     }
 }

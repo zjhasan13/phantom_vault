@@ -545,6 +545,20 @@ fn write_ext_stats(v: &serde_json::Value) {
     }
 }
 
+/// Shared fill-audit writer: desktop auto-type AND the extension report
+/// here, so popup "Last filled" + dashboard totals cover every fill path.
+/// Sidecar only (metadata, no secrets) — never touches the vault model.
+pub(crate) fn record_ext_fill(id: &str) {
+    if id.trim().is_empty() {
+        return;
+    }
+    let mut st = read_ext_stats();
+    let now = crate::models::current_timestamp();
+    st["total_fills"] = serde_json::json!(st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
+    st["last_filled"][id.trim()] = serde_json::json!(now);
+    write_ext_stats(&st);
+}
+
 /// Lowercased registrable-ish domain of a URL (mirrors the extension's
 /// base-domain matcher closely enough for save dedup).
 fn url_domain(raw: &str) -> String {

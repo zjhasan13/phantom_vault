@@ -111,6 +111,66 @@ pub enum KeyStroke {
     Vk(VIRTUAL_KEY),
 }
 
+/// Build a Tab-chained sequence for N fields + optional Enter.
+/// Contract: field{Tab}field{Tab}…[Enter]. Pinned by unit tests.
+#[allow(dead_code)]
+pub fn build_tabbed_sequence(fields: &[&str], press_enter: bool) -> Vec<KeyStroke> {
+    let mut seq = Vec::new();
+    for (i, f) in fields.iter().enumerate() {
+        if i > 0 {
+            seq.push(KeyStroke::Vk(VK_TAB));
+        }
+        for unit in sanitize_field(f).encode_utf16() {
+            seq.push(KeyStroke::Unicode(unit));
+        }
+    }
+    if press_enter {
+        seq.push(KeyStroke::Vk(VK_RETURN));
+    }
+    seq
+}
+
+/// Type N fields joined by Tab into the focused control (worker thread).
+/// Settles like `type_sequence`, then walks the fields with guarded Tabs.
+pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
+    if fields.iter().all(|f| sanitize_field(f).is_empty()) {
+        return Err(VaultError::AutoType("nothing to type".into()));
+    }
+    std::thread::sleep(Duration::from_millis(SETTLE_MS));
+    std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
+    let mut rng = OsRng;
+    for (i, f) in fields.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
+            press_vk(VK_TAB, &mut rng)?;
+            std::thread::sleep(Duration::from_millis(TAB_POST_MS));
+        }
+        for unit in field_units(f) {
+            press_unicode(unit, &mut rng)?;
+            sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+        }
+    }
+    if press_enter {
+        press_vk(VK_RETURN, &mut rng)?;
+    }
+    Ok(())
+}
+
+/// Payment-card checkout fill: number{TAB}MM/YY{TAB}CVV (no submit).
+pub fn type_card(number: &str, exp_month: &str, exp_year: &str, cvv: &str) -> Result<()> {
+    let exp = if exp_month.trim().is_empty() && exp_year.trim().is_empty() {
+        String::new()
+    } else {
+        format!("{}/{}", exp_month.trim(), exp_year.trim())
+    };
+    type_fields(&[number, &exp, cvv], false)
+}
+
+/// Identity/address fill: name{TAB}email{TAB}phone{TAB}address (no submit).
+pub fn type_identity(full_name: &str, email: &str, phone: &str, address: &str) -> Result<()> {
+    type_fields(&[full_name, email, phone, address], false)
+}
+
 fn key_input(vk: VIRTUAL_KEY, scan: u16, flags: u32) -> INPUT {
     INPUT {
         r#type: INPUT_KEYBOARD,
@@ -254,6 +314,23 @@ mod tests {
         let seq = build_sequence("a\nb", "x\ry");
         // newline chars must never become keystrokes
         assert_eq!(seq.len(), 6);
+    }
+
+    #[test]
+    fn tabbed_sequence_chains_fields_with_tabs() {
+        // card: number{TAB}exp{TAB}cvv, no Enter → 4+1+5+1+3 = 14 strokes
+        let seq = build_tabbed_sequence(&["4111", "01/30", "123"], false);
+        assert_eq!(seq.len(), 14);
+        assert!(matches!(seq[4], KeyStroke::Vk(vk) if vk == VK_TAB));
+        assert!(matches!(seq[10], KeyStroke::Vk(vk) if vk == VK_TAB));
+        // identity with Enter: 1+1+1+1 chars + 3 tabs + Enter = 8
+        let seq = build_tabbed_sequence(&["a", "b", "c", "d"], true);
+        assert_eq!(seq.len(), 8);
+        assert!(matches!(seq[7], KeyStroke::Vk(vk) if vk == VK_RETURN));
+        // empty field still advances (blind checkout forms).
+        let seq = build_tabbed_sequence(&["", "x"], false);
+        assert_eq!(seq.len(), 2);
+        assert!(matches!(seq[0], KeyStroke::Vk(vk) if vk == VK_TAB));
     }
 
     /// Regression test for the "c typed as o" report: proves byte-for-byte

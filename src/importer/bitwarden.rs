@@ -67,7 +67,8 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                 });
             }
             4 => {
-                // Identity.
+                // Identity (email/company/state/postal have no dedicated
+                // slots — they ride `c` / appended notes, zero data lost).
                 let i = o.get("identity").and_then(|i| i.as_object());
                 let get = |k: &str| i.map(|i| str_field(i, k)).unwrap_or_default();
                 let full = format!("{} {} {}", get("firstName"), get("middleName"), get("lastName"))
@@ -81,11 +82,25 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                 if idnum.is_empty() {
                     idnum = get("ssn");
                 }
+                let mut inotes = notes.clone();
+                for (label, val) in [
+                    ("Company", get("company")),
+                    ("State", get("state")),
+                    ("Postal", get("postalCode")),
+                ] {
+                    if !val.trim().is_empty() {
+                        if !inotes.is_empty() {
+                            inotes.push('\n');
+                        }
+                        inotes.push_str(&format!("{label}: {}", val.trim()));
+                    }
+                }
                 out.push(RawItem {
                     kind: 5,
                     title: name,
                     a: full,
                     b: idnum,
+                    c: get("email"),
                     d: get("phone"),
                     e: [&get("address1"), &get("address2"), &get("city"), &get("country")]
                         .iter()
@@ -93,7 +108,7 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    notes,
+                    notes: inotes,
                     folder,
                     ..Default::default()
                 });
@@ -119,11 +134,36 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                     a: get("username"),
                     b: get("password"),
                     c: uris,
-                    totp: get("totp"),
+                    totp: super::normalize_totp(&get("totp")),
                     notes,
                     folder,
                     ..Default::default()
                 };
+                // Bitwarden passwordHistory: [{lastUsedDate, password}] —
+                // newest-first, capped at KEEP; unreadable stamps are skipped.
+                if let Some(hist) = l.and_then(|l| l.get("passwordHistory")).and_then(|h| h.as_array()) {
+                    for h in hist {
+                        let pw = h.get("password").map(s).unwrap_or_default();
+                        if pw.is_empty() {
+                            continue;
+                        }
+                        let ts = h
+                            .get("lastUsedDate")
+                            .and_then(|v| v.as_str())
+                            .and_then(super::parse_bw_datetime)
+                            .unwrap_or(0);
+                        if ts == 0 {
+                            continue;
+                        }
+                        if r.history.len() >= crate::models::PASSWORD_HISTORY_KEEP {
+                            break;
+                        }
+                        r.history.push(crate::models::PasswordHistoryEntry {
+                            password: pw,
+                            changed_at: ts,
+                        });
+                    }
+                }
                 // Custom fields: type 0 text, 1 hidden, 2 boolean, 3 linked.
                 if let Some(fields) = o.get("fields").and_then(|f| f.as_array()) {
                     for f in fields {
@@ -263,7 +303,7 @@ fn parse_csv_delim(bytes: &[u8], delim: u8, summary: &mut ImportSummary) -> Resu
                     a: get(&m, "loginusername"),
                     b: get(&m, "loginpassword"),
                     c: get(&m, "loginuri"),
-                    totp: get(&m, "logintotp"),
+                    totp: super::normalize_totp(&get(&m, "logintotp")),
                     notes: get(&m, "notes"),
                     folder: get(&m, "folder"),
                     ..Default::default()
@@ -354,5 +394,53 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "X");
         assert_eq!(items[0].b, "pw");
+    }
+
+    #[test]
+    fn fidelity_password_history_identity_email_otpauth() {
+        let data = br#"{
+            "folders": [],
+            "items": [
+                {"type": 1, "name": "Mail", "notes": "Backup codes:\n111222\n333444",
+                 "login": {"username": "u", "password": "new",
+                           "totp": "otpauth://totp/Mail:u?secret=JBSWY3DPEHPK3PXP&issuer=Mail",
+                           "passwordHistory": [
+                               {"lastUsedDate": "2024-06-01T12:00:00.000Z", "password": "old1"},
+                               {"lastUsedDate": "2023-01-01T00:00:00Z", "password": "old2"},
+                               {"lastUsedDate": "garbage", "password": "skipped"}
+                           ]},
+                 "fields": [{"name": "Recovery Codes", "value": "AAAA1111\nBBBB2222", "type": 0}]},
+                {"type": 4, "name": "Me", "identity": {
+                    "firstName": "Ada", "lastName": "L", "email": "ada@x.com",
+                    "company": "Acme", "state": "DHK", "postalCode": "1205", "phone": "123"}}
+            ]
+        }"#;
+        let mut s = ImportSummary::default();
+        let items = parse_json(data, &mut s).unwrap();
+        assert_eq!(items.len(), 2);
+        // otpauth URL → bare secret.
+        assert_eq!(items[0].totp, "JBSWY3DPEHPK3PXP");
+        // passwordHistory ingested newest-first, bad stamp skipped.
+        assert_eq!(items[0].history.len(), 2);
+        assert_eq!(items[0].history[0].password, "old1");
+        assert!(items[0].history[0].changed_at > items[0].history[1].changed_at);
+        // Identity: email in `c`, company/state/postal appended to notes.
+        assert_eq!(items[1].c, "ada@x.com");
+        assert!(items[1].notes.contains("Company: Acme"));
+        assert!(items[1].notes.contains("State: DHK"));
+        assert!(items[1].notes.contains("Postal: 1205"));
+        // Full merge: backup box filled from field AND notes, customs kept.
+        let mut v = crate::models::Vault::new();
+        let mut ms = super::ImportSummary::default();
+        crate::importer::merge(&mut v, items, &mut ms);
+        let c = &v.credentials[0];
+        assert!(c.backup_codes.contains(&"AAAA1111".to_string()));
+        assert!(c.backup_codes.contains(&"111222".to_string()));
+        assert!(c.backup_codes.contains(&"333444".to_string()));
+        // Values stay in place too (copied, never moved).
+        assert!(c.notes.contains("Backup codes:"));
+        assert!(c.custom_fields.iter().any(|f| f.name == "Recovery Codes"));
+        assert_eq!(c.totp_secret, "JBSWY3DPEHPK3PXP");
+        assert_eq!(c.password_history.len(), 2);
     }
 }
