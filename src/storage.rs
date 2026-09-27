@@ -8,6 +8,9 @@ use crate::models::Vault;
 use std::fs;
 use std::path::Path;
 
+/// Automated scheduled backups (ciphertext snapshots + retention shred).
+pub mod backup_scheduler;
+
 /// Legacy Phase-14 DPAPI sidecar. Only needed to OPEN old 3-byte-magic vaults
 /// one final time during migration. New saves never create it.
 const PQ_DK_FILE: &str = "pq_decapsulation.dpapi";

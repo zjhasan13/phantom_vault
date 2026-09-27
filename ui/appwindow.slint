@@ -69,6 +69,13 @@ struct PasskeyView {
     fav: bool,
 }
 
+// LAN peer row (name + ip preformatted in Rust; detail = version • head).
+struct PeerView {
+    name: string,
+    ip: string,
+    detail: string,
+}
+
 // --- Phantom palette (single source of truth) ---
 global PhantomTheme {
     in-out property <color> void: #080c14;
@@ -198,6 +205,7 @@ component GeneratorPanel inherits Rectangle {
     in-out property <bool> gen_symbols;
     in-out property <bool> gen_exclude_ambiguous;
     in-out property <bool> gen_diceware_mode;
+    in-out property <int> gen_dice_lang;
     in-out property <int> gen_word_count;
     in-out property <string> gen_output;
     in-out property <float> gen_entropy_bits;
@@ -289,7 +297,31 @@ component GeneratorPanel inherits Rectangle {
             }
         }
 
-        if root.gen_diceware_mode : HorizontalLayout {
+        if root.gen_diceware_mode : VerticalLayout { spacing: 8px;
+        HorizontalLayout {
+            spacing: 4px;
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 8px;
+                height: 34px;
+                background: root.gen_dice_lang == 0 ? #1a2450 : transparent;
+                border-width: 1px;
+                border-color: root.gen_dice_lang == 0 ? #38e1ff : #26315c;
+                TouchArea { mouse-cursor: pointer; clicked => { root.gen_dice_lang = 0; root.regenerate(); } }
+                Text { text: "English (EFF 7776)"; color: root.gen_dice_lang == 0 ? #ffffff : #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            Rectangle {
+                horizontal-stretch: 1;
+                border-radius: 8px;
+                height: 34px;
+                background: root.gen_dice_lang == 1 ? #1a2450 : transparent;
+                border-width: 1px;
+                border-color: root.gen_dice_lang == 1 ? #38e1ff : #26315c;
+                TouchArea { mouse-cursor: pointer; clicked => { root.gen_dice_lang = 1; root.regenerate(); } }
+                Text { text: "বাংলা 🇧🇩"; color: root.gen_dice_lang == 1 ? #ffffff : #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            }
+        }
+        HorizontalLayout {
             alignment: space-between;
             FieldLabel { text: "WORDS"; vertical-alignment: center; }
             HorizontalLayout {
@@ -298,7 +330,7 @@ component GeneratorPanel inherits Rectangle {
                 Text { text: root.gen_word_count; color: #38e1ff; font-size: 15px; font-weight: 800; vertical-alignment: center; min-width: 30px; horizontal-alignment: center; }
                 AuraButton { label: "+"; width: 34px; height: 32px; clicked => { if root.gen_word_count < 12 { root.gen_word_count += 1; root.regenerate(); } } }
             }
-        }
+        }}
 
         // Output well
         Rectangle {
@@ -524,6 +556,11 @@ export component MainWindow inherits Window {
     in-out property <string> access_log_text: "No events yet.";
     callback set_offline_mode(bool);
     callback view_access_log();
+    callback set_tray_minimize(bool);
+    callback set_backup_enabled(bool);
+    callback set_backup_interval(int);
+    callback browse_backup_dir();
+    callback backup_now();
     // Phase 25: BLE proximity auto-lock (0 Close/-75, 1 Medium/-85, 2 Far/-95)
     in-out property <bool> prox_enabled: false;
     in-out property <string> prox_device: "";
@@ -552,9 +589,22 @@ export component MainWindow inherits Window {
     in-out property <string> sync_repo;
     in-out property <string> sync_token_input;
     in-out property <string> sync_status: "";
+    // Local Wi-Fi P2P sync (default OFF) + GitHub Releases updater.
+    in-out property <bool> p2p_enabled: false;
+    in-out property <string> p2p_status: "P2P discovery is OFF — enable to find LAN devices.";
+    in-out property <[PeerView]> p2p_peers;
+    in-out property <string> update_status: "";
+    in-out property <string> update_tag: "";
+    in-out property <bool> update_ready: false;
+    in-out property <string> app_version: "";
     in-out property <string> ext_host_id: "";
     in-out property <string> export_status: "";
     in-out property <int> rp_export_fmt: 0;
+    in-out property <bool> tray_minimize: true;
+    in-out property <bool> backup_enabled: true;
+    in-out property <int> backup_interval: 7;
+    in-out property <string> backup_dir: "";
+    in-out property <string> backup_status: "";
     in-out property <bool> show_generator: false;
     in-out property <int> gen_length: 20;
     in-out property <bool> gen_uppercase: true;
@@ -563,6 +613,7 @@ export component MainWindow inherits Window {
     in-out property <bool> gen_symbols: true;
     in-out property <bool> gen_exclude_ambiguous: true;
     in-out property <bool> gen_diceware_mode: false;
+    in-out property <int> gen_dice_lang: 0;
     in-out property <int> gen_word_count: 6;
     in-out property <string> gen_output: "";
     in-out property <float> gen_entropy_bits: 0.0;
@@ -600,6 +651,12 @@ export component MainWindow inherits Window {
     callback type_item_requested(int, string);
     callback save_sync_config(string, string, string);
     callback sync_now();
+    callback set_p2p(bool);
+    callback scan_p2p();
+    callback sync_peer(string);
+    callback check_updates();
+    callback download_update();
+    callback restart_update();
     callback pick_import_file();
     callback install_browser_host(string);
     // Zero-lockin reverse exporters (2FA hub QR + full-vault files).
@@ -960,6 +1017,15 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline kill-switch (no network)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📜  Access Log"; width: 180px; clicked => { root.view_access_log(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "Close button minimizes to tray"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tray_minimize ? "ON" : "OFF"; primary: root.tray_minimize; width: 90px; clicked => { root.set_tray_minimize(!root.tray_minimize); } } }
+                    FieldLabel { text: "APP UPDATES (GITHUB RELEASES)"; }
+                    Text { text: root.update_tag == "" ? "Current: v" + root.app_version : "🎉 New Update Available: " + root.update_tag; color: root.update_tag == "" ? #8e99c0 : #34d399; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Check for Updates"; width: 170px; clicked => { root.check_updates(); } }
+                        if root.update_tag != "" && !root.update_ready : AuraButton { label: "⬇️ Download & Stage"; primary: true; width: 190px; clicked => { root.download_update(); } }
+                        if root.update_ready : AuraButton { label: "🔄 Restart to Update"; primary: true; width: 190px; clicked => { root.restart_update(); } }
+                    }
+                    Text { text: root.update_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📱 Bluetooth Proximity Auto-Lock"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
@@ -981,6 +1047,14 @@ export component MainWindow inherits Window {
                     Text { text: root.sync_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Enable Local Wi-Fi Discovery"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "🔍 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } }
+                    for peer in root.p2p_peers : Rectangle { background: #121927; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: #5b6589; font-size: 10px; overflow: elide; } } AuraButton { label: "Sync Now"; width: 110px; height: 30px; y: 7px; clicked => { root.sync_peer(peer.ip); } } } }
+                    Text { text: root.p2p_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                }}
+                Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Browser Bridge (headless)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
@@ -992,6 +1066,20 @@ export component MainWindow inherits Window {
                     Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. Shred the file after moving it."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } }
                     Text { text: root.export_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                }}
+                Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "💾 SCHEDULED BACKUPS (CIPHERTEXT)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: "Snapshots are encrypted blobs — safe anywhere. Oldest pruned with a 3-pass shred past retention."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Automatic backups"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.backup_enabled ? "ON" : "OFF"; primary: root.backup_enabled; width: 90px; clicked => { root.set_backup_enabled(!root.backup_enabled); } } }
+                    HorizontalLayout { spacing: 6px;
+                        AuraButton { label: "Daily"; primary: root.backup_interval == 1; width: 80px; height: 30px; clicked => { root.set_backup_interval(1); } }
+                        AuraButton { label: "Weekly"; primary: root.backup_interval == 7; width: 80px; height: 30px; clicked => { root.set_backup_interval(7); } }
+                        AuraButton { label: "Monthly"; primary: root.backup_interval == 30; width: 80px; height: 30px; clicked => { root.set_backup_interval(30); } }
+                        AuraButton { label: "📁 Browse"; width: 110px; height: 30px; clicked => { root.browse_backup_dir(); } }
+                        AuraButton { label: "💾 Back Up Now"; width: 140px; height: 30px; clicked => { root.backup_now(); } }
+                    }
+                    Text { text: root.backup_dir; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.backup_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Paranoia & Recovery"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
@@ -1213,6 +1301,7 @@ export component MainWindow inherits Window {
             gen_symbols <=> root.gen_symbols;
             gen_exclude_ambiguous <=> root.gen_exclude_ambiguous;
             gen_diceware_mode <=> root.gen_diceware_mode;
+            gen_dice_lang <=> root.gen_dice_lang;
             gen_word_count <=> root.gen_word_count;
             gen_output <=> root.gen_output;
             gen_entropy_bits <=> root.gen_entropy_bits;

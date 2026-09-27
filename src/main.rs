@@ -1825,6 +1825,29 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("{msg}");
     }));
     let main_window = MainWindow::new()?;
+    main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
+    // Prefs painted before first frame (tray + backup).
+    main_window.set_tray_minimize(windows_native::tray::load_tray_pref());
+    {
+        let bcfg = storage::backup_scheduler::load_config();
+        main_window.set_backup_enabled(bcfg.enabled);
+        main_window.set_backup_interval(bcfg.interval_days as i32);
+        main_window.set_backup_dir(bcfg.backup_dir.clone().into());
+        main_window.set_backup_status(format!(
+            "Next: {} • keep {} • {}",
+            if bcfg.enabled {
+                if bcfg.last_backup_timestamp == 0 {
+                    "on next heartbeat".to_string()
+                } else {
+                    format!("{}d cycle", bcfg.interval_days)
+                }
+            } else {
+                "disabled".to_string()
+            },
+            bcfg.max_backups_retained,
+            bcfg.backup_dir,
+        ).into());
+    }
     let quick_bar = QuickBarWindow::new()?;
     let capture_window = QuickCaptureWindow::new()?;
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1839,6 +1862,136 @@ fn main() -> Result<(), slint::PlatformError> {
     let editing_item: Arc<Mutex<Option<(i32, String)>>> = Arc::new(Mutex::new(None));
     // Travel Mode: when true, only travel_safe items are listed anywhere.
     let travel_mode: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
+    // System tray: icon + menu, alive from boot so close-to-tray always has
+    // a restore path. Actions hop to the event loop (Slint is not thread-safe).
+    let trayalive = {
+        let w_main = main_window.as_weak();
+        let w_qb = quick_bar.as_weak();
+        let qb_vis = Arc::clone(&quickbar_visible);
+        let t_vault = Arc::clone(&active_vault);
+        let t_master = Arc::clone(&active_master_pw);
+        let t_travel = Arc::clone(&travel_mode);
+        let open = {
+            let w = w_main.clone();
+            Arc::new(move || {
+                let w = w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = w.upgrade() {
+                        ui.window().set_minimized(false);
+                        ui.show().ok();
+                        bring_to_foreground(ui.window());
+                    }
+                });
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let quickbar = {
+            let w_main = w_main.clone();
+            let w_qb = w_qb.clone();
+            Arc::new(move || {
+                let (w_main, w_qb, t_vault, t_master, t_travel, qb_vis) = (
+                    w_main.clone(), w_qb.clone(),
+                    t_vault.clone(), t_master.clone(), t_travel.clone(),
+                    qb_vis.clone(),
+                );
+                let _ = slint::invoke_from_event_loop(move || {
+                    let is_unlocked = lock_master_pw(&t_master).is_some();
+                    if !is_unlocked {
+                        if let Some(main_ui) = w_main.upgrade() {
+                            main_ui.show().ok();
+                            bring_to_foreground(main_ui.window());
+                        }
+                        return;
+                    }
+                    if let Some(qb) = w_qb.upgrade() {
+                        let vault = lock_vault(&t_vault);
+                        let travel = *t_travel.lock().unwrap();
+                        qb.set_quick_query("".into());
+                        qb.set_filtered_results(vault_quickbar(&vault, "", travel));
+                        qb.show().ok();
+                        bring_to_foreground(qb.window());
+                        qb_vis.store(true, std::sync::atomic::Ordering::SeqCst);
+                    }
+                });
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let lock = {
+            let t_vault = Arc::clone(&active_vault);
+            let t_master = Arc::clone(&active_master_pw);
+            Arc::new(move || {
+                windows_native::clipboard::flush_now();
+                panic_wipe(&t_vault, &t_master);
+                security::access_log::log_event("lock", "tray exit");
+                std::process::exit(0);
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        let exit = {
+            let t_vault = Arc::clone(&active_vault);
+            let t_master = Arc::clone(&active_master_pw);
+            Arc::new(move || {
+                windows_native::clipboard::flush_now();
+                panic_wipe(&t_vault, &t_master);
+                security::access_log::log_event("lock", "tray exit");
+                std::process::exit(0);
+            }) as Arc<dyn Fn() + Send + Sync>
+        };
+        match windows_native::tray::start(windows_native::tray::TrayActions {
+            on_open: Some(open),
+            on_quickbar: Some(quickbar),
+            on_lock: Some(lock),
+            on_exit: Some(exit),
+        }) {
+            Ok(_handle) => {
+                eprintln!("📥 System tray icon live.");
+                true
+            }
+            Err(e) => {
+                eprintln!("⚠️ Tray unavailable ({e}) — close-to-tray falls back to exit.");
+                false
+            }
+        }
+    };
+    let tray_alive = Arc::new(std::sync::atomic::AtomicBool::new(trayalive));
+    // X button: tray-minimize (hide + trim, loop survives — the callback runs
+    // on the event loop, unlike the old worker-thread hide() crash). Tray
+    // missing or pref OFF = secure exit (flush + log), never a linger.
+    {
+        let w = main_window.as_weak();
+        let alive = Arc::clone(&tray_alive);
+        main_window.window().on_close_requested(move || {
+            let minimize = windows_native::tray::load_tray_pref()
+                && alive.load(std::sync::atomic::Ordering::SeqCst);
+            if minimize {
+                windows_native::tray::trim_working_set();
+                if let Some(ui) = w.upgrade() {
+                    ui.set_notification_text("📥 Minimized to tray — right-click the tray icon to restore.".into());
+                }
+                slint::CloseRequestResponse::HideWindow
+            } else {
+                windows_native::clipboard::flush_now();
+                security::access_log::log_event("lock", "window close exit");
+                std::process::exit(0);
+            }
+        });
+    }
+    // Scheduled-backup heartbeat: ciphertext-only, needs no unlock.
+    {
+        let w = main_window.as_weak();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(
+                storage::backup_scheduler::HEARTBEAT_SECS,
+            ));
+            let now = crate::models::current_timestamp();
+            if let Some(msg) = storage::backup_scheduler::heartbeat_tick(now) {
+                let w = w.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = w.upgrade() {
+                        ui.set_backup_status(msg.clone().into());
+                        ui.set_notification_text(msg.into());
+                    }
+                });
+            }
+        });
+    }
     // Health badges keyed by credential id (audit results, cleared on lock).
     let _health_state: Arc<Mutex<std::collections::HashMap<String, String>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
@@ -4377,11 +4530,19 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.on_regenerate(move || {
         let Some(ui) = gen_weak_regen.upgrade() else { return; };
         let result: Option<(String, f64)> = if ui.get_gen_diceware_mode() {
-            let wc = ui.get_gen_word_count().clamp(4, 12) as usize;
-            let bits = PasswordGenerator::entropy_bits_diceware(wc);
-            PasswordGenerator::generate_diceware(wc, '-')
-                .map(|s| (s.expose_secret().to_owned(), bits))
-                .ok()
+            if ui.get_gen_dice_lang() == 1 {
+                let wc = ui.get_gen_word_count().clamp(4, 8) as usize;
+                let bits = PasswordGenerator::entropy_bits_diceware_bn(wc);
+                PasswordGenerator::generate_diceware_bn(wc, '-')
+                    .map(|s| (s.expose_secret().to_owned(), bits))
+                    .ok()
+            } else {
+                let wc = ui.get_gen_word_count().clamp(4, 12) as usize;
+                let bits = PasswordGenerator::entropy_bits_diceware(wc);
+                PasswordGenerator::generate_diceware(wc, '-')
+                    .map(|s| (s.expose_secret().to_owned(), bits))
+                    .ok()
+            }
         } else {
             let policy = PasswordPolicy {
                 length: ui.get_gen_length().clamp(8, 128) as usize,
@@ -4494,6 +4655,234 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         };
         ui.set_sync_status("⏳ Syncing…".into());
         trigger_sync_push(ui.as_weak());
+    });
+
+    // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.
+    // Listener + beacon + responder threads are detached; the shared stop
+    // flag retires them on toggle-off (re-enable flips it back + respawns).
+    let p2p_stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    let p2p_weak = main_window.as_weak();
+    main_window.on_set_p2p(move |on| {
+        let Some(ui) = p2p_weak.upgrade() else {
+            return;
+        };
+        ui.set_p2p_enabled(on);
+        if on {
+            p2p_stop.store(false, std::sync::atomic::Ordering::SeqCst);
+            for runner in [
+                sync::p2p_local::run_listener as fn(Arc<std::sync::atomic::AtomicBool>),
+                sync::p2p_local::run_beacon,
+                sync::p2p_local::run_discover_responder,
+            ] {
+                let stop = Arc::clone(&p2p_stop);
+                std::thread::spawn(move || runner(stop));
+            }
+            ui.set_p2p_status("📡 Discovery ON — port 52199. Scan to find peers.".into());
+            security::access_log::log_event("p2p", "discovery enabled");
+        } else {
+            p2p_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            ui.set_p2p_peers(ModelRc::new(VecModel::from(Vec::<PeerView>::new())));
+            ui.set_p2p_status("P2P discovery is OFF — enable to find LAN devices.".into());
+            security::access_log::log_event("p2p", "discovery disabled");
+        }
+    });
+    let scan_weak = main_window.as_weak();
+    main_window.on_scan_p2p(move || {
+        let Some(ui) = scan_weak.upgrade() else {
+            return;
+        };
+        if !ui.get_p2p_enabled() {
+            ui.set_p2p_status("⚠️ Enable discovery first.".into());
+            return;
+        }
+        ui.set_p2p_status("🔍 Scanning LAN…".into());
+        let weak = scan_weak.clone();
+        std::thread::spawn(move || {
+            let peers = sync::p2p_local::scan_peers(Duration::from_secs(4));
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                let rows: Vec<PeerView> = peers
+                    .iter()
+                    .map(|p| PeerView {
+                        name: p.name.clone().into(),
+                        ip: p.ip.clone().into(),
+                        detail: format!("v{} • {}", p.version, &p.head_sha.chars().take(8).collect::<String>()).into(),
+                    })
+                    .collect();
+                ui.set_p2p_peers(ModelRc::new(VecModel::from(rows)));
+                ui.set_p2p_status(if peers.is_empty() {
+                    "No peers found — same Wi-Fi? Discovery ON on both?".into()
+                } else {
+                    format!("Found {} peer(s).", peers.len()).into()
+                });
+            });
+        });
+    });
+    let syncpeer_weak = main_window.as_weak();
+    let syncpeer_vault = Arc::clone(&active_vault);
+    let syncpeer_master = Arc::clone(&active_master_pw);
+    let syncpeer_search = Arc::clone(&search_state);
+    let syncpeer_qb = quick_bar.as_weak();
+    main_window.on_sync_peer(move |ip| {
+        let Some(ui) = syncpeer_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_p2p_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_p2p_status(format!("⏳ Syncing with {ip}…").into());
+        let weak = syncpeer_weak.clone();
+        let vault_clone = Arc::clone(&syncpeer_vault);
+        let master_clone = Arc::clone(&syncpeer_master);
+        let search_clone = Arc::clone(&syncpeer_search);
+        let qb_clone = syncpeer_qb.clone();
+        let target = ip.as_str().to_string();
+        std::thread::spawn(move || {
+            let mut adopt = |blob: Vec<u8>| {
+                crate::security::shredder::secure_write(
+                    std::path::Path::new(VAULT_FILE),
+                    &blob,
+                )
+                .map_err(|e| e.to_string())
+            };
+            let outcome = sync::p2p_local::sync_with_peer(&target, &mut adopt);
+            // Adopted a remote head → reload memory + repaint everywhere.
+            let reloaded: Option<Vault> = match &outcome {
+                Ok(msg) if msg.contains("adopted") => {
+                    let master_opt = lock_master_pw(&master_clone).clone();
+                    master_opt.and_then(|master_pw| {
+                        crate::storage::load_vault_versioned(master_pw.expose_secret(), VAULT_FILE)
+                            .ok()
+                            .map(|(v, _)| {
+                                *lock_vault(&vault_clone) = v.clone();
+                                v
+                            })
+                    })
+                }
+                _ => None,
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match outcome {
+                    Ok(msg) => {
+                        if let Some(v) = reloaded {
+                            let f = search_clone.lock().unwrap().clone();
+                            ui.set_credentials(vault_to_items(&v, &f));
+                            sync_folders_to_ui(&v, &ui);
+                            ui.set_d_id(String::new().into());
+                            trigger_sync_push(ui.as_weak());
+                        }
+                        if let Some(qb) = qb_clone.upgrade() {
+                            let vv = lock_vault(&vault_clone);
+                            qb.set_filtered_results(vault_quickbar(&vv, "", search_clone.lock().unwrap().travel_only));
+                        }
+                        ui.set_p2p_status(msg.into());
+                        ui.set_notification_text("📡 LAN sync complete.".into());
+                    }
+                    Err(e) => ui.set_p2p_status(e.into()),
+                }
+            });
+        });
+    });
+
+    // GitHub Releases auto-updater: check → stage → restart-to-apply.
+    let upd_weak = main_window.as_weak();
+    let upd_info: Arc<Mutex<Option<sync::updater::ReleaseInfo>>> = Arc::new(Mutex::new(None));
+    let upd_bat: Arc<Mutex<Option<std::path::PathBuf>>> = Arc::new(Mutex::new(None));
+    let upd_info0 = Arc::clone(&upd_info);
+    main_window.on_check_updates(move || {
+        let Some(ui) = upd_weak.upgrade() else {
+            return;
+        };
+        ui.set_update_status("⏳ Checking GitHub releases…".into());
+        let weak = upd_weak.clone();
+        let info_arc = Arc::clone(&upd_info0);
+        std::thread::spawn(move || {
+            let res = sync::updater::check_latest();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match res {
+                    Err(e) => ui.set_update_status(format!("⚠️ Update check failed: {e}").into()),
+                    Ok(None) => {
+                        ui.set_update_tag(String::new().into());
+                        ui.set_update_ready(false);
+                        ui.set_update_status(format!("✅ Already on latest (v{}).", env!("CARGO_PKG_VERSION")).into());
+                    }
+                    Ok(Some(info)) => {
+                        ui.set_update_tag(info.tag.clone().into());
+                        ui.set_update_ready(false);
+                        ui.set_update_status(
+                            format!("🎉 {} available — {} ({} bytes). Download, then restart.", info.tag, info.asset_name, info.asset_size).into(),
+                        );
+                        if let Ok(mut g) = info_arc.lock() {
+                            *g = Some(info);
+                        }
+                    }
+                }
+            });
+        });
+    });
+    let dl_weak = main_window.as_weak();
+    let dl_info = Arc::clone(&upd_info);
+    let dl_bat = Arc::clone(&upd_bat);
+    main_window.on_download_update(move || {
+        let Some(ui) = dl_weak.upgrade() else {
+            return;
+        };
+        let info = dl_info.lock().ok().and_then(|g| g.clone());
+        let Some(info) = info else {
+            ui.set_update_status("⚠️ Check for updates first.".into());
+            return;
+        };
+        ui.set_update_status(format!("⏳ Downloading {}…", info.asset_name).into());
+        let weak = dl_weak.clone();
+        let bat_arc = Arc::clone(&dl_bat);
+        std::thread::spawn(move || {
+            let res: Result<std::path::PathBuf, String> = (|| {
+                let staged = sync::updater::download_asset(&info).map_err(|e| e.to_string())?;
+                sync::updater::stage_swap_script(&staged, &info.tag).map_err(|e| e.to_string())
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match res {
+                    Err(e) => ui.set_update_status(format!("⚠️ Update failed: {e}").into()),
+                    Ok(bat) => {
+                        if let Ok(mut g) = bat_arc.lock() {
+                            *g = Some(bat);
+                        }
+                        ui.set_update_ready(true);
+                        ui.set_update_status("✅ Staged! Click “Restart to Update” — the app swaps itself after exit.".into());
+                        security::access_log::log_event("update", &format!("staged {}", info.tag));
+                    }
+                }
+            });
+        });
+    });
+    let rt_weak = main_window.as_weak();
+    let rt_bat = Arc::clone(&upd_bat);
+    main_window.on_restart_update(move || {
+        let bat = rt_bat.lock().ok().and_then(|g| g.clone());
+        let Some(bat) = bat else {
+            if let Some(ui) = rt_weak.upgrade() {
+                ui.set_update_status("⚠️ Download an update first.".into());
+            }
+            return;
+        };
+        security::access_log::log_event("update", "restart-to-apply");
+        // Detached console-less launch, then exit so the script can swap us.
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", "/MIN", &bat.to_string_lossy()])
+            .spawn();
+        std::process::exit(0);
     });
 
     // Batch-4: registry-install the browser native host (HKCU, both browsers).
@@ -6691,6 +7080,95 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         windows_native::clipboard::flush_now();
         security::access_log::log_event("lock", "manual exit");
         std::process::exit(0);
+    });
+    // Close-to-tray preference toggle (persisted, default ON).
+    let traypref_weak = main_window.as_weak();
+    main_window.on_set_tray_minimize(move |on| {
+        windows_native::tray::save_tray_pref(on);
+        if let Some(ui) = traypref_weak.upgrade() {
+            ui.set_tray_minimize(on);
+            ui.set_notification_text(if on {
+                "📥 Close button minimizes to tray.".into()
+            } else {
+                "⚠️ Close button now exits the app.".into()
+            });
+        }
+    });
+    // Scheduled backups: toggle / interval / folder / run-now.
+    let bk_weak = main_window.as_weak();
+    main_window.on_set_backup_enabled(move |on| {
+        let mut cfg = storage::backup_scheduler::load_config();
+        cfg.enabled = on;
+        let msg = match storage::backup_scheduler::save_config(&cfg) {
+            Ok(()) => if on { "💾 Scheduled backups ON." } else { "💾 Scheduled backups OFF." },
+            Err(_) => "⚠️ Could not save schedule.",
+        };
+        if let Some(ui) = bk_weak.upgrade() {
+            ui.set_backup_enabled(on);
+            ui.set_notification_text(msg.into());
+            security::access_log::log_event("backup", if on { "schedule on" } else { "schedule off" });
+        }
+    });
+    let bki_weak = main_window.as_weak();
+    main_window.on_set_backup_interval(move |days| {
+        let days = (days as u32).clamp(1, 30);
+        let mut cfg = storage::backup_scheduler::load_config();
+        cfg.interval_days = if days <= 1 { 1 } else if days <= 7 { 7 } else { 30 };
+        let label = cfg.interval_days;
+        let ok = storage::backup_scheduler::save_config(&cfg).is_ok();
+        if let Some(ui) = bki_weak.upgrade() {
+            ui.set_backup_interval(label as i32);
+            ui.set_notification_text(if ok {
+                format!("💾 Backup interval: every {label}d.").into()
+            } else {
+                "⚠️ Could not save schedule.".into()
+            });
+        }
+    });
+    let bkb_weak = main_window.as_weak();
+    main_window.on_browse_backup_dir(move || {
+        let picked = rfd::FileDialog::new()
+            .set_title("Scheduled backup folder")
+            .pick_folder();
+        let Some(dir) = picked else { return };
+        let mut cfg = storage::backup_scheduler::load_config();
+        cfg.backup_dir = dir.to_string_lossy().into_owned();
+        let ok = storage::backup_scheduler::save_config(&cfg).is_ok();
+        if let Some(ui) = bkb_weak.upgrade() {
+            ui.set_backup_dir(cfg.backup_dir.clone().into());
+            ui.set_notification_text(if ok {
+                "💾 Backup folder updated.".into()
+            } else {
+                "⚠️ Could not save schedule.".into()
+            });
+        }
+    });
+    let bkn_weak = main_window.as_weak();
+    main_window.on_backup_now(move || {
+        if let Some(ui) = bkn_weak.upgrade() {
+            ui.set_backup_status("⏳ Backing up…".into());
+        }
+        let weak = bkn_weak.clone();
+        std::thread::spawn(move || {
+            let now = crate::models::current_timestamp();
+            let mut cfg = storage::backup_scheduler::load_config();
+            let res = storage::backup_scheduler::run_backup(&mut cfg, now);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match res {
+                        Ok(o) => {
+                            ui.set_backup_status(
+                                format!("✅ {} (pruned {})", o.path, o.pruned).into(),
+                            );
+                            ui.set_notification_text("💾 Manual backup complete.".into());
+                        }
+                        Err(e) => {
+                            ui.set_backup_status(format!("⚠️ Backup failed: {e}").into());
+                        }
+                    }
+                }
+            });
+        });
     });
     let bb_weak = main_window.as_weak();
     main_window.on_set_blackout(move |on| {
