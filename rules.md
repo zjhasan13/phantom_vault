@@ -299,9 +299,9 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 233 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 244 tests green)
 
-Scale: 60+ Rust modules (61 `.rs` files), 235 unit tests passing / 0 failing
+Scale: 60+ Rust modules (61 `.rs` files), 244 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
 
 Architecture (all shipped, all tested):
@@ -316,29 +316,51 @@ Architecture (all shipped, all tested):
 - Automated Scheduled Backup Rotation (`storage/backup_scheduler.rs`):
   weekly default → Documents, keep 10, 3-pass shred prune, 30-min heartbeat.
 - Local Wi-Fi P2P Sync, port 52199 (`sync/p2p_local.rs`): UDP beacons +
-  minimal HTTP (pull/push), ciphertext-only, SHA+mtime conflict guard.
+  minimal HTTP (pull/push), ciphertext-only, SHA+mtime conflict guard,
+  server-side freshness gate (stale pushes → 409), DPAPI-sealed 6-digit
+  pairing PIN gating BOTH endpoints (Settings shows PIN + regenerate).
 - 1-Click GitHub Releases Auto-Updater (`sync/updater.rs`): semver compare,
-  staged download, post-exit swap script. Trust root: TLS + pinned repo
-  (no code-signature verify yet — REQUIRED before store distribution).
+  staged download, post-exit swap script, MANDATORY SHA-256 sidecar verify
+  (fail-closed, staged file shredded on mismatch). Trust root: TLS + pinned
+  repo + checksums (code-signature verify still REQUIRED before store
+  distribution).
 - Bengali Diceware (`core/generator.rs` + `assets/bengali_words.txt`):
   140-word list, 4–8 words + ২-digit suffix, honest Shannon bits.
 - Desktop UIA Autofill + Smart-Grab (`Alt+S`) + hands-free 2FA chaining;
-  card/identity TAB sequences; exe typosquat guard; reprompt modal.
+  card/identity TAB sequences with focus-loss abort; exe typosquat guard;
+  reprompt modal. Autotype backs `trigger_autotype` per-kind requests with
+  snapshot rollback on every mutation path.
 - Universal Omni-Importer (Bitwarden/1Password/KeePass/Chrome/Safari/
   LastPass/Proton/Fuzzy): passwordHistory ingestion, backup-code auto-sort,
-  identity email/company/state/postal preserved, otpauth-URL TOTP normalize.
+  identity email/company/state/postal preserved, otpauth-URL TOTP normalize
+  (non-default params flagged, never silent), KeePass custom fields,
+  content-aware dedup keys (rotations re-import visibly).
 - Reverse Exporter Suite: Google Migration QR (`authenticator/
-  google_migration.rs`, batched, Steam/period loss flagged) + Bitwarden
-  JSON/CSV (`importer/exporter.rs`, roundtrip-tested). Both master-gated.
+  google_migration.rs`, batched 1-based index, Steam/period loss flagged) +
+  Bitwarden JSON/CSV (`importer/exporter.rs`, backup-codes + CSV roundtrip
+  tested). Both master-gated (reprompt action 5, decoy refused).
 - Universal 2FA ingestion (`authenticator/universal_2fa.rs`): 2FAS, Aegis,
   Steam .maFile, andOTP, FreeOTP, multi-line URIs, multi-QR images;
   encrypted exports fail LOUD with guidance; smart dedup merge.
 - Generation-guarded clipboard (`windows_native/clipboard.rs`): monotonic
-  `CLIPBOARD_GEN` retires stale auto-clear workers; flush retires all.
+  `CLIPBOARD_GEN` retires stale auto-clear workers; flush retires all;
+  per-handle ownership (never free OS-owned blocks).
+- Heap-pinned secrets (`core/memory.rs::LockedBytes`): `VirtualLock` on the
+  real buffer (the old generic pinned only the String fat pointer).
+- Atomic vault writes (`security/shredder.rs::secure_write`): tmp+rename,
+  never torn; stale `vault.lock` reclaimed after 60s.
+- Health scoreboard (`security/breach_check.rs` + Settings card): 0–100
+  score (−25/−10/−5/−2, +10 2FA bonus), gauge, click-to-filter metric cards,
+  2FA coverage bar, Re-Scan.
 - Anti-photography Moiré lens guard + peep-hole hold-to-reveal; blackout
   guard default OFF (`blackout.pref`).
 - Native Messaging Host bridge (`windows_native/native_host.rs`): Hello-
   cached unlock, CWD fix, decoy-cover serving, save/stats/filled/cards/
   identities commands; registry install locks `allowed_origins` to one ID.
+- Browser extension (`browser_extension/`): smart autofill engine, save
+  prompt, badge count, popup TOTP + reprompt/domain guards, fill audit,
+  settings + i18n, debounced badge.
+- Resource diet: 2FA ticker + UIA probe deep-sleep when locked/hidden
+  (`ui_visible` atomic); release `lto = "fat"`.
 - Packaging: `installer.iss` (Inno Setup 6, HKCU host keys, full uninstall);
   release gate: `QA_CHECKLIST.md` 7 physical tests.
