@@ -156,7 +156,7 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
                                     a: cur.user.clone(),
                                     b: cur.pass.clone(),
                                     c: cur.url.clone(),
-                                    totp: cur.otp.clone(),
+                                    totp: super::normalize_totp(&cur.otp),
                                     notes: cur.notes.clone(),
                                     folder,
                                     ..Default::default()

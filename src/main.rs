@@ -59,16 +59,142 @@ fn tokio_rt() -> Option<tokio::runtime::Runtime> {
 /// Phase 23: when `totp_secret` is non-empty, a 30s UIA watcher arms after the
 /// password Enter. If an OTP screen appears, the live code is typed + Enter,
 /// hands-free. Secrets ride zeroizing wrappers and die with the thread.
+///
+/// Unified auto-type request: logins type user{TAB}pass{ENTER} (golden path),
+/// cards type number{TAB}MM/YY{TAB}CVV, identities type
+/// name{TAB}email{TAB}phone{TAB}address (no submit). `last_changed == 0`
+/// means "unknown" and skips the stale nudge (only logins track rotation).
+struct TypeRequest {
+    kind: i32,
+    fields: Vec<String>,
+    press_enter: bool,
+    item_id: String,
+    item_title: String,
+    last_changed: u64,
+    totp_secret: String,
+}
+
+/// Build a TypeRequest from the vault by (kind, id). Returns None for
+/// unknown ids or trashed items (trashed items never auto-type).
+fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
+    match kind {
+        1 => vault.credentials.iter().find(|c| c.id == id && c.deleted_at.is_none()).map(|c| TypeRequest {
+            kind,
+            fields: vec![c.username.clone(), c.password.clone()],
+            press_enter: true,
+            item_id: c.id.clone(),
+            item_title: c.title.clone(),
+            last_changed: c.last_changed,
+            totp_secret: c.totp_secret.clone(),
+        }),
+        2 => vault.licenses.iter().find(|l| l.id == id && l.deleted_at.is_none()).map(|l| TypeRequest {
+            kind,
+            fields: vec![l.license_key.clone()],
+            press_enter: false,
+            item_id: l.id.clone(),
+            item_title: l.app_name.clone(),
+            last_changed: 0,
+            totp_secret: String::new(),
+        }),
+        3 => vault.notes.iter().find(|n| n.id == id && n.deleted_at.is_none()).map(|n| TypeRequest {
+            kind,
+            fields: vec![n.content.clone()],
+            press_enter: false,
+            item_id: n.id.clone(),
+            item_title: n.title.clone(),
+            last_changed: 0,
+            totp_secret: String::new(),
+        }),
+        // Card: separate MM / YY boxes are the checkout norm — 4 TAB stops.
+        4 => vault.cards.iter().find(|k| k.id == id && k.deleted_at.is_none()).map(|k| TypeRequest {
+            kind,
+            fields: vec![
+                k.card_number.clone(),
+                k.exp_month.trim().to_string(),
+                k.exp_year.trim().to_string(),
+                k.cvv.clone(),
+            ],
+            press_enter: false,
+            item_id: k.id.clone(),
+            item_title: k.title.clone(),
+            last_changed: 0,
+            totp_secret: String::new(),
+        }),
+        5 => vault.identities.iter().find(|i| i.id == id && i.deleted_at.is_none()).map(|i| TypeRequest {
+            kind,
+            fields: vec![i.full_name.clone(), i.email.clone(), i.phone.clone(), i.address.clone()],
+            press_enter: false,
+            item_id: i.id.clone(),
+            item_title: i.title.clone(),
+            last_changed: 0,
+            totp_secret: String::new(),
+        }),
+        6 => vault.ssh_keys.iter().find(|s| s.id == id && s.deleted_at.is_none()).map(|s| TypeRequest {
+            kind,
+            fields: vec![s.private_key.clone()],
+            press_enter: false,
+            item_id: s.id.clone(),
+            item_title: s.title.clone(),
+            last_changed: 0,
+            totp_secret: String::new(),
+        }),
+        _ => None,
+    }
+}
+
+const STALE_TYPE_SECS: u64 = 180 * 24 * 3600;
+
+/// Login fast-path with vault metadata (title/last_changed for audit +
+/// stale nudge); falls back to the passed values when the id is unknown.
+fn login_type_request(
+    vault: &Vault,
+    id: &str,
+    user: &str,
+    pass: &str,
+    totp: &str,
+) -> TypeRequest {
+    if let Some(r) = type_request_for(vault, 1, id) {
+        return r;
+    }
+    TypeRequest {
+        kind: 1,
+        fields: vec![user.to_string(), pass.to_string()],
+        press_enter: true,
+        item_id: id.to_string(),
+        item_title: String::new(),
+        last_changed: 0,
+        totp_secret: totp.to_string(),
+    }
+}
+
 fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
     qb_visible: Arc<std::sync::atomic::AtomicBool>,
-    username: String,
-    password: String,
-    totp_secret: String,
+    req: TypeRequest,
 ) {
     use core::memory::LockedMemory;
-    use windows_native::autotype::type_sequence;
+    use windows_native::autotype::{type_card, type_fields, type_identity, type_sequence};
+    // Spoof guard FIRST (before minimizing — minimizing changes foreground).
+    // A typosquat/leet executable refuses the keystrokes entirely.
+    if let Ok(ctx) = windows_native::desktop_autofill::inspect_active_context() {
+        if let Some(brand) =
+            windows_native::desktop_autofill::executable_spoof_brand(&ctx.exe_name)
+        {
+            let msg = format!(
+                "🚨 App-Spoof Hazard: Suspicious executable '{}' detected (impersonating {})! Auto-type blocked for security.",
+                if ctx.exe_name.is_empty() { "?" } else { &ctx.exe_name },
+                brand
+            );
+            crate::security::access_log::log_event("autotype-blocked-spoof", &ctx.exe_name);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = main_weak.upgrade() {
+                    ui.set_notification_text(msg.into());
+                }
+            });
+            return;
+        }
+    }
     if let Some(ui) = main_weak.upgrade() {
         ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
         ui.window().set_minimized(true);
@@ -81,23 +207,55 @@ fn trigger_autotype(
         // Even an unexpected panic mid-typing must restore the window —
         // never leave the user staring at a vanished vault.
         let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            // Batch-1: the password rides a VirtualLock-pinned page while typing.
-            let secret = LockedMemory::new(password)
-                .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
-            let out = type_sequence(&username, secret.expose());
-            drop(secret);
-            out
+            // Batch-1: sensitive fields ride VirtualLock-pinned pages.
+            // Login golden path keeps byte-identical type_sequence behavior.
+            match req.kind {
+                4 if req.fields.len() == 4 => type_card(
+                    &req.fields[0],
+                    &req.fields[1],
+                    &req.fields[2],
+                    &req.fields[3],
+                ),
+                5 if req.fields.len() == 4 => type_identity(
+                    &req.fields[0],
+                    &req.fields[1],
+                    &req.fields[2],
+                    &req.fields[3],
+                ),
+                _ => {
+                    if req.press_enter && req.fields.len() == 2 {
+                        let secret = LockedMemory::new(req.fields[1].clone())
+                            .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
+                        let out = type_sequence(&req.fields[0], secret.expose());
+                        drop(secret);
+                        out
+                    } else {
+                        let refs: Vec<&str> = req.fields.iter().map(|s| s.as_str()).collect();
+                        type_fields(&refs, req.press_enter)
+                    }
+                }
+            }
         }))
         .map_err(|_| {
             crate::error::VaultError::AutoType("typing aborted unexpectedly".into())
         })
         .and_then(|r| r);
-        let chained = res.is_ok() && !totp_secret.trim().is_empty();
+        let ok = res.is_ok();
+        if ok {
+            // Fill audit: sidecar (popup "Last filled" + dashboard) + access log.
+            windows_native::native_host::record_ext_fill(&req.item_id);
+            crate::security::access_log::log_event("autotype/fill", &req.item_title);
+        }
+        let stale = ok
+            && req.last_changed != 0
+            && crate::models::current_timestamp().saturating_sub(req.last_changed)
+                > STALE_TYPE_SECS;
+        let chained = ok && !req.totp_secret.trim().is_empty();
         // Arm the 2FA watcher BEFORE restoring UI (overlaps the app's
         // password-submit round-trip instead of serializing after it).
         let chain_handle = chained.then(|| {
             let weak = main_weak.clone();
-            let mut secret = totp_secret.trim().to_string();
+            let mut secret = req.totp_secret.trim().to_string();
             thread::spawn(move || {
                 let code = chain_2fa_watch(&secret);
                 {
@@ -125,7 +283,11 @@ fn trigger_autotype(
                 ui.show().ok();
                 match &res {
                     Ok(()) => {
-                        if chain_handle.is_none() {
+                        if stale {
+                            ui.set_notification_text(
+                                "⚠️ Auto-typed: Password is over 6 months old. Consider updating it.".into(),
+                            );
+                        } else if chain_handle.is_none() {
                             ui.set_notification_text(
                                 "⌨️ Typed — clipboard never touched.".into(),
                             );
@@ -1868,6 +2030,32 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 let ctx = windows_native::desktop_autofill::inspect_active_context()
                     .unwrap_or_default();
+                // Spoofed host app → never offer the pill; warn once per app.
+                if let Some(brand) =
+                    windows_native::desktop_autofill::executable_spoof_brand(&ctx.exe_name)
+                {
+                    if last_shown != ctx.exe_name {
+                        last_shown = ctx.exe_name.clone();
+                        crate::security::access_log::log_event(
+                            "pill-blocked-spoof",
+                            &ctx.exe_name,
+                        );
+                        let weak = main_weak_pill.clone();
+                        let exe = ctx.exe_name.clone();
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_show_autofill_pill(false);
+                                ui.set_notification_text(
+                                    format!(
+                                        "🚨 App-Spoof Hazard: Suspicious executable '{exe}' detected (impersonating {brand})! Autofill pill suppressed."
+                                    )
+                                    .into(),
+                                );
+                            }
+                        });
+                    }
+                    continue;
+                }
                 let show = ctx.is_password_focused && !ctx.app_name.is_empty()
                     && !ctx.app_name.eq_ignore_ascii_case("phantom_vault");
                 if show {
@@ -2075,9 +2263,18 @@ fn main() -> Result<(), slint::PlatformError> {
             type_qb_main.clone(),
             type_qb_self.clone(),
             Arc::clone(&type_qb_vis),
-            username.as_str().to_string(),
-            password.as_str().to_string(),
-            totp.as_str().to_string(),
+            {
+                let v = lock_vault(&type_qb_vault);
+                type_request_for(&v, kind, id.as_str()).unwrap_or_else(|| {
+                    login_type_request(
+                        &v,
+                        id.as_str(),
+                        username.as_str(),
+                        password.as_str(),
+                        totp.as_str(),
+                    )
+                })
+            },
         );
     });
 
@@ -3668,6 +3865,57 @@ fn replace_item(
         });
     });
 
+/// Zero-lockin: one rendered GA migration page (URI + PNG bytes).
+struct GaPage {
+    uri: String,
+    png: Vec<u8>,
+}
+
+/// PNG bytes → Slint image (grayscale QR on white — no theme work needed).
+fn png_bytes_to_image(png: &[u8]) -> Option<slint::Image> {
+    let rgba = image::load_from_memory(png).ok()?.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        rgba.as_raw(),
+        w,
+        h,
+    );
+    Some(slint::Image::from_rgba8(buf))
+}
+
+fn ga_warn_text(skipped: &[String], lossy: &[String], capped: usize) -> String {
+    let mut parts = Vec::new();
+    if !lossy.is_empty() {
+        parts.push(format!(
+            "⚠️ {} transfer as standard TOTP (Steam alphabet / custom period won't match on phone): {}",
+            lossy.len(),
+            lossy.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if !skipped.is_empty() {
+        parts.push(format!(
+            "⏭️ {} skipped (undecodable secrets): {}",
+            skipped.len(),
+            skipped.iter().take(3).cloned().collect::<Vec<_>>().join(", ")
+        ));
+    }
+    if capped > 0 {
+        parts.push(format!("✂️ Capped at 100 accounts ({capped} left out) — export again after moving these."));
+    }
+    parts.join("\n")
+}
+
+fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
+    let Some(p) = pages.get(idx) else {
+        return;
+    };
+    if let Some(img) = png_bytes_to_image(&p.png) {
+        ui.set_ga_image(img);
+    }
+    ui.set_ga_page(format!("Page {} of {}", idx + 1, pages.len()).into());
+    ui.set_ga_show(true);
+}
+
     // 8a: Manual URL paste (otpauth-migration:// or otpauth://)
     let window_weak_url = main_window.as_weak();
     let vault_arc_url = Arc::clone(&active_vault);
@@ -3962,13 +4210,99 @@ fn replace_item(
                 );
             }
         }
+        // Legacy login path (no id): metadata unknown, audit still records
+        // the (empty) id sidecar-side only when present — see handler below.
+        let req = {
+            let v = lock_vault(&type_main_vault);
+            // Best-effort id recovery for audit: match the exact password.
+            let found = v.credentials.iter().find(|c| {
+                c.deleted_at.is_none()
+                    && c.username == username.as_str()
+                    && c.password == password.as_str()
+            });
+            match found {
+                Some(c) => type_request_for(&v, 1, &c.id).unwrap_or_else(|| TypeRequest {
+                    kind: 1,
+                    fields: vec![username.as_str().to_string(), password.as_str().to_string()],
+                    press_enter: true,
+                    item_id: String::new(),
+                    item_title: String::new(),
+                    last_changed: 0,
+                    totp_secret: totp.as_str().to_string(),
+                }),
+                None => TypeRequest {
+                    kind: 1,
+                    fields: vec![username.as_str().to_string(), password.as_str().to_string()],
+                    press_enter: true,
+                    item_id: String::new(),
+                    item_title: String::new(),
+                    last_changed: 0,
+                    totp_secret: totp.as_str().to_string(),
+                },
+            }
+        };
         trigger_autotype(
             type_main.clone(),
             type_main_qb.clone(),
             Arc::clone(&type_main_vis),
-            username.as_str().to_string(),
-            password.as_str().to_string(),
-            totp.as_str().to_string(),
+            req,
+        );
+    });
+
+    // Bitwarden-parity: type ANY item kind by (kind, id) — cards type
+    // number{TAB}MM/YY{TAB}CVV, identities type name{TAB}email{TAB}phone{TAB}address.
+    let type_item_main = main_window.as_weak();
+    let type_item_qb = quick_bar.as_weak();
+    let type_item_vis = Arc::clone(&quickbar_visible);
+    let type_item_vault = Arc::clone(&active_vault);
+    main_window.on_type_item_requested(move |kind, id| {
+        let req = {
+            let v = lock_vault(&type_item_vault);
+            type_request_for(&v, kind, id.as_str())
+        };
+        let Some(req) = req else {
+            if let Some(ui) = type_item_main.upgrade() {
+                ui.set_notification_text("⚠️ Item not found (or in Trash) — cannot type.".into());
+            }
+            return;
+        };
+        // Canary tripwire across every typed field (passwords AND card/
+        // identity material — honeytokens can hide in any kind).
+        let tripped = req
+            .fields
+            .iter()
+            .filter(|f| !f.trim().is_empty())
+            .find_map(|f| check_canary_trip(&type_item_vault, f, "autotype-item"));
+        if let Some(title) = tripped {
+            if let Some(ui) = type_item_main.upgrade() {
+                ui.set_notification_text(
+                    format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
+                );
+            }
+        }
+        // Reprompt gate: armed items detour through the modal (rp_action 2).
+        if let Some(main_ui) = type_item_main.upgrade() {
+            let gated = {
+                let v = lock_vault(&type_item_vault);
+                reprompt_gate(&v, kind, id.as_str())
+            };
+            if let Some((g_user, g_secret)) = gated {
+                main_ui.set_rp_action(2);
+                main_ui.set_rp_kind(kind);
+                main_ui.set_rp_id(id.clone());
+                main_ui.set_rp_user(g_user.into());
+                main_ui.set_rp_secret(g_secret.into());
+                main_ui.set_rp_error(String::new().into());
+                main_ui.set_rp_show(true);
+                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                return;
+            }
+        }
+        trigger_autotype(
+            type_item_main.clone(),
+            type_item_qb.clone(),
+            Arc::clone(&type_item_vis),
+            req,
         );
     });
 
@@ -4567,6 +4901,140 @@ fn replace_item(
                 }
             });
         });
+    });
+
+    // Zero-lockin: GA reverse-export QR pages + full-vault file export.
+    // GA pages live in memory only (URIs hold raw secrets — never logged).
+    let ga_weak = main_window.as_weak();
+    let ga_vault = Arc::clone(&active_vault);
+    let ga_pages: Arc<Mutex<Vec<GaPage>>> = Arc::new(Mutex::new(Vec::new()));
+    let ga_idx: Arc<Mutex<usize>> = Arc::new(Mutex::new(0));
+    let ga_pages0 = Arc::clone(&ga_pages);
+    let ga_idx0 = Arc::clone(&ga_idx);
+    main_window.on_ga_export_start(move || {
+        let Some(ui) = ga_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let accounts = lock_vault(&ga_vault).totp_accounts.clone();
+        if accounts.is_empty() {
+            ui.set_notification_text("⚠️ No 2FA accounts to export.".into());
+            return;
+        }
+        ui.set_notification_text("⏳ Building migration QR…".into());
+        let weak = ga_weak.clone();
+        let pages_arc = Arc::clone(&ga_pages0);
+        let idx_arc = Arc::clone(&ga_idx0);
+        std::thread::spawn(move || {
+            let capped = accounts.len().saturating_sub(100);
+            let first: Vec<_> = accounts.into_iter().take(100).collect();
+            let built = authenticator::google_migration::build_migration_uris(&first);
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match built {
+                    Err(e) => ui.set_notification_text(format!("⚠️ GA export: {e}").into()),
+                    Ok((uris, skipped, lossy)) => {
+                        let mut pages = Vec::new();
+                        let mut failed = 0usize;
+                        for uri in uris {
+                            match authenticator::google_migration::render_migration_qr_png(&uri) {
+                                Ok(png) => pages.push(GaPage { uri, png }),
+                                Err(_) => failed += 1,
+                            }
+                        }
+                        if pages.is_empty() {
+                            ui.set_notification_text("⚠️ GA export: QR render failed.".into());
+                            return;
+                        }
+                        let mut skipped_all = skipped;
+                        if failed > 0 {
+                            skipped_all.push(format!("{failed} QR render failures"));
+                        }
+                        ui.set_ga_warn(ga_warn_text(&skipped_all, &lossy, capped).into());
+                        if let Ok(mut g) = pages_arc.lock() {
+                            *g = pages;
+                        }
+                        if let Ok(mut i) = idx_arc.lock() {
+                            *i = 0;
+                        }
+                        if let Ok(g) = pages_arc.lock() {
+                            ga_show_page(&ui, &g, 0);
+                        }
+                        security::access_log::log_event("export", "ga-qr");
+                        ui.set_notification_text("📲 Scan the QR with Google Authenticator.".into());
+                    }
+                }
+            });
+        });
+    });
+    let ga_page_weak = main_window.as_weak();
+    let ga_page_arc = Arc::clone(&ga_pages);
+    let ga_page_idx = Arc::clone(&ga_idx);
+    main_window.on_ga_export_page(move |delta| {
+        let Some(ui) = ga_page_weak.upgrade() else {
+            return;
+        };
+        let next = {
+            let (len, cur) = (
+                ga_page_arc.lock().ok().map(|g| g.len()).unwrap_or(0),
+                ga_page_idx.lock().ok().map(|g| *g).unwrap_or(0),
+            );
+            if len == 0 {
+                return;
+            }
+            (cur as i32 + delta).clamp(0, len as i32 - 1) as usize
+        };
+        if let Ok(mut i) = ga_page_idx.lock() {
+            *i = next;
+        }
+        if let Ok(g) = ga_page_arc.lock() {
+            ga_show_page(&ui, &g, next);
+        }
+    });
+    let ga_copy_weak = main_window.as_weak();
+    let ga_copy_arc = Arc::clone(&ga_pages);
+    let ga_copy_idx = Arc::clone(&ga_idx);
+    let ga_copy_ct = Arc::clone(&clipboard_timeout_secs);
+    main_window.on_ga_copy_uri(move || {
+        let uri = ga_copy_arc
+            .lock()
+            .ok()
+            .and_then(|g| {
+                let i = ga_copy_idx.lock().ok().map(|g| *g).unwrap_or(0);
+                g.get(i).map(|p| p.uri.clone())
+            })
+            .unwrap_or_default();
+        if uri.is_empty() {
+            return;
+        }
+        let secs = ga_copy_ct.load(std::sync::atomic::Ordering::SeqCst);
+        secure_copy_with_feedback(
+            ga_copy_weak.clone(),
+            uri,
+            &format!("📋 Migration URI copied! Secrets on clipboard — auto-clearing in {secs}s."),
+            secs,
+        );
+    });
+    // Full-vault file export: master-gated via the reprompt modal (action 4).
+    let exp_weak = main_window.as_weak();
+    main_window.on_export_vault(move |fmt| {
+        let Some(ui) = exp_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_rp_action(5);
+        ui.set_rp_export_fmt(fmt);
+        ui.set_rp_error(String::new().into());
+        ui.set_rp_show(true);
+        ui.set_notification_text("🔒 Confirm master password — export writes PLAINTEXT to disk.".into());
     });
 
     // Hub trash section: restore one trashed passkey + re-seal.
@@ -5304,9 +5772,16 @@ fn replace_item(
                     rp_main.clone(),
                     rp_qb.clone(),
                     Arc::clone(&rp_vis),
-                    ui.get_rp_user().to_string(),
-                    ui.get_rp_secret().to_string(),
-                    totp,
+                    {
+                        let v = lock_vault(&rp_del_vault);
+                        login_type_request(
+                            &v,
+                            &ui.get_rp_id().to_string(),
+                            &ui.get_rp_user().to_string(),
+                            &ui.get_rp_secret().to_string(),
+                            &totp,
+                        )
+                    },
                 );
             }
             3 => {
@@ -5384,6 +5859,80 @@ fn replace_item(
                     ui.set_credentials(vault_to_items(&vault, &f));
                     ui.set_notification_text("Travel Mode OFF — full vault restored.".into());
                 }
+            }
+            5 => {
+                // Zero-lockin file export (master verified above; decoy refused).
+                let fmt = ui.get_rp_export_fmt();
+                if ui.get_is_decoy() {
+                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    return;
+                }
+                ui.set_export_status("⚠️ Plaintext export — pick a destination…".into());
+                let weak = rp_main.clone();
+                let vault_clone = Arc::clone(&rp_del_vault);
+                std::thread::spawn(move || {
+                    // Snapshot under lock, then release before the dialog blocks.
+                    let (payload, filename, filters, summary) = {
+                        let v = lock_vault(&vault_clone);
+                        if fmt == 2 {
+                            let csv = importer::exporter::export_csv(&v);
+                            let n: usize = v.credentials.iter().filter(|c| c.deleted_at.is_none()).count()
+                                + v.cards.iter().filter(|k| k.deleted_at.is_none()).count();
+                            (
+                                csv.into_bytes(),
+                                "phantom-vault-export.csv".to_string(),
+                                vec![("CSV", vec!["csv"])],
+                                format!("{n} logins/cards"),
+                            )
+                        } else {
+                            let (doc, atts) = importer::exporter::export_bitwarden_json(&v);
+                            let n = doc["items"].as_array().map(|a| a.len()).unwrap_or(0);
+                            let f = doc["folders"].as_array().map(|a| a.len()).unwrap_or(0);
+                            (
+                                serde_json::to_vec_pretty(&doc).unwrap_or_default(),
+                                "phantom-vault-export.json".to_string(),
+                                vec![("JSON", vec!["json"])],
+                                format!("{n} items in {f} folders ({atts} attachments listed, binaries not embedded)"),
+                            )
+                        }
+                    };
+                    let mut dlg = rfd::FileDialog::new()
+                        .set_title("Export PLAINTEXT vault — anyone with this file reads everything")
+                        .set_file_name(&filename);
+                    for (label, exts) in &filters {
+                        dlg = dlg.add_filter(*label, exts);
+                    }
+                    let picked = dlg.save_file();
+                    let Some(path) = picked else {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_export_status("Export cancelled — nothing written.".into());
+                            }
+                        });
+                        return;
+                    };
+                    let res = std::fs::write(&path, &payload).map_err(|e| e.to_string());
+                    let path_str = path.to_string_lossy().into_owned();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            match res {
+                                Ok(()) => {
+                                    ui.set_export_status(
+                                        format!("✅ Exported {summary} → {path_str}. Shred it after moving!")
+                                            .into(),
+                                    );
+                                    ui.set_notification_text(
+                                        "✅ Vault exported (plaintext!). Shred the file after moving it.".into(),
+                                    );
+                                    security::access_log::log_event("export", "file");
+                                }
+                                Err(e) => {
+                                    ui.set_export_status(format!("❌ Export failed: {e}").into());
+                                }
+                            }
+                        }
+                    });
+                });
             }
             _ => {}
         }
@@ -6425,9 +6974,10 @@ fn replace_item(
             pill_weak.clone(),
             pill_qb.clone(),
             Arc::clone(&pill_vis),
-            user,
-            pass,
-            totp,
+            {
+                let v = lock_vault(&pill_vault);
+                login_type_request(&v, &qid, &user, &pass, &totp)
+            },
         );
     });
     // Wire-up #5: real secret-leak scan via native folder picker + worker.

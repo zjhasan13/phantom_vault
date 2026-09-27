@@ -149,8 +149,10 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
     })
 }
 
-/// Parse standard otpauth://totp/... URL into single TotpAccount
-fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
+/// Parse standard otpauth://totp/... URL into single TotpAccount.
+/// `pub(crate)` so the importer can normalize full-URL TOTP exports down to
+/// the bare secret the live renderer needs.
+pub(crate) fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
     let url = url::Url::parse(url_str).map_err(|e| format!("Invalid otpauth URL: {}", e))?;
     if url.scheme() != "otpauth" {
         return Err("Not an otpauth URL".to_string());
@@ -385,6 +387,144 @@ mod urlencoding {
     }
 }
 
+// ============================================================================
+// ZERO-LOCKIN REVERSE EXPORTER: vault TotpAccounts -> Google Authenticator QR.
+// ============================================================================
+
+/// Accounts per QR: camera readability degrades past ~10 entries per payload.
+pub const GA_BATCH_SIZE: usize = 10;
+
+/// Reverse of `map_otp_to_account`: vault account -> GA OtpParameters.
+/// Steam Guard has no GA representation — the SECRET is preserved as a
+/// standard 6-digit TOTP (caller must warn: phone shows decimals, not the
+/// 5-char Steam alphabet). Non-30s periods do not survive either (GA assumes
+/// 30s); the secret still transfers, codes will drift — caller warns.
+pub fn account_to_otp(acc: &TotpAccount) -> Result<OtpParameters, String> {
+    let clean = acc.secret.replace([' ', '-'], "").to_uppercase();
+    let raw = data_encoding::BASE32_NOPAD
+        .decode(clean.as_bytes())
+        .or_else(|_| data_encoding::BASE32.decode(clean.as_bytes()))
+        .map_err(|e| format!("account '{}' has undecodable secret: {e:?}", acc.account_name))?;
+    if raw.is_empty() {
+        return Err(format!("account '{}' has empty secret", acc.account_name));
+    }
+    let steam = acc.otp_type.eq_ignore_ascii_case("steam");
+    let algorithm = if steam {
+        Algorithm::Sha1 as i32
+    } else {
+        match acc.algorithm.to_uppercase().as_str() {
+            "SHA256" => Algorithm::Sha256 as i32,
+            "SHA512" => Algorithm::Sha512 as i32,
+            "MD5" => Algorithm::Md5 as i32,
+            _ => Algorithm::Sha1 as i32,
+        }
+    };
+    let digit = if steam {
+        Digit::Six as i32
+    } else {
+        match acc.digits {
+            8 => Digit::Eight as i32,
+            _ => Digit::Six as i32,
+        }
+    };
+    let (otp_type, counter) = if acc.otp_type.eq_ignore_ascii_case("hotp") {
+        (OtpType::Hotp as i32, acc.counter.max(0) as i64)
+    } else {
+        (OtpType::Totp as i32, 0)
+    };
+    Ok(OtpParameters {
+        secret: raw,
+        name: acc.account_name.clone(),
+        issuer: acc.issuer.clone(),
+        algorithm,
+        digit,
+        r#type: otp_type,
+        counter,
+    })
+}
+
+/// Chunk accounts into `otpauth-migration://offline?data=…` URIs (≤10 each).
+/// Skips undecodable accounts but reports their names; errors only when
+/// NOTHING exportable remains. Returns (uris, skipped_names, lossy_names)
+/// where lossy = steam/custom-period accounts needing the caller warning.
+pub fn build_migration_uris(
+    accounts: &[TotpAccount],
+) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+    use base64::Engine as _;
+    let mut params = Vec::new();
+    let mut skipped = Vec::new();
+    let mut lossy = Vec::new();
+    for acc in accounts {
+        match account_to_otp(acc) {
+            Ok(p) => {
+                if acc.otp_type.eq_ignore_ascii_case("steam") || acc.period != 30 {
+                    lossy.push(acc.account_name.clone());
+                }
+                params.push(p);
+            }
+            Err(_) => skipped.push(acc.account_name.clone()),
+        }
+    }
+    if params.is_empty() {
+        return Err("no exportable 2FA accounts (all secrets undecodable)".to_string());
+    }
+    let batch_id = (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(1)
+        % (i32::MAX as u64)) as i32;
+    let chunks: Vec<&[OtpParameters]> = params.chunks(GA_BATCH_SIZE).collect();
+    let total = chunks.len() as i32;
+    let mut uris = Vec::with_capacity(chunks.len());
+    for (i, chunk) in chunks.iter().enumerate() {
+        let payload = MigrationPayload {
+            otp_parameters: chunk.to_vec(),
+            version: 1,
+            batch_size: total,
+            batch_index: i as i32,
+            batch_id,
+        };
+        let mut buf = Vec::new();
+        payload
+            .encode(&mut buf)
+            .map_err(|e| format!("protobuf encode failed: {e}"))?;
+        let b64 = base64::engine::general_purpose::URL_SAFE.encode(&buf);
+        uris.push(format!("otpauth-migration://offline?data={b64}"));
+    }
+    Ok((uris, skipped, lossy))
+}
+
+/// Rasterize a migration URI to PNG bytes (grayscale, quiet zone included)
+/// using the `qrcode` grid API + the `image` crate — no Qt, no browser.
+pub fn render_migration_qr_png(uri: &str) -> Result<Vec<u8>, String> {
+    let code =
+        qrcode::QrCode::new(uri.as_bytes()).map_err(|e| format!("QR build failed: {e:?}"))?;
+    let w = code.width() as u32;
+    let quiet: u32 = 4;
+    let scale: u32 = 8;
+    let size = (w + quiet * 2) * scale;
+    if size > 4096 {
+        return Err("QR payload too large to render".to_string());
+    }
+    let mut img = image::GrayImage::from_pixel(size, size, image::Luma([255u8]));
+    for y in 0..w {
+        for x in 0..w {
+            if code[(x as usize, y as usize)] == qrcode::Color::Dark {
+                for dy in 0..scale {
+                    for dx in 0..scale {
+                        img.put_pixel((x + quiet) * scale + dx, (y + quiet) * scale + dy, image::Luma([0u8]));
+                    }
+                }
+            }
+        }
+    }
+    let mut out = Vec::new();
+    image::DynamicImage::ImageLuma8(img)
+        .write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png)
+        .map_err(|e| format!("PNG encode failed: {e}"))?;
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -457,5 +597,65 @@ mod tests {
             accs[0].secret,
             data_encoding::BASE32_NOPAD.encode(b"12345678901234567890")
         );
+    }
+
+    fn ga_account(name: &str, secret_b32: &str) -> TotpAccount {
+        TotpAccount {
+            id: "t1".into(),
+            account_name: name.into(),
+            issuer: "Test".into(),
+            secret: secret_b32.into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+        }
+    }
+
+    #[test]
+    fn reverse_export_roundtrips_secret_bit_exact() {
+        let acc = ga_account("GitHub:me", "JBSWY3DPEHPK3PXP");
+        let otp = account_to_otp(&acc).unwrap();
+        assert_eq!(otp.name, "GitHub:me");
+        assert_eq!(otp.r#type, OtpType::Totp as i32);
+        // Raw bytes survive the round trip.
+        let expect = data_encoding::BASE32_NOPAD.decode(b"JBSWY3DPEHPK3PXP").unwrap();
+        assert_eq!(otp.secret, expect);
+    }
+
+    #[test]
+    fn reverse_export_batches_and_renders_qr() {
+        let accs: Vec<TotpAccount> = (0..12)
+            .map(|i| ga_account(&format!("acc{i}"), "JBSWY3DPEHPK3PXP"))
+            .collect();
+        let (uris, skipped, lossy) = build_migration_uris(&accs).unwrap();
+        // 12 accounts → 2 QR pages, nothing skipped or lossy.
+        assert_eq!(uris.len(), 2);
+        assert!(skipped.is_empty());
+        assert!(lossy.is_empty());
+        for u in &uris {
+            assert!(u.starts_with("otpauth-migration://offline?data="));
+            let png = render_migration_qr_png(u).unwrap();
+            // PNG magic, non-trivial size.
+            assert_eq!(&png[0..8], &[137, 80, 78, 71, 13, 10, 26, 10]);
+            assert!(png.len() > 500);
+        }
+        // ...and page 1 parses back to the first 10 accounts.
+        let back = parse_google_migration_url(&uris[0]).unwrap();
+        assert_eq!(back.len(), 10);
+        assert_eq!(back[0].account_name, "acc0");
+    }
+
+    #[test]
+    fn reverse_export_flags_steam_and_bad_secrets() {
+        let mut steam = ga_account("steam-acc", "JBSWY3DPEHPK3PXP");
+        steam.otp_type = "steam".into();
+        let bad = ga_account("bad", "!!!not-base32!!!");
+        let ok = ga_account("ok", "JBSWY3DPEHPK3PXP");
+        let (uris, skipped, lossy) = build_migration_uris(&[steam, bad, ok]).unwrap();
+        assert_eq!(uris.len(), 1);
+        assert_eq!(skipped, vec!["bad".to_string()]);
+        assert_eq!(lossy, vec!["steam-acc".to_string()]);
     }
 }

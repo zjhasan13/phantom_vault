@@ -31,6 +31,9 @@ data-encoding = "2.6"
 url = "2.5"
 rqrr = "0.7"
 image = "0.25"
+# Zero-lockin: on-screen Google Authenticator migration QR (grid API only —
+# PNG rasterized manually via `image`, no default features needed).
+qrcode = { version = "0.14", default-features = false }
 percent-encoding = "2.3"
 
 # Batch-4: live webcam QR capture (Windows Media Foundation backend)

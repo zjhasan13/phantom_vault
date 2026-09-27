@@ -162,7 +162,7 @@ pub fn parse_proton(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<Raw
             a: user,
             b: pass,
             c: if urls.is_empty() { get("url") } else { urls },
-            totp: get("totpUri"),
+            totp: super::normalize_totp(&get("totpUri")),
             notes: get("note"),
             folder,
             ..Default::default()
