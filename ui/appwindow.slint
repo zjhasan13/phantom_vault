@@ -556,6 +556,7 @@ export component MainWindow inherits Window {
     in-out property <string> health_report: "Not audited yet.";
     in-out property <bool> offline_audit: false;
     callback audit_vault();
+    callback filter_health(string);
     // Cat 8: kill-switch + tamper-evident access log
     in-out property <bool> offline_mode: false;
     in-out property <bool> show_access_log: false;
@@ -585,6 +586,15 @@ export component MainWindow inherits Window {
     in-out property <int> active_nav: 0;
     in-out property <bool> blackout_enabled: false;
     in-out property <string> health_status: "Not audited yet.";
+    // Scoreboard dashboard (set by the audit worker; filter drives the list).
+    in-out property <int> health_score: 100;
+    in-out property <string> health_headline: "Not audited yet.";
+    in-out property <int> health_breached: 0;
+    in-out property <int> health_reused: 0;
+    in-out property <int> health_weak: 0;
+    in-out property <int> health_stale: 0;
+    in-out property <int> health_coverage: 0;
+    in-out property <string> health_filter: "";
     in-out property <int> clipboard_timeout: 15;
     in-out property <int> autolock_timeout: 0;
     in-out property <bool> show_autofill_pill: false;
@@ -1143,6 +1153,29 @@ export component MainWindow inherits Window {
                     Text { text: root.health_status; color: #38e1ff; font-size: 12px; wrap: word-wrap; } AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } }
                     HorizontalLayout { spacing: 8px; Text { text: "SSH Agent"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: #8e99c0; font-size: 11px; vertical-alignment: center; } AuraButton { label: "Refresh"; width: 90px; clicked => { root.refresh_ssh_status(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline audit (no network)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_audit ? "ON" : "OFF"; primary: root.offline_audit; width: 90px; clicked => { root.offline_audit = !root.offline_audit; } } }
+                }}
+                Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "🛡️ SECURITY SCOREBOARD"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    HorizontalLayout { spacing: 12px; alignment: space-between;
+                        VerticalLayout { spacing: 2px;
+                            Text { text: root.health_score + " / 100"; color: root.health_score >= 90 ? #10b981 : (root.health_score >= 70 ? #fbbf24 : #fb7185); font-size: 26px; font-weight: 900; }
+                            Text { text: root.health_headline; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                        }
+                        AuraButton { label: "🛡️ Re-Scan Vault"; primary: true; width: 170px; clicked => { root.audit_vault(); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "🚨 " + root.health_breached; primary: root.health_filter == "breached"; width: 110px; clicked => { root.filter_health("breached"); } }
+                        AuraButton { label: "🔁 " + root.health_reused; primary: root.health_filter == "reused"; width: 110px; clicked => { root.filter_health("reused"); } }
+                        AuraButton { label: "⚠️ " + root.health_weak; primary: root.health_filter == "weak"; width: 110px; clicked => { root.filter_health("weak"); } }
+                        AuraButton { label: "🕰️ " + root.health_stale; primary: root.health_filter == "stale"; width: 110px; clicked => { root.filter_health("stale"); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        Text { text: "🛡️ 2FA Coverage"; color: #eef1ff; font-size: 12px; vertical-alignment: center; width: 120px; }
+                        Rectangle { background: #1a2450; border-radius: 6px; height: 12px; horizontal-stretch: 1; clip: true;
+                            Rectangle { background: #10b981; border-radius: 6px; height: 12px; width: parent.width * root.health_coverage / 100; }
+                        }
+                        Text { text: root.health_coverage + "%"; color: #38e1ff; font-size: 12px; font-weight: 700; width: 44px; horizontal-alignment: right; }
+                    }
                 }}
             }}
         }

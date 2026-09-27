@@ -828,6 +828,7 @@ fn publish_unlocked_vault(
     }
     *search_state.lock().unwrap() = FilterState::default();
     ui.set_search_query("".into());
+    ui.set_health_filter("".into());
     // View props must mirror the reset filter — otherwise a
     // pre-lock Trash/Favorites view desyncs from the list.
     ui.set_showing_trash(false);
@@ -1549,11 +1550,13 @@ struct FilterState {
     travel_only: bool,
     fav_only: bool,
     show_trash: bool,
+    /// Health metric filter from the scoreboard ("", breached/reused/weak/stale).
+    health: String,
 }
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false }
+        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false, health: String::new() }
     }
 }
 
@@ -1682,6 +1685,10 @@ fn push_item(
     if f.folder != "All" && eff_folder(folder) != f.folder {
         return;
     }
+    // Scoreboard metric filter: only audited-flagged ids survive.
+    if !f.health.is_empty() && health_kind_for(id) != f.health {
+        return;
+    }
     if !q.is_empty() {
         let hay = format!("{title} {user} {notes}").to_lowercase();
         if !hay.contains(q) {
@@ -1715,6 +1722,23 @@ fn health_registry() -> &'static Mutex<std::collections::HashMap<String, String>
 
 fn health_badge_for(id: &str) -> String {
     health_registry()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(id)
+        .cloned()
+        .unwrap_or_default()
+}
+
+/// Metric category registry (id → breached/reused/weak/stale), written by
+/// the audit worker next to the badge registry. Drives scoreboard filtering.
+fn health_kind_registry() -> &'static Mutex<std::collections::HashMap<String, String>> {
+    static KINDS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, String>>> =
+        std::sync::OnceLock::new();
+    KINDS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn health_kind_for(id: &str) -> String {
+    health_kind_registry()
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .get(id)
@@ -1758,7 +1782,7 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
 fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
     vault_to_items(
         vault,
-        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false },
+        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new() },
     )
 }
 
@@ -7765,6 +7789,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         ui.set_health_report("Vault is empty — nothing to audit.".into());
                         ui.set_show_health(true);
                         ui.set_health_status("Vault is empty.".into());
+                        ui.set_health_score(100);
+                        ui.set_health_headline("Good Security Health".into());
+                        ui.set_health_breached(0);
+                        ui.set_health_reused(0);
+                        ui.set_health_weak(0);
+                        ui.set_health_stale(0);
+                        ui.set_health_coverage(0);
                     }
                 });
                 return;
@@ -7784,6 +7815,16 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             };
             let headline = report.headline();
             let badges = report.badges();
+            let kinds = report.kinds();
+            let score = report.score() as i32;
+            let head_line = report.health_line();
+            let (breached, reused, weak_n, stale, coverage) = (
+                report.breached as i32,
+                report.reused as i32,
+                report.weak as i32,
+                report.stale as i32,
+                report.coverage_pct() as i32,
+            );
             // Detailed per-item lines (titles + flags only, never passwords).
             let mut detail = String::new();
             for r in &report.results {
@@ -7810,14 +7851,26 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let full = format!("{headline}\n\n{detail}");
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
-                    // Publish badges to the process-wide registry + refresh list.
+                    // Publish badges + metric kinds to the process-wide registries.
                     if let Ok(mut reg) = health_registry().lock() {
                         reg.clear();
                         reg.extend(badges);
                     }
+                    if let Ok(mut reg) = health_kind_registry().lock() {
+                        reg.clear();
+                        reg.extend(kinds);
+                    }
                     ui.set_health_report(full.into());
                     ui.set_show_health(true);
                     ui.set_health_status(headline.into());
+                    // Scoreboard dashboard props.
+                    ui.set_health_score(score);
+                    ui.set_health_headline(head_line.into());
+                    ui.set_health_breached(breached);
+                    ui.set_health_reused(reused);
+                    ui.set_health_weak(weak_n);
+                    ui.set_health_stale(stale);
+                    ui.set_health_coverage(coverage);
                     security::access_log::log_event("audit", "health scan");
                     let f = search_clone.lock().map(|s| s.clone()).unwrap_or_default();
                     let v = lock_vault(&vault_clone);
@@ -7828,6 +7881,38 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     });
 
     run_startup_pull(main_window.as_weak());
+
+    // Scoreboard metric click → filter the middle list to matching accounts.
+    // Toggles: clicking the active metric clears the filter. Jumps to the
+    // vault view so the filtered list is immediately visible.
+    let filter_weak = main_window.as_weak();
+    let filter_vault = Arc::clone(&active_vault);
+    let filter_search = Arc::clone(&search_state);
+    let filter_qb = quick_bar.as_weak();
+    main_window.on_filter_health(move |metric| {
+        let Some(ui) = filter_weak.upgrade() else {
+            return;
+        };
+        let want = metric.as_str();
+        let mut f = filter_search.lock().map(|s| s.clone()).unwrap_or_default();
+        // Toggle off when clicking the active metric.
+        f.health = if f.health == want { String::new() } else { want.to_string() };
+        *filter_search.lock().unwrap() = f.clone();
+        ui.set_health_filter(f.health.clone().into());
+        ui.set_active_nav(0);
+        let v = lock_vault(&filter_vault);
+        ui.set_credentials(vault_to_items(&v, &f));
+        if let Some(qb) = filter_qb.upgrade() {
+            qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
+        }
+        if f.health.is_empty() {
+            ui.set_notification_text("Health filter cleared.".into());
+        } else {
+            ui.set_notification_text(
+                format!("🛡️ Showing {} flagged accounts — click again to clear.", f.health).into(),
+            );
+        }
+    });
 
     // Phase 25: BLE proximity auto-lock service. Passive scan + 4s heartbeat
     // on a worker thread; the fire path reuses the standard lock pipeline
