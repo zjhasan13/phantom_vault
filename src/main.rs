@@ -171,6 +171,7 @@ fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
     qb_visible: Arc<std::sync::atomic::AtomicBool>,
+    ui_visible: Arc<std::sync::atomic::AtomicBool>,
     req: TypeRequest,
 ) {
     use windows_native::autotype::{type_card, type_fields, type_identity, type_sequence};
@@ -198,6 +199,8 @@ fn trigger_autotype(
         ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
         ui.window().set_minimized(true);
     }
+    // Resource diet: loops deep-sleep while the main window is down.
+    ui_visible.store(false, std::sync::atomic::Ordering::SeqCst);
     if let Some(qb) = qb_weak.upgrade() {
         qb.hide().ok();
     }
@@ -285,6 +288,7 @@ fn trigger_autotype(
                 // Restore BEFORE touching UI so the user sees the result.
                 ui.window().set_minimized(false);
                 ui.show().ok();
+                ui_visible.store(true, std::sync::atomic::Ordering::SeqCst);
                 match &res {
                     Ok(()) => {
                         if stale {
@@ -813,6 +817,7 @@ fn publish_unlocked_vault(
     vault_arc: &Arc<Mutex<Vault>>,
     master_pw_arc: &Arc<Mutex<Option<SecretString>>>,
     search_state: &Arc<Mutex<FilterState>>,
+    ui_visible: &Arc<std::sync::atomic::AtomicBool>,
     vault: Vault,
     master_store: Option<String>,
     purged_n: usize,
@@ -884,8 +889,26 @@ fn publish_unlocked_vault(
     }
     let window_for_totp = ui.as_weak();
     let vault_for_auth = Arc::clone(vault_arc);
+    let master_for_auth = Arc::clone(master_pw_arc);
+    let visible_for_auth = Arc::clone(ui_visible);
     thread::spawn(move || {
         loop {
+            // Resource diet: locked vault or hidden main window → deep sleep
+            // in 1s slices (wakes within a second of restore/unlock). No
+            // TOTP crypto, no event-loop wakeups: true 0% idle.
+            let idle = lock_master_pw(&master_for_auth).is_none()
+                || !visible_for_auth.load(std::sync::atomic::Ordering::SeqCst);
+            if idle {
+                for _ in 0..10 {
+                    thread::sleep(Duration::from_secs(1));
+                    let awake = lock_master_pw(&master_for_auth).is_some()
+                        && visible_for_auth.load(std::sync::atomic::Ordering::SeqCst);
+                    if awake {
+                        break;
+                    }
+                }
+                continue;
+            }
             // Phase 24+Hardening: hero renders the FIRST live
             // 2FA account dynamically (any algorithm/digits)
             // instead of a hardcoded demo secret.
@@ -967,6 +990,7 @@ fn unlock_with_password(    pass: String,
     master_pw_arc: Arc<Mutex<Option<SecretString>>>,
     search_state: Arc<Mutex<FilterState>>,
     qb_weak: slint::Weak<QuickBarWindow>,
+    ui_visible: Arc<std::sync::atomic::AtomicBool>,
     cache_hello_token: bool,
     and_mode: bool,
 ) {
@@ -1148,7 +1172,7 @@ fn unlock_with_password(    pass: String,
                 )) {
                     Ok(true) => {
                         // Second factor passed — full publish pipeline, fresh KDF.
-                        unlock_with_password(pass2, w2, v2, m2, s2, q2, false, false);
+                        unlock_with_password(pass2, w2, v2, m2, s2, q2, Arc::clone(&ui_visible), false, false);
                     }
                     _ => {
                         let _ = slint::invoke_from_event_loop(move || {
@@ -1196,6 +1220,7 @@ fn unlock_with_password(    pass: String,
                         &vault_arc,
                         &master_pw_arc,
                         &search_state,
+                        &ui_visible,
                         vault,
                         Some(pass_for_store),
                         purged_n,
@@ -1885,6 +1910,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let quick_bar = QuickBarWindow::new()?;
     let capture_window = QuickCaptureWindow::new()?;
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    // Main-window visibility for the resource diet: background loops deep-
+    // sleep while this is false (tray/minimized) or the vault is locked.
+    // Flipped on the event loop at every show/hide transition below.
+    let ui_visible = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let active_vault = Arc::new(Mutex::new(Vault::new()));
     // Store master password in RAM for re-encryption on add (wrapped in Arc/Mutex)
     let active_master_pw: Arc<Mutex<Option<SecretString>>> = Arc::new(Mutex::new(None));
@@ -1907,13 +1936,16 @@ fn main() -> Result<(), slint::PlatformError> {
         let t_travel = Arc::clone(&travel_mode);
         let open = {
             let w = w_main.clone();
+            let vis = Arc::clone(&ui_visible);
             Arc::new(move || {
                 let w = w.clone();
+                let vis = vis.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = w.upgrade() {
                         ui.window().set_minimized(false);
                         ui.show().ok();
                         bring_to_foreground(ui.window());
+                        vis.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 });
             }) as Arc<dyn Fn() + Send + Sync>
@@ -1991,11 +2023,13 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let w = main_window.as_weak();
         let alive = Arc::clone(&tray_alive);
+        let vis = Arc::clone(&ui_visible);
         main_window.window().on_close_requested(move || {
             let minimize = windows_native::tray::load_tray_pref()
                 && alive.load(std::sync::atomic::Ordering::SeqCst);
             if minimize {
                 windows_native::tray::trim_working_set();
+                vis.store(false, std::sync::atomic::Ordering::SeqCst);
                 if let Some(ui) = w.upgrade() {
                     ui.set_notification_text("📥 Minimized to tray — right-click the tray icon to restore.".into());
                 }
@@ -2158,14 +2192,24 @@ fn main() -> Result<(), slint::PlatformError> {
         let cap_weak_pill = capture_window.as_weak();
         let master_pill = Arc::clone(&active_master_pw);
         let pill_app_probe = Arc::clone(&pill_app);
+        let pill_visible = Arc::clone(&ui_visible);
         thread::spawn(move || {
             use windows_native::ime_guard::hwnd_of;
             let mut last_shown = String::new();
             let mut had_focus = true; // assume focused until proven otherwise
             let mut ours: Vec<isize> = vec![0, 0, 0];
             loop {
-                thread::sleep(Duration::from_millis(1500));
+                // Diet cadence: locked vault or hidden main window → 10s
+                // idle (pill still probes, just slower); active → 1.5s.
+                // UIA COM probe is the hottest idle cost after the ticker.
+                // Falls through to the existing locked/hidden handling below.
                 let unlocked = master_pill.lock().map(|m| m.is_some()).unwrap_or(false);
+                let hidden = !pill_visible.load(std::sync::atomic::Ordering::SeqCst);
+                if !unlocked || hidden {
+                    thread::sleep(Duration::from_secs(10));
+                } else {
+                    thread::sleep(Duration::from_millis(1500));
+                }
                 // Lazily resolve our HWNDs (valid only after first show).
                 if ours.iter().all(|&h| h == 0) {
                     if let Some(ui) = main_weak_pill.upgrade() {
@@ -2417,6 +2461,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let type_qb_self = quick_bar.as_weak();
     let type_qb_vis = Arc::clone(&quickbar_visible);
     let type_qb_vault = Arc::clone(&active_vault);
+    let type_qb_uvis = Arc::clone(&ui_visible);
     quick_bar.on_type_selected(move |kind, id, username, password, totp| {
         if let Some(title) =
             check_canary_trip(&type_qb_vault, password.as_str(), "autotype-quickbar")
@@ -2450,6 +2495,7 @@ fn main() -> Result<(), slint::PlatformError> {
             type_qb_main.clone(),
             type_qb_self.clone(),
             Arc::clone(&type_qb_vis),
+            Arc::clone(&type_qb_uvis),
             {
                 let v = lock_vault(&type_qb_vault);
                 type_request_for(&v, kind, id.as_str()).unwrap_or_else(|| {
@@ -2801,6 +2847,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let qb_weak_unlock = quick_bar.as_weak();
     let travel_off = Arc::clone(&travel_mode);
     let activity_unlock = Arc::clone(&last_activity);
+    let unlock_uvis = Arc::clone(&ui_visible);
     main_window.on_unlock_requested(move |entered_password| {
         if let Ok(mut t) = activity_unlock.lock() {
             *t = std::time::Instant::now();
@@ -2823,6 +2870,7 @@ fn main() -> Result<(), slint::PlatformError> {
             Arc::clone(&master_pw_arc),
             Arc::clone(&search_state_unlock),
             qb_weak_unlock.clone(),
+            Arc::clone(&unlock_uvis),
             true,
             and_mode,
         );
@@ -2870,6 +2918,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let verify_master = Arc::clone(&active_master_pw);
     let verify_search = Arc::clone(&search_state);
     let verify_qb = quick_bar.as_weak();
+    let verify_uvis = Arc::clone(&ui_visible);
     main_window.on_verify_totp_unlock(move |code| {
         let Some(ui) = verify_weak.upgrade() else {
             return;
@@ -2929,6 +2978,7 @@ fn main() -> Result<(), slint::PlatformError> {
             &verify_vault,
             &verify_master,
             &verify_search,
+            &verify_uvis,
             vault,
             None,
             0,
@@ -3114,6 +3164,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let bio_master = Arc::clone(&active_master_pw);
     let bio_search = Arc::clone(&search_state);
     let bio_qb = quick_bar.as_weak();
+    let bio_uvis = Arc::clone(&ui_visible);
     main_window.on_request_biometric_unlock(move || {
         // Cat 8 AND-mode is password-FIRST: a Hello-first attempt would skip
         // factor one, so refuse loudly instead of half-unlocking.
@@ -3132,6 +3183,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let master_clone = Arc::clone(&bio_master);
         let search_clone = Arc::clone(&bio_search);
         let qb_clone = bio_qb.clone();
+        let uvis_clone = Arc::clone(&bio_uvis);
         std::thread::spawn(move || {
             let runtime = match tokio::runtime::Builder::new_multi_thread()
                 .enable_all()
@@ -3187,7 +3239,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         return;
                     }
                     unlock_with_password(
-                        pass, weak, vault_clone, master_clone, search_clone, qb_clone, false,
+                        pass, weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), false,
                         false,
                     );
                 }
@@ -4488,6 +4540,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let type_main = main_window.as_weak();
     let type_main_qb = quick_bar.as_weak();
     let type_main_vis = Arc::clone(&quickbar_visible);
+    let type_main_uvis = Arc::clone(&ui_visible);
     let type_main_vault = Arc::clone(&active_vault);
     main_window.on_type_credential_requested(move |username, password, totp| {
         if let Some(title) =
@@ -4534,6 +4587,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             type_main.clone(),
             type_main_qb.clone(),
             Arc::clone(&type_main_vis),
+            Arc::clone(&type_main_uvis),
             req,
         );
     });
@@ -4543,6 +4597,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let type_item_main = main_window.as_weak();
     let type_item_qb = quick_bar.as_weak();
     let type_item_vis = Arc::clone(&quickbar_visible);
+    let type_item_uvis = Arc::clone(&ui_visible);
     let type_item_vault = Arc::clone(&active_vault);
     main_window.on_type_item_requested(move |kind, id| {
         let req = {
@@ -4591,6 +4646,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             type_item_main.clone(),
             type_item_qb.clone(),
             Arc::clone(&type_item_vis),
+            Arc::clone(&type_item_uvis),
             req,
         );
     });
@@ -4813,6 +4869,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let stop = Arc::clone(&p2p_stop);
                 std::thread::spawn(move || runner(stop));
             }
+            // Pairing PIN is created lazily and shown for cross-device entry.
+            match sync::p2p_local::get_or_create_pin() {
+                Ok(pin) => ui.set_p2p_pin(pin.into()),
+                Err(e) => ui.set_p2p_status(format!("⚠️ PIN unavailable: {e}").into()),
+            }
             ui.set_p2p_status("📡 Discovery ON — port 52199. Scan to find peers.".into());
             security::access_log::log_event("p2p", "discovery enabled");
         } else {
@@ -4844,7 +4905,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     .map(|p| PeerView {
                         name: p.name.clone().into(),
                         ip: p.ip.clone().into(),
-                        detail: format!("v{} • {}", p.version, &p.head_sha.chars().take(8).collect::<String>()).into(),
+                        detail: format!("v{} • {}{}", p.version, &p.head_sha.chars().take(8).collect::<String>(), if p.pin_required { " • 🔒 PIN" } else { "" }).into(),
                     })
                     .collect();
                 ui.set_p2p_peers(ModelRc::new(VecModel::from(rows)));
@@ -4856,12 +4917,26 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             });
         });
     });
+    let regen_weak = main_window.as_weak();
+    main_window.on_regen_p2p_pin(move || {
+        let Some(ui) = regen_weak.upgrade() else {
+            return;
+        };
+        match sync::p2p_local::regenerate_pin() {
+            Ok(pin) => {
+                ui.set_p2p_pin(pin.into());
+                ui.set_p2p_status("🔑 New pairing PIN — re-pair your devices.".into());
+                security::access_log::log_event("p2p", "pin regenerated");
+            }
+            Err(e) => ui.set_p2p_status(format!("⚠️ PIN regen failed: {e}").into()),
+        }
+    });
     let syncpeer_weak = main_window.as_weak();
     let syncpeer_vault = Arc::clone(&active_vault);
     let syncpeer_master = Arc::clone(&active_master_pw);
     let syncpeer_search = Arc::clone(&search_state);
     let syncpeer_qb = quick_bar.as_weak();
-    main_window.on_sync_peer(move |ip| {
+    main_window.on_sync_peer(move |ip, pin| {
         let Some(ui) = syncpeer_weak.upgrade() else {
             return;
         };
@@ -4876,6 +4951,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let search_clone = Arc::clone(&syncpeer_search);
         let qb_clone = syncpeer_qb.clone();
         let target = ip.as_str().to_string();
+        let pin = pin.as_str().trim().to_string();
         std::thread::spawn(move || {
             let mut adopt = |blob: Vec<u8>| {
                 crate::security::shredder::secure_write(
@@ -4884,7 +4960,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 )
                 .map_err(|e| e.to_string())
             };
-            let outcome = sync::p2p_local::sync_with_peer(&target, &mut adopt);
+            let outcome = sync::p2p_local::sync_with_peer(&target, &pin, &mut adopt);
             // Adopted a remote head → reload memory + repaint everywhere.
             let reloaded: Option<Vault> = match &outcome {
                 Ok(msg) if msg.contains("adopted") => {
@@ -6256,6 +6332,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let rp_main = main_window.as_weak();
     let rp_qb = quick_bar.as_weak();
     let rp_vis = Arc::clone(&quickbar_visible);
+    let rp_uvis = Arc::clone(&ui_visible);
     let rp_del_vault = Arc::clone(&active_vault);
     let rp_del_search = Arc::clone(&search_state);
     let rp_del_qb = quick_bar.as_weak();
@@ -6308,6 +6385,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     rp_main.clone(),
                     rp_qb.clone(),
                     Arc::clone(&rp_vis),
+                    Arc::clone(&rp_uvis),
                     {
                         let v = lock_vault(&rp_del_vault);
                         login_type_request(
@@ -6516,6 +6594,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let rec_master = Arc::clone(&active_master_pw);
     let rec_search = Arc::clone(&search_state);
     let rec_qb = quick_bar.as_weak();
+    let rec_uvis = Arc::clone(&ui_visible);
     main_window.on_recover_with_shards(move |s1, s2, s3| {
         if let Some(ui) = rec_weak.upgrade() {
             ui.set_unlock_error_message("".into());
@@ -6527,6 +6606,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let master_clone = Arc::clone(&rec_master);
         let search_clone = Arc::clone(&rec_search);
         let qb_clone = rec_qb.clone();
+        let uvis_clone = Arc::clone(&rec_uvis);
         std::thread::spawn(move || {
             let refs: Vec<&str> = inputs.iter().map(|s| s.as_str()).collect();
             let pass = match security::shamir::Shamir::combine(&refs) {
@@ -6551,7 +6631,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 return;
             }
             unlock_with_password(
-                pass, weak, vault_clone, master_clone, search_clone, qb_clone, true, false,
+                pass, weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), true, false,
             );
         });
     });
@@ -7536,6 +7616,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let pill_weak = main_window.as_weak();
     let pill_qb = quick_bar.as_weak();
     let pill_vis = Arc::clone(&quickbar_visible);
+    let pill_uvis = Arc::clone(&ui_visible);
     let pill_vault = Arc::clone(&active_vault);
     let pill_app_click = Arc::clone(&pill_app);
     let pill_touch = Arc::clone(&last_activity);
@@ -7599,6 +7680,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             pill_weak.clone(),
             pill_qb.clone(),
             Arc::clone(&pill_vis),
+            Arc::clone(&pill_uvis),
             {
                 let v = lock_vault(&pill_vault);
                 login_type_request(&v, &qid, &user, &pass, &totp)

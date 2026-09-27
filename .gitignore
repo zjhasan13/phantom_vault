@@ -23,3 +23,5 @@ native_host.log
 project_dir.txt
 # Generated native-messaging manifest (absolute local paths + extension ID).
 com.phantomvault.host.json
+# P2P pairing PIN seal (per-device secret).
+p2p_pin.dpapi

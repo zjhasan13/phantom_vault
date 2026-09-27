@@ -28,6 +28,75 @@ pub struct Peer {
     pub ip: String,
     pub version: String,
     pub head_sha: String,
+    /// True when the peer enforces a pairing PIN (from its beacon).
+    pub pin_required: bool,
+}
+
+// ---------------------------------------------------------------------------
+// Optional pairing PIN: DPAPI-sealed 6-digit secret. When a PIN exists,
+// BOTH endpoints refuse unauthenticated requests (403); when none exists
+// the LAN stays open (backward compatible, user opted in by enabling P2P).
+// ---------------------------------------------------------------------------
+
+/// Sealed PIN file (override path via env for hermetic tests).
+fn pin_path() -> std::path::PathBuf {
+    std::env::var("PV_P2P_PIN_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("p2p_pin.dpapi"))
+}
+
+/// True when this device enforces PIN pairing (sealed PIN present).
+pub fn pin_required() -> bool {
+    load_pin().is_some()
+}
+
+fn load_pin() -> Option<String> {
+    let blob = std::fs::read(pin_path()).ok()?;
+    let secret = crate::core::memory::DpapiGuard::unprotect(&blob).ok()?;
+    let pin = String::from_utf8_lossy(secret.expose()).into_owned();
+    if pin.len() == 6 && pin.chars().all(|c| c.is_ascii_digit()) {
+        Some(pin)
+    } else {
+        None
+    }
+}
+
+/// Fetch the sealed PIN, generating + sealing one on first call.
+pub fn get_or_create_pin() -> Result<String, String> {
+    if let Some(pin) = load_pin() {
+        return Ok(pin);
+    }
+    use rand_core::RngCore as _;
+    let mut rng = rand_core::OsRng;
+    let mut buf = [0u8; 4];
+    rng.fill_bytes(&mut buf);
+    let pin = format!("{:06}", u32::from_le_bytes(buf) % 1_000_000);
+    let blob = crate::core::memory::DpapiGuard::protect(pin.as_bytes())
+        .map_err(|e| format!("pin seal failed: {e}"))?;
+    std::fs::write(pin_path(), blob).map_err(|e| format!("pin store failed: {e}"))?;
+    Ok(pin)
+}
+
+/// Regenerate the PIN (old pairings break immediately).
+pub fn regenerate_pin() -> Result<String, String> {
+    let _ = std::fs::remove_file(pin_path());
+    get_or_create_pin()
+}
+
+/// Length-first + full compare (interactive-attempt-rate path).
+pub fn verify_pin(candidate: &str) -> bool {
+    let Some(expected) = load_pin() else {
+        // No PIN configured → pairing check disabled (open LAN).
+        return true;
+    };
+    let candidate = candidate.trim();
+    expected.len() == candidate.len()
+        && expected
+            .as_bytes()
+            .iter()
+            .zip(candidate.as_bytes())
+            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
+            == 0
 }
 
 /// Presence beacon. `head_sha`/`mtime` describe the CIPHERTEXT only.
@@ -41,6 +110,7 @@ pub fn beacon_json(version: &str, head_sha: &str) -> String {
         "version": version,
         "port": P2P_PORT,
         "head_sha": head_sha,
+        "pin_required": pin_required(),
     })
     .to_string()
 }
@@ -63,6 +133,7 @@ pub fn parse_beacon(text: &str, from_ip: &str) -> Option<Peer> {
         ip: from_ip.to_string(),
         version: v.get("version").and_then(|n| n.as_str()).unwrap_or("?").to_string(),
         head_sha: v.get("head_sha").and_then(|n| n.as_str()).unwrap_or("").to_string(),
+        pin_required: v.get("pin_required").and_then(|b| b.as_bool()).unwrap_or(false),
     })
 }
 
@@ -150,7 +221,8 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
 }
 
 /// Route one request. Pure decision surface (no FS here — the caller adopts).
-/// Returns (status, body, optional adoption).
+/// Returns (status, body, optional adoption). Pairing PIN (when configured)
+/// gates BOTH endpoints: GET reads `?pin=`, POST reads the `pin` field.
 pub fn route(
     method: &str,
     path: &str,
@@ -159,7 +231,21 @@ pub fn route(
     local_sha: &str,
     local_mtime: u64,
 ) -> (u16, String, Option<(String, Vec<u8>)>) {
-    if method == "GET" && path == "/p2p/pull" {
+    // Split query string (?pin=…) — minimal HTTP only.
+    let (clean_path, query_pin) = match path.split_once('?') {
+        Some((p, q)) => {
+            let pin = q.split('&').find_map(|kv| {
+                let (k, v) = kv.split_once('=')?;
+                (k == "pin").then(|| v.to_string())
+            });
+            (p, pin)
+        }
+        None => (path, None),
+    };
+    if method == "GET" && clean_path == "/p2p/pull" {
+        if pin_required() && !verify_pin(query_pin.as_deref().unwrap_or("")) {
+            return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+        }
         let body = serde_json::json!({
             "sha": local_sha,
             "mtime": local_mtime,
@@ -168,11 +254,16 @@ pub fn route(
         .to_string();
         return (200, body, None);
     }
-    if method == "POST" && path == "/p2p/sync" {
+    if method == "POST" && clean_path == "/p2p/sync" {
         let v: serde_json::Value = match serde_json::from_slice(body) {
             Ok(v) => v,
             Err(_) => return (400, r#"{"ok":false,"error":"bad json"}"#.into(), None),
         };
+        if pin_required()
+            && !verify_pin(v.get("pin").and_then(|p| p.as_str()).unwrap_or(""))
+        {
+            return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+        }
         let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
         let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("");
         if sha.is_empty() || blob_b64.is_empty() {
@@ -364,12 +455,17 @@ pub fn scan_peers(wait: Duration) -> Vec<Peer> {
     peers
 }
 
-/// Pull a peer's ciphertext head + blob.
-pub fn pull_peer(addr: SocketAddr) -> Result<(String, u64, Vec<u8>), String> {
+/// Pull a peer's ciphertext head + blob (PIN sent as query when set).
+pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
-    let req = "GET /p2p/pull HTTP/1.1\r\nHost: pv\r\nConnection: close\r\n\r\n";
+    let target = if pin.trim().is_empty() {
+        "/p2p/pull".to_string()
+    } else {
+        format!("/p2p/pull?pin={}", pin.trim())
+    };
+    let req = format!("GET {target} HTTP/1.1\r\nHost: pv\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
@@ -391,11 +487,11 @@ pub fn pull_peer(addr: SocketAddr) -> Result<(String, u64, Vec<u8>), String> {
 }
 
 /// Push our ciphertext blob to a peer (it SHA-verifies + freshness-gates).
-pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8]) -> Result<bool, String> {
+pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], pin: &str) -> Result<bool, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string();
+    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob), "pin": pin.trim()}).to_string();
     let req = format!(
         "POST /p2p/sync HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -426,12 +522,13 @@ pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8]) -> Result
 /// `adopt_local` persists an adopted remote blob (caller = secure_write).
 pub fn sync_with_peer(
     ip: &str,
+    pin: &str,
     adopt_local: &mut dyn FnMut(Vec<u8>) -> Result<(), String>,
 ) -> Result<String, String> {
     let addr: SocketAddr = format!("{ip}:{P2P_PORT}").parse().map_err(|e| format!("bad peer ip: {e}"))?;
     let (local_sha, local_mtime) = local_head();
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
-    let (remote_sha, remote_mtime, remote_blob) = pull_peer(addr)?;
+    let (remote_sha, remote_mtime, remote_blob) = pull_peer(addr, pin)?;
     if remote_sha == local_sha {
         return Ok("📡 Already in sync (identical heads).".to_string());
     }
@@ -441,7 +538,7 @@ pub fn sync_with_peer(
         return Ok("📡 Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
     }
     if local_mtime > remote_mtime {
-        push_peer(addr, &local_sha, local_mtime, &local_blob)?;
+        push_peer(addr, &local_sha, local_mtime, &local_blob, pin)?;
         crate::security::access_log::log_event("p2p", &format!("pushed {local_sha} to {ip}"));
         return Ok("📡 Synced with local peer via Wi-Fi! (pushed newer local)".to_string());
     }
@@ -477,6 +574,8 @@ mod tests {
 
     #[test]
     fn route_pull_sync_and_rejections() {
+        // Ambient PIN env from a racing PIN test would 403 everything here.
+        let _guard = pin_env_lock();
         let blob = b"ciphertext-bytes";
         let sha = sha_hex(blob);
         // Pull mirrors the blob.
@@ -522,6 +621,8 @@ mod tests {
 
     #[test]
     fn loopback_pull_end_to_end() {
+        // Same ambient-PIN exclusion as the route test above.
+        let _guard = pin_env_lock();
         // Ephemeral-port listener + real TCP pull (no LAN involved).
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -534,7 +635,7 @@ mod tests {
             }
         });
         let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-        let (got_sha, mtime, got_blob) = pull_peer(addr).unwrap();
+        let (got_sha, mtime, got_blob) = pull_peer(addr, "").unwrap();
         assert_eq!(mtime, 7);
         assert_eq!(got_blob, b"loopback-ct");
         assert!(!got_sha.is_empty());
@@ -563,5 +664,73 @@ mod tests {
             None => (400, r#"{"ok":false}"#.into(), None),
         };
         let _ = stream.write_all(&http_response(status, &body));
+    }
+
+    /// Hermetic PIN sandbox: point PV_P2P_PIN_FILE at a temp path.
+    /// Serialized: tests share one process env, so PIN tests take this lock.
+    /// Non-PIN route tests take `pin_env_lock()` to exclude the window where
+    /// a PIN test has the env pointed at a LIVE pin file (else ambient 403s).
+    static PIN_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn pin_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        PIN_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+    fn with_pin_file(path: &str) -> std::sync::MutexGuard<'static, ()> {
+        let guard = pin_env_lock();
+        std::env::set_var("PV_P2P_PIN_FILE", path);
+        guard
+    }
+
+    fn clear_pin_file() {
+        std::env::remove_var("PV_P2P_PIN_FILE");
+    }
+
+    #[test]
+    fn pin_create_verify_wrong_and_regen() {
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let pinfile = sandbox.join("p2p_pin.dpapi");
+        let _ = std::fs::remove_file(&pinfile);
+        let _guard = with_pin_file(pinfile.to_str().unwrap());
+        // No PIN configured yet → open (verify-all) AND not required.
+        assert!(!pin_required());
+        assert!(verify_pin("anything"));
+        let pin = get_or_create_pin().unwrap();
+        assert_eq!(pin.len(), 6);
+        assert!(pin_required());
+        assert!(verify_pin(&pin));
+        assert!(!verify_pin("000000"));
+        // Regenerate rotates.
+        let pin2 = regenerate_pin().unwrap();
+        assert!(verify_pin(&pin2));
+        assert!(!verify_pin(&pin));
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn pin_gates_both_endpoints() {
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-gate-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let pinfile = sandbox.join("p2p_pin.dpapi");
+        let _ = std::fs::remove_file(&pinfile);
+        let _guard = with_pin_file(pinfile.to_str().unwrap());
+        let pin = get_or_create_pin().unwrap();
+        let blob = b"gate-ct";
+        let sha = sha_hex(blob);
+        // GET without pin → 403; with pin → 200.
+        assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1).0, 403);
+        let (st, _, _) = route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1);
+        assert_eq!(st, 200);
+        // POST without pin → 403; wrong pin → 403; right pin → proceeds.
+        let mk = |pin_val: &str| {
+            serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x"), "pin": pin_val}).to_string()
+        };
+        assert_eq!(route("POST", "/p2p/sync", mk("").as_bytes(), blob, &sha, 1).0, 403);
+        assert_eq!(route("POST", "/p2p/sync", mk("000000").as_bytes(), blob, &sha, 1).0, 403);
+        let (st, _, adopt) = route("POST", "/p2p/sync", mk(&pin).as_bytes(), blob, &sha, 1);
+        assert_eq!(st, 200);
+        assert!(adopt.is_some());
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
     }
 }
