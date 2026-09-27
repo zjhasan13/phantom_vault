@@ -22,6 +22,9 @@ pub struct ReleaseInfo {
     pub asset_name: String,
     pub asset_url: String,
     pub asset_size: u64,
+    /// Checksum sidecar (`<asset>.sha256` preferred, else SHA256SUMS*).
+    /// `None` = release ships no verifiable hash (download refuses).
+    pub checksum_url: Option<String>,
 }
 
 /// `v1.2.3` / `1.2` / `1.2.3-beta.1` → numeric triple (suffix ignored for
@@ -122,13 +125,36 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
             })
             .unwrap_or_default();
         match pick_asset(&assets) {
-            Some((asset_name, asset_url, asset_size)) => Ok(Some(ReleaseInfo {
-                tag: tag.clone(),
-                name: doc.get("name").and_then(|n| n.as_str()).unwrap_or(&tag).to_string(),
-                asset_name,
-                asset_url,
-                asset_size,
-            })),
+            Some((asset_name, asset_url, asset_size)) => {
+                // Checksum sidecar, most-specific first: "<asset>.sha256",
+                // then the GNU-style aggregate files.
+                let lower: Vec<(String, String)> = assets
+                    .iter()
+                    .map(|(n, u, _)| (n.to_lowercase(), u.clone()))
+                    .collect();
+                let want = format!("{asset_name}.sha256").to_lowercase();
+                let checksum_url = lower
+                    .iter()
+                    .find(|(n, _)| *n == want)
+                    .map(|(_, u)| u.clone())
+                    .or_else(|| {
+                        lower
+                            .iter()
+                            .find(|(n, _)| {
+                                let f = n.rsplit('/').next().unwrap_or(n);
+                                f == "sha256sums" || f == "sha256sums.txt"
+                            })
+                            .map(|(_, u)| u.clone())
+                    });
+                Ok(Some(ReleaseInfo {
+                    tag: tag.clone(),
+                    name: doc.get("name").and_then(|n| n.as_str()).unwrap_or(&tag).to_string(),
+                    asset_name,
+                    asset_url,
+                    asset_size,
+                    checksum_url,
+                }))
+            }
             None => Err(VaultError::Sync(format!(
                 "{tag} has no Windows (.exe) asset"
             ))),
@@ -136,8 +162,57 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
     })
 }
 
-/// Download the asset to `%TEMP%`. Sanity: non-empty + matches advertised
-/// size when the API reported one.
+/// Parse a checksum sidecar: GNU `SHA256SUMS` lines (`<hex>[ *]filename`)
+/// plus bare single-hash files. Returns filename → lowercase hex.
+pub fn parse_sums(text: &str) -> std::collections::HashMap<String, String> {
+    let mut out = std::collections::HashMap::new();
+    for line in text.lines() {
+        let t = line.trim();
+        if t.is_empty() || t.starts_with('#') {
+            continue;
+        }
+        let mut parts = t.split_whitespace();
+        let (Some(hash), Some(name)) = (parts.next(), parts.next()) else {
+            // Bare hash with no filename (single-asset .sha256 file).
+            if t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit()) {
+                out.insert(String::new(), t.to_lowercase());
+            }
+            continue;
+        };
+        if hash.len() == 64 && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            // GNU `*` marks binary mode — strip it; keep basename only.
+            let file = name.trim_start_matches('*');
+            let file = file.rsplit(['/', '\\']).next().unwrap_or(file);
+            out.insert(file.to_string(), hash.to_lowercase());
+        }
+    }
+    out
+}
+
+/// SHA-256 hex of bytes (integrity gate for staged binaries).
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    let mut s = String::with_capacity(64);
+    for b in sha2::Sha256::digest(bytes) {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
+
+/// Verify bytes against an expected hex digest (case-insensitive).
+/// Plain std Result (message IS the user-facing toast). Pure — unit tested.
+pub fn check_hash(bytes: &[u8], expected_hex: &str) -> std::result::Result<(), String> {
+    let got = sha256_hex(bytes);
+    if got == expected_hex.trim().to_lowercase() {
+        Ok(())
+    } else {
+        Err("🚨 Update Integrity Check Failed: Binary hash mismatch! Aborted for security.".to_string())
+    }
+}
+
+/// Download the asset to `%TEMP%`, then PROVE it: fetch the release checksum
+/// sidecar and compare SHA-256. No sums asset (or no entry) = fail CLOSED.
+/// On ANY failure the staged file is securely deleted and nothing executes.
 pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
     let rt = runtime()?;
     rt.block_on(async {
@@ -163,6 +238,36 @@ pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
         }
         let dest = std::env::temp_dir().join(format!("phantom-vault-update-{}.exe", info.tag.replace(['/', '\\', ':'], "_")));
         std::fs::write(&dest, &bytes).map_err(|e| VaultError::Sync(format!("stage write failed: {e}")))?;
+        // Integrity gate BEFORE anything may execute or replace.
+        let sums_url = info.checksum_url.clone().ok_or_else(|| {
+            VaultError::Sync("release ships no checksum file — refusing unverified binary".to_string())
+        })?;
+        let sums_text = client()?
+            .get(&sums_url)
+            .send()
+            .await
+            .map_err(|e| VaultError::Sync(format!("checksum download failed: {e}")))?
+            .error_for_status()
+            .map_err(|e| VaultError::Sync(format!("checksum HTTP error: {e}")))?
+            .text()
+            .await
+            .map_err(|e| VaultError::Sync(format!("checksum read failed: {e}")))?;
+        let sums = parse_sums(&sums_text);
+        // Exact filename first, bare-hash single file second.
+        let expected = sums
+            .get(&info.asset_name)
+            .or_else(|| sums.get(""))
+            .cloned()
+            .ok_or_else(|| {
+                VaultError::Sync(format!(
+                    "no checksum entry for {} — refusing unverified binary",
+                    info.asset_name
+                ))
+            })?;
+        if let Err(e) = check_hash(&bytes, &expected) {
+            let _ = std::fs::remove_file(&dest);
+            return Err(VaultError::Sync(e));
+        }
         Ok(dest)
     })
 }
@@ -235,5 +340,33 @@ mod tests {
         let none: Vec<(String, String, u64)> = vec![("app.tar.gz".to_string(), "u".to_string(), 1)];
         assert!(pick_asset(&none).is_none());
         assert!(pick_asset(&[]).is_none());
+    }
+
+    #[test]
+    fn sha256_vector_and_check() {
+        // NIST vector: SHA-256("abc").
+        assert_eq!(
+            sha256_hex(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert!(check_hash(b"abc", "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD").is_ok());
+        let err = check_hash(b"abc", &"0".repeat(64)).unwrap_err();
+        assert!(err.contains("hash mismatch"));
+    }
+
+    #[test]
+    fn sums_parse_gnu_bare_and_binary() {
+        let gnu = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad  app.exe\n\
+                   e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855  *setup.exe\n\
+                   # comment\n\
+                   notahash\n";
+        let m = parse_sums(gnu);
+        assert_eq!(m["app.exe"], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(m["setup.exe"], "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
+        assert_eq!(m.len(), 2);
+        // Bare single-hash file.
+        let bare = parse_sums("  BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD\n");
+        assert_eq!(bare[""], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert!(parse_sums("garbage\n").is_empty());
     }
 }
