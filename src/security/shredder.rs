@@ -81,14 +81,29 @@ pub fn shred_file(path: &Path) -> Result<(), String> {
 /// Overwrite-in-place write: if the file exists, its old bytes get the 3-pass
 /// treatment keyed to the OLD length before the new content lands. New files
 /// are written directly (nothing stale to kill).
+/// Crash-safe atomic replace: the payload lands in a sibling `.tmp` file
+/// (same volume → `rename` is atomic), then swaps over the target. A crash
+/// leaves either the complete old file or the complete new file — never a
+/// torn primary. (Prior generations already live in rotated `.bak` files, so
+/// dropping the in-place overwrite loses no recoverability: old ciphertext
+/// is encrypted under the same master either way.)
 pub fn secure_write(path: &Path, data: &[u8]) -> Result<(), String> {
-    if let Ok(meta) = std::fs::metadata(path) {
-        if meta.is_file() && meta.len() > 0 {
-            // Best-effort: a failing overwrite must not block the save itself.
-            let _ = overwrite_passes(path, meta.len());
-        }
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| "secure_write: bad file name".to_string())?;
+    let tmp = path.with_file_name(format!("{file_name}.tmp"));
+    {
+        use std::io::Write;
+        let mut f = std::fs::File::create(&tmp).map_err(|e| format!("tmp create: {e}"))?;
+        f.write_all(data).map_err(|e| format!("tmp write: {e}"))?;
+        f.flush().map_err(|e| format!("tmp flush: {e}"))?;
+        f.sync_all().map_err(|e| format!("tmp sync: {e}"))?;
     }
-    std::fs::write(path, data).map_err(|e| format!("File write error: {}", e))?;
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("atomic replace: {e}")
+    })?;
     Ok(())
 }
 

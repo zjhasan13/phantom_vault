@@ -428,7 +428,7 @@ pub fn account_to_otp(acc: &TotpAccount) -> Result<OtpParameters, String> {
         }
     };
     let (otp_type, counter) = if acc.otp_type.eq_ignore_ascii_case("hotp") {
-        (OtpType::Hotp as i32, acc.counter.max(0) as i64)
+        (OtpType::Hotp as i32, acc.counter as i64)
     } else {
         (OtpType::Totp as i32, 0)
     };
@@ -443,13 +443,14 @@ pub fn account_to_otp(acc: &TotpAccount) -> Result<OtpParameters, String> {
     })
 }
 
+/// One export batch: (page URIs, skipped names, lossy-warning names).
+pub type MigrationBatch = (Vec<String>, Vec<String>, Vec<String>);
+
 /// Chunk accounts into `otpauth-migration://offline?data=…` URIs (≤10 each).
 /// Skips undecodable accounts but reports their names; errors only when
-/// NOTHING exportable remains. Returns (uris, skipped_names, lossy_names)
-/// where lossy = steam/custom-period accounts needing the caller warning.
-pub fn build_migration_uris(
-    accounts: &[TotpAccount],
-) -> Result<(Vec<String>, Vec<String>, Vec<String>), String> {
+/// NOTHING exportable remains. Lossy = steam/custom-period accounts needing
+/// the caller warning.
+pub fn build_migration_uris(accounts: &[TotpAccount]) -> Result<MigrationBatch, String> {
     use base64::Engine as _;
     let mut params = Vec::new();
     let mut skipped = Vec::new();
@@ -476,12 +477,14 @@ pub fn build_migration_uris(
     let chunks: Vec<&[OtpParameters]> = params.chunks(GA_BATCH_SIZE).collect();
     let total = chunks.len() as i32;
     let mut uris = Vec::with_capacity(chunks.len());
+    // batch_index is 1-based per the reference format (1..=batch_size):
+    // strict validators reject page 1 when it carries index 0.
     for (i, chunk) in chunks.iter().enumerate() {
         let payload = MigrationPayload {
             otp_parameters: chunk.to_vec(),
             version: 1,
             batch_size: total,
-            batch_index: i as i32,
+            batch_index: i as i32 + 1,
             batch_id,
         };
         let mut buf = Vec::new();

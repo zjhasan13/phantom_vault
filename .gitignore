@@ -14,3 +14,12 @@ duress.dpapi
 # Runtime artifacts: access trail (metadata) + dev debug logs. Never push.
 access.log
 debug.log
+# Local scheduler/UI prefs (machine-specific state, recreated on boot).
+backup_schedule.json
+tray_minimize.pref
+blackout.pref
+pv_ext_stats.json
+native_host.log
+project_dir.txt
+# Generated native-messaging manifest (absolute local paths + extension ID).
+com.phantomvault.host.json

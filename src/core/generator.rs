@@ -199,8 +199,10 @@ mod tests {
 
     #[test]
     fn diceware_produces_correct_word_count() {
-        let pwd = PasswordGenerator::generate_diceware(6, '-').unwrap();
-        assert_eq!(pwd.expose_secret().split('-').count(), 6);
+        // '_' never appears in the EFF list (unlike '-' in drop-down,
+        // felt-tip, t-shirt, yo-yo) — exact split count, zero flake.
+        let pwd = PasswordGenerator::generate_diceware(6, '_').unwrap();
+        assert_eq!(pwd.expose_secret().split('_').count(), 6);
     }
 
     #[test]

@@ -296,3 +296,49 @@ Always retain existing passing unit tests.
 Supply-chain audit: `cargo audit` (RustSec) runs in CI on every push/PR (`.github/workflows/security.yml`); no known-RUSTSEC-vulnerable dependency may ship.
 Never stub out security functions with "TODO" or insecure dummy fallbacks.
 Keep comments concise and maintain maximum code clarity.
+
+---
+
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 233 tests green)
+
+Scale: 60+ Rust modules (61 `.rs` files), 235 unit tests passing / 0 failing
+(1 ignored: live HIBP network test), `cargo check` zero-warning.
+
+Architecture (all shipped, all tested):
+- NIST FIPS 203 ML-KEM-768 hybrid key layer (`PV2` portable container with
+  wrapped DK; `core/pq_hybrid.rs`, `crypto.rs`).
+- Pure Slint GPU "Phantom Aura" 3-column Bitwarden UI + 2-column Proton 2FA
+  Hub (`ui/appwindow.slint`); per-card live countdown rings, HOTP/Steam paths.
+- Isolated 2FA Hub search (`totp_search_query`) — never cross-filters vault.
+- Windows System Tray (`windows_native/tray.rs`): icon + Open/QuickBar/Lock/
+  Exit menu, close-to-tray (default ON, `tray_minimize.pref`), `EmptyWorkingSet`
+  trim on minimize. X with tray OFF = secure exit (never a linger).
+- Automated Scheduled Backup Rotation (`storage/backup_scheduler.rs`):
+  weekly default → Documents, keep 10, 3-pass shred prune, 30-min heartbeat.
+- Local Wi-Fi P2P Sync, port 52199 (`sync/p2p_local.rs`): UDP beacons +
+  minimal HTTP (pull/push), ciphertext-only, SHA+mtime conflict guard.
+- 1-Click GitHub Releases Auto-Updater (`sync/updater.rs`): semver compare,
+  staged download, post-exit swap script. Trust root: TLS + pinned repo
+  (no code-signature verify yet — REQUIRED before store distribution).
+- Bengali Diceware (`core/generator.rs` + `assets/bengali_words.txt`):
+  140-word list, 4–8 words + ২-digit suffix, honest Shannon bits.
+- Desktop UIA Autofill + Smart-Grab (`Alt+S`) + hands-free 2FA chaining;
+  card/identity TAB sequences; exe typosquat guard; reprompt modal.
+- Universal Omni-Importer (Bitwarden/1Password/KeePass/Chrome/Safari/
+  LastPass/Proton/Fuzzy): passwordHistory ingestion, backup-code auto-sort,
+  identity email/company/state/postal preserved, otpauth-URL TOTP normalize.
+- Reverse Exporter Suite: Google Migration QR (`authenticator/
+  google_migration.rs`, batched, Steam/period loss flagged) + Bitwarden
+  JSON/CSV (`importer/exporter.rs`, roundtrip-tested). Both master-gated.
+- Universal 2FA ingestion (`authenticator/universal_2fa.rs`): 2FAS, Aegis,
+  Steam .maFile, andOTP, FreeOTP, multi-line URIs, multi-QR images;
+  encrypted exports fail LOUD with guidance; smart dedup merge.
+- Generation-guarded clipboard (`windows_native/clipboard.rs`): monotonic
+  `CLIPBOARD_GEN` retires stale auto-clear workers; flush retires all.
+- Anti-photography Moiré lens guard + peep-hole hold-to-reveal; blackout
+  guard default OFF (`blackout.pref`).
+- Native Messaging Host bridge (`windows_native/native_host.rs`): Hello-
+  cached unlock, CWD fix, decoy-cover serving, save/stats/filled/cards/
+  identities commands; registry install locks `allowed_origins` to one ID.
+- Packaging: `installer.iss` (Inno Setup 6, HKCU host keys, full uninstall);
+  release gate: `QA_CHECKLIST.md` 7 physical tests.

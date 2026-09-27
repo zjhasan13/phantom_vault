@@ -128,13 +128,15 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                             .join("\n")
                     })
                     .unwrap_or_default();
+                let (totp, notes) =
+                    super::apply_totp(&get("totp"), &name, notes, summary);
                 let mut r = RawItem {
                     kind: 1,
                     title: name,
                     a: get("username"),
                     b: get("password"),
                     c: uris,
-                    totp: super::normalize_totp(&get("totp")),
+                    totp,
                     notes,
                     folder,
                     ..Default::default()
@@ -260,16 +262,17 @@ fn parse_csv_delim(bytes: &[u8], delim: u8, summary: &mut ImportSummary) -> Resu
     let mut out = Vec::new();
     for rec in rows {
         let m = rec_map(&headers, &rec);
-        // Bitwarden type col: 1 login, 2 note, 3 card, 4 identity.
+        // Bitwarden type col: 1 login, 2 note, 3 card, 4 identity —
+        // plus word forms (our exporter writes "login"/"card").
         match get(&m, "type").as_str() {
-            "2" => out.push(RawItem {
+            "2" | "note" => out.push(RawItem {
                 kind: 3,
                 title: get(&m, "name"),
                 a: get(&m, "notes"),
                 folder: get(&m, "folder"),
                 ..Default::default()
             }),
-            "3" => out.push(RawItem {
+            "3" | "card" => out.push(RawItem {
                 kind: 4,
                 title: get(&m, "name"),
                 a: get(&m, "cardholdername"),
@@ -280,7 +283,7 @@ fn parse_csv_delim(bytes: &[u8], delim: u8, summary: &mut ImportSummary) -> Resu
                 folder: get(&m, "folder"),
                 ..Default::default()
             }),
-            "4" => out.push(RawItem {
+            "4" | "identity" => out.push(RawItem {
                 kind: 5,
                 title: get(&m, "name"),
                 a: format!("{} {}", get(&m, "firstname"), get(&m, "lastname")).trim().to_string(),
@@ -297,15 +300,41 @@ fn parse_csv_delim(bytes: &[u8], delim: u8, summary: &mut ImportSummary) -> Resu
                     summary.rows_failed += 1;
                     continue;
                 }
+                // Remaining types (1/"login"/blank) are logins.
+                let (totp, notes) = super::apply_totp(
+                    &get(&m, "logintotp"),
+                    &get(&m, "name"),
+                    get(&m, "notes"),
+                    summary,
+                );
+                // Our own exporter's `fields` column ("name: value; …") parses back.
+                let mut custom_text = Vec::new();
+                for chunk in get(&m, "fields").split(';') {
+                    if let Some((n, v)) = chunk.split_once(':') {
+                        let (n, v) = (n.trim(), v.trim());
+                        if !n.is_empty() && !v.is_empty() {
+                            custom_text.push((n.to_string(), v.to_string()));
+                        }
+                    }
+                }
+                // Our own exporter's `backupcodes` column (one per line).
+                let backup: Vec<String> = get(&m, "backupcodes")
+                    .lines()
+                    .map(str::trim)
+                    .filter(|l| !l.is_empty())
+                    .map(str::to_string)
+                    .collect();
                 out.push(RawItem {
                     kind: 1,
                     title: get(&m, "name"),
                     a: get(&m, "loginusername"),
                     b: get(&m, "loginpassword"),
                     c: get(&m, "loginuri"),
-                    totp: super::normalize_totp(&get(&m, "logintotp")),
-                    notes: get(&m, "notes"),
+                    totp,
+                    notes,
                     folder: get(&m, "folder"),
+                    backup,
+                    custom_text,
                     ..Default::default()
                 });
             }
@@ -344,8 +373,14 @@ pub fn parse_generic_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<V
             summary.rows_failed += 1;
             continue;
         }
+        let (totp, notes) = super::apply_totp(
+            &pick(&["totp", "totp_secret", "totpsecret", "otpauth", "2fa", "mfa"]),
+            &title,
+            notes,
+            summary,
+        );
         out.push(RawItem {
-            kind: 1, title, a: user, b: pass, c: url, notes, ..Default::default()
+            kind: 1, title, a: user, b: pass, c: url, totp, notes, ..Default::default()
         });
     }
     Ok(out)

@@ -58,6 +58,9 @@ struct AuthView {
     tint: color,
     kind: string,
     is_hotp: bool,
+    // Per-card live countdown: seconds left (TOTP) / -1 (HOTP) + label.
+    secs: int,
+    countdown: string,
 }
 
 // Resident passkey row. meta is preformatted ("3 signs").
@@ -422,6 +425,8 @@ export component MainWindow inherits Window {
     in-out property <string> notification_text: "";
     in-out property <[CredentialView]> credentials;
     in-out property <string> search_query;
+    // Isolated 2FA Hub query — never touches the vault search above.
+    in-out property <string> totp_search_query: "";
     // Bitwarden-parity item management
     in-out property <int> new_kind: 1;
     in-out property <int> type_filter: 0;
@@ -504,6 +509,7 @@ export component MainWindow inherits Window {
     in-out property <string> alias_domain;
     in-out property <string> alias_token;
     in-out property <string> import_input;
+    in-out property <string> import_2fa_status: "";
     // Phase 11: Windows Hello
     in-out property <bool> hello_available: false;
     in-out property <string> hello_status: "Checking…";
@@ -589,6 +595,7 @@ export component MainWindow inherits Window {
     in-out property <string> sync_repo;
     in-out property <string> sync_token_input;
     in-out property <string> sync_status: "";
+    in-out property <string> bridge_status: "";
     // Local Wi-Fi P2P sync (default OFF) + GitHub Releases updater.
     in-out property <bool> p2p_enabled: false;
     in-out property <string> p2p_status: "P2P discovery is OFF — enable to find LAN devices.";
@@ -638,12 +645,14 @@ export component MainWindow inherits Window {
     callback open_detail(string);
     callback reprompt_confirm(string);
     callback search_changed(string);
+    callback totp_search_changed(string);
     callback scan_qr_requested();
     callback scan_webcam_requested();
     callback cancel_webcam_scan();
     callback generate_alias_for_form();
     callback save_alias_config(int, string, string);
     callback import_url_requested(string);
+    callback import_2fa_file();
     callback hotp_next(string);
     callback delete_auth_account(string);
     callback request_biometric_unlock();
@@ -872,44 +881,56 @@ export component MainWindow inherits Window {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px;
                 HorizontalLayout { spacing: 8px;
-                    AuraButton { label: "+ Add"; primary: true; width: 110px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
-                    LineEdit { placeholder-text: "🔍 Search"; text <=> root.search_query; height: 38px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
+                    AuraButton { label: "+ Add 2FA"; primary: true; width: 120px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
+                    LineEdit { placeholder-text: "🔍 Search 2FA accounts..."; text <=> root.totp_search_query; height: 38px; horizontal-stretch: 1; edited(text) => { root.totp_search_changed(text); } }
+                    AuraButton { label: "📲 Import"; width: 110px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
                     AuraButton { label: "📲 Export"; width: 110px; clicked => { root.ga_export_start(); } }
                     AuraButton { label: "⚙"; width: 46px; clicked => { root.active_nav = 3; } }
                 }
-                if root.show_2fa_import : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 14px; spacing: 8px; HorizontalLayout { spacing: 8px; AuraButton { label: "📋 Scan QR"; primary: true; horizontal-stretch: 1; clicked => { root.scan_qr_requested(); } } AuraButton { label: "📷 Scan via Webcam"; horizontal-stretch: 1; clicked => { root.scan_webcam_requested(); } } } LineEdit { placeholder-text: "otpauth://..."; text <=> root.import_input; height: 36px; } AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } } }
-                ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 10px;
-                    for row in root.auth_rows : HorizontalLayout { spacing: 12px;
+                if root.show_2fa_import : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 14px; spacing: 8px;
+                    Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: #5b6589; font-size: 10px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "📋 Scan QR"; primary: true; horizontal-stretch: 1; clicked => { root.scan_qr_requested(); } } AuraButton { label: "📷 Scan via Webcam"; horizontal-stretch: 1; clicked => { root.scan_webcam_requested(); } } AuraButton { label: "📁 Browse File"; horizontal-stretch: 1; clicked => { root.import_2fa_file(); } } }
+                    TextEdit { placeholder-text: "Paste multi-line otpauth:// links or raw JSON here…"; text <=> root.import_input; height: 72px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } }
+                    if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                } }
+                ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 14px;
+                    // Proton-style 2-column card grid (rows of 2 from Rust;
+                    // a lone card gets a stretch spacer, never full-width).
+                    for row in root.auth_rows : HorizontalLayout { spacing: 14px;
                         for acc in row : Rectangle {
                             horizontal-stretch: 1;
-                            background: #0d131f;
-                            border-radius: 14px;
+                            background: #111827;
+                            border-radius: 10px;
                             border-width: 1px;
-                            border-color: #26315c;
-                            height: 132px;
+                            border-color: #1e293b;
+                            height: 148px;
+                            clip: true;
                             HorizontalLayout { padding: 14px; spacing: 10px;
                                 VerticalLayout { horizontal-stretch: 1; spacing: 4px;
                                     HorizontalLayout { spacing: 8px;
-                                        Rectangle { width: 34px; height: 34px; border-radius: 17px; background: acc.tint;
+                                        Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
                                             Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                                         VerticalLayout { spacing: 0px; alignment: center;
-                                            Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 12px; font-weight: 800; overflow: elide; }
-                                            Text { text: acc.name; color: #8e99c0; font-size: 10px; overflow: elide; } }
+                                            Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
+                                            Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                     }
-                                    Text { text: acc.display; color: #eef1ff; font-size: 24px; font-weight: 900; }
+                                    Text { text: acc.display; color: #eef1ff; font-size: 26px; font-weight: 900; }
+                                    Text { text: "Next: " + acc.next; color: #5b6589; font-size: 10px; overflow: elide; }
                                 }
-                                VerticalLayout { spacing: 2px; alignment: center;
-                                    Rectangle { width: 46px; height: 46px; border-radius: 23px; border-width: 2px; border-color: #fbbf24;
-                                        Text { text: acc.kind == "HOTP" ? "HOTP" : root.totp_countdown; color: #fbbf24; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-                                    Text { text: "Next"; color: #5b6589; font-size: 9px; horizontal-alignment: center; }
-                                    Text { text: acc.next; color: #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
+                                VerticalLayout { spacing: 4px; alignment: center;
+                                    Rectangle { width: 48px; height: 48px; border-radius: 24px; border-width: 2px;
+                                        border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
+                                        Text { text: acc.countdown; color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+                                    if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
+                                    if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 26px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
-                                        if acc.is_hotp : AuraButton { label: "🔄"; width: 40px; height: 28px; clicked => { root.hotp_next(acc.id); } }
-                                        AuraButton { label: "📋"; width: 48px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
+                                        AuraButton { label: "📋 Copy"; width: 72px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
                                         AuraButton { label: "🗑️"; width: 40px; height: 28px; danger: true; clicked => { root.delete_auth_account(acc.id); } } }
                                 }
                             }
                         }
+                        if row.length == 1 : Rectangle { horizontal-stretch: 1; }
                     }
                     if root.auth_rows.length == 0 : Text { text: "No 2FA accounts yet — hit + Add."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
                     Text { text: "🔑  Resident Passkeys (WebAuthn)"; color: #eef1ff; font-size: 15px; font-weight: 900; }
@@ -1059,7 +1080,7 @@ export component MainWindow inherits Window {
                     Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "🌐 Install Browser Extension Host"; primary: true; width: 280px; clicked => { root.install_browser_host(root.ext_host_id); } } }
-                    Text { text: root.sync_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.bridge_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
@@ -1156,7 +1177,7 @@ export component MainWindow inherits Window {
                         for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : #101834; border-radius: 10px; border-width: 1px; border-color: root.d_id == cred.id ? #8b7cf6 : #26315c; height: 62px;
                             TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
                             HorizontalLayout { padding: 10px; spacing: 8px; alignment: space-between;
-                                Text { text: cred.kind == 1 ? "🔑" : cred.kind == 4 ? "💳" : cred.kind == 3 ? "📝" : "📦"; font-size: 18px; vertical-alignment: center; }
+                                Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : "🔑")))); font-size: 18px; vertical-alignment: center; }
                                 VerticalLayout { horizontal-stretch: 1; spacing: 1px; Text { text: cred.title; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: cred.username + " • " + cred.folder; color: #5b6589; font-size: 11px; overflow: elide; } }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
                                 Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : ""; font-size: 12px; vertical-alignment: center; }
@@ -1180,6 +1201,16 @@ export component MainWindow inherits Window {
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Username / Email" : "Field A"; text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: "🎭 Alias"; width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Password" : "Field B (secret)"; input-type: password; text <=> root.f_b; height: 36px; horizontal-stretch: 1; } AuraButton { label: "🎲"; width: 52px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } } }
                         Text { text: "Use the generator 🎲 to create a strong unique password"; color: #5b6589; font-size: 11px; }
+                        // Non-login kinds: Field C/D/E have NO inputs elsewhere
+                        // (f_d/f_e were unwritable) — per-kind labels here.
+                        if root.new_kind == 4 || root.new_kind == 5 || root.new_kind == 6 : VerticalLayout { spacing: 8px;
+                            FieldLabel { text: "EXTRA FIELDS"; }
+                            LineEdit { placeholder-text: root.new_kind == 4 ? "Expiry MM/YY" : (root.new_kind == 5 ? "Email" : "Fingerprint"); text <=> root.f_c; height: 36px; }
+                        }
+                        if root.new_kind == 4 || root.new_kind == 5 : VerticalLayout { spacing: 8px;
+                            LineEdit { placeholder-text: root.new_kind == 4 ? "CVV" : "Phone"; text <=> root.f_d; height: 36px; }
+                        }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: "Address"; text <=> root.f_e; height: 36px; }
                         if root.new_kind == 1 : VerticalLayout { spacing: 8px;
                             FieldLabel { text: "AUTHENTICATOR KEY (TOTP)"; }
                             LineEdit { placeholder-text: "Paste otpauth secret…"; text <=> root.f_totp; height: 36px; }
@@ -1188,7 +1219,7 @@ export component MainWindow inherits Window {
                             FieldLabel { text: "AUTOFILL OPTIONS"; }
                             LineEdit { placeholder-text: "Website (URI), e.g. https://example.com/login"; text <=> root.f_c; height: 36px; }
                             FieldLabel { text: "SECRET KEYS / API TOKENS"; }
-                            for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype != 2 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
+                            for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
                             AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
                         }
                         FieldLabel { text: "NOTES"; }

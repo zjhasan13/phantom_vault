@@ -98,7 +98,23 @@ pub struct BackupOutcome {
 /// `last_backup_timestamp` is NOT bumped on failure).
 pub fn run_backup(cfg: &mut BackupScheduleConfig, now: u64) -> Result<BackupOutcome, String> {
     let src = std::path::Path::new(crate::developer::vault_run::VAULT_FILE);
-    let bytes = std::fs::read(src).map_err(|e| format!("vault read: {e}"))?;
+    // Torn-read guard: sample twice 100ms apart; a concurrent save mid-read
+    // shows up as a mismatch → retry, then fail LOUD (no corrupt snapshot).
+    let mut bytes = Vec::new();
+    let mut stable = false;
+    for _ in 0..3 {
+        let a = std::fs::read(src).map_err(|e| format!("vault read: {e}"))?;
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let b = std::fs::read(src).map_err(|e| format!("vault re-read: {e}"))?;
+        if a == b {
+            bytes = a;
+            stable = true;
+            break;
+        }
+    }
+    if !stable {
+        return Err("vault file changing under backup — retry later".into());
+    }
     if bytes.is_empty() {
         return Err("vault file is empty — refusing to snapshot nothing".into());
     }

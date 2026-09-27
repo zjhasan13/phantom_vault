@@ -93,6 +93,17 @@ pub fn export_bitwarden_json(vault: &Vault) -> (serde_json::Value, usize) {
     for c in vault.credentials.iter().filter(|c| c.deleted_at.is_none()) {
         let mut notes = c.notes.clone();
         attachments += attachment_note(&mut notes, &c.attachments);
+        // Backup codes ride as a hidden custom field: Bitwarden has no
+        // native slot, and our importer's auto-sort ("backup" in the name)
+        // restores them into backup_codes on the way back in.
+        let mut fields = bw_fields(&c.custom_fields);
+        if !c.backup_codes.is_empty() {
+            fields.push(serde_json::json!({
+                "name": "PhantomVault Backup Codes",
+                "value": c.backup_codes.join("\n"),
+                "type": 1,
+            }));
+        }
         items.push(serde_json::json!({
             "id": c.id, "organizationId": null,
             "folderId": folder_id(&folders, &c.folder),
@@ -105,7 +116,7 @@ pub fn export_bitwarden_json(vault: &Vault) -> (serde_json::Value, usize) {
                     serde_json::json!({"lastUsedDate": unix_to_iso(h.changed_at), "password": h.password})
                 }).collect::<Vec<_>>(),
             },
-            "fields": bw_fields(&c.custom_fields),
+            "fields": fields,
         }));
     }
     for k in vault.cards.iter().filter(|k| k.deleted_at.is_none()) {
@@ -188,7 +199,7 @@ pub fn export_csv(vault: &Vault) -> String {
     let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
     let _ = w.write_record([
         "folder", "favorite", "type", "name", "notes", "fields", "login_uri",
-        "login_username", "login_password", "login_totp",
+        "login_username", "login_password", "login_totp", "backupcodes",
     ]);
     for c in vault.credentials.iter().filter(|c| c.deleted_at.is_none()) {
         let fields = c
@@ -208,6 +219,7 @@ pub fn export_csv(vault: &Vault) -> String {
             c.username.as_str(),
             c.password.as_str(),
             c.totp_secret.as_str(),
+            &c.backup_codes.join("\n"),
         ]);
     }
     for k in vault.cards.iter().filter(|k| k.deleted_at.is_none()) {
@@ -222,6 +234,7 @@ pub fn export_csv(vault: &Vault) -> String {
             k.cardholder_name.as_str(),
             k.card_number.as_str(),
             &format!("{}/{} cvv {}", k.exp_month, k.exp_year, k.cvv),
+            "",
         ]);
     }
     String::from_utf8(w.into_inner().unwrap_or_default()).unwrap_or_default()
@@ -296,7 +309,30 @@ mod tests {
         assert_eq!(c.folder, "Work");
         assert_eq!(c.password_history.len(), 1);
         assert_eq!(c.password_history[0].password, "old");
-        assert_eq!(c.custom_fields.len(), 1);
+        // PIN custom + re-imported backup-codes field (auto-sort restores box).
+        assert_eq!(c.custom_fields.len(), 2);
+        // Backup codes round-trip via the hidden customs field + auto-sort.
+        assert!(c.backup_codes.contains(&"zzz".to_string()));
+    }
+
+    #[test]
+    fn csv_roundtrips_login_with_backup() {
+        let v = vault_one();
+        let csv = export_csv(&v);
+        assert!(csv.contains("backupcodes"));
+        // Back through OUR csv path: login, totp, customs, backup all survive.
+        let bytes = csv.into_bytes();
+        let mut summary = crate::importer::ImportSummary::default();
+        let mut v2 = Vault::new();
+        // Sniff ours as BitwardenCsv (login_username header) and parse.
+        let raws = crate::importer::bitwarden::parse_csv(&bytes, &mut summary).unwrap();
+        crate::importer::merge(&mut v2, raws, &mut summary);
+        assert_eq!(v2.credentials.len(), 1);
+        let c = &v2.credentials[0];
+        assert_eq!(c.username, "me");
+        assert_eq!(c.totp_secret, "ABC");
+        assert!(c.backup_codes.contains(&"zzz".to_string()));
+        assert!(c.custom_fields.iter().any(|f| f.name == "PIN"));
     }
 
     #[test]

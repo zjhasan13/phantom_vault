@@ -139,8 +139,10 @@ pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     let mut rng = OsRng;
+    let target = foreground_token();
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {
+            ensure_focus(target)?;
             std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
             press_vk(VK_TAB, &mut rng)?;
             std::thread::sleep(Duration::from_millis(TAB_POST_MS));
@@ -220,6 +222,25 @@ fn press_vk(vk: VIRTUAL_KEY, rng: &mut OsRng) -> Result<()> {
     Ok(())
 }
 
+/// Foreground-window token for the focus guard below. Captured after the
+/// settle sleeps (target assumed focused), re-checked before every field
+/// after the first: if the user Alt+Tabbed mid-type, we abort instead of
+/// spraying the password into a chat box. HWND reuse errs to abort (safe).
+fn foreground_token() -> isize {
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    // SAFETY: no buffers; null handle = no foreground window.
+    unsafe { GetForegroundWindow().0 as isize }
+}
+
+fn ensure_focus(target: isize) -> Result<()> {
+    if foreground_token() != target {
+        return Err(VaultError::AutoType(
+            "focus moved mid-type — aborted for safety".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Type arbitrary text (e.g. a live TOTP code) with the same per-key
 /// down/hold/up discipline. Used by the 2FA auto-chain watcher.
 pub fn type_text_raw(text: &str, press_enter: bool) -> Result<()> {
@@ -246,12 +267,15 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     let mut rng = OsRng;
+    let target = foreground_token();
     // 2. Username, char by char (verified UTF-16 units, no translation).
     for unit in field_units(username) {
         press_unicode(unit, &mut rng)?;
         sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
     }
-    // 3. Tab transition with guards on both sides.
+    // 3. Tab transition with guards on both sides (focus re-verified:
+    // the password must never land in a newly-focused chat box).
+    ensure_focus(target)?;
     std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
     press_vk(VK_TAB, &mut rng)?;
     std::thread::sleep(Duration::from_millis(TAB_POST_MS));

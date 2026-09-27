@@ -156,14 +156,20 @@ pub fn parse_proton(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<Raw
             summary.rows_failed += 1;
             continue;
         }
+        let (totp, notes) = super::apply_totp(
+            &get("totpUri"),
+            &title,
+            get("note"),
+            summary,
+        );
         out.push(RawItem {
             kind: 1,
             title,
             a: user,
             b: pass,
             c: if urls.is_empty() { get("url") } else { urls },
-            totp: super::normalize_totp(&get("totpUri")),
-            notes: get("note"),
+            totp,
+            notes,
             folder,
             ..Default::default()
         });

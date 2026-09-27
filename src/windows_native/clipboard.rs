@@ -28,6 +28,22 @@ const CF_UNICODETEXT: u32 = 13;
 const OPEN_RETRIES: usize = 30;
 const OPEN_RETRY_MS: u64 = 10;
 
+/// Copy-generation counter: every `copy_sensitive` (and every `flush_now`)
+/// bumps it. A stale auto-clear worker whose generation no longer matches
+/// exits as a harmless no-op — so copying B 10s after A can never let A's
+/// timer wipe B. Backstops the content-equality check below.
+static CLIPBOARD_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Claim the next generation (called on every new copy).
+pub(crate) fn next_generation() -> u64 {
+    CLIPBOARD_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1
+}
+
+/// Current generation (workers compare against their claimed one).
+pub(crate) fn current_generation() -> u64 {
+    CLIPBOARD_GEN.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn wide_null(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(std::iter::once(0)).collect()
 }
@@ -135,7 +151,9 @@ fn read_text_locked() -> Option<String> {
 /// Unconditional flush: empties the clipboard NOW regardless of content.
 /// Used on vault lock / process exit so a copied secret never outlives the
 /// session. Best effort — a busy clipboard simply stays as-is.
+/// Also retires the generation so any in-flight auto-clear worker dies quiet.
 pub fn flush_now() {
+    let _ = next_generation();
     if open_guarded().is_err() {
         return;
     }
@@ -178,35 +196,54 @@ pub fn copy_sensitive(
 
     open_guarded()?;
     // SAFETY: classic clipboard sequence; CloseClipboard runs in every path.
-    // A null return from SetClipboardData keeps OUR ownership (we free it).
-    let ok = unsafe {
-        let mut ok = false;
-        if EmptyClipboard() != 0
-            && !SetClipboardData(CF_UNICODETEXT, h_text as HANDLE).is_null()
-            // Presence marker: null handle tells monitors to ignore us.
-            && !SetClipboardData(exclude, std::ptr::null_mut()).is_null()
-            && !SetClipboardData(can_hist, h_hist as HANDLE).is_null()
-            && !SetClipboardData(can_cloud, h_cloud as HANDLE).is_null()
-        {
-            ok = true;
+    // Ownership is tracked PER HANDLE: a failed SetClipboardData keeps OUR
+    // ownership (we free it); a successful one transfers it to the OS (we
+    // must NOT free — that would corrupt the OS heap). The exclusion-marker
+    // call passes a NULL handle, so its return value is meaningless and is
+    // deliberately ignored (best-effort hardening, never load-bearing).
+    let (ok_text, ok_hist, ok_cloud) = unsafe {
+        if EmptyClipboard() == 0 {
+            (false, false, false)
+        } else {
+            let ok_text = !SetClipboardData(CF_UNICODETEXT, h_text as HANDLE).is_null();
+            let _ = SetClipboardData(exclude, std::ptr::null_mut());
+            let ok_hist = !SetClipboardData(can_hist, h_hist as HANDLE).is_null();
+            let ok_cloud = !SetClipboardData(can_cloud, h_cloud as HANDLE).is_null();
+            (ok_text, ok_hist, ok_cloud)
         }
-        CloseClipboard();
-        ok
     };
-    if !ok {
-        // Ownership never transferred — free our blocks (best effort).
-        unsafe {
+    unsafe {
+        CloseClipboard();
+        // Free ONLY what we still own — never an OS-transferred block.
+        if !ok_text {
             GlobalFree(h_text);
+        }
+        if !ok_hist {
             GlobalFree(h_hist);
+        }
+        if !ok_cloud {
             GlobalFree(h_cloud);
         }
+    }
+    if !ok_text {
         return Err(VaultError::AutoType("SetClipboardData failed".into()));
+    }
+    if !(ok_hist && ok_cloud) {
+        // Secret landed WITHOUT the Win+V/cloud opt-outs: usable, but warn
+        // LOUD so a silently-unprotected copy never surprises anyone.
+        eprintln!("⚠️ clipboard privacy flags rejected — copy works, history exclusion uncertain");
     }
 
     // Guarded auto-clear on a worker thread (never blocks UI).
+    // Generation gate FIRST (cheap, race-free), content check second.
+    let my_gen = next_generation();
     let mut expect = text.to_string();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(auto_clear_secs));
+        if current_generation() != my_gen {
+            expect.zeroize();
+            return; // a newer copy (or flush) superseded us — no-op.
+        }
         let matched = (|| {
             open_guarded().ok()?;
             let current = read_text_locked();
@@ -227,4 +264,20 @@ pub fn copy_sensitive(
         }
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn generation_monotonic_and_flush_retires() {
+        let a = next_generation();
+        let b = next_generation();
+        assert_eq!(b, a + 1);
+        assert_eq!(current_generation(), b);
+        // A newer claim must invalidate an older worker's generation.
+        let stale = a;
+        assert_ne!(current_generation(), stale);
+    }
 }
