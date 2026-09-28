@@ -121,6 +121,7 @@ fn mk_account(
         algorithm: norm_algo(algorithm),
         otp_type,
         counter,
+        favorite: false,
     })
 }
 
@@ -302,7 +303,7 @@ pub fn parse_uri_lines(text: &str) -> (Vec<TotpAccount>, Vec<String>, bool) {
         if line.starts_with("otpauth-migration://") || line.contains("data=") && line.contains("migration") {
             saw_migration = true;
             match crate::authenticator::google_migration::parse_google_migration_url(line) {
-                Ok(mut accs) => {
+                Ok((mut accs, _batch)) => {
                     // Fresh ids (parsed ids collide across pastes).
                     for (i, a) in accs.iter_mut().enumerate() {
                         a.id = new_id(out.len() + i);
@@ -600,11 +601,13 @@ mod tests {
             id: "old".into(), account_name: "a@x".into(), issuer: "X".into(),
             secret: "JBSWY3DPEHPK3PXP".into(), digits: 6, period: 30,
             algorithm: "SHA1".into(), otp_type: "totp".into(), counter: 0,
+            favorite: false,
         });
         let mk = |secret: &str| TotpAccount {
             id: "t".into(), account_name: "a@x".into(), issuer: "X".into(),
             secret: secret.into(), digits: 6, period: 30,
             algorithm: "SHA1".into(), otp_type: "totp".into(), counter: 0,
+            favorite: false,
         };
         // Identical (case/padding-tolerant) → skip.
         let (imp, skip) = merge_2fa(&mut v, vec![mk("jbswy3dpehpk3pxp")]);

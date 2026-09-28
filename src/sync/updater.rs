@@ -15,6 +15,15 @@ pub const RELEASES_URL: &str =
     "https://api.github.com/repos/zjhasan13/phantom_vault/releases/latest";
 const USER_AGENT: &str = "phantom-vault-updater";
 
+/// Release-signing public key (Ed25519). The matching PRIVATE key lives ONLY
+/// as a GitHub Actions secret — it is NEVER in this repo. Every release
+/// asset must ship `<asset>.sig` (raw 64-byte detached signature); binaries
+/// without a valid signature are refused, no exceptions.
+pub const UPDATER_PUBLIC_KEY: [u8; 32] = [
+    199, 62, 33, 33, 153, 183, 61, 17, 153, 186, 193, 81, 125, 98, 44, 26,
+    217, 109, 183, 126, 115, 189, 59, 210, 175, 22, 68, 21, 44, 2, 169, 139,
+];
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReleaseInfo {
     pub tag: String,
@@ -25,6 +34,9 @@ pub struct ReleaseInfo {
     /// Checksum sidecar (`<asset>.sha256` preferred, else SHA256SUMS*).
     /// `None` = release ships no verifiable hash (download refuses).
     pub checksum_url: Option<String>,
+    /// Detached Ed25519 signature (`<asset>.sig`, raw 64 bytes or hex).
+    /// `None` = release ships no signature (download refuses).
+    pub sig_url: Option<String>,
 }
 
 /// `v1.2.3` / `1.2` / `1.2.3-beta.1` → numeric triple (suffix ignored for
@@ -146,6 +158,13 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
                             })
                             .map(|(_, u)| u.clone())
                     });
+                // Detached signature sidecar: exact "<asset>.sig" only —
+                // never a shared/aggregate file (wrong-asset confusion).
+                let sig_want = format!("{asset_name}.sig").to_lowercase();
+                let sig_url = lower
+                    .iter()
+                    .find(|(n, _)| *n == sig_want)
+                    .map(|(_, u)| u.clone());
                 Ok(Some(ReleaseInfo {
                     tag: tag.clone(),
                     name: doc.get("name").and_then(|n| n.as_str()).unwrap_or(&tag).to_string(),
@@ -153,6 +172,7 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
                     asset_url,
                     asset_size,
                     checksum_url,
+                    sig_url,
                 }))
             }
             None => Err(VaultError::Sync(format!(
@@ -210,6 +230,46 @@ pub fn check_hash(bytes: &[u8], expected_hex: &str) -> std::result::Result<(), S
     }
 }
 
+/// Verify raw bytes against a detached Ed25519 signature (raw 64 bytes or
+/// hex-encoded). Pure — unit tested. This is the final gate before any
+/// staged binary may execute or replace the live exe.
+pub fn check_signature(bytes: &[u8], sig_blob: &[u8]) -> std::result::Result<(), String> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    // Accept raw 64-byte signatures and hex (with optional whitespace).
+    let raw: Vec<u8> = if sig_blob.len() == 64 {
+        sig_blob.to_vec()
+    } else {
+        let t: String = String::from_utf8_lossy(sig_blob)
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        hex_decode(&t).ok_or_else(|| {
+            "🚨 Update signature unreadable — refusing unverified binary.".to_string()
+        })?
+    };
+    let arr: [u8; 64] = raw.try_into().map_err(|_| {
+        "🚨 Update signature has wrong length — refusing unverified binary.".to_string()
+    })?;
+    let vk = VerifyingKey::from_bytes(&UPDATER_PUBLIC_KEY).map_err(|_| {
+        "🚨 Embedded updater key corrupt — refusing all updates.".to_string()
+    })?;
+    let sig = Signature::from_bytes(&arr);
+    vk.verify_strict(bytes, &sig).map_err(|_| {
+        "🚨 Update Signature Invalid: untrusted binary! Aborted for security.".to_string()
+    })?;
+    Ok(())
+}
+
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    if s.len() % 2 != 0 || !s.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..s.len())
+        .step_by(2)
+        .map(|i| u8::from_str_radix(&s[i..i + 2], 16).ok())
+        .collect()
+}
+
 /// Download the asset to `%TEMP%`, then PROVE it: fetch the release checksum
 /// sidecar and compare SHA-256. No sums asset (or no entry) = fail CLOSED.
 /// On ANY failure the staged file is securely deleted and nothing executes.
@@ -265,6 +325,30 @@ pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
                 ))
             })?;
         if let Err(e) = check_hash(&bytes, &expected) {
+            let _ = std::fs::remove_file(&dest);
+            return Err(VaultError::Sync(e));
+        }
+        // Signature gate (final): detached Ed25519 over the exact bytes.
+        // Missing .sig asset = fail CLOSED. Any failure shreds the stage.
+        let sig_url = info.sig_url.clone().ok_or_else(|| {
+            let _ = std::fs::remove_file(&dest);
+            VaultError::Sync("release ships no .sig signature — refusing unverified binary".to_string())
+        })?;
+        let sig_blob = client()?
+            .get(&sig_url)
+            .send()
+            .await
+            .map_err(|e| VaultError::Sync(format!("signature download failed: {e}")))?
+            .error_for_status()
+            .map_err(|e| VaultError::Sync(format!("signature HTTP error: {e}")))?
+            .bytes()
+            .await
+            .map_err(|e| VaultError::Sync(format!("signature read failed: {e}")))?;
+        if sig_blob.is_empty() || sig_blob.len() > 4096 {
+            let _ = std::fs::remove_file(&dest);
+            return Err(VaultError::Sync("signature file implausible — refusing unverified binary".into()));
+        }
+        if let Err(e) = check_signature(&bytes, &sig_blob) {
             let _ = std::fs::remove_file(&dest);
             return Err(VaultError::Sync(e));
         }
@@ -368,5 +452,41 @@ mod tests {
         let bare = parse_sums("  BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD\n");
         assert_eq!(bare[""], "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         assert!(parse_sums("garbage\n").is_empty());
+    }
+
+    #[test]
+    fn signature_verify_strict_roundtrip() {
+        use ed25519_dalek::Signer;
+        // Independent test key (NOT the embedded release key).
+        let signing = ed25519_dalek::SigningKey::from_bytes(&[7u8; 32]);
+        let msg = b"phantom-vault fake binary bytes";
+        let sig = signing.sign(msg);
+        // Raw 64-byte form verifies against its own key...
+        let vk_bytes = signing.verifying_key().to_bytes();
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&vk_bytes).unwrap();
+        vk.verify_strict(msg, &sig).unwrap();
+        // ...but the EMBEDDED release key must reject it.
+        assert!(check_signature(msg, &sig.to_bytes()).is_err());
+        // Tampered message fails even with a structurally-valid sig blob.
+        assert!(check_signature(b"tampered!", &sig.to_bytes()).is_err());
+        // Hex form accepted when valid — build one against the embedded key
+        // is impossible here (no private key), so assert the SHAPE path:
+        // 128-hex-char blob parses (length gate), then key rejects.
+        let hex_sig: String = sig.to_bytes().iter().map(|b| format!("{b:02x}")).collect();
+        let err = check_signature(msg, hex_sig.as_bytes()).unwrap_err();
+        assert!(err.contains("Invalid") || err.contains("untrusted"));
+        // Garbage / short blobs fail loud, never panic.
+        assert!(check_signature(msg, b"nope").is_err());
+        assert!(check_signature(msg, &[0u8; 63]).is_err());
+        assert!(check_signature(msg, &[0u8; 64]).is_err());
+    }
+
+    #[test]
+    fn embedded_key_is_well_formed() {
+        // Would panic the updater at runtime otherwise — pin it in a test.
+        let vk = ed25519_dalek::VerifyingKey::from_bytes(&UPDATER_PUBLIC_KEY).unwrap();
+        // Sanity: not the all-zero key.
+        assert_ne!(UPDATER_PUBLIC_KEY, [0u8; 32]);
+        let _ = vk;
     }
 }

@@ -9,10 +9,12 @@
 
   const DEFAULTS = {
     show_suggestions: true,
+    show_suggestions_on_icon_click_only: false,
     suggest_cards: true,
     suggest_identities: true,
     autofill_on_load: true,
     auto_inject_totp: true,
+    copy_totp_auto: true,
     show_context_menu: true,
     match_mode: "base", // base | host | exact
     auto_submit: false,
@@ -34,6 +36,98 @@
     return parts.slice(-2).join("."); // pragmatic; multi-label PSL TLDs are edge cases
   }
   function pageBase() { return registrable(location.hostname); }
+  // Equivalent-domain clusters (mirrors native_host.rs — keep in sync).
+  const EQUIV_CLUSTERS = [
+    ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
+    ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
+    ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
+    ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
+    ["apple.com", "icloud.com"],
+    ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
+    ["sony.com", "playstation.com", "playstationnetwork.com"],
+    ["yahoo.com", "aol.com"],
+  ];
+  const SUB_PREFIXES = ["account", "accounts", "login", "auth", "myaccount", "my", "app", "www", "signin", "sso", "secure", "id", "mail"];
+  function stripSubs(host) {
+    const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
+    while (parts.length > 2 && SUB_PREFIXES.includes(parts[0])) parts.shift();
+    return parts.join(".");
+  }
+  function memberHit(member, domain) {
+    if (member.endsWith(".*")) {
+      const p = member.slice(0, -2);
+      return domain === p || domain.startsWith(p + ".");
+    }
+    return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
+  }
+  function clusterStem(members) {
+    const labels = members.map((m) => m.replace(/\.\*$/, "").split(".")[0] || "");
+    let len = (labels[0] || "").length;
+    for (const l of labels.slice(1)) {
+      let i = 0;
+      while (i < len && (labels[0][i] === l[i])) i++;
+      len = Math.min(len, i);
+    }
+    return len >= 5 ? labels[0].slice(0, len) : null;
+  }
+  // Candidate domains for a host: stripped full host + multi-label suffixes.
+  function domainCands(host) {
+    const full = stripSubs(host);
+    const parts = full.split(".").filter(Boolean);
+    const out = [full];
+    for (let i = 1; i < parts.length; i++) {
+      if (parts.length - i >= 2) out.push(parts.slice(i).join("."));
+    }
+    return out;
+  }
+  // True when two domains are equivalent siblings (cluster or brand-stem).
+  function domainsEquiv(a, b) {
+    const ca = domainCands(a), cb = domainCands(b);
+    for (const cluster of EQUIV_CLUSTERS) {
+      const hitA = ca.some((d) => cluster.some((m) => memberHit(m, d)));
+      if (!hitA) continue;
+      if (cb.some((d) => cluster.some((m) => memberHit(m, d)))) return true;
+      // Brand-stem fallback: distinctive shared root (>= 5 chars).
+      const stem = clusterStem(cluster);
+      if (stem) {
+        const tok = (full => full.split(".")[0] || "")(stripSubs(b));
+        if (tok && (tok === stem || tok.startsWith(stem) || stem.startsWith(tok))) return true;
+      }
+    }
+    return false;
+  }
+  // Brand letter for inline rows (mirrors desktop brand_of tints loosely).
+  // Subdomain prefixes (www., m., accountscenter., login., …) are stripped
+  // first — "www.facebook.com" and "accountscenter.facebook.com" both yield
+  // F, never W or A. Stored-URL hosts win over free-text titles.
+  const HOST_PREFIXES = ["accountscenter.", "accounts.", "account.", "signin.", "login.", "auth.", "myaccount.", "mobile.", "secure.", "sso.", "mail.", "app.", "www.", "m.", "id."];
+  function stripHostPrefixes(h) {
+    h = String(h || "").toLowerCase();
+    let hit = true;
+    while (hit) {
+      hit = false;
+      for (const p of HOST_PREFIXES) {
+        if (h.startsWith(p) && h.length > p.length + 2) { h = h.slice(p.length); hit = true; break; }
+      }
+    }
+    return h;
+  }
+  function brandLetter(entry) {
+    const urls = (entry && entry.urls) || [];
+    for (const raw of urls) {
+      try {
+        const h = stripHostPrefixes(new URL(raw.includes("://") ? raw : "https://" + raw).hostname);
+        const m = h.match(/[a-z0-9]/);
+        if (m) return m[0].toUpperCase();
+      } catch (_) { /* next source */ }
+    }
+    // Title/username with leading host-ish prefixes stripped ("www
+    // facebook" → "facebook" → F).
+    const s = String(((entry && entry.title) || "") + " " + ((entry && entry.username) || ""))
+      .replace(/^(www|m|mobile|accountscenter|accounts|account|login|signin|auth|sso)\b[^a-z0-9]*/i, "");
+    const m = s.match(/[A-Za-z0-9\u0980-\u09FF]/);
+    return (m ? m[0] : "?").toUpperCase();
+  }
   function isBlocked() {
     const base = pageBase();
     return (settings.blocked_domains || []).some((d) => {
@@ -66,7 +160,9 @@
       } else if (mode === "host") {
         if (u.hostname.toLowerCase() === pageHost) return true;
       } else {
+        // Base domain OR equivalent sibling (youtube ↔ google, …).
         if (registrable(u.hostname) === pageBase()) return true;
+        if (domainsEquiv(u.hostname, pageHost)) return true;
       }
     }
     return false;
@@ -91,10 +187,14 @@
     const cs = getComputedStyle(el);
     return cs.visibility !== "hidden" && cs.display !== "none" && !el.disabled && !el.readOnly;
   }
+  // React / modern SPA value injection: raw `el.value = x` is ignored by
+  // controlled components — the native prototype setter plus bubbling
+  // input/change events is what React's dispatcher listens for.
   function setNativeValue(el, value) {
     const proto = el.tagName === "TEXTAREA"
       ? window.HTMLTextAreaElement.prototype
       : window.HTMLInputElement.prototype;
+    try { el.focus({ preventScroll: true }); } catch (_) {}
     try {
       Object.getOwnPropertyDescriptor(proto, "value").set.call(el, value);
     } catch (_) { el.value = value; }
@@ -131,17 +231,74 @@
   }
 
   function findFields() {
-    const q = (s) => [...document.querySelectorAll(s)].filter(isVisible);
-    const pass = q('input[type="password"]:not([autocomplete="new-password"])');
-    const newPass = q('input[autocomplete="new-password"], input[type="password"][name*="new" i]');
-    const users = q('input[type="text"][name*="user" i], input[type="text"][name*="login" i], ' +
-      'input[type="email"], input[type="text"][autocomplete*="username" i], input[type="text"][id*="user" i]');
-    const otp = q('input[autocomplete="one-time-code"], input[inputmode="numeric"], ' +
-      'input[name*="otp" i], input[name*="2fa" i], input[name*="verif" i], input[name*="code" i][maxlength]');
+    // Strict classifier: search bars NEVER classify (YouTube/Google/Amazon
+    // search boxes must not get badges, listeners, or dropdowns). Login =
+    // autocomplete username/email, type=email, or type=text beside a password
+    // in the SAME form. Password = type=password only. OTP =
+    // autocomplete=one-time-code or otp/2fa/code/token/verif name/id.
+    const all = [...document.querySelectorAll("input")].filter(isVisible);
+    const pass = [], newPass = [], users = [], otp = [];
+    for (const el of all) {
+      if (isSearchField(el)) continue;
+      const type = (el.type || "").toLowerCase();
+      const ac = (el.autocomplete || "").toLowerCase();
+      if (type === "password") {
+        const nameId = ((el.name || "") + " " + (el.id || "")).toLowerCase();
+        if (ac === "new-password" || nameId.includes("new")) newPass.push(el);
+        else pass.push(el);
+        continue;
+      }
+      if (isOtpField(el)) { otp.push(el); continue; }
+      if (isUsernameField(el)) { users.push(el); continue; }
+    }
+    const q = (s) => [...document.querySelectorAll(s)].filter(isVisible).filter((el) => !isSearchField(el));
     const cards = q('input[name*="cardnumber" i], input[autocomplete="cc-number"], input[data-stripe="number"]');
     const addr = q('input[autocomplete="street-address"], input[autocomplete="address-line1"], ' +
       'input[name*="address" i], input[autocomplete="tel"], input[name*="phone" i]');
     return { pass, newPass, users, otp, cards, addr };
+  }
+
+  // ---------- strict field classifier (search-blindness fix) ----------
+  // NEVER attach badges, listeners, or dropdowns to search/filter inputs.
+  const SEARCH_WORDS = ["search", "search_query", "query", "keyword", "find"];
+  function fieldText(el) {
+    return [el.name, el.id, el.placeholder, el.getAttribute("aria-label")]
+      .filter(Boolean).join(" ").toLowerCase();
+  }
+  function isSearchField(el) {
+    if (!el || el.tagName !== "INPUT") return false;
+    if ((el.type || "").toLowerCase() === "search") return true;
+    if ((el.getAttribute("role") || "").toLowerCase() === "searchbox") return true;
+    const form = el.closest("form");
+    if (form && (form.getAttribute("role") || "").toLowerCase() === "search") return true;
+    const hay = fieldText(el);
+    for (const w of SEARCH_WORDS) {
+      if (hay.includes(w)) return true;
+    }
+    // Bare "q" (Google's ?q= search box) matches as a STANDALONE token only:
+    // substring would nuke "unique", "request", "antique", ...
+    if (hay.split(/[^a-z0-9]+/).includes("q")) return true;
+    return false;
+  }
+  function isUsernameField(el) {
+    if (isSearchField(el)) return false;
+    const ac = (el.autocomplete || "").toLowerCase();
+    if (ac === "username" || ac === "email") return true;
+    const type = (el.type || "").toLowerCase();
+    if (type === "email") return true;
+    if (type !== "text") return false;
+    // type=text counts ONLY beside a password field in the SAME form.
+    // Form-less SPA logins fall back to any password field on the page.
+    const scope = el.form || document;
+    return [...scope.querySelectorAll('input[type="password"]')].some(isVisible);
+  }
+  function isOtpField(el) {
+    if (isSearchField(el)) return false;
+    if ((el.autocomplete || "").toLowerCase() === "one-time-code") return true;
+    const hay = ((el.name || "") + " " + (el.id || "")).toLowerCase();
+    if (/otp|2fa|two-factor|one-time|verif|token/.test(hay)) return true;
+    // "code" as a standalone token only ("postcode"/"area-code" are addresses).
+    return hay.split(/[^a-z0-9]+/).includes("code");
   }
   function queryHost(type, q, ms = 10000) {
     // Dead-bridge hang guard: every round-trip races a timeout (popup and
@@ -219,10 +376,16 @@
     }
     neutralizeOpener();
     const f = fields || findFields();
+    // Single-field / multi-step pages (FxA, Google step 1): fill WHICHEVER
+    // fields exist right now — never abort for a missing password step.
     if (f.users[0] && entry.username) setNativeValue(f.users[0], entry.username);
     if (f.pass[0] && entry.password) {
       setNativeValue(f.pass[0], entry.password);
       // Multi-step chaining: remember entry; password step may render later.
+      try { sessionStorage.setItem("__pv_pending", JSON.stringify(entry)); } catch (_) {}
+    } else if (f.users[0] && entry.username && entry.password) {
+      // Step 1 filled email only: stash the entry so the password step
+      // (rendered later) can chain via chainPendingStep/otpObserver.
       try { sessionStorage.setItem("__pv_pending", JSON.stringify(entry)); } catch (_) {}
     }
     if (entry.totp) fillTotp(entry.totp, f);
@@ -238,12 +401,14 @@
     const f = fields || findFields();
     if (f.otp[0]) {
       setNativeValue(f.otp[0], code.replace(/\s/g, ""));
-      copyWithAutoclear(code); // fallback: paste-ready, auto-cleared in 30s
+      // Paste-ready fallback, auto-cleared in 30s — only when the
+      // "Copy TOTP automatically" setting is on.
+      if (settings.copy_totp_auto !== false) copyWithAutoclear(code);
       if (settings.auto_submit) {
         const form = f.otp[0].form;
         if (form && form.requestSubmit) form.requestSubmit();
       }
-    } else {
+    } else if (settings.copy_totp_auto !== false) {
       copyWithAutoclear(code);
     }
   }
@@ -281,8 +446,10 @@
 
   // ---------- inline suggestions dropdown ----------
   let dropEl = null;
+  let dropAnchor = null;
   function closeDrop() {
     if (dropEl) { dropEl.remove(); dropEl = null; }
+    dropAnchor = null;
     document.removeEventListener("click", outsideDrop, true);
   }
   function outsideDrop(e) {
@@ -292,39 +459,65 @@
     closeDrop();
     if (!rows.length || !isVisible(anchor)) return;
     dropEl = document.createElement("div");
-    dropEl.style.cssText = "position:absolute;z-index:2147483647;min-width:240px;max-width:320px;" +
-      "background:#0d131f;border:1px solid #26315c;border-radius:10px;padding:6px;" +
-      "box-shadow:0 12px 40px #000d;font:13px system-ui;color:#eef1ff;";
-    for (const r of rows.slice(0, 6)) {
+    dropEl.style.cssText = "position:absolute;z-index:2147483647;" +
+      "background:#111827;border:1px solid #1e293b;border-radius:8px;padding:6px;" +
+      "box-shadow:0 12px 40px #000d;font:13px system-ui;color:#eef1ff;box-sizing:border-box;";
+    // Container-level blur guard: mousedown ANYWHERE inside the dropdown must
+    // not steal focus from the input (React/SPA pages re-render or dismiss on
+    // blur, which otherwise cancels the row click before it fires).
+    dropEl.addEventListener("mousedown", (e) => { e.preventDefault(); });
+    // Indexed binding: row N strictly fires matches[N].onPick (closure-per-row
+    // over a sliced copy once mis-fired when the list re-rendered mid-click).
+    const items = rows.slice(0, 6);
+    items.forEach((r, index) => {
       const b = document.createElement("button");
       b.type = "button";
-      b.style.cssText = "display:block;width:100%;text-align:left;background:transparent;border:0;" +
-        "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;";
+      b.dataset.pvIndex = String(index);
+      b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
+        "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;";
       b.innerHTML = "";
+      // Service brand-icon circle (Bitwarden row layout).
+      const icon = document.createElement("div");
+      icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
+        "color:#080c14;font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:center;";
+      icon.textContent = brandLetter(r.entry || {});
+      const tx = document.createElement("div");
+      tx.style.cssText = "flex:1;min-width:0;";
       const t = document.createElement("div");
       t.style.fontWeight = "700";
       t.textContent = r.title;
       const s = document.createElement("div");
-      s.style.cssText = "color:#8e99c0;font-size:11px;";
+      s.style.cssText = "color:#8e99c0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
       s.textContent = r.sub;
-      b.append(t, s);
+      tx.append(t, s);
+      b.append(icon, tx);
       b.addEventListener("mouseenter", () => { b.style.background = "#1a2333"; });
       b.addEventListener("mouseleave", () => { b.style.background = "transparent"; });
-      b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); r.onPick(); closeDrop(); });
+      b.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pick = items[index] && items[index].onPick;
+        if (typeof pick === "function") pick();
+        closeDrop();
+      });
       dropEl.append(b);
-    }
+    });
     document.documentElement.appendChild(dropEl);
     const rc = anchor.getBoundingClientRect();
+    // Bitwarden parity: dropdown matches the input's EXACT bounding box.
+    dropEl.style.width = rc.width + "px";
     dropEl.style.left = (rc.left + window.scrollX) + "px";
     dropEl.style.top = (rc.bottom + window.scrollY + 4) + "px";
+    dropEl.style.boxSizing = "border-box";
+    dropAnchor = anchor;
     document.addEventListener("click", outsideDrop, true);
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrop(); }, true);
 
-  async function suggestFor(anchor) {
-    if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
-    if (!location.host) return;
-    const f = findFields();
+  // Shared row resolver: classifies the anchor, queries the vault ONCE, and
+  // returns dropdown rows (or null when nothing applies). Used by both the
+  // passive focus path and the badge-click path so they can never disagree.
+  async function resolveRows(anchor, f) {
     // Explicit parens: card-field OR checkout-form context (was `a || b && c`
     // which misclassified address inputs on /checkout as card fields).
     const form = anchor.closest("form");
@@ -332,37 +525,98 @@
       /check|pay|card/i.test(((form.id || "") + " " + location.pathname));
     const isCard = f.cards.includes(anchor) || inCheckoutForm;
     const isAddr = f.addr.includes(anchor);
+    // Unclassified inputs (search bars, plain textareas-as-inputs, unknown
+    // widgets) get NO dropdown — previously EVERY input fell into login query.
+    const isLogin = f.users.includes(anchor) || f.pass.includes(anchor) || f.newPass.includes(anchor);
+    if (f.otp.includes(anchor)) return null; // OTP: auto-inject owns it, no dropdown
+    if (!isCard && !isAddr && !isLogin) return null;
+    if (isCard && settings.suggest_cards) {
+      const cards = await queryHost("PV_CARDS", pageBase());
+      return cards.map((c) => ({
+        entry: { title: c.title, username: c.cardholder },
+        title: "💳 " + (c.title || "Card"),
+        sub: `${c.cardholder || ""} ${masked(c.number)}`.trim(),
+        onPick: () => fillCard(c),
+      }));
+    } else if (isAddr && settings.suggest_identities) {
+      const ids = await queryHost("PV_IDENTITIES", pageBase());
+      return ids.map((i) => ({
+        entry: { title: i.title, username: i.full_name },
+        title: "🪪 " + (i.title || i.full_name || "Identity"),
+        sub: [i.full_name, i.email].filter(Boolean).join(" • "),
+        onPick: () => fillIdentity(i),
+      }));
+    }
+    const logins = await queryHost("PV_QUERY", pageBase());
+    return logins.map((e) => ({
+      entry: e,
+      title: "🔑 " + (e.title || "(untitled)"),
+      sub: e.username || "",
+      onPick: () => fillLogin(e, f),
+    }));
+  }
+  async function suggestFor(anchor) {
+    if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
+    if (!location.host) return;
+    if (isSearchField(anchor)) return; // search bars: never touch, never query
     try {
-      if (isCard && settings.suggest_cards) {
-        const cards = await queryHost("PV_CARDS", pageBase());
-        showDrop(anchor, cards.map((c) => ({
-          title: "💳 " + (c.title || "Card"),
-          sub: `${c.cardholder || ""} ${masked(c.number)}`.trim(),
-          onPick: () => fillCard(c),
-        })));
-      } else if (isAddr && settings.suggest_identities) {
-        const ids = await queryHost("PV_IDENTITIES", pageBase());
-        showDrop(anchor, ids.map((i) => ({
-          title: "🪪 " + (i.title || i.full_name || "Identity"),
-          sub: [i.full_name, i.email].filter(Boolean).join(" • "),
-          onPick: () => fillIdentity(i),
-        })));
-      } else {
-        const logins = await queryHost("PV_QUERY", pageBase());
-        showDrop(anchor, logins.map((e) => ({
-          title: "🔑 " + (e.title || "(untitled)"),
-          sub: e.username || "",
-          onPick: () => fillLogin(e, f),
-        })));
-      }
+      const rows = await resolveRows(anchor, findFields());
+      if (rows) showDrop(anchor, rows);
+    } catch (_) { /* bridge down: stay silent, popup explains */ }
+  }
+  // Smart badge click: exactly 1 match fills IMMEDIATELY; several toggle the
+  // dropdown (open ↔ close) with zero flicker; zero matches says so quietly.
+  async function badgeFill(field) {
+    if (isBlocked() || phishingRefuse() || !location.host) return;
+    if (dropEl && dropAnchor === field) { closeDrop(); return; }
+    try {
+      const rows = await resolveRows(field, findFields());
+      if (!rows || !rows.length) { toast("🛡️ No matching credential for this site."); return; }
+      if (rows.length === 1) { rows[0].onPick(); return; }
+      showDrop(field, rows);
     } catch (_) { /* bridge down: stay silent, popup explains */ }
   }
   document.addEventListener("focusin", (e) => {
     const el = e.target;
-    if (el instanceof HTMLInputElement && isVisible(el)) suggestFor(el);
+    if (!(el instanceof HTMLInputElement) || !isVisible(el)) return;
+    if (isSearchField(el)) return; // YouTube/Google/Amazon search: stay blind
+    // Bitwarden parity: when icon-click-only mode is on, passive focus NEVER
+    // opens the dropdown — the shield badge is the only trigger.
+    if (settings.show_suggestions_on_icon_click_only) return;
+    suggestFor(el);
   });
 
-  // ---------- badge (legacy quick-fill) + generator dice ----------
+  // ---------- badge (in-field shield) + generator dice ----------
+  // Right-side overlay: position:fixed from the input's viewport rect, so it
+  // can never be crushed by inline layout or clipped by a left border.
+  // Repositioned on scroll/resize/DOM churn (see scan() tail).
+  const BADGE_SIZE = 24;
+  const badges = new Map(); // button -> field
+  function badgeRightOffset(field) {
+    // Native reveal/caps-lock icons, site eye-toggles, sibling manager
+    // badges: if anything live sits at the field's right edge, dock further
+    // left so icons never collide.
+    try {
+      const r = field.getBoundingClientRect();
+      const el = document.elementFromPoint(r.right - 6, r.top + r.height / 2);
+      if (el && el !== field && !badges.has(el) && !(el.dataset && el.dataset.pvBadged)) return 34;
+    } catch (_) {}
+    return 10;
+  }
+  function positionBadge(b, field) {
+    if (!isVisible(field)) { b.style.display = "none"; return; }
+    b.style.display = "flex";
+    const r = field.getBoundingClientRect();
+    const off = badgeRightOffset(field);
+    b.style.left = Math.max(0, r.right - BADGE_SIZE - off) + "px";
+    b.style.top = Math.max(0, r.top + (r.height - BADGE_SIZE) / 2) + "px";
+  }
+  function repositionBadges() {
+    for (const [b, field] of badges) {
+      if (!field.isConnected) { b.remove(); badges.delete(b); continue; }
+      positionBadge(b, field);
+    }
+  }
   function placeBadge(field) {
     if (field.dataset.pvBadged) return;
     field.dataset.pvBadged = "1";
@@ -370,13 +624,19 @@
     b.type = "button";
     b.title = "Fill with PhantomVault";
     b.textContent = "🛡️";
-    b.style.cssText = "position:absolute;z-index:2147483647;width:26px;height:26px;margin-left:-30px;" +
-      "border:1px solid #8b7cf6;border-radius:8px;background:#0d131f;cursor:pointer;font-size:14px;";
+    b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
+      "display:flex;align-items:center;justify-content:center;" +
+      "border:1px solid #8b7cf6;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
+    // mousedown first: preventDefault keeps input focus (no blur flicker),
+    // then click smart-fills (1 match) or toggles the dropdown (several).
+    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
     b.addEventListener("click", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();
-      await hotkeyFill();
+      await badgeFill(field);
     });
-    field.insertAdjacentElement("afterend", b);
+    document.documentElement.appendChild(b);
+    badges.set(b, field);
+    positionBadge(b, field);
   }
   function genPassword(len = 20) {
     const chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789!@#$%^&*-_+=";
@@ -391,8 +651,10 @@
     b.type = "button";
     b.title = "Generate strong password (PhantomVault)";
     b.textContent = "🎲";
-    b.style.cssText = "position:absolute;z-index:2147483647;width:26px;height:26px;margin-left:-30px;" +
-      "border:1px solid #10b981;border-radius:8px;background:#0d131f;cursor:pointer;font-size:14px;";
+    b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
+      "display:flex;align-items:center;justify-content:center;" +
+      "border:1px solid #10b981;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
+    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
     b.addEventListener("click", (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       const pw = genPassword();
@@ -405,7 +667,9 @@
       copyWithAutoclear(pw);
       toast("🎲 Strong password filled + copied — save it in PhantomVault!");
     });
-    field.insertAdjacentElement("afterend", b);
+    document.documentElement.appendChild(b);
+    badges.set(b, field);
+    positionBadge(b, field);
   }
 
   // ---------- zero-click load + multi-step chaining ----------
@@ -469,9 +733,13 @@
 
   function scan() {
     if (isBlocked()) return;
-    const { pass, newPass } = findFields();
-    pass.forEach(placeBadge);
-    newPass.forEach(placeDice);
+    // Badges ride every fillable field (the icon-click-only mode needs the
+    // badge present as the SOLE trigger — it must exist even though passive
+    // focus stays silent). Reposition pass keeps fixed overlays glued.
+    const f = findFields();
+    [...f.pass, ...f.users, ...f.cards].forEach(placeBadge);
+    f.newPass.forEach(placeDice);
+    repositionBadges();
   }
 
   // ---------- auto-save: offer to store freshly submitted credentials ----------
@@ -528,7 +796,8 @@
     form.addEventListener("submit", async () => {
       try {
         if (isBlocked() || phishingRefuse() || !location.host) return;
-        const user = form.querySelector('input[type="text"], input[type="email"]');
+        const user = [...form.querySelectorAll('input[type="text"], input[type="email"]')]
+          .find((el) => !isSearchField(el) && isVisible(el));
         const pw = form.querySelector('input[type="password"]:not([autocomplete="new-password"])');
         const username = (user && user.value || "").trim();
         const password = (pw && pw.value || "");
@@ -580,6 +849,16 @@
   scanForms();
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
   new MutationObserver(scanForms).observe(document.documentElement, { childList: true, subtree: true });
+  // Fixed overlays must track the viewport (passive listeners, no jank).
+  let reposT = 0;
+  const queueRepos = () => {
+    const now = Date.now();
+    if (now - reposT < 100) return;
+    reposT = now;
+    requestAnimationFrame(repositionBadges);
+  };
+  window.addEventListener("scroll", queueRepos, { passive: true, capture: true });
+  window.addEventListener("resize", queueRepos, { passive: true });
   otpObserver.observe(document.documentElement, { childList: true, subtree: true });
   if (document.readyState === "complete" || document.readyState === "interactive") {
     autofillOnLoad();

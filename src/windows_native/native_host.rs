@@ -105,13 +105,18 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if q.is_empty() {
                 return no("empty query (refusing vault dump)");
             }
+            // Omni-domain: the raw query plus equivalent siblings, brand
+            // stems, and stripped registrables all match (any-hit).
+            let variants = expand_query(&q);
             let entries: Vec<serde_json::Value> = vault
                 .credentials
                 .iter()
                 .filter(|c| {
-                    c.title.to_lowercase().contains(&q)
-                        || c.username.to_lowercase().contains(&q)
-                        || c.urls.iter().any(|u| u.to_lowercase().contains(&q))
+                    let title = c.title.to_lowercase();
+                    let user = c.username.to_lowercase();
+                    variants.iter().any(|v| {
+                        title.contains(v) || user.contains(v) || c.urls.iter().any(|u| u.to_lowercase().contains(v))
+                    })
                 })
                 .map(|c| {
                     serde_json::json!({
@@ -121,6 +126,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "password": c.password,
                         "totp": live_totp(&c.totp_secret),
                         "urls": c.urls,
+                        "folder": c.folder,
                         "reprompt": c.reprompt,
                         "last_changed": c.last_changed,
                     })
@@ -320,6 +326,129 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             }
         }
         "" => no("missing cmd"),
+        // Popup "All items": metadata ONLY (no secrets) for browsing.
+        // Secrets still travel exclusively via query/fill paths, so a
+        // compromised popup sees titles — never passwords or TOTP seeds.
+        // Covers every kind (Bitwarden vault browser); `fetch` below hands
+        // out exactly ONE item's secrets on explicit user action.
+        "list" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let logins: Vec<serde_json::Value> = vault
+                .credentials
+                .iter()
+                .filter(|c| c.deleted_at.is_none())
+                .map(|c| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "title": c.title,
+                        "username": c.username,
+                        "urls": c.urls,
+                        "folder": c.folder,
+                        "reprompt": c.reprompt,
+                    })
+                })
+                .collect();
+            let cards: Vec<serde_json::Value> = vault
+                .cards
+                .iter()
+                .filter(|k| k.deleted_at.is_none())
+                .map(|k| {
+                    let digits: String = k.card_number.chars().filter(|c| c.is_ascii_digit()).collect();
+                    serde_json::json!({
+                        "id": k.id,
+                        "title": k.title,
+                        "cardholder": k.cardholder_name,
+                        "masked": if digits.len() > 4 { format!("•••• {}", &digits[digits.len() - 4..]) } else { "••••".to_string() },
+                        "folder": k.folder,
+                    })
+                })
+                .collect();
+            let identities: Vec<serde_json::Value> = vault
+                .identities
+                .iter()
+                .filter(|i| i.deleted_at.is_none())
+                .map(|i| {
+                    serde_json::json!({
+                        "id": i.id,
+                        "title": i.title,
+                        "full_name": i.full_name,
+                        "email": i.email,
+                        "folder": i.folder,
+                    })
+                })
+                .collect();
+            let notes: Vec<serde_json::Value> = vault
+                .notes
+                .iter()
+                .filter(|n| n.deleted_at.is_none())
+                .map(|n| {
+                    serde_json::json!({
+                        "id": n.id,
+                        "title": n.title,
+                        "folder": n.folder,
+                    })
+                })
+                .collect();
+            crate::security::access_log::log_event(
+                "bridge-list",
+                &format!("{}+{}+{}+{}", logins.len(), cards.len(), identities.len(), notes.len()),
+            );
+            Answer {
+                reply: serde_json::json!({"ok": true, "logins": logins, "cards": cards, "identities": identities, "notes": notes}),
+                persist: false,
+            }
+        }
+        // Fetch ONE item's fill secrets by (kind, id). Trashed never served.
+        // This is what backs Fill/Copy on metadata rows — no vault dump.
+        "fetch" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let kind = req.get("kind").and_then(|k| k.as_i64()).unwrap_or(1) as i32;
+            let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            if id.is_empty() {
+                return no("id required");
+            }
+            let entry: Option<serde_json::Value> = match kind {
+                4 => vault.cards.iter().find(|k| k.id == id && k.deleted_at.is_none()).map(|k| {
+                    serde_json::json!({
+                        "id": k.id, "kind": 4, "title": k.title,
+                        "cardholder": k.cardholder_name, "number": k.card_number,
+                        "exp_month": k.exp_month, "exp_year": k.exp_year, "cvv": k.cvv,
+                    })
+                }),
+                5 => vault.identities.iter().find(|i| i.id == id && i.deleted_at.is_none()).map(|i| {
+                    serde_json::json!({
+                        "id": i.id, "kind": 5, "title": i.title,
+                        "full_name": i.full_name, "email": i.email,
+                        "phone": i.phone, "address": i.address,
+                    })
+                }),
+                3 => vault.notes.iter().find(|n| n.id == id && n.deleted_at.is_none()).map(|n| {
+                    serde_json::json!({
+                        "id": n.id, "kind": 3, "title": n.title, "content": n.content,
+                    })
+                }),
+                _ => vault.credentials.iter().find(|c| c.id == id && c.deleted_at.is_none()).map(|c| {
+                    serde_json::json!({
+                        "id": c.id, "kind": 1, "title": c.title,
+                        "username": c.username, "password": c.password,
+                        "totp": live_totp(&c.totp_secret),
+                        "urls": c.urls, "reprompt": c.reprompt,
+                        "last_changed": c.last_changed,
+                    })
+                }),
+            };
+            match entry {
+                Some(e) => {
+                    crate::security::access_log::log_event("bridge-fetch", &format!("{kind}:{id}"));
+                    Answer { reply: serde_json::json!({"ok": true, "entry": e}), persist: false }
+                }
+                None => no("item not found"),
+            }
+        }
         // Smart-autofill: record a fill (audit sidecar only, no vault write).
         "filled" => {
             if !unlocked {
@@ -574,6 +703,118 @@ fn url_domain(raw: &str) -> String {
     } else {
         parts[parts.len() - 2..].join(".")
     }
+}
+
+/// Equivalent-domain clusters (Bitwarden-style): one account spans every
+/// sibling (login on youtube.com matches a google.com credential).
+/// Trailing `.*` members are ccTLD-prefix rules (`google.co.*`).
+const EQUIV_CLUSTERS: &[&[&str]] = &[
+    &["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
+    &["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
+    &["facebook.com", "messenger.com", "instagram.com", "threads.net"],
+    &["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
+    &["apple.com", "icloud.com"],
+    &["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
+    &["sony.com", "playstation.com", "playstationnetwork.com"],
+    &["yahoo.com", "aol.com"],
+];
+
+/// Subdomain prefixes stripped before matching (`account.google.com` → google).
+const SUB_PREFIXES: &[&str] = &[
+    "account", "accounts", "login", "auth", "myaccount", "my", "app", "www",
+    "signin", "sso", "secure", "id", "mail",
+];
+
+/// Strip well-known login sub-prefixes (`account.google.com` → `google.com`).
+pub(crate) fn strip_sub_prefixes(host: &str) -> String {
+    let lower = host.to_lowercase();
+    let mut parts: Vec<&str> = lower.split('.').filter(|p| !p.is_empty()).collect();
+    while parts.len() > 2 && SUB_PREFIXES.contains(&parts[0]) {
+        parts.remove(0);
+    }
+    parts.join(".")
+}
+
+fn member_hit(member: &str, domain: &str) -> bool {
+    if let Some(prefix) = member.strip_suffix(".*") {
+        domain == prefix || domain.starts_with(&format!("{prefix}."))
+    } else {
+        domain == member
+            || domain.ends_with(&format!(".{member}"))
+            || member.ends_with(&format!(".{domain}"))
+    }
+}
+
+/// Brand-stem fallback: longest common first-label prefix (≥5 chars) shared
+/// by a cluster (`protonvpn`/`proton` → `proton`). Pure — unit tested.
+fn cluster_stem(members: &[&str]) -> Option<String> {
+    let labels: Vec<&str> = members
+        .iter()
+        .map(|m| m.trim_end_matches(".*").split('.').next().unwrap_or(""))
+        .collect();
+    let first = labels.first().copied().unwrap_or("");
+    let mut len = first.len();
+    for l in &labels[1..] {
+        len = first
+            .chars()
+            .zip(l.chars())
+            .take_while(|(a, b)| a == b)
+            .count()
+            .min(len);
+    }
+    if len >= 5 {
+        Some(first[..len].to_string())
+    } else {
+        None
+    }
+}
+
+fn first_label(domain: &str) -> String {
+    domain.split('.').next().unwrap_or("").to_string()
+}
+
+/// Expand one query host into equivalent match strings: itself, stripped
+/// host + every multi-label suffix (ccTLD-safe: `google.co.uk` is tested,
+/// not just the naive last-2 `co.uk`), cluster siblings, brand-stem hits.
+pub(crate) fn expand_query(raw_q: &str) -> Vec<String> {
+    let mut out = vec![raw_q.trim().to_lowercase()];
+    // Full host with login prefixes stripped (scheme/path/port removed).
+    let h = raw_q.trim().to_lowercase();
+    let h = h.rsplit("://").next().unwrap_or(&h);
+    let h = h.split('/').next().unwrap_or(h);
+    let h = h.split(':').next().unwrap_or(h);
+    let full = strip_sub_prefixes(h);
+    // Candidate domains: full host + every suffix with 2+ labels.
+    let labels: Vec<&str> = full.split('.').filter(|p| !p.is_empty()).collect();
+    let mut cands = vec![full.clone()];
+    for i in 1..labels.len() {
+        if labels.len() - i >= 2 {
+            cands.push(labels[i..].join("."));
+        }
+    }
+    for c in &cands {
+        if !c.is_empty() && !out.contains(c) {
+            out.push(c.clone());
+        }
+    }
+    for cluster in EQUIV_CLUSTERS {
+        let direct = cluster
+            .iter()
+            .any(|m| cands.iter().any(|d| member_hit(m, d)));
+        let tok = first_label(&full);
+        let stem_hit = cluster_stem(cluster).map(|stem| {
+            !tok.is_empty() && (tok == stem || tok.starts_with(&stem) || stem.starts_with(&tok))
+        });
+        if direct || stem_hit == Some(true) {
+            for m in *cluster {
+                let s = m.trim_end_matches(".*").to_string();
+                if !out.contains(&s) {
+                    out.push(s);
+                }
+            }
+        }
+    }
+    out
 }
 /// Install the native-messaging manifests for Chrome + Edge under HKCU and
 /// return the manifest path. `allowed_origin` must be the real extension
@@ -962,6 +1203,9 @@ mod tests {
 
     #[test]
     fn stats_reports_counts_and_score() {
+        // Hermetic: a real sidecar (pv_ext_stats.json) may exist in CWD from
+        // app/extension runs — start clean so counts are deterministic.
+        let _ = std::fs::remove_file(EXT_STATS_FILE);
         let mut v = vault_with_login();
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
         assert_eq!(r.reply["ok"], true);
@@ -1143,5 +1387,105 @@ mod tests {
             assert!(m.get(k).is_some(), "missing {k}");
         }
         let _ = PasskeyItem::default();
+    }
+
+    #[test]
+    fn omni_domain_matching() {
+        // Subdomain prefixes stripped.
+        assert_eq!(strip_sub_prefixes("account.google.com"), "google.com");
+        assert_eq!(strip_sub_prefixes("login.microsoftonline.com"), "microsoftonline.com");
+        // Cluster siblings expand.
+        let v = expand_query("youtube.com");
+        assert!(v.contains(&"google.com".to_string()));
+        assert!(v.contains(&"youtube.com".to_string()));
+        // Brand-stem fallback: protonvpn ↔ proton.
+        let v = expand_query("protonvpn.com");
+        assert!(v.contains(&"proton.me".to_string()));
+        assert!(v.contains(&"protonvpn.com".to_string()));
+        // ccTLD prefix rule: google.co.uk hits the google cluster.
+        let v = expand_query("mail.google.co.uk");
+        assert!(v.contains(&"google.com".to_string()));
+        // Unrelated domains stay lonely (no cross-contamination).
+        let v = expand_query("mybank.example");
+        assert_eq!(v, vec!["mybank.example".to_string()]);
+    }
+
+    #[test]
+    fn omni_query_matches_siblings_end_to_end() {
+        let mut v = Vault::new();
+        v.credentials.push(Credential {
+            id: "c9".into(),
+            title: "Google".into(),
+            username: "me@gmail.com".into(),
+            password: "pw".into(),
+            totp_secret: String::new(),
+            urls: vec!["https://accounts.google.com".into()],
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        // youtube.com query finds the google.com credential via cluster.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "youtube.com"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(r.reply["entries"][0]["username"], "me@gmail.com");
+    }
+
+    #[test]
+    fn list_exposes_metadata_never_secrets() {
+        let mut v = Vault::new();
+        v.credentials.push(Credential {
+            id: "c1".into(),
+            title: "Bank".into(),
+            username: "me".into(),
+            password: "s3cret".into(),
+            totp_secret: "JBSWY3DPEHPK3PXP".into(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "Finance".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "list"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "list"}));
+        assert_eq!(r.reply["ok"], true);
+        let e = &r.reply["logins"][0];
+        assert_eq!(e["title"], "Bank");
+        assert_eq!(e["folder"], "Finance");
+        assert!(e.get("password").is_none());
+        assert!(e.get("totp").is_none());
+        assert_eq!(r.reply["cards"].as_array().unwrap().len(), 0);
+        // fetch hands out exactly one item's secrets (trashed excluded).
+        // The live TOTP code renders for ANY decodable secret length now
+        // (new_unchecked — no 128-bit minimum); genuine junk still maps to "".
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": "c1"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["entry"]["password"], "s3cret");
+        let live = r.reply["entry"]["totp"].as_str().unwrap_or_default().to_string();
+        assert_eq!(live.len(), 6);
+        assert!(live.bytes().all(|c| c.is_ascii_digit()));
+        v.credentials[0].totp_secret = "!!!junk!!!".into();
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": "c1"}));
+        assert_eq!(r.reply["entry"]["totp"], "");
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": "nope"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": "c1"}));
+        assert_eq!(r.reply["ok"], false);
     }
 }

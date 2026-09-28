@@ -6,23 +6,20 @@ use crate::models::TotpAccount;
 
 /// একটি সিক্রেট কি (Secret Key) থেকে লাইভ ৬ ডিজিটের TOTP কোড এবং বাকি সময় বের করা
 /// (Legacy hero-ticker path — SHA1/6-digit fixed. Prefer generate_code_for_account.)
+/// Uses new_unchecked: short (80-bit) secrets hash EXACTLY per RFC 6238 —
+/// never padded, never rejected.
 pub fn generate_live_code(secret_base32: &str) -> std::result::Result<(String, u64), String> {
-    // স্পেস বা ড্যাশ থাকলে তা পরিষ্কার করে নেওয়া
-    let clean_secret = secret_base32.replace([' ', '-'], "").to_uppercase();
-
-    // Base32 সিক্রেট থেকে বাইট রিড করা
-    let secret_bytes = Secret::Encoded(clean_secret)
-        .to_bytes()
-        .map_err(|e| format!("Invalid Base32 Secret: {:?}", e))?;
+    let secret_bytes =
+        decode_secret_bytes(secret_base32).map_err(|e| format!("Invalid secret: {:?}", e))?;
 
     // RFC 6238 কনফিগারেশন
-    let totp = TOTP::new(
+    let totp = TOTP::new_unchecked(
         Algorithm::SHA1,
         6,  // ৬ ডিজিটের কোড
         1,  // Skew tolerance
         30, // ৩০ সেকেন্ডের পিরিয়ড
         secret_bytes,
-    ).map_err(|e| format!("TOTP init error: {}", e))?;
+    );
 
     // বর্তমান ইউনিক্স টাইমস্ট্যাম্প
     let current_time = SystemTime::now()
@@ -52,11 +49,76 @@ fn parse_totp_algorithm(name: &str) -> Result<Algorithm> {
     }
 }
 
+/// Strip a pasted value down to the pure Base32 secret: full
+/// `otpauth://...?secret=XYZ&...` URIs yield just the secret parameter;
+/// bare secrets pass through. Spaces, dashes, `=` padding, stray
+/// CR/LF/TAB, and case are all normalized (none carry entropy).
+pub fn extract_pure_base32(input: &str) -> String {
+    let trimmed = input.trim();
+    let raw_secret = if let Some(pos) = trimmed.find("secret=") {
+        let after = &trimmed[pos + 7..];
+        after.split('&').next().unwrap_or(after)
+    } else {
+        trimmed
+    };
+    raw_secret
+        .replace([' ', '-', '=', '\r', '\n', '\t'], "")
+        .to_uppercase()
+}
+
+/// Decode a stored secret to raw bytes. Primary: Base32 (what the vault
+/// stores). Rescue: HEX — some exporters hand over hex secrets, which are
+/// unambiguous to detect: Base32 has no `0/1/8/9`, so a string that fails
+/// Base32 AND contains those digits AND is all-hex with even length can only
+/// be hex. Anything else errors (never guess bytes — wrong bytes = wrong
+/// codes with no visible failure).
+pub(crate) fn decode_secret_bytes(secret_stored: &str) -> Result<Vec<u8>> {
+    let clean = extract_pure_base32(secret_stored);
+    // Padding-tolerant: `=` is metadata, not entropy — strip before decode.
+    let nopad = clean.trim_end_matches('=').to_string();
+    for cand in [&clean, &nopad] {
+        if let Ok(b) = Secret::Encoded(cand.clone()).to_bytes() {
+            if !b.is_empty() {
+                return Ok(b);
+            }
+        }
+    }
+    let h = clean.replace('=', "");
+    let looks_hex = !h.is_empty()
+        && h.len() % 2 == 0
+        && h.bytes().all(|c| c.is_ascii_hexdigit())
+        && h.bytes().any(|c| matches!(c, b'0' | b'1' | b'8' | b'9'));
+    if looks_hex {
+        let bytes: Option<Vec<u8>> = (0..h.len())
+            .step_by(2)
+            .map(|i| {
+                let hi = hex_val(h.as_bytes()[i])?;
+                let lo = hex_val(h.as_bytes()[i + 1])?;
+                Some(hi << 4 | lo)
+            })
+            .collect();
+        if let Some(b) = bytes {
+            if !b.is_empty() {
+                return Ok(b);
+            }
+        }
+    }
+    Err(VaultError::Crypto(format!(
+        "Invalid secret: not Base32 nor HEX ({} chars)",
+        clean.len()
+    )))
+}
+
+fn hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
 fn secret_bytes(secret_base32: &str) -> Result<Vec<u8>> {
-    let clean = secret_base32.replace([' ', '-'], "").to_uppercase();
-    Secret::Encoded(clean)
-        .to_bytes()
-        .map_err(|e| VaultError::Crypto(format!("Invalid Base32 secret: {:?}", e)))
+    decode_secret_bytes(secret_base32)
 }
 
 fn now_secs() -> Result<u64> {
@@ -135,8 +197,11 @@ pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
         _ => {
             let algo = parse_totp_algorithm(&algo_name)?;
             let period = if acc.period == 0 { 30 } else { acc.period };
-            let totp = TOTP::new(algo, digits, 1, period, secret)
-                .map_err(|e| VaultError::Crypto(format!("TOTP init error: {}", e)))?;
+            // new_unchecked: the EXACT raw bytes are hashed per RFC 6238 —
+            // 80-bit GitHub secrets and 256-bit AWS secrets alike. No
+            // zero-padding (padding changes the HMAC output = wrong codes),
+            // no 128-bit minimum rejection.
+            let totp = TOTP::new_unchecked(algo, digits, 1, period, secret);
             let now = now_secs()?;
             Ok((totp.generate(now), period - (now % period)))
         }
@@ -166,8 +231,7 @@ fn next_code_for_account_at(acc: &TotpAccount, now: u64) -> Result<String> {
         _ => {
             let algo = parse_totp_algorithm(&algo_name)?;
             let period = if acc.period == 0 { 30 } else { acc.period };
-            let totp = TOTP::new(algo, digits, 1, period, secret)
-                .map_err(|e| VaultError::Crypto(format!("TOTP init error: {}", e)))?;
+            let totp = TOTP::new_unchecked(algo, digits, 1, period, secret);
             Ok(totp.generate(now + period))
         }
     }
@@ -191,6 +255,7 @@ mod tests {
             algorithm: algorithm.into(),
             otp_type: otp_type.into(),
             counter,
+            favorite: false,
         }
     }
 
@@ -207,6 +272,111 @@ mod tests {
         for (c, want) in expected.iter().enumerate() {
             assert_eq!(hotp_full(secret, "SHA1", c as u64).unwrap() % 1_000_000, *want);
         }
+    }
+
+    #[test]
+    fn hex_secret_rescue_matches_base32_bytes() {
+        // Same 20 bytes as HEX (has 0/1/8/9 → unambiguous) and as Base32:
+        // both must decode to identical bytes and identical HOTP codes.
+        let raw = b"12345678901234567890";
+        let hex: String = raw.iter().map(|b| format!("{b:02X}")).collect();
+        let mut hex_acc = account("x", "SHA1", 6, "hotp", 0);
+        hex_acc.secret = hex.clone();
+        let b32_acc = account("12345678901234567890", "SHA1", 6, "hotp", 0);
+        assert_eq!(decode_secret_bytes(&hex).unwrap(), raw.to_vec());
+        assert_eq!(
+            hotp_full(&decode_secret_bytes(&hex).unwrap(), "SHA1", 0).unwrap() % 1_000_000,
+            hotp_full(raw, "SHA1", 0).unwrap() % 1_000_000
+        );
+        assert_eq!(
+            next_code_for_account_at(&hex_acc, 0).unwrap(),
+            next_code_for_account_at(&b32_acc, 0).unwrap()
+        );
+        // Padded Base32 still decodes (padding is metadata, not entropy).
+        // 6 bytes -> 10 chars + 6 '=' pads.
+        let padded = data_encoding::BASE32.encode(b"123456");
+        assert!(padded.contains('='));
+        assert_eq!(decode_secret_bytes(&padded).unwrap(), b"123456".to_vec());
+        // Genuine junk stays junk (symbols outside both alphabets).
+        assert!(decode_secret_bytes("!!!not-a-secret!!!").is_err());
+        assert!(decode_secret_bytes("").is_err());
+        // Base32 charset but wrong length still fails safe (no hex digits to
+        // rescue, no valid decode) — e.g. 6-char group with bad modulus.
+        assert!(decode_secret_bytes("ABCDEF!").is_err());
+    }
+
+    #[test]
+    fn extract_pure_base32_handles_uris_and_noise() {
+        assert_eq!(extract_pure_base32("  jbsw y3dp-====\r\n"), "JBSWY3DP");
+        assert_eq!(
+            extract_pure_base32("otpauth://totp/GitHub:me?secret=jbswy3dp&issuer=GitHub&period=30"),
+            "JBSWY3DP"
+        );
+        assert_eq!(
+            extract_pure_base32("otpauth://hotp/X?a=1&secret=ABCDEF&counter=7"),
+            "ABCDEF"
+        );
+        assert_eq!(extract_pure_base32("JBSWY3DP"), "JBSWY3DP");
+    }
+
+    #[test]
+    fn all_secret_lengths_generate_without_rejection() {
+        fn totp_acc(secret_field: &str) -> TotpAccount {
+            TotpAccount {
+                id: "t".into(),
+                account_name: "u".into(),
+                issuer: "i".into(),
+                secret: secret_field.into(),
+                digits: 6,
+                period: 30,
+                algorithm: "SHA1".into(),
+                otp_type: "totp".into(),
+                counter: 0,
+                favorite: false,
+            }
+        }
+        // 80 / 128 / 160 / 256-bit — GitHub, Google, AWS sizes. Every one
+        // must render a code (never Err → never the bad-secret badge).
+        let raws: [&[u8]; 4] = [
+            b"1234567890",
+            b"1234567890123456",
+            b"12345678901234567890",
+            b"12345678901234567890123456789012",
+        ];
+        for raw in raws {
+            let acc = totp_acc(&data_encoding::BASE32_NOPAD.encode(raw));
+            let (code, _) = generate_code_for_account(&acc).unwrap();
+            assert_eq!(code.len(), 6);
+            assert!(code.bytes().all(|c| c.is_ascii_digit()));
+            // Bit-exact: the TOTP window must equal our independent RFC 4226
+            // core on the SAME raw bytes (proves no padding/mutation).
+            let now = 1_700_000_000u64;
+            let expect = format!("{:06}", hotp_full(raw, "SHA1", now / 30 + 1).unwrap() % 1_000_000);
+            assert_eq!(next_code_for_account_at(&acc, now).unwrap(), expect);
+        }
+    }
+
+    #[test]
+    fn otpauth_uri_string_generates_valid_code() {
+        fn totp_acc(secret_field: &str) -> TotpAccount {
+            TotpAccount {
+                id: "t".into(),
+                account_name: "u".into(),
+                issuer: "i".into(),
+                secret: secret_field.into(),
+                digits: 6,
+                period: 30,
+                algorithm: "SHA1".into(),
+                otp_type: "totp".into(),
+                counter: 0,
+                favorite: false,
+            }
+        }
+        // Full URI pasted as the secret still yields a live 6-digit code.
+        let uri = "otpauth://totp/GitHub:me?secret=JBSWY3DPEHPK3PXP&issuer=GitHub";
+        let (code, _) = generate_code_for_account(&totp_acc(uri)).unwrap();
+        assert_eq!(code.len(), 6);
+        assert!(code.bytes().all(|c| c.is_ascii_digit()));
     }
 
     #[test]

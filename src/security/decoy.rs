@@ -85,6 +85,7 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         algorithm: "SHA1".to_string(),
         otp_type: "totp".to_string(),
         counter: 0,
+        favorite: false,
     });
     save_vault(&vault, &pw, DECOY_FILE)
         .map_err(|e| VaultError::Security(format!("decoy seal failed: {e}")))?;
