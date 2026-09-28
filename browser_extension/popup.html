@@ -18,6 +18,20 @@
              background: #1a2450; color: #fff; cursor: pointer; font-weight: 700; }
     button.fill { background: #8b7cf6; }
     #status { color: #5b6589; font-size: 12px; text-align: center; }
+    #vaultSearch { width: 100%; box-sizing: border-box; background: #0b1226; color: #eef1ff;
+      border: 1px solid #26315c; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+      margin-bottom: 8px; font-family: inherit; }
+    .filterrow { display: flex; gap: 8px; margin-bottom: 8px; }
+    .filterrow select { flex: 1; background: #0b1226; color: #eef1ff; border: 1px solid #26315c;
+      border-radius: 8px; padding: 6px; font-size: 12px; min-width: 0; }
+    .sechead { color: #8e99c0; font-size: 11px; font-weight: 800; margin: 8px 2px 6px;
+      padding-top: 6px; border-top: 1px solid #1a2450; }
+    .sechead:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
+    .brandrow { display: flex; gap: 10px; align-items: center; }
+    .brandic { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 16px; background: #8b7cf6;
+      color: #080c14; font-weight: 900; font-size: 15px; display: flex;
+      align-items: center; justify-content: center; }
+    .brandtx { flex: 1; min-width: 0; }
     #langToggle { float: right; flex: 0 0 auto; width: 44px; font-size: 11px; }
     .row.focused { outline: 2px solid #38bdf8; }
     .totp { display: flex; align-items: center; gap: 8px; margin-top: 6px;
@@ -50,7 +64,21 @@
     <button id="tabSettings">⚙️ Autofill Settings</button>
   </div>
   <div id="vaultPane">
-    <div id="list"></div>
+    <input id="vaultSearch" placeholder="🔍 Search" />
+    <div class="filterrow">
+      <select id="folderFilter"><option value="">📁 Folder</option></select>
+      <select id="typeFilter">
+        <option value="all">📋 Type: All</option>
+        <option value="1">🔑 Logins</option>
+        <option value="4">💳 Cards</option>
+        <option value="5">🪪 Identities</option>
+        <option value="3">📝 Notes</option>
+      </select>
+    </div>
+    <div id="suggestHead" class="sechead"></div>
+    <div id="suggestList"></div>
+    <div id="allHead" class="sechead"></div>
+    <div id="allList"></div>
     <div id="status">Loading…</div>
   </div>
   <div id="statsPane" class="hidden">

@@ -44,6 +44,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "PV_QUERY") {
       return await hostRequest({ cmd: "query", app: msg.app || msg.url || "" });
     }
+    if (msg.type === "PV_LIST") {
+      return await hostRequest({ cmd: "list" });
+    }
+    if (msg.type === "PV_FETCH") {
+      return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });
+    }
     if (msg.type === "PV_CARDS") {
       return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "" });
     }
@@ -113,11 +119,49 @@ chrome.commands.onCommand.addListener(async (command) => {
   } catch (_) { /* unsupported page */ }
 });
 
-// ---- Toolbar badge: matching-login count per tab ----
+// ---- Toolbar badge: STRICT domain match count per tab ----
+// The host matches usernames too ("@gmail.com" would inflate every page),
+// so the badge re-filters to website domains only — same rule as popup.
 function pvRegistrable(host) {
   const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
   if (parts.length <= 2) return parts.join(".");
   return parts.slice(-2).join(".");
+}
+const PV_EQUIV = [
+  ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
+  ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
+  ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
+  ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
+  ["apple.com", "icloud.com"],
+  ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
+  ["sony.com", "playstation.com", "playstationnetwork.com"],
+  ["yahoo.com", "aol.com"],
+];
+function pvMemberHit(member, domain) {
+  if (member.endsWith(".*")) {
+    const p = member.slice(0, -2);
+    return domain === p || domain.startsWith(p + ".");
+  }
+  return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
+}
+function pvEntryMatchesPage(e, pageHost) {
+  const urls = (e && e.urls) || [];
+  if (!urls.length) {
+    // No stored URL: title text only (never username/email).
+    const t = String((e && e.title) || "").toLowerCase();
+    const base = pvRegistrable(pageHost);
+    return !!base && t.includes(base);
+  }
+  return urls.some((raw) => {
+    let d = "";
+    try {
+      d = new URL(raw.includes("://") ? raw : "https://" + raw).hostname.toLowerCase();
+    } catch (_) { return false; }
+    if (!d || !pageHost) return false;
+    if (pvRegistrable(d) === pvRegistrable(pageHost)) return true;
+    return PV_EQUIV.some((c) =>
+      c.some((m) => pvMemberHit(m, d)) && c.some((m) => pvMemberHit(m, pageHost)));
+  });
 }
 
 async function refreshBadge(tabId, url) {
@@ -132,7 +176,9 @@ async function refreshBadge(tabId, url) {
       return;
     }
     const res = await hostRequest({ cmd: "query", app: base });
-    const n = res && res.ok && Array.isArray(res.entries) ? res.entries.length : 0;
+    const entries = res && res.ok && Array.isArray(res.entries) ? res.entries : [];
+    const pageHost = new URL(url).hostname.toLowerCase();
+    const n = entries.filter((e) => pvEntryMatchesPage(e, pageHost)).length;
     await chrome.action.setBadgeBackgroundColor({ color: "#38bdf8", tabId });
     await chrome.action.setBadgeText({ text: n > 0 ? String(Math.min(n, 99)) : "", tabId });
   } catch (_) {

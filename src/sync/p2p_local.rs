@@ -99,6 +99,75 @@ pub fn verify_pin(candidate: &str) -> bool {
             == 0
 }
 
+// ---------------------------------------------------------------------------
+// PIN brute-force brake: 5 consecutive failures from one IP lock it out for
+// 30 seconds (429/403 + loud log). Success resets the counter. Successive
+// legitimate typos (≤4) never trigger. In-memory only — restarts clear it.
+// ---------------------------------------------------------------------------
+
+/// Consecutive-failure budget per IP before lockout.
+pub const PIN_MAX_FAILS: u32 = 5;
+/// Lockout window per offending IP.
+pub const PIN_LOCKOUT_SECS: u64 = 30;
+
+struct PinThrottle {
+    fails: u32,
+    locked_until: Option<std::time::Instant>,
+}
+
+fn pin_throttle_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, PinThrottle>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, PinThrottle>>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// True when `ip` is currently locked out (caller returns 429).
+pub fn pin_locked_out(ip: &str) -> bool {
+    let now = std::time::Instant::now();
+    pin_throttle_map()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(ip).and_then(|t| t.locked_until))
+        .map(|until| now < until)
+        .unwrap_or(false)
+}
+
+/// Record one PIN verdict for `ip`. Success clears failures + lockout.
+pub fn pin_record(ip: &str, ok: bool) {
+    let Ok(mut m) = pin_throttle_map().lock() else {
+        return;
+    };
+    if ok {
+        m.remove(ip);
+        return;
+    }
+    let e = m.entry(ip.to_string()).or_insert(PinThrottle { fails: 0, locked_until: None });
+    e.fails = e.fails.saturating_add(1);
+    if e.fails >= PIN_MAX_FAILS {
+        e.locked_until = Some(std::time::Instant::now() + std::time::Duration::from_secs(PIN_LOCKOUT_SECS));
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn pin_throttle_test_set(ip: &str, fails: u32, locked_secs_from_now: i64) {
+    // Test hook: plant exact throttle state (negative = already expired).
+    let until = if locked_secs_from_now > 0 {
+        Some(std::time::Instant::now() + std::time::Duration::from_secs(locked_secs_from_now as u64))
+    } else {
+        None
+    };
+    if let Ok(mut m) = pin_throttle_map().lock() {
+        m.insert(ip.to_string(), PinThrottle { fails, locked_until: until });
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn pin_throttle_test_clear() {
+    if let Ok(mut m) = pin_throttle_map().lock() {
+        m.clear();
+    }
+}
+
 /// Presence beacon. `head_sha`/`mtime` describe the CIPHERTEXT only.
 pub fn beacon_json(version: &str, head_sha: &str) -> String {
     let name = std::env::var("COMPUTERNAME")
@@ -223,6 +292,7 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
 /// Route one request. Pure decision surface (no FS here — the caller adopts).
 /// Returns (status, body, optional adoption). Pairing PIN (when configured)
 /// gates BOTH endpoints: GET reads `?pin=`, POST reads the `pin` field.
+/// `peer_ip` feeds the brute-force brake (5 fails → 30s lockout, 429).
 pub fn route(
     method: &str,
     path: &str,
@@ -230,6 +300,7 @@ pub fn route(
     local_blob: &[u8],
     local_sha: &str,
     local_mtime: u64,
+    peer_ip: &str,
 ) -> (u16, String, Option<(String, Vec<u8>)>) {
     // Split query string (?pin=…) — minimal HTTP only.
     let (clean_path, query_pin) = match path.split_once('?') {
@@ -243,8 +314,16 @@ pub fn route(
         None => (path, None),
     };
     if method == "GET" && clean_path == "/p2p/pull" {
-        if pin_required() && !verify_pin(query_pin.as_deref().unwrap_or("")) {
-            return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+        if pin_required() {
+            if pin_locked_out(peer_ip) {
+                return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
+            }
+            let ok = verify_pin(query_pin.as_deref().unwrap_or(""));
+            pin_record(peer_ip, ok);
+            if !ok {
+                crate::security::access_log::log_event("p2p", &format!("bad PIN from {peer_ip}"));
+                return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+            }
         }
         let body = serde_json::json!({
             "sha": local_sha,
@@ -259,10 +338,16 @@ pub fn route(
             Ok(v) => v,
             Err(_) => return (400, r#"{"ok":false,"error":"bad json"}"#.into(), None),
         };
-        if pin_required()
-            && !verify_pin(v.get("pin").and_then(|p| p.as_str()).unwrap_or(""))
-        {
-            return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+        if pin_required() {
+            if pin_locked_out(peer_ip) {
+                return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
+            }
+            let ok = verify_pin(v.get("pin").and_then(|p| p.as_str()).unwrap_or(""));
+            pin_record(peer_ip, ok);
+            if !ok {
+                crate::security::access_log::log_event("p2p", &format!("bad PIN from {peer_ip}"));
+                return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+            }
         }
         let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
         let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("");
@@ -340,6 +425,11 @@ fn read_full_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
 
 /// Serve ONE connection: route, optionally adopt via secure_write, respond.
 fn serve_conn(mut stream: TcpStream) {
+    // Peer IP for the PIN brake; unresolvable → throttle key falls back.
+    let peer_ip = stream
+        .peer_addr()
+        .map(|a| a.ip().to_string())
+        .unwrap_or_default();
     let raw = match read_full_request(&mut stream) {
         Some(r) => r,
         None => return,
@@ -353,7 +443,7 @@ fn serve_conn(mut stream: TcpStream) {
     };
     let blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
     let (local_sha, local_mtime) = local_head();
-    let (status, resp_body, adopt) = route(&method, &path, &body, &blob, &local_sha, local_mtime);
+    let (status, resp_body, adopt) = route(&method, &path, &body, &blob, &local_sha, local_mtime, &peer_ip);
     if let Some((sha, data)) = adopt {
         // Newer-or-different remote head: adopt atomically. mtime comparison
         // happens client-side (sync_with_peer); the listener trusts the
@@ -579,7 +669,7 @@ mod tests {
         let blob = b"ciphertext-bytes";
         let sha = sha_hex(blob);
         // Pull mirrors the blob.
-        let (st, body, adopt) = route("GET", "/p2p/pull", b"", blob, &sha, 99);
+        let (st, body, adopt) = route("GET", "/p2p/pull", b"", blob, &sha, 99, "192.0.2.10");
         assert_eq!(st, 200);
         assert!(adopt.is_none());
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
@@ -587,36 +677,36 @@ mod tests {
         assert_eq!(v["mtime"], 99);
         // Same-sha push → no adopt.
         let push = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob)}).to_string();
-        let (st, _, adopt) = route("POST", "/p2p/sync", push.as_bytes(), blob, &sha, 1);
+        let (st, _, adopt) = route("POST", "/p2p/sync", push.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 200);
         assert!(adopt.is_none());
         // Newer blob → adopt with verified SHA (mtime must be strictly newer).
         let blob2 = b"newer-ciphertext";
         let sha2 = sha_hex(blob2);
         let push2 = serde_json::json!({"sha": sha2, "mtime": 2, "blob_b64": base64_encode(blob2)}).to_string();
-        let (st, _, adopt) = route("POST", "/p2p/sync", push2.as_bytes(), blob, &sha, 1);
+        let (st, _, adopt) = route("POST", "/p2p/sync", push2.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 200);
         let (got_sha, got_blob) = adopt.unwrap();
         assert_eq!(got_sha, sha2);
         assert_eq!(got_blob, blob2);
         // Stale push (older mtime) → 409, local kept.
         let stale = serde_json::json!({"sha": sha2, "mtime": 1, "blob_b64": base64_encode(blob2)}).to_string();
-        let (st, _, adopt) = route("POST", "/p2p/sync", stale.as_bytes(), blob, &sha, 5);
+        let (st, _, adopt) = route("POST", "/p2p/sync", stale.as_bytes(), blob, &sha, 5, "192.0.2.10");
         assert_eq!(st, 409);
         assert!(adopt.is_none());
         // Missing mtime → 400.
         let no_ts = serde_json::json!({"sha": sha2, "blob_b64": base64_encode(blob2)}).to_string();
-        assert_eq!(route("POST", "/p2p/sync", no_ts.as_bytes(), blob, &sha, 1).0, 400);
+        assert_eq!(route("POST", "/p2p/sync", no_ts.as_bytes(), blob, &sha, 1, "192.0.2.10").0, 400);
         // Tampered body (sha lies) → 400, nothing adopted.
         let evil = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob2)}).to_string();
-        let (st, _, adopt) = route("POST", "/p2p/sync", evil.as_bytes(), blob, &sha, 1);
+        let (st, _, adopt) = route("POST", "/p2p/sync", evil.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 400);
         assert!(adopt.is_none());
         // Oversize body → refused at framing.
         let mut big = b"POST /p2p/sync HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n".to_vec();
         big.extend_from_slice(b"{}");
         assert!(parse_http_request(&big).is_none());
-        assert_eq!(route("GET", "/nope", b"", blob, &sha, 1).0, 404);
+        assert_eq!(route("GET", "/nope", b"", blob, &sha, 1, "192.0.2.10").0, 404);
     }
 
     #[test]
@@ -660,7 +750,7 @@ mod tests {
             }
         }
         let (status, body, _) = match parse_http_request(&raw) {
-            Some((m, p, b)) => route(&m, &p, &b, &blob, &sha, mtime),
+            Some((m, p, b)) => route(&m, &p, &b, &blob, &sha, mtime, "127.0.0.1"),
             None => (400, r#"{"ok":false}"#.into(), None),
         };
         let _ = stream.write_all(&http_response(status, &body));
@@ -718,19 +808,43 @@ mod tests {
         let blob = b"gate-ct";
         let sha = sha_hex(blob);
         // GET without pin → 403; with pin → 200.
-        assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1).0, 403);
-        let (st, _, _) = route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1);
+        assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1, "192.0.2.20").0, 403);
+        let (st, _, _) = route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1, "192.0.2.20");
         assert_eq!(st, 200);
         // POST without pin → 403; wrong pin → 403; right pin → proceeds.
         let mk = |pin_val: &str| {
             serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x"), "pin": pin_val}).to_string()
         };
-        assert_eq!(route("POST", "/p2p/sync", mk("").as_bytes(), blob, &sha, 1).0, 403);
-        assert_eq!(route("POST", "/p2p/sync", mk("000000").as_bytes(), blob, &sha, 1).0, 403);
-        let (st, _, adopt) = route("POST", "/p2p/sync", mk(&pin).as_bytes(), blob, &sha, 1);
+        assert_eq!(route("POST", "/p2p/sync", mk("").as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
+        assert_eq!(route("POST", "/p2p/sync", mk("000000").as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
+        let (st, _, adopt) = route("POST", "/p2p/sync", mk(&pin).as_bytes(), blob, &sha, 1, "192.0.2.20");
         assert_eq!(st, 200);
         assert!(adopt.is_some());
         clear_pin_file();
         let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn pin_lockout_after_five_fails() {
+        pin_throttle_test_clear();
+        let ip = "198.51.100.7";
+        let other = "198.51.100.8";
+        // 4 fails: still allowed through to 403 (not yet locked).
+        for _ in 0..4 {
+            assert!(!pin_locked_out(ip));
+            pin_record(ip, false);
+        }
+        assert!(!pin_locked_out(ip));
+        // 5th fail trips the 30s lockout; other IPs unaffected.
+        pin_record(ip, false);
+        assert!(pin_locked_out(ip));
+        assert!(!pin_locked_out(other));
+        // Success clears failures + lockout.
+        pin_record(ip, true);
+        assert!(!pin_locked_out(ip));
+        // Pre-seeded expired lockout reads as open.
+        pin_throttle_test_set(ip, 9, -5);
+        assert!(!pin_locked_out(ip));
+        pin_throttle_test_clear();
     }
 }

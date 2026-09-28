@@ -30,6 +30,8 @@ base64 = "0.22"
 data-encoding = "2.6"
 url = "2.5"
 rqrr = "0.7"
+# Indestructible QR ingestion: ZXing-port multi-pass decoder (+ rqrr fallback).
+rxing = "0.5"
 image = "0.25"
 # Zero-lockin: on-screen Google Authenticator migration QR (grid API only —
 # PNG rasterized manually via `image`, no default features needed).
@@ -99,6 +101,9 @@ global-hotkey = "0.6"
 
 # Raw window handle for HWND extraction
 raw-window-handle = "0.6"
+
+# Diet: mi-malloc reclaims freed pages to the OS instead of hoarding heap.
+mimalloc = { version = "0.1", default-features = false }
 
 [build-dependencies]
 slint-build = "1.8"

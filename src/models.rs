@@ -210,6 +210,8 @@ pub struct TotpAccount {
     pub otp_type: String, // "totp", "hotp", "steam"
     #[serde(default)]
     pub counter: u64, // HOTP moving factor
+    #[serde(default)]
+    pub favorite: bool, // sidebar ⭐ (serde default keeps old vaults loading)
 }
 
 fn default_algorithm() -> String {
@@ -1128,6 +1130,7 @@ impl From<VaultGen3> for Vault {
                     algorithm: default_algorithm(),
                     otp_type: default_otp_type(),
                     counter: 0,
+                    favorite: false,
                 })
                 .collect(),
             licenses: old.licenses,

@@ -170,28 +170,29 @@ pub fn import_any_file(
     Ok(summary)
 }
 
+/// Login dedup key: title + username (case-insensitive, trimmed) + EXACT
+/// password (case-sensitive — passwords are). Two rows sharing title/user
+/// but different passwords are NEVER the same item (decoy vs real password,
+/// rotation) and must both import.
+fn dedup_key(title: &str, username: &str, password: &str) -> String {
+    format!(
+        "{}:{}:{}",
+        title.trim().to_lowercase(),
+        username.trim().to_lowercase(),
+        password
+    )
+}
+
 /// Duplicate probe for the login dedup path. Trashed items never block:
 /// the user may re-add (or re-import) a credential whose older copy sits in
-/// Trash awaiting its 30-day shred. Key = title + username + (password OR
-/// URL overlap): a rotation (new password, new URL) imports visibly instead
+/// Trash awaiting its 30-day shred. An item is ONLY a duplicate when title,
+/// username, AND password are all identical — a different password (rotation,
+/// decoy/fake entry alongside the real one) ALWAYS imports visibly instead
 /// of vanishing as a "duplicate". Pure — unit tested.
-fn dup_login(vault: &Vault, title: &str, user: &str, password: &str, urls: &[String]) -> bool {
+fn dup_login(vault: &Vault, title: &str, user: &str, password: &str) -> bool {
+    let want = dedup_key(title, user, password);
     vault.credentials.iter().any(|c| {
-        if c.deleted_at.is_some()
-            || c.title.to_lowercase() != title.to_lowercase()
-            || c.username.to_lowercase() != user.to_lowercase()
-        {
-            return false;
-        }
-        if c.password == password {
-            return true;
-        }
-        let want: Vec<String> = urls.iter().map(|u| u.to_lowercase()).collect();
-        !want.is_empty()
-            && c.urls.iter().any(|u| {
-                let have = u.to_lowercase();
-                want.iter().any(|w| w == &have || have.contains(w.as_str()) || w.contains(have.as_str()))
-            })
+        c.deleted_at.is_none() && dedup_key(&c.title, &c.username, &c.password) == want
     })
 }
 
@@ -205,14 +206,10 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
             vault.folders.push(folder.clone());
         }
         // Login-shaped rows (kind 1 + fallback arm) dedup within the batch.
+        // Password-aware: identical rows collapse, but a second row with a
+        // different password (or URL) imports instead of vanishing.
         if r.kind != 2 && r.kind != 3 && r.kind != 4 && r.kind != 5 && r.kind != 6 {
-            let fp = format!(
-                "L\x00{}\x00{}\x00{}\x00{}",
-                title.to_lowercase(),
-                r.a.to_lowercase(),
-                r.b,
-                r.c
-            );
+            let fp = format!("L\x00{}\x00{}", dedup_key(&title, &r.a, &r.b), r.c);
             if !seen_batch.insert(fp) {
                 summary.duplicates_skipped += 1;
                 continue;
@@ -340,7 +337,7 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     continue;
                 }
                 let urls: Vec<String> = r.c.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
-                if dup_login(vault, &title, &r.a, &r.b, &urls) {
+                if dup_login(vault, &title, &r.a, &r.b) {
                     summary.duplicates_skipped += 1;
                     continue;
                 }
@@ -724,6 +721,36 @@ mod tests {
         merge(&mut v, vec![login_raw("GitHub", "me"), login_raw("GitHub", "me")], &mut s3);
         assert_eq!(s3.logins, 0);
         assert_eq!(s3.duplicates_skipped, 2);
+    }
+
+    #[test]
+    fn same_user_different_password_never_drops_either() {
+        // The Facebook data-loss case: decoy/fake entries plus the ONE real
+        // password, all sharing title + username + URL. Every distinct
+        // password must survive the import.
+        fn fb(pw: &str) -> RawItem {
+            RawItem {
+                kind: 1,
+                title: "Facebook".into(),
+                a: "me".into(),
+                b: pw.into(),
+                c: "https://facebook.com".into(),
+                ..Default::default()
+            }
+        }
+        let mut v = Vault::new();
+        let mut s = ImportSummary::default();
+        merge(&mut v, vec![fb("fake-1"), fb("REAL-PW"), fb("fake-2")], &mut s);
+        assert_eq!(s.logins, 3);
+        assert_eq!(s.duplicates_skipped, 0);
+        assert!(v.credentials.iter().any(|c| c.password == "REAL-PW"));
+        // Re-import of the identical batch merges nothing and wipes nothing.
+        let mut s2 = ImportSummary::default();
+        merge(&mut v, vec![fb("fake-1"), fb("REAL-PW"), fb("fake-2")], &mut s2);
+        assert_eq!(s2.logins, 0);
+        assert_eq!(s2.duplicates_skipped, 3);
+        assert_eq!(v.credentials.len(), 3);
+        assert!(v.credentials.iter().any(|c| c.password == "REAL-PW"));
     }
 
     #[test]

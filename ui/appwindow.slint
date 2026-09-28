@@ -6,9 +6,10 @@ import { Button, CheckBox, ComboBox, LineEdit, ScrollView, TextEdit } from "std-
 // frozen contract with src/main.rs — NEVER rename them (UI-only redesign).
 // =============================================================================
 
-// Unified row for all 6 item kinds. kind: 1 login, 2 license, 3 note,
-// 4 card, 5 identity, 6 ssh. user=subtitles, secret=protected value,
-// meta=short aux (expiry/phone/fingerprint), url+notes as applicable.
+// Unified row for all item kinds. kind: 1 login, 2 license, 3 note,
+// 4 card, 5 identity, 6 ssh, 8 standalone 2FA. user=subtitles,
+// secret=protected value, meta=short aux (expiry/phone/fingerprint),
+// url+notes as applicable.
 struct CredentialView {
     id: string,
     kind: int,
@@ -22,6 +23,7 @@ struct CredentialView {
     totp: string,
     health: string,
     fav: bool,
+    sel: bool,
 }
 
 // Retired password row (secret rides along for the copy button; RAM-only).
@@ -61,6 +63,7 @@ struct AuthView {
     // Per-card live countdown: seconds left (TOTP) / -1 (HOTP) + label.
     secs: int,
     countdown: string,
+    fav: bool,
 }
 
 // Resident passkey row. meta is preformatted ("3 signs").
@@ -435,6 +438,8 @@ export component MainWindow inherits Window {
     in-out property <string> f_a;
     in-out property <string> f_b;
     in-out property <string> f_c;
+    // Secondary website URLs (primary stays in f_c above).
+    in-out property <[string]> f_urls;
     in-out property <string> f_d;
     in-out property <string> f_e;
     in-out property <string> f_notes;
@@ -470,17 +475,32 @@ export component MainWindow inherits Window {
     in-out property <bool> d_secret_visible: false;
     in-out property <bool> d_reprompt: false;
     in-out property <bool> d_stale: false;
+    in-out property <string> d_age_info: "";
     in-out property <bool> d_fav: false;
     in-out property <[HistoryView]> d_history;
     in-out property <bool> show_history: false;
     in-out property <bool> show_fav_only: false;
     in-out property <bool> showing_trash: false;
+    // Bulk-select mode (Column 2): checkbox per card + bottom action bar.
+    in-out property <bool> select_mode: false;
+    in-out property <int> selected_count: 0;
+    in-out property <string> selected_label: "";
+    in-out property <string> bulk_folder: "General";
     in-out property <string> trash_label: "Trash";
     in-out property <bool> show_empty_confirm: false;
     in-out property <bool> d_trashed: false;
     callback restore_item(int, string);
     callback empty_trash();
     in-out property <bool> d_travel: false;
+    // In-RAM attachment preview (images decoded to pixels, text decoded to
+    // string — plaintext never touches disk). kind: "image" | "text" | "other".
+    in-out property <bool> att_preview: false;
+    in-out property <string> att_preview_id: "";
+    in-out property <string> att_preview_name: "";
+    in-out property <string> att_preview_kind: "";
+    in-out property <string> att_preview_info: "";
+    in-out property <image> att_preview_image;
+    in-out property <string> att_preview_text: "";
     in-out property <bool> exp_confirm: false;
     in-out property <string> exp_att_id: "";
     in-out property <[AttachmentView]> d_attachments;
@@ -505,6 +525,7 @@ export component MainWindow inherits Window {
     in-out property <string> ga_page: "";
     in-out property <string> ga_warn: "";
     in-out property <bool> show_webcam_scan: false;
+    in-out property <image> webcam_frame;
     in-out property <int> alias_provider: 0;
     in-out property <string> alias_domain;
     in-out property <string> alias_token;
@@ -544,6 +565,15 @@ export component MainWindow inherits Window {
     in-out property <string> recover_1;
     in-out property <string> recover_2;
     in-out property <string> recover_3;
+    // First-run onboarding carousel (shown only when no vault exists on disk).
+    in-out property <bool> show_onboarding: false;
+    in-out property <int> onboarding_step: 1;
+    in-out property <string> ob_strength_label: "";
+    in-out property <float> ob_strength_frac: 0.0;
+    in-out property <string> ob_error: "";
+    in-out property <string> ob_new_text: "";
+    in-out property <string> ob_confirm_text: "";
+    callback ob_pw_changed(string);
     callback generate_shards();
     callback recover_with_shards(string, string, string);
     callback stego_hide();
@@ -638,12 +668,19 @@ export component MainWindow inherits Window {
     in-out property <float> gen_entropy_bits: 0.0;
     callback unlock_requested(string);
     callback copy_password_requested(string);
+    callback quick_copy(int, string);
+    callback toggle_totp_favorite(string);
     callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
     callback delete_item_requested(int, string);
     callback type_filter_changed(int);
     callback folder_filter_changed(string);
     callback fav_filter_changed(bool);
     callback toggle_favorite(int, string);
+    callback toggle_select(int, string);
+    callback clear_selection();
+    callback bulk_favorite();
+    callback bulk_move(string);
+    callback bulk_trash();
     callback show_trash_view();
     callback open_url(string);
     callback open_new_form(int);
@@ -651,6 +688,9 @@ export component MainWindow inherits Window {
     callback add_folder_requested(string);
     callback add_custom_field(int, string, string);
     callback delete_custom_field(int);
+    callback add_url();
+    callback update_url(int, string);
+    callback remove_url(int);
     callback toggle_pending_field(int);
     callback toggle_saved_field(int, string, int);
     callback edit_item_requested(int, string);
@@ -698,6 +738,7 @@ export component MainWindow inherits Window {
     callback pick_attachment(int, string);
     callback download_attachment(int, string, string);
     callback delete_attachment(int, string, string);
+    callback preview_attachment(int, string, string);
     callback toggle_travel(int, string);
     callback regenerate();
     callback use_password(string);
@@ -833,6 +874,75 @@ export component MainWindow inherits Window {
         }
     }
 
+
+    // ==== First-run onboarding carousel (no vault on disk yet) ====
+    if !root.is_unlocked && root.show_onboarding : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #080c14;
+        TouchArea { mouse-cursor: default; }
+        VerticalLayout {
+            alignment: center;
+            HorizontalLayout {
+                alignment: center;
+                Rectangle {
+                    width: 480px;
+                    background: #0d131f;
+                    border-radius: 18px;
+                    border-width: 1px;
+                    border-color: #8b7cf6;
+                    drop-shadow-blur: 36px;
+                    drop-shadow-color: #00000088;
+                    VerticalLayout { padding: 28px; spacing: 14px;
+                        HorizontalLayout { alignment: center; spacing: 8px;
+                            Text { text: root.onboarding_step >= 1 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
+                            Text { text: root.onboarding_step >= 2 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
+                            Text { text: root.onboarding_step >= 3 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
+                            Text { text: "  Step " + root.onboarding_step + " of 3"; color: #5b6589; font-size: 11px; font-weight: 700; }
+                        }
+                        if root.onboarding_step == 1 : VerticalLayout { spacing: 10px;
+                            Text { text: "🛡️"; font-size: 44px; horizontal-alignment: center; }
+                            Text { text: "Welcome to PhantomVault"; color: #eef1ff; font-size: 20px; font-weight: 900; horizontal-alignment: center; }
+                            Text { text: "Zero-knowledge & post-quantum protected. Your secrets are encrypted on YOUR machine before they go anywhere — no cloud, no accounts, no tracking."; color: #8e99c0; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+                        }
+                        if root.onboarding_step == 2 : VerticalLayout { spacing: 10px;
+                            Text { text: "🔑"; font-size: 44px; horizontal-alignment: center; }
+                            Text { text: "Your Master Password is your ONLY key"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                            Text { text: "We never store or transmit it. If you lose it AND your recovery shards, nobody — not even us — can open your vault."; color: #8e99c0; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+                        }
+                        if root.onboarding_step == 3 : VerticalLayout { spacing: 10px;
+                            Text { text: "🔐 Create your Master Password"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; }
+                            ob_new := LineEdit { placeholder-text: "New master password (12+ chars recommended)…"; input-type: password; height: 42px; text <=> root.ob_new_text; edited(text) => { root.ob_pw_changed(text); } }
+                            ob_confirm := LineEdit { placeholder-text: "Confirm master password…"; input-type: password; height: 42px; text <=> root.ob_confirm_text; }
+                            HorizontalLayout { spacing: 8px;
+                                Text { text: root.ob_strength_label; color: root.ob_strength_frac < 0.28 ? #fb7185 : (root.ob_strength_frac < 0.5 ? #fbbf24 : (root.ob_strength_frac < 0.8 ? #34d399 : #38e1ff)); font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
+                            }
+                            Rectangle { background: #1a2450; border-radius: 5px; height: 10px; clip: true;
+                                Rectangle { width: parent.width * root.ob_strength_frac; height: 10px; border-radius: 5px; background: root.ob_strength_frac < 0.28 ? #fb7185 : (root.ob_strength_frac < 0.5 ? #fbbf24 : (root.ob_strength_frac < 0.8 ? #34d399 : #38e1ff)); }
+                            }
+                            if root.ob_error != "" : Text { text: root.ob_error; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                        }
+                        HorizontalLayout { spacing: 8px; alignment: center;
+                            if root.onboarding_step > 1 : AuraButton { label: "◀ Back"; width: 110px; height: 40px; clicked => { root.ob_error = ""; root.onboarding_step = root.onboarding_step - 1; } }
+                            if root.onboarding_step < 3 : AuraButton { label: "Next ▶"; primary: true; width: 130px; height: 40px; clicked => { root.onboarding_step = root.onboarding_step + 1; } }
+                            if root.onboarding_step == 3 : AuraButton { label: "🚀 Create Vault"; primary: true; width: 170px; height: 40px; clicked => {
+                                if root.ob_new_text == "" || root.ob_confirm_text == "" { root.ob_error = "⚠️ Type the password twice to confirm."; }
+                                else if root.ob_new_text != root.ob_confirm_text { root.ob_error = "⚠️ Passwords do not match."; }
+                                else if root.ob_new_text.character-count < 8 { root.ob_error = "⚠️ Minimum 8 characters."; }
+                                else { root.ob_error = ""; root.unlock_requested(root.ob_new_text); }
+                            } }
+                        }
+                        HorizontalLayout { alignment: center;
+                            AuraButton { label: "Skip tour"; width: 110px; height: 30px; clicked => { root.show_onboarding = false; } }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // ================= APP SHELL — STRICT 3-COLUMN =================
     if root.is_unlocked : HorizontalLayout {
         spacing: 0px;
@@ -910,9 +1020,10 @@ export component MainWindow inherits Window {
                 ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 14px;
                     // Proton-style 2-column card grid (rows of 2 from Rust;
                     // a lone card gets a stretch spacer, never full-width).
-                    for row in root.auth_rows : HorizontalLayout { spacing: 14px;
+                    for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: center;
                         for acc in row : Rectangle {
                             horizontal-stretch: 1;
+                            max-width: 560px;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
@@ -927,6 +1038,7 @@ export component MainWindow inherits Window {
                                         VerticalLayout { spacing: 0px; alignment: center;
                                             Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
+                                        AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 28px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
                                     Text { text: acc.display; color: #eef1ff; font-size: 26px; font-weight: 900; }
                                     Text { text: "Next: " + acc.next; color: #5b6589; font-size: 10px; overflow: elide; }
@@ -966,6 +1078,7 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+
                 }}
                 // Zero-lockin: scan pages into Google Authenticator.
                 if root.ga_show : Rectangle {
@@ -980,12 +1093,12 @@ export component MainWindow inherits Window {
                         border-width: 1px;
                         border-color: #8b7cf6;
                         clip: true;
-                        VerticalLayout { padding: 20px; spacing: 10px;
+                        VerticalLayout { padding: 16px; spacing: 8px;
                             Text { text: "📲 Export to Google Authenticator"; color: #eef1ff; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
                             Text { text: "Scan with your phone — secrets leave the vault only through your camera."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { alignment: center;
-                                Rectangle { width: 300px; height: 300px; border-radius: 12px; background: #ffffff;
-                                    Image { source: root.ga_image; width: 300px; height: 300px; image-fit: contain; }
+                                Rectangle { width: 260px; height: 260px; border-radius: 12px; background: #ffffff;
+                                    Image { source: root.ga_image; width: 260px; height: 260px; image-fit: contain; }
                                 }
                             }
                             Text { text: root.ga_page; color: #38e1ff; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
@@ -1199,6 +1312,9 @@ export component MainWindow inherits Window {
                         }
                     }
                     LineEdit { placeholder-text: "🔍 Search vault..."; text <=> root.search_query; height: 38px; edited(text) => { root.search_changed(text); } }
+                    HorizontalLayout { spacing: 8px; alignment: center;
+                        AuraButton { label: root.select_mode ? "☑️ Selecting…" : "☑️ Select"; width: 130px; height: 32px; primary: root.select_mode; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
+                    }
                     if root.show_fav_only && !root.showing_trash : Text { text: "⭐ Showing favorites only"; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
                     if root.showing_trash : VerticalLayout { spacing: 8px;
                         Text { text: "🗑️ Trash (items shredded after 30 days)"; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
@@ -1215,13 +1331,31 @@ export component MainWindow inherits Window {
                         for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : #101834; border-radius: 10px; border-width: 1px; border-color: root.d_id == cred.id ? #8b7cf6 : #26315c; height: 62px;
                             TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
                             HorizontalLayout { padding: 10px; spacing: 8px; alignment: space-between;
-                                Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : "🔑")))); font-size: 18px; vertical-alignment: center; }
+                                if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 36px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
+                                Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🔑"))))); font-size: 18px; vertical-alignment: center; }
                                 VerticalLayout { horizontal-stretch: 1; spacing: 1px; Text { text: cred.title; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: cred.username + " • " + cred.folder; color: #5b6589; font-size: 11px; overflow: elide; } }
+                                if cred.kind == 1 : AuraButton { label: "📋"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.kind == 4 : AuraButton { label: "💳"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.kind == 8 : AuraButton { label: "⏱️"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
                                 Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : ""; font-size: 12px; vertical-alignment: center; }
                             }
                         }
                         if root.credentials.length == 0 : Text { text: root.showing_trash ? "Trash is empty — shredded items are gone for good." : (root.show_fav_only ? "No favorites yet — tap ⭐ on any item." : "No items — hit + New"); color: #5b6589; font-size: 12px; horizontal-alignment: center; }
+                        if root.credentials.length >= 50 : Text { text: "Showing first 50 — refine search to find the rest."; color: #5b6589; font-size: 11px; horizontal-alignment: center; }
+                    }}
+                    // Floating bulk action bar (Select mode, non-empty selection)
+                    if root.select_mode && root.selected_count > 0 : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 10px; spacing: 8px;
+                        Text { text: root.selected_label; color: #eef1ff; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+                        HorizontalLayout { spacing: 6px;
+                            AuraButton { label: "⭐ Favorite All"; horizontal-stretch: 1; height: 34px; clicked => { root.bulk_favorite(); } }
+                            AuraButton { label: "🗑️ Trash"; horizontal-stretch: 1; height: 34px; danger: true; clicked => { root.bulk_trash(); } }
+                        }
+                        HorizontalLayout { spacing: 6px;
+                            ComboBox { model: root.filter_folders; current-value <=> root.bulk_folder; horizontal-stretch: 1; height: 34px; }
+                            AuraButton { label: "📁 Move"; width: 90px; height: 34px; clicked => { root.bulk_move(root.bulk_folder); } }
+                        }
+                        AuraButton { label: "✕ Deselect All"; height: 32px; clicked => { root.clear_selection(); } }
                     }}
                 }
             }
@@ -1256,6 +1390,8 @@ export component MainWindow inherits Window {
                             TextEdit { placeholder-text: "Paste one-time recovery / backup codes here (one per line)..."; text <=> root.f_backup; height: 56px; wrap: word-wrap; }
                             FieldLabel { text: "AUTOFILL OPTIONS"; }
                             LineEdit { placeholder-text: "Website (URI), e.g. https://example.com/login"; text <=> root.f_c; height: 36px; }
+                            for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: "🗑️"; width: 44px; height: 36px; danger: true; clicked => { root.remove_url(idx); } } }
+                            AuraButton { label: "+ Add website"; height: 34px; clicked => { root.add_url(); } }
                             FieldLabel { text: "SECRET KEYS / API TOKENS"; }
                             for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
                             AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
@@ -1274,12 +1410,6 @@ export component MainWindow inherits Window {
                     }}
                     if root.notification_text != "" : Rectangle { background: #101834; border-radius: 8px; height: 32px; HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px; Text { text: root.notification_text; color: #38e1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "✕"; width: 36px; height: 24px; y: 4px; clicked => { root.notification_text = ""; } } } }
                     if root.is_travel_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL MODE"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-                    // LIVE 2FA hero (hidden while the create/edit form is open to avoid overlap)
-                    // Capped + centered: on wide windows a full-bleed hero
-                    // looks stretched with a black void underneath.
-                    if !root.show_add_form && root.d_id == "" : HorizontalLayout { alignment: center;
-                        Rectangle { background: #0d131f; border-radius: 14px; border-width: 1px; border-color: #8b7cf655; horizontal-stretch: 1; max-width: 560px; HorizontalLayout { padding: 14px; spacing: 10px; alignment: space-between; VerticalLayout { Text { text: root.hero_account; color: #8e99c0; font-size: 11px; font-weight: 700; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 28px; font-weight: 900; } } Rectangle { width: 56px; height: 56px; border-radius: 28px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 13px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } } }
-                    }
                     // SELECTED ITEM DETAIL
                     // Peep pad stays instantiated (detail rows bind
                     // peep_hold_col.pressed) but visible:false collapses it
@@ -1297,51 +1427,73 @@ export component MainWindow inherits Window {
                         peep_hold_col := TouchArea { }
                         Text { text: peep_hold_col.pressed ? "👁 REVEALING — release to mask" : "👁 HOLD TO PEEK (ephemeral)"; color: #ffffff; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                     }
-                    if root.d_id != "" : VerticalLayout { spacing: 10px;
-                        HorizontalLayout { spacing: 10px; Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; horizontal-stretch: 1; overflow: elide; } if root.d_reprompt : Text { text: "🔒"; font-size: 13px; vertical-alignment: center; } AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 30px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } } Text { text: root.d_folder; color: #8b7cf6; font-size: 11px; font-weight: 700; vertical-alignment: center; } }
-                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 10px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: "📋"; width: 44px; height: 30px; y: 11px; clicked => { root.copy_password_requested(root.live_totp_code); } } } } }
+                    if root.d_id != "" : VerticalLayout { spacing: 12px;
+                        // CARD 1: header + primary action (Bitwarden style)
+                        Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 14px; spacing: 10px;
+                            HorizontalLayout { spacing: 10px;
+                                Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 26px; vertical-alignment: center; }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 2px;
+                                    Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; overflow: elide; }
+                                    HorizontalLayout { spacing: 6px; Text { text: "📁 " + root.d_folder; color: #8b7cf6; font-size: 11px; font-weight: 700; vertical-alignment: center; } if root.d_reprompt : Text { text: "🔒"; font-size: 12px; vertical-alignment: center; } }
+                                }
+                                AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 34px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
+                            }
+                            if !root.d_trashed : AuraButton { label: "⚡ Autofill / Type"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
+                        }}
                         if root.d_trashed : Rectangle { background: #2a1f08; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: #fbbf24; font-size: 12px; font-weight: 700; wrap: word-wrap; }
-                        Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                        FieldLabel { text: "USERNAME"; }
-                        if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
-                        Rectangle { height: 1px; background: #1e293b; }
-                        FieldLabel { text: "PASSWORD"; }
-                        HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
-                        if root.d_kind == 1 && root.d_history.length > 0 : VerticalLayout { spacing: 6px;
-                            AuraButton { label: root.show_history ? "📜 Hide Password History" : "📜 Show Password History"; width: 230px; height: 30px; clicked => { root.show_history = !root.show_history; } }
-                            if root.show_history : VerticalLayout { spacing: 4px;
-                                for h in root.d_history : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: h.when; color: #5b6589; font-size: 11px; width: 90px; vertical-alignment: center; } Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : h.password; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(h.password); } } } }
+                        // CARD 2: login credentials
+                        if root.d_kind != 8 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
+                            FieldLabel { text: "LOGIN CREDENTIALS"; }
+                            FieldLabel { text: "USERNAME"; }
+                            if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋 Copy"; width: 76px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
+                            Rectangle { height: 1px; background: #1e293b; }
+                            FieldLabel { text: "PASSWORD"; }
+                            HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
+                            if root.d_kind == 1 && root.d_history.length > 0 : VerticalLayout { spacing: 6px;
+                                AuraButton { label: root.show_history ? "📜 Hide Password History" : "📜 Show Password History"; width: 230px; height: 30px; clicked => { root.show_history = !root.show_history; } }
+                                if root.show_history : VerticalLayout { spacing: 4px;
+                                    for h in root.d_history : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: h.when; color: #5b6589; font-size: 11px; width: 90px; vertical-alignment: center; } Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : h.password; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(h.password); } } } }
+                                }
                             }
-                        }
-                        } }
-                        if root.d_url != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 8px; spacing: 6px;
-                        FieldLabel { text: "WEBSITE"; }
-                        HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "↗"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
-                        if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                        } }
-                        if root.d_totp != "" : HorizontalLayout { spacing: 8px; Text { text: "TOTP: " + root.d_totp; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; wrap: word-wrap; } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_totp); } } }
-                        if root.d_backup != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 8px; spacing: 6px;
-                        FieldLabel { text: "BACKUP / RECOVERY CODES"; }
-                        Rectangle { background: #121927; border-radius: 8px; height: 64px; clip: true; Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : root.d_backup; color: #eef1ff; font-size: 12px; wrap: word-wrap; overflow: elide; } }
-                        HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy All Codes"; width: 190px; height: 30px; clicked => { root.copy_password_requested(root.d_backup); } } }
-                        } }
-                        if root.d_custom.length > 0 : VerticalLayout { spacing: 6px;
-                        FieldLabel { text: "CUSTOM FIELDS"; }
-                        for cf[idx] in root.d_custom : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 1 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (root.d_revealed == idx ? cf.value : "••••"); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : AuraButton { label: root.d_revealed == idx ? "👁️‍🗨️" : "👁️"; width: 40px; height: 24px; y: 6px; clicked => { if !root.peep_hole_mode { root.d_revealed = root.d_revealed == idx ? -1 : idx; } } } if cf.ftype == 1 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 2 : AuraButton { label: cf.value == "true" ? "✓ ON" : "✕ OFF"; primary: cf.value == "true"; width: 76px; height: 24px; y: 6px; clicked => { root.toggle_saved_field(root.d_kind, root.d_id, idx); } } if cf.ftype == 3 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (cf.value == "username" ? root.d_user : root.d_secret); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 3 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value == "username" ? root.d_user : root.d_secret); } } } }
-                        }
-                        if root.d_notes != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 8px; spacing: 6px;
-                        FieldLabel { text: "NOTES"; }
-                        Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
-                        } }
-                        if root.d_attachments.length > 0 : VerticalLayout { spacing: 6px;
-                        FieldLabel { text: "ATTACHMENTS"; }
-                        for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "🗑"; width: 36px; height: 24px; y: 6px; danger: true; clicked => { root.delete_attachment(root.d_kind, root.d_id, att.id); } } } }
-                        }
-                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } }
-                        if !root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "⚡ Fill"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "📎"; width: 52px; height: 36px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } AuraButton { label: root.d_travel ? "✈️✓" : "✈️"; primary: root.d_travel; width: 52px; height: 36px; clicked => { root.toggle_travel(root.d_kind, root.d_id); } } AuraButton { label: "✏️"; width: 52px; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "🗑️"; danger: true; width: 52px; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } }
+                        }}
+                        // Embedded / standalone 2FA live card
+                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: "📋"; width: 44px; height: 30px; y: 11px; clicked => { root.copy_password_requested(root.live_totp_code); } } } } }
+                        // CARD 3: auto-fill options — single-line elided URL, never wraps
+                        if root.d_url != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
+                            FieldLabel { text: "AUTO-FILL OPTIONS"; }
+                            HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
+                            if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: #5b6589; font-size: 11px; overflow: elide; }
+                        }}
+                        // CARD 4: additional options (only when populated)
+                        if root.d_backup != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
+                            FieldLabel { text: "BACKUP / RECOVERY CODES"; }
+                            Rectangle { background: #121927; border-radius: 8px; height: 64px; clip: true; Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : root.d_backup; color: #eef1ff; font-size: 12px; wrap: word-wrap; overflow: elide; } }
+                            HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy All Codes"; width: 190px; height: 30px; clicked => { root.copy_password_requested(root.d_backup); } } }
+                        }}
+                        if root.d_custom.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
+                            FieldLabel { text: "CUSTOM FIELDS"; }
+                            for cf[idx] in root.d_custom : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 1 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (root.d_revealed == idx ? cf.value : "••••"); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : AuraButton { label: root.d_revealed == idx ? "👁️‍🗨️" : "👁️"; width: 40px; height: 24px; y: 6px; clicked => { if !root.peep_hole_mode { root.d_revealed = root.d_revealed == idx ? -1 : idx; } } } if cf.ftype == 1 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 2 : AuraButton { label: cf.value == "true" ? "✓ ON" : "✕ OFF"; primary: cf.value == "true"; width: 76px; height: 24px; y: 6px; clicked => { root.toggle_saved_field(root.d_kind, root.d_id, idx); } } if cf.ftype == 3 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (cf.value == "username" ? root.d_user : root.d_secret); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 3 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value == "username" ? root.d_user : root.d_secret); } } } }
+                        }}
+                        if root.d_notes != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
+                            FieldLabel { text: "NOTES"; }
+                            Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                        }}
+                        if root.d_attachments.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
+                            FieldLabel { text: "ATTACHMENTS"; }
+                            for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "👁"; width: 40px; height: 24px; y: 6px; clicked => { root.preview_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "🗑"; width: 36px; height: 24px; y: 6px; danger: true; clicked => { root.delete_attachment(root.d_kind, root.d_id, att.id); } } } }
+                        }}
+                        // CARD 5: item history & safety
+                        Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
+                            FieldLabel { text: "ITEM HISTORY"; }
+                            if root.d_age_info != "" : Text { text: root.d_age_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                            HorizontalLayout { spacing: 8px; FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? #34d399 : #5b6589; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
+                        }}
+                        // Bottom action bar
+                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.show_detail = false; } } }
+                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.show_detail = false; } } }
                     }
-                    if root.d_id == "" && !root.show_add_form : Text { text: "Select an item from the middle list →"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
+                    if root.d_id == "" && !root.show_add_form : Text { text: "🛡️ Select an item from the list to view details"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
                 }}
             }
         }
@@ -1530,7 +1682,7 @@ export component MainWindow inherits Window {
                         background: #1a2450;
                         border-width: 1px;
                         border-color: #8b7cf655;
-                        Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : "🔑")))); font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
+                        Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     VerticalLayout {
                         alignment: center;
@@ -1688,7 +1840,19 @@ export component MainWindow inherits Window {
                     }
                     if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "FINGERPRINT"; } Text { text: root.d_meta; color: #8e99c0; font-size: 12px; } }
                 }
-                HorizontalLayout {
+                // Standalone 2FA inspector: live code + countdown, fed by the
+                // 1s ticker from d_totp (same source as the desktop card).
+                if root.d_kind == 8 : VerticalLayout {
+                    spacing: 10px;
+                    FieldLabel { text: "ACCOUNT"; }
+                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
+                    FieldLabel { text: "TYPE"; }
+                    Text { text: root.d_meta; color: #8e99c0; font-size: 12px; }
+                    FieldLabel { text: "LIVE CODE"; }
+                    HorizontalLayout { spacing: 8px; Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; horizontal-stretch: 1; vertical-alignment: center; } Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
+                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "📋 Copy Code"; width: 150px; clicked => { root.copy_password_requested(root.live_totp_code); } } AuraButton { label: "⚡ Fill"; width: 110px; primary: true; clicked => { root.show_detail = false; root.type_item_requested(root.d_kind, root.d_id); } } }
+                }
+                if root.d_kind != 8 : HorizontalLayout {
                     spacing: 8px;
                     alignment: start;
                     FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; }
@@ -1743,7 +1907,7 @@ export component MainWindow inherits Window {
                     spacing: 8px;
                     alignment: center;
                     padding-top: 6px;
-                    AuraButton { label: "✏️  Edit"; width: 130px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
+                    if root.d_kind != 8 : AuraButton { label: "✏️  Edit"; width: 130px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
                     AuraButton { label: "🗑️  Delete"; danger: true; width: 130px; clicked => { if root.d_reprompt { root.rp_action = 3; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = ""; root.rp_error = ""; root.rp_show = true; } else { root.delete_item_requested(root.d_kind, root.d_id); } } }
                     AuraButton { label: "✕  Close"; width: 130px; clicked => { root.show_detail = false; } }
                 }
@@ -1754,6 +1918,42 @@ export component MainWindow inherits Window {
                 y: 12px;
                 width: 480px;
                 height: parent.height - 24px;
+            }
+        }
+    }
+
+    // ==== Attachment RAM preview (images decoded to pixels, text to string —
+    // plaintext never touches disk) ====
+    if root.att_preview : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 480px;
+            background: #0d131f;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: #8b7cf6;
+            clip: true;
+            VerticalLayout { padding: 16px; spacing: 10px;
+                Text { text: "📎 " + root.att_preview_name; color: #eef1ff; font-size: 14px; font-weight: 800; horizontal-alignment: center; overflow: elide; }
+                Text { text: root.att_preview_info; color: #5b6589; font-size: 11px; horizontal-alignment: center; }
+                if root.att_preview_kind == "image" : HorizontalLayout { alignment: center;
+                    Image { source: root.att_preview_image; width: 440px; height: 320px; image-fit: contain; }
+                }
+                if root.att_preview_kind == "text" : Rectangle { background: #111827; border-radius: 8px; height: 320px; clip: true;
+                    ScrollView { VerticalLayout { padding: 10px; Text { text: root.att_preview_text; color: #eef1ff; font-size: 12px; wrap: word-wrap; } } }
+                }
+                if root.att_preview_kind == "other" : Text { text: "No in-app preview for this file type — export to view."; color: #fbbf24; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                HorizontalLayout { spacing: 8px; alignment: center;
+                    AuraButton { label: "💾 Export File"; width: 140px; height: 36px; clicked => { root.att_preview = false; root.download_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
+                    AuraButton { label: "🗑️ Delete"; width: 120px; height: 36px; danger: true; clicked => { root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
+                    AuraButton { label: "✕ Close Preview"; width: 150px; height: 36px; clicked => { root.att_preview = false; } }
+                }
             }
         }
     }
@@ -1780,6 +1980,10 @@ export component MainWindow inherits Window {
                 spacing: 10px;
                 Text { text: "📷  Scanning webcam for QR…"; font-size: 16px; font-weight: 800; color: #eef1ff; horizontal-alignment: center; }
                 Text { text: "Hold the code steady in front of camera 0. Auto-imports on detection (60s budget)."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                Rectangle { background: #000000; border-radius: 12px; border-width: 1px; border-color: #26315c; clip: true;
+                    height: 300px;
+                    Image { source: root.webcam_frame; width: 100%; height: 100%; image-fit: contain; }
+                }
                 Text { text: root.notification_text; color: #38e1ff; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout {
                     alignment: center;

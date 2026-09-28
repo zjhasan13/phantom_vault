@@ -88,7 +88,9 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
     if otp.secret.is_empty() {
         return Err("OTP secret is empty".to_string());
     }
-    // Convert raw bytes -> standard Base32 NOPAD (upper)
+    // No minimum-length gate: Google Authenticator routinely stores 10-byte
+    // (80-bit / 16-char Base32) secrets for older accounts. totp-rs/HMAC
+    // accepts short keys, so every non-empty secret imports bit-exact.
     let secret_b32 = data_encoding::BASE32_NOPAD.encode(&otp.secret);
 
     // Digit mapping
@@ -132,8 +134,10 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
             account_name = "Imported 2FA".to_string();
         }
     }
+    // No ugly "Imported" issuer: when the export carries no issuer and the
+    // name has no "Issuer:account" colon, mirror the name (e.g. "djhy").
     if issuer.is_empty() {
-        issuer = "Imported".to_string();
+        issuer = account_name.clone();
     }
 
     Ok(TotpAccount {
@@ -146,6 +150,7 @@ fn map_otp_to_account_with_idx(otp: &OtpParameters, idx: usize) -> Result<TotpAc
         algorithm,
         otp_type,
         counter,
+        favorite: false,
     })
 }
 
@@ -256,6 +261,7 @@ pub(crate) fn parse_otpauth_url(url_str: &str) -> Result<TotpAccount, String> {
         algorithm,
         otp_type,
         counter,
+        favorite: false,
     })
 }
 
@@ -299,8 +305,47 @@ fn b64_decode_migration(data: &str) -> Result<Vec<u8>, String> {
 /// - otpauth-migration://offline?data=BASE64
 /// - otpauth://totp/...?secret=...
 /// - raw base64 migration payload (if passed directly)
-pub fn parse_google_migration_url(migration_url: &str) -> Result<Vec<TotpAccount>, String> {
-    let trimmed = migration_url.trim();
+///
+/// Returns the accounts plus batch intelligence (`total_batches`,
+/// 1-based `current_batch`) so the UI can prompt for remaining QRs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BatchInfo {
+    pub total_batches: i32,
+    pub current_batch: i32,
+}
+
+impl BatchInfo {
+    fn single() -> Self {
+        Self { total_batches: 1, current_batch: 1 }
+    }
+
+    /// 1-based display ("Batch 1 of 1"); hidden when there is only one page.
+    pub fn is_multi(&self) -> bool {
+        self.total_batches > 1
+    }
+
+    /// UI label for multi-page exports; `None` when there is only one page
+    /// (callers hide the badge in that case).
+    pub fn display(&self) -> Option<String> {
+        if self.is_multi() {
+            Some(format!("Batch {} of {}", self.current_batch, self.total_batches))
+        } else {
+            None
+        }
+    }
+}
+
+/// Strip ALL whitespace (copy-paste wraps long URLs across lines) before
+/// any base64 work. Percent-sequences are handled by the url crate first,
+/// with a manual fallback below.
+fn clean_migration_data(raw: &str) -> String {
+    raw.split_whitespace().collect()
+}
+
+pub fn parse_google_migration_url(migration_url: &str) -> Result<(Vec<TotpAccount>, BatchInfo), String> {
+    // Strip ALL whitespace first: long URLs get wrapped across lines on copy-paste.
+    let cleaned = clean_migration_data(migration_url);
+    let trimmed = cleaned.trim();
     if trimmed.is_empty() {
         return Err("Empty migration URL".to_string());
     }
@@ -308,7 +353,7 @@ pub fn parse_google_migration_url(migration_url: &str) -> Result<Vec<TotpAccount
     // Fast path: standard otpauth single account
     if trimmed.starts_with("otpauth://") {
         let acc = parse_otpauth_url(trimmed)?;
-        return Ok(vec![acc]);
+        return Ok((vec![acc], BatchInfo::single()));
     }
 
     // Migration URL handling
@@ -327,12 +372,13 @@ pub fn parse_google_migration_url(migration_url: &str) -> Result<Vec<TotpAccount
         if payload.otp_parameters.is_empty() {
             return Err("Migration payload contains no OTP parameters".to_string());
         }
+        println!("🔍 [Migration] Total OTP parameters in QR payload: {}", payload.otp_parameters.len());
         let mut accounts = Vec::new();
         for (idx, otp) in payload.otp_parameters.iter().enumerate() {
             match map_otp_to_account_with_idx(otp, idx) {
                 Ok(acc) => accounts.push(acc),
-                Err(e) => {
-                    eprintln!("Skipping invalid OTP entry: {}", e);
+                Err(err) => {
+                    eprintln!("⚠️ [Migration] Item #{} failed: {:?}", idx, err);
                     continue;
                 }
             }
@@ -340,21 +386,27 @@ pub fn parse_google_migration_url(migration_url: &str) -> Result<Vec<TotpAccount
         if accounts.is_empty() {
             return Err("No valid OTP accounts in payload".to_string());
         }
-        return Ok(accounts);
+        let batch = BatchInfo {
+            total_batches: if payload.batch_size > 0 { payload.batch_size } else { 1 },
+            current_batch: if payload.batch_index > 0 { payload.batch_index } else { 1 },
+        };
+        return Ok((accounts, batch));
     }
 
     // Fallback: treat as raw base64 blob (user pasted only data string)
     if let Ok(decoded) = b64_decode_migration(trimmed) {
         if let Ok(payload) = MigrationPayload::decode(decoded.as_slice()) {
             if !payload.otp_parameters.is_empty() {
+                println!("🔍 [Migration] Total OTP parameters in QR payload: {}", payload.otp_parameters.len());
                 let mut accounts = Vec::new();
                 for (idx, otp) in payload.otp_parameters.iter().enumerate() {
-                    if let Ok(acc) = map_otp_to_account_with_idx(otp, idx) {
-                        accounts.push(acc);
+                    match map_otp_to_account_with_idx(otp, idx) {
+                        Ok(acc) => accounts.push(acc),
+                        Err(err) => eprintln!("⚠️ [Migration] Item #{} failed: {:?}", idx, err),
                     }
                 }
                 if !accounts.is_empty() {
-                    return Ok(accounts);
+                    return Ok((accounts, BatchInfo::single()));
                 }
             }
         }
@@ -400,10 +452,10 @@ pub const GA_BATCH_SIZE: usize = 10;
 /// 5-char Steam alphabet). Non-30s periods do not survive either (GA assumes
 /// 30s); the secret still transfers, codes will drift — caller warns.
 pub fn account_to_otp(acc: &TotpAccount) -> Result<OtpParameters, String> {
-    let clean = acc.secret.replace([' ', '-'], "").to_uppercase();
-    let raw = data_encoding::BASE32_NOPAD
-        .decode(clean.as_bytes())
-        .or_else(|_| data_encoding::BASE32.decode(clean.as_bytes()))
+    // Same flexible decoder as the live renderer (Base32 + unambiguous HEX
+    // rescue): whatever the hub displays must also export, or accounts would
+    // silently vanish from the migration QR.
+    let raw = crate::totp_engine::decode_secret_bytes(&acc.secret)
         .map_err(|e| format!("account '{}' has undecodable secret: {e:?}", acc.account_name))?;
     if raw.is_empty() {
         return Err(format!("account '{}' has empty secret", acc.account_name));
@@ -591,7 +643,7 @@ mod tests {
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::URL_SAFE.encode(&buf);
         let url = format!("otpauth-migration://offline?data={b64}");
-        let accs = parse_google_migration_url(&url).unwrap();
+        let (accs, _batch) = parse_google_migration_url(&url).unwrap();
         assert_eq!(accs.len(), 1);
         assert_eq!(accs[0].algorithm, "SHA512");
         assert_eq!(accs[0].issuer, "GitHub");
@@ -613,6 +665,7 @@ mod tests {
             algorithm: "SHA1".into(),
             otp_type: "totp".into(),
             counter: 0,
+            favorite: false,
         }
     }
 
@@ -645,9 +698,44 @@ mod tests {
             assert!(png.len() > 500);
         }
         // ...and page 1 parses back to the first 10 accounts.
-        let back = parse_google_migration_url(&uris[0]).unwrap();
+        let (back, _batch) = parse_google_migration_url(&uris[0]).unwrap();
         assert_eq!(back.len(), 10);
         assert_eq!(back[0].account_name, "acc0");
+    }
+
+    #[test]
+    fn short_80bit_secret_and_bare_name_import_cleanly() {
+        // 10-byte (80-bit) secret, no issuer, no "Issuer:account" colon.
+        let otp = otp(b"1234567890", Algorithm::Sha1, Digit::Six, OtpType::Totp, 0);
+        let mut bare = otp.clone();
+        bare.name = "djhy".into();
+        bare.issuer = String::new();
+        let acc = map_otp_to_account(&bare).unwrap();
+        assert_eq!(acc.secret, data_encoding::BASE32_NOPAD.encode(b"1234567890"));
+        assert_eq!(acc.account_name, "djhy");
+        assert_eq!(acc.issuer, "djhy");
+        // Colon form still splits.
+        let mut colon = otp;
+        colon.name = "Google:user@gmail.com".into();
+        colon.issuer = String::new();
+        let acc2 = map_otp_to_account(&colon).unwrap();
+        assert_eq!(acc2.issuer, "Google");
+        assert_eq!(acc2.account_name, "user@gmail.com");
+    }
+
+    #[test]
+    fn hex_secret_exports_and_roundtrips() {
+        let mut hex_acc = ga_account("hexacc", "JBSWY3DPEHPK3PXP");
+        hex_acc.secret = "3132333435363738393031323334353637383930".into();
+        let otp = account_to_otp(&hex_acc).unwrap();
+        assert_eq!(otp.secret, b"12345678901234567890".to_vec());
+        let (uris, skipped, _) = build_migration_uris(&[hex_acc]).unwrap();
+        assert_eq!(uris.len(), 1);
+        assert!(skipped.is_empty());
+        let (back, _) = parse_google_migration_url(&uris[0]).unwrap();
+        assert_eq!(back.len(), 1);
+        let otp2 = account_to_otp(&back[0]).unwrap();
+        assert_eq!(otp2.secret, b"12345678901234567890".to_vec());
     }
 
     #[test]

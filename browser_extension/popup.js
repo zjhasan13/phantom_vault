@@ -6,10 +6,12 @@
 (async () => {
   const DEFAULTS = {
     show_suggestions: true,
+    show_suggestions_on_icon_click_only: false,
     suggest_cards: true,
     suggest_identities: true,
     autofill_on_load: true,
     auto_inject_totp: true,
+    copy_totp_auto: true,
     show_context_menu: true,
     match_mode: "base",
     auto_submit: false,
@@ -18,10 +20,12 @@
   };
   const TOGGLES = [
     ["show_suggestions", "suggest_show", "Show autofill suggestions on form fields"],
+    ["show_suggestions_on_icon_click_only", "suggest_icon_only", "Show suggestions only when icon is clicked"],
     ["suggest_cards", "suggest_cards", "Display Cards as suggestions on checkout"],
     ["suggest_identities", "suggest_ids", "Display Identities as suggestions on forms"],
     ["autofill_on_load", "autofill_load", "Enable Auto-fill on Page Load"],
     ["auto_inject_totp", "auto_totp", "Hands-free 2FA / TOTP injection"],
+    ["copy_totp_auto", "copy_totp", "Copy TOTP automatically"],
     ["show_context_menu", "ctx_menu", "Show context menu options (Right-click)"],
     ["auto_submit", "auto_submit", "Automatically submit form after autofill"],
   ];
@@ -35,16 +39,22 @@
       blocked_hint: "One per line — no badges, no autofill here.",
       retry: "🔄 Retry", fill: "⚡ Fill", copy: "📋 Copy", copied: "✅ Copied", blocked_cb: "⚠️ Blocked",
       copy2fa: "📋 Copy 2FA", no_match: (h) => `No credentials match “${h}”.`,
+      suggest_head: (d, n) => `Autofill suggestions (${d}) (${n})`,
+      suggest_empty: "No suggestions for this page",
+      all_head: (n) => `All items (${n})`,
+      this_page: "this page",
       open_site: "🌐 Open a real website tab first, then click the PhantomVault icon.",
       last_filled: (a) => `Last filled: ${a}`,
       never_filled: "Never filled yet",
       just_now: "just now", min_ago: (n) => `${n}m ago`, hour_ago: (n) => `${n}h ago`, day_ago: (n) => `${n}d ago`,
       score: "Security Score", fills: "Total Fills", stale_n: "Stale passwords", reused_n: "Reused groups",
       suggest_show: "Show autofill suggestions on form fields",
+      suggest_icon_only: "Show suggestions only when icon is clicked",
       suggest_cards: "Display Cards as suggestions on checkout",
       suggest_ids: "Display Identities as suggestions on forms",
       autofill_load: "Enable Auto-fill on Page Load",
       auto_totp: "Hands-free 2FA / TOTP injection",
+      copy_totp: "Copy TOTP automatically",
       ctx_menu: "Show context menu options (Right-click)",
       auto_submit: "Automatically submit form after autofill",
     },
@@ -55,16 +65,22 @@
       blocked_hint: "প্রতি লাইনে একটি — এখানে ব্যাজ/অটোফিল বন্ধ।",
       retry: "🔄 পুনরায়", fill: "⚡ পূরণ", copy: "📋 কপি", copied: "✅ কপি হয়েছে", blocked_cb: "⚠️ ব্যর্থ",
       copy2fa: "📋 2FA কপি", no_match: (h) => `“${h}” এর কোনো তথ্য নেই।`,
+      suggest_head: (d, n) => `অটোফিল পরামর্শ (${d}) (${n})`,
+      suggest_empty: "এই পেজের জন্য পরামর্শ নেই",
+      all_head: (n) => `সব আইটেম (${n})`,
+      this_page: "এই পেজ",
       open_site: "🌐 আগে আসল ওয়েবসাইট খুলুন, তারপর আইকনে ক্লিক করুন।",
       last_filled: (a) => `শেষ পূরণ: ${a}`,
       never_filled: "এখনো পূরণ হয়নি",
       just_now: "এক্ষুনি", min_ago: (n) => `${n} মি আগে`, hour_ago: (n) => `${n} ঘ আগে`, day_ago: (n) => `${n} দি আগে`,
       score: "নিরাপত্তা স্কোর", fills: "মোট পূরণ", stale_n: "পুরনো পাসওয়ার্ড", reused_n: "পুনর্ব্যবহৃত গ্রুপ",
       suggest_show: "ফর্মে অটোফিল পরামর্শ দেখাও",
+      suggest_icon_only: "শুধু আইকনে ক্লিক করলে পরামর্শ দেখাও",
       suggest_cards: "চেকআউটে কার্ড পরামর্শ দেখাও",
       suggest_ids: "ফর্মে পরিচয় পরামর্শ দেখাও",
       autofill_load: "পেজ লোডে অটো-ফিল চালু",
       auto_totp: "হ্যান্ডস-ফ্রি 2FA / TOTP ইনজেকশন",
+      copy_totp: "TOTP স্বয়ংক্রিয়ভাবে কপি করো",
       ctx_menu: "রাইট-ক্লিক মেনু দেখাও",
       auto_submit: "অটোফিলের পর ফর্ম সাবমিট করো",
     },
@@ -110,9 +126,11 @@
     }
   }
   const TOGGLE_I18N = {
-    show_suggestions: "suggest_show", suggest_cards: "suggest_cards",
+    show_suggestions: "suggest_show", show_suggestions_on_icon_click_only: "suggest_icon_only",
+    suggest_cards: "suggest_cards",
     suggest_identities: "suggest_ids", autofill_on_load: "autofill_load",
-    auto_inject_totp: "auto_totp", show_context_menu: "ctx_menu", auto_submit: "auto_submit",
+    auto_inject_totp: "auto_totp", copy_totp_auto: "copy_totp",
+    show_context_menu: "ctx_menu", auto_submit: "auto_submit",
   };
   langBtn.addEventListener("click", async () => {
     lang = lang === "en" ? "bn" : "en";
@@ -229,8 +247,14 @@
     if (st && st.ok && st.last_filled) lastFilledMap = st.last_filled;
   } catch (_) {}
 
-  const list = document.getElementById("list");
+  const suggestList = document.getElementById("suggestList");
+  const suggestHead = document.getElementById("suggestHead");
+  const allList = document.getElementById("allList");
+  const allHead = document.getElementById("allHead");
   const status = document.getElementById("status");
+  const searchBox = document.getElementById("vaultSearch");
+  const folderSel = document.getElementById("folderFilter");
+  const typeSel = document.getElementById("typeFilter");
   function showLocked(hint) {
     status.textContent = LOCKED_MSG + (hint ? " (" + hint + ")" : "");
     const retry = document.createElement("button");
@@ -247,30 +271,98 @@
   }
 
   let host = "";
+  let hostBase = "";
   try {
     const [tab] = await withTimeout(
       chrome.tabs.query({ active: true, currentWindow: true }),
       QUERY_TIMEOUT_MS, "tab lookup");
-    // hostname (no port): content.js queries base-domains, and "app:8080"
-    // would miss the same entry the page itself would match.
-    host = tab && tab.url ? new URL(tab.url).hostname : "";
+    // Bulletproof extraction: missing/blocked urls (chrome://, web store,
+    // redacted without permissions) yield "" — suggestions stay empty, but
+    // the full vault browser below remains usable.
+    try {
+      const raw = tab && tab.url ? String(tab.url) : "";
+      host = raw ? new URL(raw).hostname.toLowerCase() : "";
+    } catch (_) { host = ""; }
+    hostBase = pageBase(host);
   } catch (_) { showLocked("no active tab"); return; }
-  if (!host) { status.textContent = t("open_site"); return; }
+  // No host (chrome://, new-tab): suggestions stay empty, but the full
+  // vault browser below remains usable.
+  const noHost = !host;
 
   function pageBase(h) {
     const parts = String(h || "").toLowerCase().split(".").filter(Boolean);
     return parts.length <= 2 ? parts.join(".") : parts.slice(-2).join(".");
   }
+  // Equivalent-domain clusters (mirrors content.js/host — keep in sync).
+  const EQUIV_CLUSTERS = [
+    ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
+    ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
+    ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
+    ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
+    ["apple.com", "icloud.com"],
+    ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
+    ["sony.com", "playstation.com", "playstationnetwork.com"],
+    ["yahoo.com", "aol.com"],
+  ];
+  function memberHit(member, domain) {
+    if (member.endsWith(".*")) {
+      const p = member.slice(0, -2);
+      return domain === p || domain.startsWith(p + ".");
+    }
+    return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
+  }
+  function domainsEquiv(a, b) {
+    const cn = (h) => {
+      const full = String(h || "").toLowerCase();
+      const parts = full.split(".").filter(Boolean);
+      const out = [full];
+      for (let i = 1; i < parts.length; i++) {
+        if (parts.length - i >= 2) out.push(parts.slice(i).join("."));
+      }
+      return out;
+    };
+    const ca = cn(a), cb = cn(b);
+    return EQUIV_CLUSTERS.some((cluster) =>
+      cluster.some((m) => ca.some((d) => memberHit(m, d))) &&
+      cluster.some((m) => cb.some((d) => memberHit(m, d))));
+  }
+  // Strict WEBSITE-domain extraction: username/email NEVER participate.
+  // A "@gmail.com" username must not turn the whole vault into "Google".
+  function itemDomains(e) {
+    return (e.urls || []).map((raw) => {
+      try {
+        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
+        return u.hostname.toLowerCase();
+      } catch (_) { return ""; }
+    }).filter(Boolean);
+  }
+  function domainMatchesPage(d) {
+    if (!host) return false;
+    if (pageBase(d) === pageBase(host)) return true;
+    return domainsEquiv(d, host);
+  }
+  // Suggestion gate: stored-URL domains decide; url-less legacy entries
+  // fall back to TITLE text only (never username/email).
+  function suggestMatch(e) {
+    const domains = itemDomains(e);
+    if (domains.length) return domains.some(domainMatchesPage);
+    if (!hostBase) return false;
+    const t = (e.title || "").toLowerCase();
+    if (t.includes(hostBase)) return true;
+    return EQUIV_CLUSTERS.some((cluster) => {
+      const pageHit = cluster.some((m) => memberHit(m, host));
+      return pageHit && cluster.some((m) => t.includes(m.replace(/\.\*$/, "")));
+    });
+  }
   function entryAllowed(e) {
-    // Mirror of content.js: entries WITH stored urls must share the page's
-    // registrable domain (or explicit host/exact per saved match mode);
-    // url-less legacy entries pass through.
+    // Fill gate mirrors the suggestion gate (strict domains + clusters).
+    // Url-less legacy entries pass through (nothing to verify against).
     const urls = e.urls || [];
     if (!urls.length) return true;
     return urls.some((raw) => {
       try {
         const u = new URL(raw.includes("://") ? raw : "https://" + raw);
-        return pageBase(u.hostname) === pageBase(host);
+        return domainMatchesPage(u.hostname);
       } catch (_) { return false; }
     });
   }
@@ -303,34 +395,266 @@
     window.close();
   }
 
-  let res;
-  try {
-    res = await withTimeout(
-      chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }),
-      QUERY_TIMEOUT_MS, "vault bridge");
-  } catch (e) { showLocked("bridge unreachable"); return; }
-  if (!res || !res.ok) {
-    const err = (res && res.error) || "";
-    if (/lock/i.test(err)) showLocked();
-    else if (err) status.textContent = "⚠️ " + err;
-    else showLocked();
-    return;
-  }
-  const entries = res.entries || [];
-  if (!entries.length) { status.textContent = t("no_match", host); return; }
-  status.textContent = "";
+  // ---------- two-tier data: domain suggestions + full metadata ----------
+  let suggEntries = []; // full login entries (with secrets) for this domain
+  let allData = { logins: [], cards: [], identities: [], notes: [] };
+  const suggIds = new Set();
   const rows = [];
-  entries.slice(0, 8).forEach((e, idx) => {
+
+  // Subdomain prefixes stripped before the initial is read — "www." /
+  // "accountscenter." must never donate W or A (Facebook → F, always).
+  function stripBrandPrefix(s) {
+    return String(s || "")
+      .replace(/^(www|m|mobile|accountscenter|accounts|account|login|signin|auth|sso)\b[^a-z0-9]*/i, "");
+  }
+  function brandLetter(title, username) {
+    const m = stripBrandPrefix(String((title || "") + " " + (username || "")).trim()).match(/[A-Za-z0-9]/);
+    return (m ? m[0] : "?").toUpperCase();
+  }
+  // Brand icon: letter + brand color (no more generic "A" everywhere).
+  // Checks title/username/urls so "gmail" or "2captcha" resolve correctly.
+  const BRANDS = [
+    ["google", "G", "#4285F4", "#ffffff"],
+    ["gmail", "G", "#4285F4", "#ffffff"],
+    ["binance", "B", "#F3BA2F", "#080c14"],
+    ["proton", "P", "#6D4AFF", "#ffffff"],
+    ["firefox", "F", "#FF7139", "#ffffff"],
+    ["github", "G", "#eef1ff", "#24292E"],
+    ["2captcha", "2", "#8b7cf6", "#ffffff"],
+    ["discord", "D", "#5865F2", "#ffffff"],
+    ["steam", "S", "#66C0F4", "#080c14"],
+    ["spotify", "S", "#1DB954", "#080c14"],
+    ["microsoft", "M", "#00A4EF", "#ffffff"],
+    ["outlook", "O", "#00A4EF", "#ffffff"],
+    ["apple", "A", "#A2AAAD", "#080c14"],
+    ["icloud", "A", "#A2AAAD", "#080c14"],
+    ["facebook", "F", "#1877F2", "#ffffff"],
+    ["instagram", "I", "#E4405F", "#ffffff"],
+    ["amazon", "A", "#FF9900", "#080c14"],
+    ["yahoo", "Y", "#6001D2", "#ffffff"],
+    ["x", "X", "#eef1ff", "#080c14"],
+    ["twitter", "X", "#1DA1F2", "#ffffff"],
+  ];
+  function brandIcon(entry) {
+    const urls = ((entry && entry.urls) || []);
+    // Stripped host roots first: "accountscenter.facebook.com" → root
+    // "facebook" → F, even when the title is just "Accounts Center".
+    const roots = [];
+    for (const raw of urls) {
+      try {
+        const h = new URL(raw.includes("://") ? raw : "https://" + raw).hostname.toLowerCase();
+        roots.push(stripBrandPrefix(h).split(".").filter(Boolean)[0] || "");
+      } catch (_) {}
+    }
+    for (const root of roots) {
+      if (!root) continue;
+      for (const [key, letter, bg, fg] of BRANDS) {
+        if (key.length > 1 && root === key) return { letter, bg, fg };
+      }
+    }
+    const hay = (((entry && entry.title) || "") + " " + ((entry && entry.username) || "") + " " + (urls.join(" "))).toLowerCase();
+    for (const [key, letter, bg, fg] of BRANDS) {
+      if (key.length === 1 ? hay.split(/[^a-z0-9]/).includes(key) : hay.includes(key)) {
+        return { letter, bg, fg };
+      }
+    }
+    return { letter: brandLetter(entry && entry.title, entry && entry.username), bg: "#8b7cf6", fg: "#080c14" };
+  }
+  // eTLD+1-ish base for grouping (page side; host already expanded clusters).
+  function regBase(h) {
+    const p = String(h || "").toLowerCase().split(".").filter(Boolean);
+    return p.length <= 2 ? p.join(".") : p.slice(-2).join(".");
+  }
+
+  async function refresh() {
+    status.textContent = t("loading");
+    suggEntries = [];
+    suggIds.clear();
+    allData = { logins: [], cards: [], identities: [], notes: [] };
+    try {
+      const [q, l] = await Promise.all([
+        host ? withTimeout(chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "vault bridge") : Promise.resolve(null),
+        withTimeout(chrome.runtime.sendMessage({ type: "PV_LIST" }), QUERY_TIMEOUT_MS, "vault list"),
+      ]);
+      if (q && !q.ok) {
+        const err = q.error || "";
+        if (/lock/i.test(err)) { showLocked(); return; }
+        if (err) { status.textContent = "⚠️ " + err; return; }
+      }
+      if (l && !l.ok) {
+        const err = l.error || "";
+        if (/lock/i.test(err)) { showLocked(); return; }
+      }
+      suggEntries = (q && q.ok && q.entries) || [];
+      suggEntries.forEach((e) => suggIds.add(e.id));
+      if (l && l.ok) {
+        allData.logins = l.logins || [];
+        allData.cards = l.cards || [];
+        allData.identities = l.identities || [];
+        allData.notes = l.notes || [];
+      }
+      buildFolderOptions();
+      render();
+    } catch (_) { showLocked("bridge unreachable"); }
+  }
+
+  function buildFolderOptions() {
+    const seen = new Set();
+    const folders = [];
+    const touch = (f) => { const v = (f || "").trim() || "General"; if (!seen.has(v)) { seen.add(v); folders.push(v); } };
+    suggEntries.forEach((e) => touch(e.folder));
+    ["logins", "cards", "identities", "notes"].forEach((k) => allData[k].forEach((e) => touch(e.folder)));
+    folders.sort((a, b) => a.localeCompare(b));
+    const cur = folderSel.value;
+    folderSel.innerHTML = "";
+    const mk = (v, label) => {
+      const o = document.createElement("option");
+      o.value = v; o.textContent = label;
+      folderSel.append(o);
+    };
+    mk("", "📁 Folder");
+    folders.forEach((f) => mk(f, "📁 " + f));
+    if ([...folderSel.options].some((o) => o.value === cur)) folderSel.value = cur;
+  }
+
+  function currentFilter() {
+    return {
+      q: searchBox.value.trim().toLowerCase(),
+      folder: folderSel.value,
+      type: typeSel.value,
+    };
+  }
+  function matchText(e, q) {
+    if (!q) return true;
+    return ((e.title || "") + " " + (e.username || "") + " " + (e.full_name || "") + " " + (e.email || "")).toLowerCase().includes(q);
+  }
+  function matchFolder(e, folder) {
+    if (!folder) return true;
+    return ((e.folder || "").trim() || "General") === folder;
+  }
+
+  function sectionHead(el, labelText, isEmpty, emptyHint) {
+    el.textContent = "";
+    const s = document.createElement("span");
+    s.textContent = labelText;
+    el.append(s);
+    if (isEmpty) {
+      const h = document.createElement("div");
+      h.style.cssText = "color:#5b6589;font-size:11px;font-weight:400;margin-top:2px;";
+      h.textContent = emptyHint;
+      el.append(h);
+    }
+  }
+
+  function render() {
+    const f = currentFilter();
+    suggestList.innerHTML = "";
+    allList.innerHTML = "";
+    rows.length = 0;
+    // --- Tier 1: STRICT domain suggestions (website URLs only — a
+    // "@gmail.com" username never promotes an entry to Google) ---
+    const sugg = suggEntries.filter((e) => suggestMatch(e) && matchText(e, f.q) && matchFolder(e, f.folder) && (f.type === "all" || f.type === "1"));
+    sectionHead(suggestHead, t("suggest_head", hostBase || t("this_page"), sugg.length), !sugg.length, t("suggest_empty"));
+    sugg.slice(0, 20).forEach((e, i) => suggestList.append(buildLoginRow(e, i)));
+    // --- Tier 2: rest of the vault (metadata; secrets fetched on demand) ---
+    const rest = [];
+    if (f.type === "all" || f.type === "1") {
+      allData.logins.forEach((e) => { if (!suggIds.has(e.id)) rest.push({ kind: 1, e }); });
+    }
+    if (f.type === "all" || f.type === "4") {
+      allData.cards.forEach((e) => rest.push({ kind: 4, e }));
+    }
+    if (f.type === "all" || f.type === "5") {
+      allData.identities.forEach((e) => rest.push({ kind: 5, e }));
+    }
+    if (f.type === "all" || f.type === "3") {
+      allData.notes.forEach((e) => rest.push({ kind: 3, e }));
+    }
+    const restShown = rest.filter(({ e }) => matchText(e, f.q) && matchFolder(e, f.folder));
+    const totalAll = allData.logins.length + allData.cards.length + allData.identities.length + allData.notes.length;
+    sectionHead(allHead, t("all_head", totalAll), false, "");
+    restShown.slice(0, 60).forEach(({ kind, e }) => {
+      if (kind === 1) allList.append(buildLoginMetaRow(e));
+      else if (kind === 4) allList.append(buildCardRow(e));
+      else if (kind === 5) allList.append(buildIdentityRow(e));
+      else allList.append(buildNoteRow(e));
+    });
+    status.textContent = "";
+    if (!sugg.length && !restShown.length) status.textContent = t("no_match", f.q || host);
+    focusRow(0);
+  }
+
+  let searchTimer = null;
+  searchBox.addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(render, 200);
+  });
+  folderSel.addEventListener("change", render);
+  typeSel.addEventListener("change", render);
+
+  async function fetchEntry(kind, id) {
+    const r = await withTimeout(
+      chrome.runtime.sendMessage({ type: "PV_FETCH", kind, id }),
+      QUERY_TIMEOUT_MS, "fetch");
+    if (!r || !r.ok || !r.entry) throw new Error((r && r.error) || "fetch failed");
+    return r.entry;
+  }
+
+  function brandRow(icon, title, sub) {
     const row = document.createElement("div");
     row.className = "row";
     row.tabIndex = 0;
+    const wrap = document.createElement("div");
+    wrap.className = "brandrow";
+    const ic = document.createElement("div");
+    ic.className = "brandic";
+    ic.textContent = icon.letter;
+    ic.style.background = icon.bg;
+    ic.style.color = icon.fg;
+    const tx = document.createElement("div");
+    tx.className = "brandtx";
     const hd = document.createElement("div");
     hd.className = "t";
-    hd.textContent = (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)");
+    hd.textContent = title;
     const u = document.createElement("div");
     u.className = "u";
-    u.textContent = e.username || "";
-    row.append(hd, u);
+    u.textContent = sub;
+    tx.append(hd, u);
+    wrap.append(ic, tx);
+    row.append(wrap);
+    return row;
+  }
+  function actionButtons(row, onFill, onCopy) {
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    const fill = document.createElement("button");
+    fill.className = "fill";
+    fill.textContent = t("fill");
+    fill.addEventListener("click", (ev) => { ev.stopPropagation(); onFill(); });
+    const copy = document.createElement("button");
+    copy.textContent = t("copy");
+    copy.addEventListener("click", (ev) => { ev.stopPropagation(); onCopy(copy); });
+    btns.append(fill, copy);
+    row.append(btns);
+    return { fill, copy };
+  }
+  function wireKeys(row, idx, entry, onFill) {
+    row.addEventListener("click", () => focusRow(idx));
+    row.addEventListener("keydown", (ev) => {
+      if (ev.key === "ArrowDown") { ev.preventDefault(); focusRow(idx + 1); }
+      else if (ev.key === "ArrowUp") { ev.preventDefault(); focusRow(idx - 1); }
+      else if (ev.key === "Enter") { ev.preventDefault(); onFill(entry); }
+      else if (ev.key === "Escape") { window.close(); }
+    });
+  }
+  async function clipText(text, btn) {
+    try { await navigator.clipboard.writeText(text || ""); btn.textContent = t("copied"); }
+    catch (_) { btn.textContent = t("blocked_cb"); }
+  }
+
+  // Full login row (Bitwarden layout): brand + title/user + TOTP + audit + Fill/Copy.
+  function buildLoginRow(e, idx) {
+    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)"), e.username || "");
     if (e.totp) {
       const tot = document.createElement("div");
       tot.className = "totp";
@@ -350,31 +674,150 @@
     audit.className = "audit";
     audit.textContent = t("last_filled", ago(lastFilledMap[e.id]));
     row.append(audit);
-    const btns = document.createElement("div");
-    btns.className = "btns";
-    const fill = document.createElement("button");
-    fill.className = "fill";
-    fill.textContent = t("fill");
-    fill.addEventListener("click", () => doFill(e));
-    const copy = document.createElement("button");
-    copy.textContent = t("copy");
-    copy.addEventListener("click", async (ev) => {
-      ev.stopPropagation();
-      try { await navigator.clipboard.writeText(e.password || ""); copy.textContent = t("copied"); }
-      catch (_) { copy.textContent = t("blocked_cb"); }
-    });
-    btns.append(fill, copy);
-    row.append(btns);
-    row.addEventListener("click", () => focusRow(idx));
-    row.addEventListener("keydown", (ev) => {
-      if (ev.key === "ArrowDown") { ev.preventDefault(); focusRow(idx + 1); }
-      else if (ev.key === "ArrowUp") { ev.preventDefault(); focusRow(idx - 1); }
-      else if (ev.key === "Enter") { ev.preventDefault(); doFill(e); }
-      else if (ev.key === "Escape") { window.close(); }
-    });
-    list.append(row);
+    actionButtons(row, () => doFill(e), (btn) => clipText(e.password, btn));
+    wireKeys(row, idx, e, doFill);
     rows.push(row);
-  });
+    return row;
+  }
+  // Metadata login row: secrets fetched on demand, then same doFill path.
+  // Includes an on-demand 🔑 2FA button (fetches live code, copies it with
+  // auto-clear) so All-items rows show authenticator codes too.
+  function buildLoginMetaRow(e) {
+    const idx = rows.length;
+    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)"), e.username || "");
+    const fillOne = async () => {
+      try {
+        const full = await fetchEntry(1, e.id);
+        await doFill(full);
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    const copyOne = async (btn) => {
+      try {
+        const full = await fetchEntry(1, e.id);
+        await clipText(full.password, btn);
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    const totpOne = async (btn) => {
+      btn.textContent = "…";
+      try {
+        const full = await fetchEntry(1, e.id);
+        if (!full.totp) { btn.textContent = "—"; return; }
+        try {
+          await navigator.clipboard.writeText(full.totp);
+          btn.textContent = full.totp;
+          setTimeout(() => {
+            navigator.clipboard.writeText("").catch(() => {});
+            btn.textContent = "🔑 2FA";
+          }, 30000);
+        } catch (_) { btn.textContent = t("blocked_cb"); }
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); btn.textContent = "🔑 2FA"; }
+    };
+    actionButtons(row, fillOne, copyOne);
+    // Extra 2FA button beside Fill/Copy.
+    const btns = row.querySelector(".btns");
+    if (btns) {
+      const tb = document.createElement("button");
+      tb.textContent = "🔑 2FA";
+      tb.addEventListener("click", (ev) => { ev.stopPropagation(); totpOne(tb); });
+      btns.append(tb);
+    }
+    wireKeys(row, idx, e, fillOne);
+    rows.push(row);
+    return row;
+  }
+  function buildCardRow(c) {
+    const idx = rows.length;
+    const row = brandRow(brandIcon({ ...c, username: c.cardholder }), "💳 " + (c.title || "Card"), `${c.cardholder || ""} ${c.masked || ""}`.trim());
+    const fillOne = async () => {
+      try {
+        const full = await fetchEntry(4, c.id);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || tab.id == null) return;
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (cc) => {
+            const set = (sel, v) => {
+              const el = document.querySelector(sel);
+              if (!el || !v) return;
+              Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            set('input[autocomplete="cc-number"], input[name*="cardnumber" i]', cc.number || "");
+            set('input[autocomplete="cc-exp"], input[name*="expir" i]', (cc.exp_month && cc.exp_year) ? `${cc.exp_month}/${cc.exp_year}` : "");
+            set('input[autocomplete="cc-csc"], input[name*="cvv" i], input[name*="cvc" i]', cc.cvv || "");
+            set('input[autocomplete="cc-name"]', cc.cardholder || "");
+          },
+          args: [full],
+        });
+        try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: c.id }); } catch (_) {}
+        window.close();
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    const copyOne = async (btn) => {
+      try {
+        const full = await fetchEntry(4, c.id);
+        await clipText(full.number, btn);
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    actionButtons(row, fillOne, copyOne);
+    wireKeys(row, idx, c, fillOne);
+    rows.push(row);
+    return row;
+  }
+  function buildIdentityRow(i) {
+    const idx = rows.length;
+    const row = brandRow(brandIcon({ ...i, username: i.full_name }), "🪪 " + (i.title || i.full_name || "Identity"), [i.full_name, i.email].filter(Boolean).join(" • "));
+    const fillOne = async () => {
+      try {
+        const full = await fetchEntry(5, i.id);
+        const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+        if (!tab || tab.id == null) return;
+        await chrome.scripting.executeScript({
+          target: { tabId: tab.id },
+          func: (idn) => {
+            const set = (sel, v) => {
+              const el = document.querySelector(sel);
+              if (!el || !v) return;
+              const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+              Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
+              el.dispatchEvent(new Event("input", { bubbles: true }));
+            };
+            set('input[autocomplete="name"], input[name*="fullname" i]', idn.full_name || "");
+            set('input[autocomplete="email"], input[type="email"]', idn.email || "");
+            set('input[autocomplete="tel"], input[name*="phone" i]', idn.phone || "");
+            set('input[autocomplete="street-address"], input[name*="address" i]', idn.address || "");
+          },
+          args: [full],
+        });
+        try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: i.id }); } catch (_) {}
+        window.close();
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    const copyOne = async (btn) => {
+      try {
+        const full = await fetchEntry(5, i.id);
+        await clipText(full.email || full.full_name, btn);
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    actionButtons(row, fillOne, copyOne);
+    wireKeys(row, idx, i, fillOne);
+    rows.push(row);
+    return row;
+  }
+  function buildNoteRow(n) {
+    const idx = rows.length;
+    const row = brandRow(brandIcon({ title: n.title, username: "" }), "📝 " + (n.title || "(untitled)"), "");
+    const copyOne = async (btn) => {
+      try {
+        const full = await fetchEntry(3, n.id);
+        await clipText(full.content, btn);
+      } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    };
+    actionButtons(row, copyOne, copyOne);
+    wireKeys(row, idx, n, copyOne);
+    rows.push(row);
+    return row;
+  }
   function focusRow(i) {
     const n = rows.length;
     if (!n) return;
@@ -383,5 +826,5 @@
     rows[j].classList.add("focused");
     rows[j].focus();
   }
-  focusRow(0);
+  refresh();
 })();
