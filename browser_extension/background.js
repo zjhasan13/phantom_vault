@@ -39,8 +39,16 @@ function hostRequest(payload, timeoutMs = 10000) {
 }
 
 // Content scripts + popup talk to us here; we only proxy to the vault.
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+// After mutating calls (save/fill) the toolbar count may change, so the
+// originating tab's badge refreshes on the next tick.
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
+    const retouchBadge = () => {
+      try {
+        const t = sender && sender.tab;
+        if (t && t.id != null && t.url) scheduleBadge(t.id, t.url);
+      } catch (_) {}
+    };
     if (msg.type === "PV_QUERY") {
       return await hostRequest({ cmd: "query", app: msg.app || msg.url || "" });
     }
@@ -59,11 +67,33 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg.type === "PV_PING") {
       return await hostRequest({ cmd: "ping" });
     }
+    // Extension PIN hash — single source of truth lives in the desktop app
+    // (DPAPI-sealed). The extension keeps zero PIN state of its own.
+    if (msg.type === "PV_EXT_PIN") {
+      return await hostRequest({ cmd: "ext_pin_hash" });
+    }
     if (msg.type === "PV_SAVE_LOGIN") {
-      return await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
+      // Sender check (MISSING-HIGH): a malicious page must not save under
+      // another site's URL (github.com) to poison that credential via the
+      // host's domain match. Refuse when sender.tab.url disagrees.
+      try {
+        const tabUrl = sender && sender.tab && sender.tab.url;
+        if (tabUrl && /^https?:/i.test(tabUrl) && msg.url) {
+          const tabBase = pvRegistrable(new URL(tabUrl).hostname);
+          const msgBase = pvRegistrable(new URL(String(msg.url).includes("://") ? msg.url : "https://" + msg.url).hostname);
+          if (tabBase && msgBase && tabBase !== msgBase) {
+            return { ok: false, error: "save url does not match sender tab" };
+          }
+        }
+      } catch (_) {}
+      const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
+      if (r && r.ok) retouchBadge();
+      return r;
     }
     if (msg.type === "PV_FILLED") {
-      return await hostRequest({ cmd: "filled", id: msg.id || "" });
+      const r = await hostRequest({ cmd: "filled", id: msg.id || "" });
+      retouchBadge();
+      return r;
     }
     if (msg.type === "PV_STATS") {
       return await hostRequest({ cmd: "stats" });
@@ -90,6 +120,7 @@ async function refreshContextMenus() {
       ["pv_fill_identity", "🪪 Auto-fill Identity"],
       ["pv_copy_password", "📋 Copy Password"],
       ["pv_copy_totp", "📋 Copy 2FA Code"],
+      ["pv_generate_password", "🎲 Generate Password Here"],
     ];
     for (const [id, title] of items) {
       chrome.contextMenus.create({ id, parentId: PV_MENU_ROOT, title, contexts: ["editable"] });
@@ -180,7 +211,7 @@ async function refreshBadge(tabId, url) {
     const pageHost = new URL(url).hostname.toLowerCase();
     const n = entries.filter((e) => pvEntryMatchesPage(e, pageHost)).length;
     await chrome.action.setBadgeBackgroundColor({ color: "#38bdf8", tabId });
-    await chrome.action.setBadgeText({ text: n > 0 ? String(Math.min(n, 99)) : "", tabId });
+    await chrome.action.setBadgeText({ text: n > 0 ? (n > 9 ? "9+" : String(n)) : "", tabId });
   } catch (_) {
     try { await chrome.action.setBadgeText({ text: "", tabId }); } catch (_) {}
   }

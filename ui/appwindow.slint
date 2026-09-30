@@ -24,6 +24,9 @@ struct CredentialView {
     health: string,
     fav: bool,
     sel: bool,
+    has_icon: bool,
+    icon: image,
+    verified: bool,
 }
 
 // Retired password row (secret rides along for the copy button; RAM-only).
@@ -46,6 +49,15 @@ struct AttachmentView {
     size: string,
 }
 
+// Vault-health audit row. sev: -1 section header (id ""), 0 breached,
+// 1 reused, 2 weak, 3 stale. flags = short chip text, never secrets.
+struct HealthRow {
+    id: string,
+    title: string,
+    flags: string,
+    sev: int,
+}
+
 // Authenticator account row. kind: "TOTP" | "HOTP" | "STEAM".
 // display = grouped code for the big digits ("513 710"), next = upcoming
 // code, icon = brand letter, tint = brand color (all preformatted in Rust).
@@ -57,6 +69,9 @@ struct AuthView {
     display: string,
     next: string,
     icon: string,
+    // Favicon (same cache as the login list); letter circle fallback.
+    has_icon: bool,
+    icon_img: image,
     tint: color,
     kind: string,
     is_hotp: bool,
@@ -176,7 +191,8 @@ component NavItem inherits Rectangle {
 component FieldLabel inherits Text {
     font-size: 11px;
     font-weight: 700;
-    color: #8e99c0;
+    color: #64748b;
+    letter-spacing: 1px;
 }
 
 // Phase 26: ephemeral secret field. Peep OFF → classic eye toggle (sticky).
@@ -477,10 +493,21 @@ export component MainWindow inherits Window {
     in-out property <bool> d_stale: false;
     in-out property <string> d_age_info: "";
     in-out property <bool> d_fav: false;
+    in-out property <bool> d_verified: false;
+    in-out property <string> d_fill_info: "";
+    in-out property <string> d_health: "";
+    // Per-password strength meter (level 0..3 fraction + one-line label).
+    in-out property <float> d_pw_strength: 0.0;
+    in-out property <string> d_pw_strength_label: "";
+    in-out property <bool> d_has_icon: false;
+    in-out property <image> d_icon;
     in-out property <[HistoryView]> d_history;
     in-out property <bool> show_history: false;
     in-out property <bool> show_fav_only: false;
     in-out property <bool> showing_trash: false;
+    // Paged list window: first N matches render, Load More grows it.
+    in-out property <int> total_matches_count: 0;
+    callback load_more_items();
     // Bulk-select mode (Column 2): checkbox per card + bottom action bar.
     in-out property <bool> select_mode: false;
     in-out property <int> selected_count: 0;
@@ -533,7 +560,17 @@ export component MainWindow inherits Window {
     in-out property <string> import_2fa_status: "";
     // Phase 11: Windows Hello
     in-out property <bool> hello_available: false;
+    // App PIN quick-unlock (DPAPI-bound, device-local). pin_available mirrors
+    // pin.dpapi existence; show_pin_pad toggles the inline pad.
+    in-out property <bool> pin_available: false;
+    in-out property <bool> show_pin_pad: false;
+    in-out property <string> pin_error: "";
+    in-out property <string> pin_status: "";
     in-out property <string> hello_status: "Checking…";
+    // Extension PIN (managed here, enforced in the browser against the
+    // served hash; the extension keeps zero PIN state of its own).
+    in-out property <bool> ext_pin_set: false;
+    in-out property <string> ext_pin_status: "";
     in-out property <string> ssh_status: "Not checked";
     callback refresh_ssh_status();
     in-out property <bool> and_mode: false;
@@ -574,6 +611,11 @@ export component MainWindow inherits Window {
     in-out property <string> ob_new_text: "";
     in-out property <string> ob_confirm_text: "";
     callback ob_pw_changed(string);
+    // Post-setup shard nudge (one-shot banner; shards need an unlocked vault).
+    in-out property <bool> ob_shards_ok: false;
+    in-out property <bool> show_shard_nudge: false;
+    callback shard_nudge_generate();
+    callback shard_nudge_later();
     callback generate_shards();
     callback recover_with_shards(string, string, string);
     callback stego_hide();
@@ -584,6 +626,8 @@ export component MainWindow inherits Window {
     // Phase 25: breach + health audit
     in-out property <bool> show_health: false;
     in-out property <string> health_report: "Not audited yet.";
+    // Grouped audit rows (severity-ordered, tap to open the item).
+    in-out property <[HealthRow]> health_rows;
     in-out property <bool> offline_audit: false;
     callback audit_vault();
     callback filter_health(string);
@@ -608,6 +652,11 @@ export component MainWindow inherits Window {
     callback set_prox_sensitivity(int);
     // Phase 18: Omni-Importer vault view
     in-out property <string> import_status: "No import yet — pick any export file.";
+    // Dry-run preview: staged counts shown BEFORE anything merges.
+    in-out property <bool> show_import_preview: false;
+    in-out property <string> import_preview_text: "";
+    callback confirm_import_file();
+    callback cancel_import_file();
     // Cat 8: plaintext import-source shred offer
     in-out property <bool> show_shred_source: false;
     in-out property <string> shred_source_path: "";
@@ -615,6 +664,9 @@ export component MainWindow inherits Window {
     callback cancel_shred_source();
     in-out property <int> active_nav: 0;
     in-out property <bool> blackout_enabled: false;
+    in-out property <bool> favicons_enabled: true;
+    // Set once at startup when PHANTOM_VAULT_DIR engaged ("📦 Portable").
+    in-out property <string> portable_badge: "";
     in-out property <string> health_status: "Not audited yet.";
     // Scoreboard dashboard (set by the audit worker; filter drives the list).
     in-out property <int> health_score: 100;
@@ -645,6 +697,8 @@ export component MainWindow inherits Window {
     in-out property <string> update_status: "";
     in-out property <string> update_tag: "";
     in-out property <bool> update_ready: false;
+    in-out property <string> update_notes: "";
+    in-out property <bool> show_changelog: false;
     in-out property <string> app_version: "";
     in-out property <string> ext_host_id: "";
     in-out property <string> export_status: "";
@@ -669,6 +723,9 @@ export component MainWindow inherits Window {
     callback unlock_requested(string);
     callback copy_password_requested(string);
     callback quick_copy(int, string);
+    // Last-copied feedback: buttons flash ✓ for 1.5s after a copy.
+    in-out property <string> last_copied: "";
+    in-out property <string> last_copied_id: "";
     callback toggle_totp_favorite(string);
     callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
     callback delete_item_requested(int, string);
@@ -676,6 +733,7 @@ export component MainWindow inherits Window {
     callback folder_filter_changed(string);
     callback fav_filter_changed(bool);
     callback toggle_favorite(int, string);
+    callback toggle_verified(int, string);
     callback toggle_select(int, string);
     callback clear_selection();
     callback bulk_favorite();
@@ -695,6 +753,8 @@ export component MainWindow inherits Window {
     callback toggle_saved_field(int, string, int);
     callback edit_item_requested(int, string);
     callback open_detail(string);
+    callback close_detail();
+    callback cycle_select(int);
     callback reprompt_confirm(string);
     callback search_changed(string);
     callback totp_search_changed(string);
@@ -708,6 +768,11 @@ export component MainWindow inherits Window {
     callback hotp_next(string);
     callback delete_auth_account(string);
     callback request_biometric_unlock();
+    callback request_pin_unlock(string);
+    callback setup_app_pin(string, string);
+    callback disable_app_pin();
+    callback setup_ext_pin(string, string);
+    callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
     callback type_item_requested(int, string);
     callback save_sync_config(string, string, string);
@@ -727,6 +792,19 @@ export component MainWindow inherits Window {
     callback ga_copy_uri();
     callback export_vault(int);
     callback set_blackout(bool);
+    callback set_favicons(bool);
+    // Factory reset triple-gate (Danger Zone + lock screen recovery link).
+    in-out property <bool> show_factory_reset: false;
+    in-out property <string> fr_password: "";
+    in-out property <string> fr_delete_text: "";
+    in-out property <bool> fr_armed: false;
+    in-out property <int> fr_countdown: 0;
+    in-out property <string> fr_error: "";
+    in-out property <bool> has_vault_file: true;
+    callback factory_reset_start();
+    callback factory_reset_cancel();
+    callback factory_reset_arm();
+    callback factory_reset_confirm();
     callback set_clipboard_timeout(int);
     callback set_autolock_timeout(int);
     callback autofill_pill_clicked();
@@ -739,6 +817,8 @@ export component MainWindow inherits Window {
     callback download_attachment(int, string, string);
     callback delete_attachment(int, string, string);
     callback preview_attachment(int, string, string);
+    callback override_favicon(string);
+    callback clear_custom_favicons();
     callback toggle_travel(int, string);
     callback regenerate();
     callback use_password(string);
@@ -777,6 +857,7 @@ export component MainWindow inherits Window {
                     alignment: center;
                     Text { text: "PHANTOM VAULT"; font-size: 24px; font-weight: 900; color: #eef1ff; }
                     Text { text: "ZERO-KNOWLEDGE  •  NATIVE  •  QUANTUM-READY"; font-size: 10px; font-weight: 700; color: #5b6589; }
+                    if root.portable_badge != "" : Text { text: root.portable_badge + " — running from USB/RAM-disk, zero SSD footprint"; font-size: 11px; font-weight: 800; color: #34d399; }
                 }
             }
             Rectangle { height: 26px; }
@@ -823,6 +904,29 @@ export component MainWindow inherits Window {
                         height: 42px;
                         clicked => { root.request_biometric_unlock(); }
                     }
+                    if root.pin_available : AuraButton {
+                        label: "🔢  Quick Unlock with PIN";
+                        height: 42px;
+                        clicked => { root.show_pin_pad = !root.show_pin_pad; root.pin_error = ""; }
+                    }
+                    if root.pin_available && root.show_pin_pad : VerticalLayout {
+                        spacing: 8px;
+                        pin_input := LineEdit {
+                            placeholder-text: "4–8 digit PIN…";
+                            input-type: password;
+                            height: 46px;
+                            font-size: 18px;
+                            horizontal-alignment: center;
+                            accepted(text) => { root.request_pin_unlock(text); }
+                        }
+                        if root.pin_error != "" : Text { text: root.pin_error; font-size: 12px; font-weight: 600; color: #fb7185; horizontal-alignment: center; wrap: word-wrap; }
+                        AuraButton {
+                            label: "🔓  Unlock with PIN";
+                            primary: true;
+                            height: 42px;
+                            clicked => { root.request_pin_unlock(pin_input.text); }
+                        }
+                    }
                     if root.unlock_error_message != "" : HorizontalLayout {
                         alignment: center;
                         spacing: 8px;
@@ -868,6 +972,9 @@ export component MainWindow inherits Window {
                         }
                     }
                     Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 10px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
+                    if root.has_vault_file : HorizontalLayout { alignment: center;
+                        AuraButton { label: "Forgot password? Reset vault…"; width: 220px; height: 30px; clicked => { root.factory_reset_start(); } }
+                    }
                 }
                 }
             }
@@ -911,6 +1018,10 @@ export component MainWindow inherits Window {
                             Text { text: "🔑"; font-size: 44px; horizontal-alignment: center; }
                             Text { text: "Your Master Password is your ONLY key"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                             Text { text: "We never store or transmit it. If you lose it AND your recovery shards, nobody — not even us — can open your vault."; color: #8e99c0; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
+                            HorizontalLayout { spacing: 8px; alignment: center;
+                                CheckBox { text: "I understand — no password + no shards = no vault"; checked <=> root.ob_shards_ok; }
+                            }
+                            Text { text: "📄 Right after setup you will get ONE prompt to print your 5 recovery shards. Do not skip it."; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         }
                         if root.onboarding_step == 3 : VerticalLayout { spacing: 10px;
                             Text { text: "🔐 Create your Master Password"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; }
@@ -926,7 +1037,7 @@ export component MainWindow inherits Window {
                         }
                         HorizontalLayout { spacing: 8px; alignment: center;
                             if root.onboarding_step > 1 : AuraButton { label: "◀ Back"; width: 110px; height: 40px; clicked => { root.ob_error = ""; root.onboarding_step = root.onboarding_step - 1; } }
-                            if root.onboarding_step < 3 : AuraButton { label: "Next ▶"; primary: true; width: 130px; height: 40px; clicked => { root.onboarding_step = root.onboarding_step + 1; } }
+                            if root.onboarding_step < 3 : AuraButton { label: "Next ▶"; primary: true; width: 130px; height: 40px; clicked => { if root.onboarding_step == 2 && !root.ob_shards_ok { root.ob_error = "⚠️ Please tick the box above — this cannot be undone later."; } else { root.ob_error = ""; root.onboarding_step = root.onboarding_step + 1; } } }
                             if root.onboarding_step == 3 : AuraButton { label: "🚀 Create Vault"; primary: true; width: 170px; height: 40px; clicked => {
                                 if root.ob_new_text == "" || root.ob_confirm_text == "" { root.ob_error = "⚠️ Type the password twice to confirm."; }
                                 else if root.ob_new_text != root.ob_confirm_text { root.ob_error = "⚠️ Passwords do not match."; }
@@ -996,6 +1107,7 @@ export component MainWindow inherits Window {
             }
             }
             AuraButton { label: root.is_travel_mode ? "✈️ TRAVEL ON" : "VAULT SEALED"; primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
+            if root.portable_badge != "" : Text { text: root.portable_badge; color: #34d399; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
             }
         }
 
@@ -1017,30 +1129,35 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } }
                     if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 } }
-                ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 14px;
-                    // Proton-style 2-column card grid (rows of 2 from Rust;
-                    // a lone card gets a stretch spacer, never full-width).
-                    for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: center;
+                hub_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 14px;
+                    // Compact 3-column grid (rows of 3 from Rust). Card width
+                    // derives from the ScrollView VIEWPORT (parent-determined,
+                    // never content) — pixel-identical columns, short rows
+                    // left-align, no spacers, no zigzag, no binding loop.
+                    for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            horizontal-stretch: 1;
-                            max-width: 560px;
+                            width: (hub_scroll.width - 72px) / 3;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
                             border-color: #1e293b;
-                            height: 148px;
+                            height: 132px;
                             clip: true;
-                            HorizontalLayout { padding: 14px; spacing: 10px;
+                            // Click-anywhere copies the live code (buttons stay
+                            // on top, so ⭐/Copy/🗑️ keep their own clicks).
+                            TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_password_requested(acc.code); } } }
+                            HorizontalLayout { padding: 12px; spacing: 10px;
                                 VerticalLayout { horizontal-stretch: 1; spacing: 4px;
                                     HorizontalLayout { spacing: 8px;
                                         Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
-                                            Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                                            if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; x: 6px; y: 6px; image-fit: contain; }
+                                            if !acc.has_icon : Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                                         VerticalLayout { spacing: 0px; alignment: center;
                                             Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                         AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 28px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
-                                    Text { text: acc.display; color: #eef1ff; font-size: 26px; font-weight: 900; }
+                                    Text { text: acc.display; color: #eef1ff; font-size: 24px; font-weight: 900; }
                                     Text { text: "Next: " + acc.next; color: #5b6589; font-size: 10px; overflow: elide; }
                                 }
                                 VerticalLayout { spacing: 4px; alignment: center;
@@ -1050,14 +1167,17 @@ export component MainWindow inherits Window {
                                     if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
                                     if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 26px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
-                                        AuraButton { label: "📋 Copy"; width: 72px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
+                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == acc.code && root.last_copied != ""; width: 72px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
                                         AuraButton { label: "🗑️"; width: 40px; height: 28px; danger: true; clicked => { root.delete_auth_account(acc.id); } } }
                                 }
                             }
                         }
-                        if row.length == 1 : Rectangle { horizontal-stretch: 1; }
                     }
-                    if root.auth_rows.length == 0 : Text { text: "No 2FA accounts yet — hit + Add."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
+                    if root.auth_rows.length == 0 : VerticalLayout { spacing: 8px; alignment: center; padding-top: 30px;
+                        Text { text: "🔑"; font-size: 44px; horizontal-alignment: center; }
+                        Text { text: "No 2FA accounts yet — scan a QR or paste a key."; color: #5b6589; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                        AuraButton { label: "+ Add 2FA"; primary: true; width: 150px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
+                    }
                     Text { text: "🔑  Resident Passkeys (WebAuthn)"; color: #eef1ff; font-size: 15px; font-weight: 900; }
                     HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Relying party (github.com)"; text <=> root.pk_rp; height: 36px; horizontal-stretch: 1; } LineEdit { placeholder-text: "Username"; text <=> root.pk_user; height: 36px; horizontal-stretch: 1; } AuraButton { label: "+ Register"; primary: true; width: 130px; clicked => { root.register_passkey(root.pk_rp, root.pk_user); } } }
                     VerticalLayout { spacing: 8px;
@@ -1121,6 +1241,14 @@ export component MainWindow inherits Window {
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                 AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; clicked => { root.pick_import_file(); } }
                 Rectangle { background: #121927; border-radius: 10px; height: 64px; Text { text: root.import_status; color: #38e1ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } }
+                if root.show_import_preview : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
+                    Text { text: root.import_preview_text; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; alignment: center;
+                        AuraButton { label: "✅ Confirm Import"; primary: true; width: 170px; height: 38px; clicked => { root.confirm_import_file(); } }
+                        AuraButton { label: "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
+                    }
+                }}
             }
         }
         if root.active_nav == 3 : Rectangle {
@@ -1130,8 +1258,30 @@ export component MainWindow inherits Window {
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Security"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 8px; Text { text: "Screen Blackout"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.blackout_enabled ? "ON" : "OFF"; primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "Website Favicons (cached, DDG)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.favicons_enabled ? "ON" : "OFF"; primary: root.favicons_enabled; width: 90px; clicked => { root.set_favicons(!root.favicons_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "Custom logos (per-domain override)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "🧹 Clear"; width: 90px; clicked => { root.clear_custom_favicons(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Travel Mode"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.is_travel_mode ? "ON" : "OFF"; primary: root.is_travel_mode; width: 90px; clicked => { root.set_travel_mode(!root.is_travel_mode); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Windows Hello"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.hello_status; color: #8e99c0; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; wrap: word-wrap; } }
+                    HorizontalLayout { spacing: 8px; Text { text: "App PIN quick unlock (this PC only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pin_available ? "SET" : "OFF"; color: root.pin_available ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    HorizontalLayout { spacing: 8px;
+                        pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        pin_confirm := LineEdit { placeholder-text: "Confirm PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Set PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_app_pin(pin_new.text, pin_confirm.text); } }
+                        if root.pin_available : AuraButton { label: "Remove PIN"; danger: true; width: 130px; height: 34px; clicked => { root.disable_app_pin(); } }
+                    }
+                    if root.pin_status != "" : Text { text: root.pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    HorizontalLayout { spacing: 8px;
+                        ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        ext_pin_confirm := LineEdit { placeholder-text: "Confirm PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Set Ext PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_ext_pin(ext_pin_new.text, ext_pin_confirm.text); } }
+                        if root.ext_pin_set : AuraButton { label: "Remove Ext PIN"; danger: true; width: 150px; height: 34px; clicked => { root.disable_ext_pin(); } }
+                    }
+                    if root.ext_pin_status != "" : Text { text: root.ext_pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Two-factor unlock (password + Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.and_mode ? "ON" : "OFF"; primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
                     // Phase 27: vault-unlock TOTP gate (DEFAULT OFF).
                     HorizontalLayout { spacing: 8px; Text { text: "Unlock 2FA (authenticator code)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.totp2fa_on ? "ARMED" : "OFF"; color: root.totp2fa_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
@@ -1169,6 +1319,7 @@ export component MainWindow inherits Window {
                     Text { text: root.update_tag == "" ? "Current: v" + root.app_version : "🎉 New Update Available: " + root.update_tag; color: root.update_tag == "" ? #8e99c0 : #34d399; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "Check for Updates"; width: 170px; clicked => { root.check_updates(); } }
+                        if root.update_tag != "" : AuraButton { label: "📋 What's New"; width: 150px; clicked => { root.show_changelog = true; } }
                         if root.update_tag != "" && !root.update_ready : AuraButton { label: "⬇️ Download & Stage"; primary: true; width: 190px; clicked => { root.download_update(); } }
                         if root.update_ready : AuraButton { label: "🔄 Restart to Update"; primary: true; width: 190px; clicked => { root.restart_update(); } }
                     }
@@ -1244,6 +1395,11 @@ export component MainWindow inherits Window {
                     }
                     AuraButton { label: "🕊️  Arm Decoy"; width: 200px; clicked => { root.set_duress_password(root.duress_input); } }
                 }}
+                Rectangle { background: #2a0f1a; border-radius: 12px; border-width: 1px; border-color: #fb7185; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "🔥 DANGER ZONE"; color: #fb7185; font-size: 12px; font-weight: 800; }
+                    Text { text: "Factory reset shreds the vault, all backups, and machine seals (DoD 3-pass), then restarts onboarding. Triple-gated: password + DELETE + 5s countdown."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: "🔥 Factory Reset Vault"; danger: true; width: 220px; height: 38px; clicked => { root.factory_reset_start(); } }
+                }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Email Aliases (Addy.io / SimpleLogin)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 6px;
@@ -1297,8 +1453,27 @@ export component MainWindow inherits Window {
             // 2. Column 2: Middle Items List (340px)
             Rectangle {
                 width: 340px; background: #0b1226; clip: true;
+                // Column-2 power shortcuts: / focuses search, ↑↓ cycle
+                // selection, Esc deselects (idle unless a card/button inside
+                // holds focus — typing in fields takes precedence).
+                col2_keys := FocusScope {
+                    key-pressed(event) => {
+                            if event.text == "/" { search_input.focus(); return accept; }
+                            if event.text == Key.UpArrow { root.cycle_select(-1); return accept; }
+                            if event.text == Key.DownArrow { root.cycle_select(1); return accept; }
+                            if event.text == Key.Escape { root.close_detail(); return accept; }
+                        return reject;
+                    }
                 VerticalLayout { padding: 14px; spacing: 10px;
                     AuraButton { label: "+ New Item"; primary: true; height: 38px; clicked => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
+                    if root.show_shard_nudge : Rectangle { background: #2a1f08; border-radius: 10px; border-width: 1px; border-color: #fbbf24; VerticalLayout { padding: 10px; spacing: 6px;
+                        Text { text: "📄 Print your recovery sheet?"; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+                        Text { text: "Lose your password without shards = vault gone forever."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        HorizontalLayout { spacing: 6px; alignment: center;
+                            AuraButton { label: "📄 Generate Now"; primary: true; width: 140px; height: 32px; clicked => { root.shard_nudge_generate(); } }
+                            AuraButton { label: "Later"; width: 80px; height: 32px; clicked => { root.shard_nudge_later(); } }
+                        }
+                    }}
                     if root.show_new_menu : VerticalLayout { spacing: 4px;
                         HorizontalLayout { spacing: 6px;
                             AuraButton { label: "Login"; horizontal-stretch: 1; clicked => { root.open_new_form(1); } }
@@ -1311,7 +1486,7 @@ export component MainWindow inherits Window {
                             AuraButton { label: "SSH Key"; horizontal-stretch: 1; clicked => { root.open_new_form(6); } }
                         }
                     }
-                    LineEdit { placeholder-text: "🔍 Search vault..."; text <=> root.search_query; height: 38px; edited(text) => { root.search_changed(text); } }
+                    search_input := LineEdit { placeholder-text: "🔍 Search vault..."; text <=> root.search_query; height: 38px; edited(text) => { root.search_changed(text); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
                         AuraButton { label: root.select_mode ? "☑️ Selecting…" : "☑️ Select"; width: 130px; height: 32px; primary: root.select_mode; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
                     }
@@ -1327,22 +1502,29 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                    ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 6px;
-                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : #101834; border-radius: 10px; border-width: 1px; border-color: root.d_id == cred.id ? #8b7cf6 : #26315c; height: 62px;
-                            TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
-                            HorizontalLayout { padding: 10px; spacing: 8px; alignment: space-between;
+                    ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
+                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : (touch.has-hover ? #1a2333 : #101834); border-radius: 10px; border-width: 1px; border-color: root.d_id == cred.id ? #38bdf8 : (touch.has-hover ? #38bdf855 : #26315c); height: 62px;
+                            touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
+                            if root.d_id == cred.id : Rectangle { width: 3px; height: 40px; x: 0; y: 11px; border-radius: 2px; background: #38bdf8; drop-shadow-blur: 8px; drop-shadow-color: #38bdf888; }
+                            HorizontalLayout { padding-left: 14px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 8px; alignment: space-between;
                                 if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 36px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
-                                Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🔑"))))); font-size: 18px; vertical-alignment: center; }
-                                VerticalLayout { horizontal-stretch: 1; spacing: 1px; Text { text: cred.title; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: cred.username + " • " + cred.folder; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                if cred.kind == 1 : AuraButton { label: "📋"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
-                                if cred.kind == 4 : AuraButton { label: "💳"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
-                                if cred.kind == 8 : AuraButton { label: "⏱️"; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.has_icon : Image { source: cred.icon; width: 26px; height: 26px; image-fit: contain; vertical-alignment: center; }
+                                if !cred.has_icon : Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🔑"))))); font-size: 18px; vertical-alignment: center; }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 1px; Text { text: cred.title; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } HorizontalLayout { spacing: 4px; Text { text: cred.username + " • " + cred.folder; color: #5b6589; font-size: 11px; overflow: elide; } if cred.verified : Text { text: "✅"; font-size: 11px; vertical-alignment: center; } } }
+                                if cred.kind == 1 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "📋"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.kind == 4 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "💳"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
                                 Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : ""; font-size: 12px; vertical-alignment: center; }
                             }
                         }
-                        if root.credentials.length == 0 : Text { text: root.showing_trash ? "Trash is empty — shredded items are gone for good." : (root.show_fav_only ? "No favorites yet — tap ⭐ on any item." : "No items — hit + New"); color: #5b6589; font-size: 12px; horizontal-alignment: center; }
-                        if root.credentials.length >= 50 : Text { text: "Showing first 50 — refine search to find the rest."; color: #5b6589; font-size: 11px; horizontal-alignment: center; }
+                        if root.credentials.length == 0 : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
+                            Text { text: root.showing_trash ? "🗑️✨" : (root.show_fav_only ? "⭐" : "📭"); font-size: 44px; horizontal-alignment: center; }
+                            Text { text: root.showing_trash ? "Trash is empty — shredded items are gone for good." : (root.show_fav_only ? "No favorites yet — tap ⭐ on any item." : "Vault is empty — add your first login."); color: #5b6589; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                            if !root.showing_trash && !root.show_fav_only : AuraButton { label: "+ New Login"; primary: true; width: 170px; height: 36px; clicked => { root.open_new_form(1); } }
+                        }
+                        if root.total_matches_count > root.credentials.length : AuraButton { label: "⬇️ Load 50 More (" + (root.total_matches_count - root.credentials.length) + " remaining)"; horizontal-stretch: 1; height: 36px; clicked => { root.load_more_items(); } }
+                        if root.total_matches_count > 0 : Text { text: "Showing " + Math.min(root.credentials.length, root.total_matches_count) + " of " + root.total_matches_count; color: #5b6589; font-size: 11px; horizontal-alignment: center; }
                     }}
                     // Floating bulk action bar (Select mode, non-empty selection)
                     if root.select_mode && root.selected_count > 0 : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 10px; spacing: 8px;
@@ -1357,6 +1539,7 @@ export component MainWindow inherits Window {
                         }
                         AuraButton { label: "✕ Deselect All"; height: 32px; clicked => { root.clear_selection(); } }
                     }}
+                }
                 }
             }
             // 3. Column 3: Right Inspection Detail Panel (stretch)
@@ -1431,12 +1614,14 @@ export component MainWindow inherits Window {
                         // CARD 1: header + primary action (Bitwarden style)
                         Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 14px; spacing: 10px;
                             HorizontalLayout { spacing: 10px;
-                                Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 26px; vertical-alignment: center; }
+                                if root.d_has_icon : Image { source: root.d_icon; width: 30px; height: 30px; image-fit: contain; vertical-alignment: center; }
+                                if !root.d_has_icon : Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 26px; vertical-alignment: center; }
                                 VerticalLayout { horizontal-stretch: 1; spacing: 2px;
-                                    Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; overflow: elide; }
+                                    HorizontalLayout { spacing: 6px; Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; overflow: elide; } if root.d_verified : Text { text: "✅"; font-size: 14px; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 6px; Text { text: "📁 " + root.d_folder; color: #8b7cf6; font-size: 11px; font-weight: 700; vertical-alignment: center; } if root.d_reprompt : Text { text: "🔒"; font-size: 12px; vertical-alignment: center; } }
                                 }
                                 AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 34px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
+                                if root.d_kind == 1 : AuraButton { label: "🖼️"; width: 44px; height: 34px; clicked => { root.override_favicon(root.d_id); } }
                             }
                             if !root.d_trashed : AuraButton { label: "⚡ Autofill / Type"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
                         }}
@@ -1446,23 +1631,31 @@ export component MainWindow inherits Window {
                         if root.d_kind != 8 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: "LOGIN CREDENTIALS"; }
                             FieldLabel { text: "USERNAME"; }
-                            if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋 Copy"; width: 76px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
+                            if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.last_copied == root.d_user && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == root.d_user && root.last_copied != ""; width: 76px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
                             Rectangle { height: 1px; background: #1e293b; }
                             FieldLabel { text: "PASSWORD"; }
-                            HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
+                            HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
+                            if root.d_kind == 1 && root.d_secret != "" && root.d_pw_strength_label != "" : VerticalLayout { spacing: 4px;
+                                HorizontalLayout { spacing: 8px;
+                                    Rectangle { background: #1e293b; border-radius: 4px; height: 8px; horizontal-stretch: 1; y: 4px;
+                                        Rectangle { background: root.d_pw_strength >= 1.0 ? #34d399 : (root.d_pw_strength >= 0.75 ? #a3e635 : (root.d_pw_strength >= 0.5 ? #fbbf24 : #fb7185)); border-radius: 4px; width: parent.width * root.d_pw_strength; height: 8px; }
+                                    }
+                                }
+                                Text { text: "🛡️ " + root.d_pw_strength_label; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                            }
                             if root.d_kind == 1 && root.d_history.length > 0 : VerticalLayout { spacing: 6px;
-                                AuraButton { label: root.show_history ? "📜 Hide Password History" : "📜 Show Password History"; width: 230px; height: 30px; clicked => { root.show_history = !root.show_history; } }
+                                AuraButton { label: root.show_history ? "📜 Hide Password History (" + root.d_history.length + ")" : "📜 Password History (" + root.d_history.length + ")"; width: 250px; height: 30px; clicked => { root.show_history = !root.show_history; } }
                                 if root.show_history : VerticalLayout { spacing: 4px;
                                     for h in root.d_history : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: h.when; color: #5b6589; font-size: 11px; width: 90px; vertical-alignment: center; } Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : h.password; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(h.password); } } } }
                                 }
                             }
                         }}
                         // Embedded / standalone 2FA live card
-                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: "📋"; width: 44px; height: 30px; y: 11px; clicked => { root.copy_password_requested(root.live_totp_code); } } } } }
+                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_password_requested(root.live_totp_code); } } } } }
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: "AUTO-FILL OPTIONS"; }
-                            HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: "📋"; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
+                            HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: root.last_copied == root.d_url && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_url && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
                             if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: #5b6589; font-size: 11px; overflow: elide; }
                         }}
                         // CARD 4: additional options (only when populated)
@@ -1482,19 +1675,32 @@ export component MainWindow inherits Window {
                         if root.d_attachments.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
                             FieldLabel { text: "ATTACHMENTS"; }
                             for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "👁"; width: 40px; height: 24px; y: 6px; clicked => { root.preview_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "🗑"; width: 36px; height: 24px; y: 6px; danger: true; clicked => { root.delete_attachment(root.d_kind, root.d_id, att.id); } } } }
+                            HorizontalLayout { alignment: center; AuraButton { label: "📎  Attach File"; width: 180px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } }
                         }}
                         // CARD 5: item history & safety
                         Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: "ITEM HISTORY"; }
+                            if root.d_health == "breached" : Text { text: "⚠️ Breached in HIBP!"; color: #fb7185; font-size: 12px; font-weight: 800; wrap: word-wrap; }
                             if root.d_age_info != "" : Text { text: root.d_age_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                            if root.d_fill_info != "" : Text { text: "📊 " + root.d_fill_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                            if root.d_kind == 1 && !root.d_trashed : HorizontalLayout { spacing: 8px; alignment: center;
+                                AuraButton { label: root.d_verified ? "✅ Verified working" : "Mark as working ✓"; primary: !root.d_verified; width: 200px; height: 32px; clicked => { root.toggle_verified(root.d_kind, root.d_id); } }
+                            }
                             HorizontalLayout { spacing: 8px; FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? #34d399 : #5b6589; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
                         }}
                         // Bottom action bar
-                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.show_detail = false; } } }
-                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.show_detail = false; } } }
+                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
+                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
                     }
                     if root.d_id == "" && !root.show_add_form : Text { text: "🛡️ Select an item from the list to view details"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
                 }}
+                // Phase 26: moiré veil floats ABOVE the card content when armed.
+                if root.moire_guard_active : MoireVeil {
+                    x: (parent.width - 480px) / 2;
+                    y: 12px;
+                    width: 480px;
+                    height: parent.height - 24px;
+                }
             }
         }
     }
@@ -1650,274 +1856,32 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ==== Item detail / inspection modal ====
-    if root.show_detail : Rectangle {
+    // ==== What's New changelog (GitHub release notes, read-only) ====
+    if root.show_changelog : Rectangle {
         x: 0;
         y: 0;
         width: parent.width;
         height: parent.height;
         background: #04060ecc;
-        TouchArea {
-            clicked => { root.show_detail = false; }
-        }
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 480px;
             background: #0d131f;
             border-radius: 16px;
-            border-width: 1.5px;
+            border-width: 1px;
             border-color: #8b7cf6;
-            drop-shadow-blur: 40px;
-            drop-shadow-color: #8b7cf644;
-            VerticalLayout {
-                padding: 20px;
-                spacing: 10px;
-                HorizontalLayout {
-                    spacing: 12px;
-                    Rectangle {
-                        width: 48px;
-                        height: 48px;
-                        border-radius: 12px;
-                        background: #1a2450;
-                        border-width: 1px;
-                        border-color: #8b7cf655;
-                        Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
-                    }
-                    VerticalLayout {
-                        alignment: center;
-                        spacing: 2px;
-                        horizontal-stretch: 1;
-                        Text { text: root.d_title; color: #eef1ff; font-size: 16px; font-weight: 800; overflow: elide; }
-                        Text { text: root.d_folder; color: #8b7cf6; font-size: 11px; font-weight: 700; }
-                    }
-                    AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 40px; height: 32px; y: 8px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
-                    AuraButton { label: "✕"; width: 32px; height: 32px; y: 8px; clicked => { root.show_detail = false; } }
+            clip: true;
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { text: "🎉 What's New in " + root.update_tag; color: #34d399; font-size: 15px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Rectangle { background: #111827; border-radius: 8px; height: 300px; clip: true;
+                    ScrollView { VerticalLayout { padding: 12px; Text { text: root.update_notes; color: #eef1ff; font-size: 12px; wrap: word-wrap; } } }
                 }
-                if root.d_trashed : Rectangle { background: #2a1f08; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
-                if root.d_reprompt : Text { text: "🔒  Master reprompt armed — copy / fill / delete ask first"; color: #fbbf24; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
-                // Phase 26: peep hold-pad. Always instantiated (id stability);
-                // collapses to zero height unless peep mode is armed.
-                Rectangle {
-                    height: root.peep_hole_mode ? 40px : 0px;
-                    background: peep_hold_all.pressed ? #8b7cf6 : #1a2450;
-                    border-radius: 10px;
-                    border-width: 1px;
-                    border-color: #8b7cf6;
-                    clip: true;
-                    peep_hold_all := TouchArea { }
-                    Text { text: peep_hold_all.pressed ? "👁 REVEALING — release to mask" : "👁 HOLD TO PEEK (ephemeral)"; color: #ffffff; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                HorizontalLayout { spacing: 8px; alignment: center;
+                    if !root.update_ready : AuraButton { label: "⬇️ Download & Stage"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.download_update(); } }
+                    if root.update_ready : AuraButton { label: "🔄 Restart to Update"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.restart_update(); } }
+                    AuraButton { label: "✕ Close"; width: 120px; height: 38px; clicked => { root.show_changelog = false; } }
                 }
-                // Login fields
-                if root.d_kind == 1 : VerticalLayout {
-                    spacing: 10px;
-                    if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: #fbbf24; font-size: 12px; font-weight: 700; wrap: word-wrap; }
-                    FieldLabel { text: "USERNAME"; }
-                    HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 14px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_user); } } }
-                    FieldLabel { text: "PASSWORD"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = 1; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
-                        AuraButton { label: "⚡ Fill"; width: 80px; primary: true; clicked => { if root.d_reprompt { root.rp_action = 2; root.rp_kind = 1; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.show_detail = false; root.type_item_requested(root.d_kind, root.d_id); } } }
-                    }
-                    if root.d_kind == 1 && root.d_history.length > 0 : VerticalLayout { spacing: 6px;
-                        FieldLabel { text: "PASSWORD HISTORY"; }
-                        AuraButton { label: root.show_history ? "📜 Hide History" : "📜 Show History"; width: 170px; height: 30px; clicked => { root.show_history = !root.show_history; } }
-                        if root.show_history : VerticalLayout { spacing: 4px;
-                            for h in root.d_history : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: h.when; color: #5b6589; font-size: 11px; width: 90px; vertical-alignment: center; } Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••" : h.password; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(h.password); } } } }
-                        }
-                    }
-                    if root.d_url != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "URLS"; } Text { text: root.d_urls_extra == "" ? root.d_url : root.d_url + "\n" + root.d_urls_extra; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
-                    if root.d_totp != "" : VerticalLayout {
-                        spacing: 10px;
-                        FieldLabel { text: "TOTP SECRET"; }
-                        HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••" : root.d_totp; color: #38e1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_totp); } } }
-                    }
-                    if root.d_backup != "" : VerticalLayout {
-                        spacing: 10px;
-                        FieldLabel { text: "BACKUP / RECOVERY CODES"; }
-                        Rectangle {
-                            background: #121927;
-                            border-radius: 8px;
-                            height: 84px;
-                            clip: true;
-                            Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••" : root.d_backup; color: #eef1ff; font-size: 12px; wrap: word-wrap; overflow: elide; }
-                        }
-                        HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy All Codes"; width: 190px; clicked => { root.copy_password_requested(root.d_backup); } } }
-                    }
-                    if root.d_custom.length > 0 : VerticalLayout {
-                        spacing: 6px;
-                        FieldLabel { text: "CUSTOM FIELDS"; }
-                        for cf[idx] in root.d_custom : Rectangle {
-                            background: #121927;
-                            border-radius: 8px;
-                            height: 36px;
-                            HorizontalLayout {
-                                padding-left: 10px;
-                                padding-right: 6px;
-                                spacing: 8px;
-                                Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                                if cf.ftype == 0 : Text { text: cf.value; color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                                if cf.ftype == 0 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } }
-                                if cf.ftype == 1 : Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••" : (root.d_revealed == idx ? cf.value : "••••"); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                                if cf.ftype == 1 : AuraButton { label: root.d_revealed == idx ? "👁️‍🗨️" : "👁️"; width: 40px; height: 24px; y: 6px; clicked => { if !root.peep_hole_mode { root.d_revealed = root.d_revealed == idx ? -1 : idx; } } }
-                                if cf.ftype == 1 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } }
-                                if cf.ftype == 2 : AuraButton { label: cf.value == "true" ? "✓ ON" : "✕ OFF"; primary: cf.value == "true"; width: 76px; height: 24px; y: 6px; clicked => { root.toggle_saved_field(root.d_kind, root.d_id, idx); } }
-                                if cf.ftype == 3 : Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••" : (cf.value == "username" ? root.d_user : root.d_secret); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; }
-                                if cf.ftype == 3 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value == "username" ? root.d_user : root.d_secret); } }
-                            }
-                        }
-                    }
-                    if root.d_notes != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "NOTES"; } Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
-                }
-                // License fields
-                if root.d_kind == 2 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "LICENSE KEY"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { root.copy_password_requested(root.d_secret); } }
-                    }
-                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "EXPIRY"; } Text { text: root.d_meta; color: #eef1ff; font-size: 14px; } }
-                }
-                // Note content
-                if root.d_kind == 3 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "CONTENT"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
-                    }
-                }
-                // Card fields
-                if root.d_kind == 4 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "CARDHOLDER"; }
-                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
-                    FieldLabel { text: "CARD NUMBER"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "•••• •••• •••• ••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
-                    }
-                    FieldLabel { text: "EXPIRY + CVV"; }
-                    Text { text: root.d_meta; color: #eef1ff; font-size: 14px; }
-                }
-                // Identity fields
-                if root.d_kind == 5 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "FULL NAME"; }
-                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
-                    FieldLabel { text: "NID / PASSPORT"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = root.d_user; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
-                    }
-                    if root.d_url != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "EMAIL"; } Text { text: root.d_url; color: #8e99c0; font-size: 12px; } }
-                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "PHONE"; } Text { text: root.d_meta; color: #eef1ff; font-size: 14px; } }
-                    if root.d_notes != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "ADDRESS"; } Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; } }
-                }
-                // SSH fields
-                if root.d_kind == 6 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "PUBLIC KEY"; }
-                    Text { text: root.d_notes; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
-                    FieldLabel { text: "PRIVATE KEY"; }
-                    HorizontalLayout {
-                        spacing: 8px;
-                        Text { text: root.peep_hole_mode && !peep_hold_all.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                        AuraButton { label: root.d_secret_visible ? "👁️‍🗨️" : "👁️"; width: 52px; clicked => { if !root.peep_hole_mode { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.d_secret_visible = !root.d_secret_visible; } } } }
-                        AuraButton { label: "📋"; width: 52px; clicked => { if root.d_reprompt { root.rp_action = 1; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = root.d_secret; root.rp_error = ""; root.rp_show = true; } else { root.copy_password_requested(root.d_secret); } } }
-                    }
-                    if root.d_meta != "" : VerticalLayout { spacing: 10px; FieldLabel { text: "FINGERPRINT"; } Text { text: root.d_meta; color: #8e99c0; font-size: 12px; } }
-                }
-                // Standalone 2FA inspector: live code + countdown, fed by the
-                // 1s ticker from d_totp (same source as the desktop card).
-                if root.d_kind == 8 : VerticalLayout {
-                    spacing: 10px;
-                    FieldLabel { text: "ACCOUNT"; }
-                    Text { text: root.d_user; color: #eef1ff; font-size: 14px; }
-                    FieldLabel { text: "TYPE"; }
-                    Text { text: root.d_meta; color: #8e99c0; font-size: 12px; }
-                    FieldLabel { text: "LIVE CODE"; }
-                    HorizontalLayout { spacing: 8px; Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; horizontal-stretch: 1; vertical-alignment: center; } Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; vertical-alignment: center; } }
-                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "📋 Copy Code"; width: 150px; clicked => { root.copy_password_requested(root.live_totp_code); } } AuraButton { label: "⚡ Fill"; width: 110px; primary: true; clicked => { root.show_detail = false; root.type_item_requested(root.d_kind, root.d_id); } } }
-                }
-                if root.d_kind != 8 : HorizontalLayout {
-                    spacing: 8px;
-                    alignment: start;
-                    FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; }
-                    AuraButton { label: root.d_travel ? "ON ✓" : "OFF"; primary: root.d_travel; width: 90px; height: 30px; clicked => { root.toggle_travel(root.d_kind, root.d_id); } }
-                }
-                // Attachments (logins + licenses only)
-                if root.d_kind == 1 || root.d_kind == 2 : VerticalLayout {
-                    spacing: 6px;
-                    FieldLabel { text: "📎 ATTACHMENTS (SEALED, 5MB MAX EACH)"; }
-                    for att in root.d_attachments : Rectangle {
-                        background: #121927;
-                        border-radius: 8px;
-                        height: 36px;
-                        HorizontalLayout {
-                            padding-left: 10px;
-                            padding-right: 6px;
-                            spacing: 8px;
-                            Text { text: "📄 " + att.filename; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                            Text { text: att.size; color: #5b6589; font-size: 11px; vertical-alignment: center; }
-                            AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.exp_att_id = att.id; root.exp_confirm = true; } }
-                            AuraButton { label: "🗑️"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_attachment(root.d_kind, root.d_id, att.id); } }
-                        }
-                    }
-                    if root.exp_confirm : Rectangle {
-                        background: #2a1f08;
-                        border-radius: 8px;
-                        border-width: 1px;
-                        border-color: #fbbf24;
-                        VerticalLayout {
-                            padding: 10px;
-                            spacing: 6px;
-                            Text { text: "⚠️ Export writes PLAINTEXT to disk. Continue?"; color: #fbbf24; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
-                            HorizontalLayout {
-                                spacing: 8px;
-                                alignment: center;
-                                AuraButton { label: "Yes, Export"; width: 130px; height: 30px; clicked => { root.exp_confirm = false; root.download_attachment(root.d_kind, root.d_id, root.exp_att_id); } }
-                                AuraButton { label: "Cancel"; width: 100px; height: 30px; clicked => { root.exp_confirm = false; } }
-                            }
-                        }
-                    }
-                    HorizontalLayout {
-                        alignment: center;
-                        AuraButton { label: "📎  Attach File"; width: 180px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } }
-                    }
-                }
-                if root.d_trashed : HorizontalLayout { spacing: 8px; alignment: center; padding-top: 6px;
-                    AuraButton { label: "♻️ Restore Item"; primary: true; width: 170px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
-                    AuraButton { label: "🔥 Permanently Shred"; danger: true; width: 190px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } }
-                    AuraButton { label: "✕  Close"; width: 130px; clicked => { root.show_detail = false; } }
-                }
-                if !root.d_trashed : HorizontalLayout {
-                    spacing: 8px;
-                    alignment: center;
-                    padding-top: 6px;
-                    if root.d_kind != 8 : AuraButton { label: "✏️  Edit"; width: 130px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
-                    AuraButton { label: "🗑️  Delete"; danger: true; width: 130px; clicked => { if root.d_reprompt { root.rp_action = 3; root.rp_kind = root.d_kind; root.rp_id = root.d_id; root.rp_user = ""; root.rp_secret = ""; root.rp_error = ""; root.rp_show = true; } else { root.delete_item_requested(root.d_kind, root.d_id); } } }
-                    AuraButton { label: "✕  Close"; width: 130px; clicked => { root.show_detail = false; } }
-                }
-            }
-            // Phase 26: moiré veil floats ABOVE the card content when armed.
-            if root.moire_guard_active : MoireVeil {
-                x: (parent.width - 480px) / 2;
-                y: 12px;
-                width: 480px;
-                height: parent.height - 24px;
             }
         }
     }
@@ -1954,6 +1918,38 @@ export component MainWindow inherits Window {
                     AuraButton { label: "🗑️ Delete"; width: 120px; height: 36px; danger: true; clicked => { root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
                     AuraButton { label: "✕ Close Preview"; width: 150px; height: 36px; clicked => { root.att_preview = false; } }
                 }
+            }
+        }
+    }
+
+    // ==== Factory reset triple-gate (Danger Zone + lock recovery link) ====
+    if root.show_factory_reset : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 480px;
+            background: #0d131f;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: #fb7185;
+            clip: true;
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { text: "🔥 Factory Reset — shred EVERYTHING?"; color: #fb7185; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: "Vault file, all backup generations, decoy container, and machine seals are DoD-shredded. Recovery is IMPOSSIBLE afterwards."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                FieldLabel { text: "MASTER PASSWORD"; }
+                LineEdit { placeholder-text: "Confirm master password…"; input-type: password; text <=> root.fr_password; height: 40px; }
+                FieldLabel { text: "TYPE DELETE TO CONTINUE"; }
+                LineEdit { placeholder-text: "DELETE"; text <=> root.fr_delete_text; height: 40px; }
+                if root.fr_error != "" : Text { text: root.fr_error; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                if root.fr_countdown > 0 : Text { text: "💣 " + root.fr_countdown + "…"; color: #fb7185; font-size: 30px; font-weight: 900; horizontal-alignment: center; }
+                if !root.fr_armed : AuraButton { label: "⏳ Verify & Start 5s Countdown"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_arm(); } }
+                if root.fr_armed : AuraButton { label: "🔥 DELETE EVERYTHING NOW"; danger: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_confirm(); } }
+                AuraButton { label: "✕ Cancel (keep my vault)"; horizontal-stretch: 1; height: 36px; clicked => { root.factory_reset_cancel(); } }
             }
         }
     }
@@ -2017,10 +2013,41 @@ export component MainWindow inherits Window {
                 padding: 20px;
                 spacing: 10px;
                 Text { text: "🛡️  Vault Health Report"; font-size: 16px; font-weight: 800; color: #eef1ff; horizontal-alignment: center; }
+                // Score + count chips (props already published by the audit).
+                HorizontalLayout { spacing: 8px; alignment: center;
+                    Text { text: root.health_score + " / 100"; color: root.health_score >= 90 ? #10b981 : (root.health_score >= 70 ? #fbbf24 : #fb7185); font-size: 22px; font-weight: 900; vertical-alignment: center; }
+                    VerticalLayout { spacing: 0px;
+                        Text { text: root.health_headline; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                        HorizontalLayout { spacing: 10px;
+                            Text { text: "🚨 " + root.health_breached; color: #fb7185; font-size: 11px; font-weight: 700; }
+                            Text { text: "🔁 " + root.health_reused; color: #fbbf24; font-size: 11px; font-weight: 700; }
+                            Text { text: "🔓 " + root.health_weak; color: #fbbf24; font-size: 11px; font-weight: 700; }
+                            Text { text: "🕰️ " + root.health_stale; color: #8e99c0; font-size: 11px; font-weight: 700; }
+                        }
+                    }
+                }
                 ScrollView {
                     vertical-stretch: 1;
                     min-height: 220px;
-                    Text { text: root.health_report; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                    VerticalLayout { spacing: 4px; padding-left: 2px; padding-right: 2px;
+                        if root.health_rows.length == 0 : Text { text: "✅ All passwords look healthy — no breaches, reuse, or weakness found."; color: #34d399; font-size: 12px; wrap: word-wrap; }
+                        for row in root.health_rows : Rectangle {
+                            background: row.sev == -1 ? transparent : #121927;
+                            border-radius: 8px;
+                            height: row.sev == -1 ? 24px : 40px;
+                            clip: true;
+                            if row.sev == -1 : Text { text: row.title; color: #8b7cf6; font-size: 11px; font-weight: 800; vertical-alignment: center; }
+                            if row.sev >= 0 : HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px;
+                                Text { text: row.sev == 0 ? "🔴" : (row.sev == 1 ? "🟠" : (row.sev == 2 ? "🟡" : "⚪")); font-size: 12px; vertical-alignment: center; }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 0px;
+                                    Text { text: row.title; color: #eef1ff; font-size: 12px; font-weight: 700; vertical-alignment: center; overflow: elide; }
+                                    Text { text: row.flags; color: #8e99c0; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                                }
+                                Text { text: "›"; color: #5b6589; font-size: 16px; vertical-alignment: center; }
+                            }
+                            if row.sev >= 0 : TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(row.id); root.show_health = false; } }
+                        }
+                    }
                 }
                 HorizontalLayout {
                     alignment: center;
@@ -2153,6 +2180,7 @@ export component QuickBarWindow inherits Window {
     // kind+id ride along so Rust can enforce the master-reprompt gate
     // (password strings alone cannot identify the item).
     callback item_selected(int, string, string);
+    callback copy_totp_selected(int, string);
     callback type_selected(int, string, string, string, string);
     callback dismiss();
 
@@ -2247,6 +2275,7 @@ export component QuickBarWindow inherits Window {
                                     spacing: 6px;
                                     alignment: center;
                                     if item.kind == 1 : AuraButton { label: "⌨️ Type"; width: 88px; y: 2px; clicked => { root.type_selected(item.kind, item.id, item.username, item.password, item.totp); } }
+                                    if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; y: 2px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
                                     AuraButton { label: "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                                 }
                             }

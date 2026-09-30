@@ -1,6 +1,7 @@
-├── src/
-│   ├── crypto.rs (4.9 KB)
-│   └── main.rs (0.2 KB)
-├── Cargo.lock (8.4 KB)
-├── Cargo.toml (0.4 KB)
-└── rules.md (10.9 KB)
+phantom_vault — structure (verified 2026-09-30; do NOT hand-edit sizes)
+src/crypto.rs (~16 KB, 350+ lines: Argon2id + XChaCha20 + ML-KEM hybrid)
+src/main.rs (~449 KB, ~10000 lines: Slint app, nested helpers inside main())
+src/storage.rs, src/models.rs, src/core/, src/security/, src/sync/,
+src/windows_native/, src/importer/, src/authenticator/, browser_extension/
+Counts: see `cargo test` output + `git ls-files 'src/**/*.rs' | Measure-Object`.
+This file is an index, not a measurement — verify with Get-Item.

@@ -1,10 +1,12 @@
 pub mod access_log;
 pub mod anti_camera;
 pub mod anti_debug;
+pub mod app_pin;
 pub mod backoff;
 pub mod breach_check;
 pub mod canary;
 pub mod decoy;
+pub mod ext_pin;
 pub mod integrity;
 pub mod pdf_sheet;
 pub mod shamir;

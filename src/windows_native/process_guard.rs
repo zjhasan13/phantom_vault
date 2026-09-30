@@ -10,10 +10,9 @@
 //! All three are best-effort booleans; failure never blocks startup.
 
 /// `MicrosoftSignedOnly`: bit 0 of `PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY`.
-/// Verified against the SDK header `winnt.h`: the NonMicrosoftBinaries bits
-/// exist ONLY as creation-time attributes (`PROC_THREAD_ATTRIBUTE_…`, set by a
-/// parent launcher) — no runtime `SetProcessMitigationPolicy` struct carries
-/// them, so any high bit trips ERROR_INVALID_PARAMETER via the reserved mask.
+/// Per MSDN `winnt.h` the struct is `{ union { DWORD Flags; struct {...} } }`
+/// = exactly 4 bytes, so passing `size_of::<u32>()` is CORRECT (C12 audit
+/// claim of "8 bytes with Version" describes a different policy family).
 /// `MicrosoftSignedOnly` is the strongest self-appliable sibling: every FUTURE
 /// image load must carry a Microsoft signature (delay-loaded malware DLLs,
 /// rogue COM servers, and plugin droppers fail at load time).
@@ -32,6 +31,44 @@ pub fn block_injected_dlls() -> bool {
             std::mem::size_of::<u32>(),
         ) != 0
     }
+}
+
+/// M10: best-effort extra runtime mitigations (all DWORD-sized, all
+/// fail-soft). ExtensionPointDisable blocks AppInit/global-hook injection;
+/// FontDisable (NonSystemFonts) blocks the font info-leak primitive;
+/// StrictHandleCheck turns silent handle bugs into loud exceptions.
+/// DynamicCodePolicy deliberately NOT set (JIT risk for GPU/WebView paths).
+/// Returns the count applied.
+pub fn harden_extra() -> u32 {
+    use windows_sys::Win32::System::Threading::SetProcessMitigationPolicy;
+    fn try_set(policy: i32, flags: u32) -> bool {
+        // SAFETY: 4-byte DWORD buffer, exact size; kernel copies it in.
+        unsafe {
+            SetProcessMitigationPolicy(
+                policy,
+                &flags as *const u32 as *const core::ffi::c_void,
+                std::mem::size_of::<u32>(),
+            ) != 0
+        }
+    }
+    let mut n = 0;
+    use windows_sys::Win32::System::Threading::{
+        ProcessExtensionPointDisablePolicy, ProcessFontDisablePolicy,
+        ProcessStrictHandleCheckPolicy,
+    };
+    // DisableExtensionPoints = 1.
+    if try_set(ProcessExtensionPointDisablePolicy, 0x1) {
+        n += 1;
+    }
+    // DisableNonSystemFonts = 1 (Audit bit left off = enforce).
+    if try_set(ProcessFontDisablePolicy, 0x1) {
+        n += 1;
+    }
+    // RaiseExceptionOnInvalidHandleReference = 1.
+    if try_set(ProcessStrictHandleCheckPolicy, 0x1) {
+        n += 1;
+    }
+    n
 }
 
 #[link(name = "wer")]
@@ -68,6 +105,7 @@ mod tests {
     fn mitigations_apply_without_panic() {
         // Real OS calls; assert only "they answer and report".
         let _ = block_injected_dlls();
+        let _ = harden_extra();
         let _ = exclude_from_crash_dumps();
         let _ = is_elevated();
     }

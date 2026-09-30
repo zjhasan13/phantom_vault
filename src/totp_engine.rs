@@ -85,7 +85,7 @@ pub(crate) fn decode_secret_bytes(secret_stored: &str) -> Result<Vec<u8>> {
     }
     let h = clean.replace('=', "");
     let looks_hex = !h.is_empty()
-        && h.len() % 2 == 0
+        && h.len().is_multiple_of(2)
         && h.bytes().all(|c| c.is_ascii_hexdigit())
         && h.bytes().any(|c| matches!(c, b'0' | b'1' | b'8' | b'9'));
     if looks_hex {
@@ -181,7 +181,7 @@ fn steam_code(secret: &[u8], algorithm: &str, counter: u64) -> Result<String> {
 pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
     let secret = secret_bytes(&acc.secret)?;
     let algo_name = acc.algorithm.trim().to_uppercase();
-    let digits = acc.digits.clamp(1, 10) as usize;
+    let digits = acc.digits.clamp(1, 9) as usize;
     match acc.otp_type.trim().to_lowercase().as_str() {
         "hotp" => {
             let full = hotp_full(&secret, &algo_name, acc.counter)?;
@@ -200,8 +200,9 @@ pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
             // new_unchecked: the EXACT raw bytes are hashed per RFC 6238 —
             // 80-bit GitHub secrets and 256-bit AWS secrets alike. No
             // zero-padding (padding changes the HMAC output = wrong codes),
-            // no 128-bit minimum rejection.
-            let totp = TOTP::new_unchecked(algo, digits, 1, period, secret);
+            // no 128-bit minimum rejection. Digits stay in the RFC 6..=8
+            // range totp-rs itself enforces (exotic values clamp, never panic).
+            let totp = TOTP::new_unchecked(algo, digits.clamp(6, 8), 1, period, secret);
             let now = now_secs()?;
             Ok((totp.generate(now), period - (now % period)))
         }
@@ -218,7 +219,7 @@ pub fn next_code_for_account(acc: &TotpAccount) -> Result<String> {
 fn next_code_for_account_at(acc: &TotpAccount, now: u64) -> Result<String> {
     let secret = secret_bytes(&acc.secret)?;
     let algo_name = acc.algorithm.trim().to_uppercase();
-    let digits = acc.digits.clamp(1, 10) as usize;
+    let digits = acc.digits.clamp(1, 9) as usize;
     match acc.otp_type.trim().to_lowercase().as_str() {
         "hotp" => {
             let full = hotp_full(&secret, &algo_name, acc.counter.saturating_add(1))?;
@@ -231,7 +232,7 @@ fn next_code_for_account_at(acc: &TotpAccount, now: u64) -> Result<String> {
         _ => {
             let algo = parse_totp_algorithm(&algo_name)?;
             let period = if acc.period == 0 { 30 } else { acc.period };
-            let totp = TOTP::new_unchecked(algo, digits, 1, period, secret);
+            let totp = TOTP::new_unchecked(algo, digits.clamp(6, 8), 1, period, secret);
             Ok(totp.generate(now + period))
         }
     }
@@ -377,6 +378,56 @@ mod tests {
         let (code, _) = generate_code_for_account(&totp_acc(uri)).unwrap();
         assert_eq!(code.len(), 6);
         assert!(code.bytes().all(|c| c.is_ascii_digit()));
+    }
+
+    // M14: RFC 6238 Appendix B 8-digit TOTP vectors (the truncation path
+    // had 6-digit coverage only — the most common TOTP bug class).
+    // NOTE: `next_code_for_account_at` returns the NEXT window (counter+1,
+    // see next_hotp_is_counter_plus_one_rfc_vector), so exact RFC counters
+    // go through `hotp_full` directly; the dispatcher is pinned for shape
+    // (8 digits, numeric) plus the +1-window value.
+    #[test]
+    fn totp_rfc6238_8digit_vectors() {
+        let trunc8 = |full: u32| format!("{:08}", full % 100_000_000);
+        // Exact RFC 6238 Appendix B truncation (TOTP = HOTP(K, T)).
+        for (secret, algo, t, want) in [
+            (&b"12345678901234567890"[..], "SHA1", 1u64, "94287082"),
+            (&b"12345678901234567890"[..], "SHA1", 37_037_036, "07081804"),
+            (&b"12345678901234567890"[..], "SHA1", 41_152_263, "89005924"),
+            (
+                &b"12345678901234567890123456789012"[..],
+                "SHA256",
+                1,
+                "46119246",
+            ),
+            (
+                &b"12345678901234567890123456789012"[..],
+                "SHA256",
+                37_037_036,
+                "68084774",
+            ),
+            (
+                &b"1234567890123456789012345678901234567890123456789012345678901234"[..],
+                "SHA512",
+                1,
+                "90693936",
+            ),
+            (
+                &b"1234567890123456789012345678901234567890123456789012345678901234"[..],
+                "SHA512",
+                37_037_036,
+                "25091201",
+            ),
+        ] {
+            assert_eq!(trunc8(hotp_full(secret, algo, t).unwrap()), want, "{algo} T={t}");
+        }
+        // Dispatcher: 8-digit shape + next-window (+1) value.
+        let sha1 = account("12345678901234567890", "SHA1", 8, "totp", 0);
+        let code = next_code_for_account_at(&sha1, 59).unwrap();
+        assert_eq!(code.len(), 8);
+        assert!(code.bytes().all(|c| c.is_ascii_digit()));
+        // t=59 → T=1, next window T=2 → HOTP-2 8-digit = 37359152.
+        assert_eq!(code, "37359152");
     }
 
     #[test]

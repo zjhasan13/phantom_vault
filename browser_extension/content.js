@@ -12,7 +12,9 @@
     show_suggestions_on_icon_click_only: false,
     suggest_cards: true,
     suggest_identities: true,
-    autofill_on_load: true,
+    // M15: no silent zero-click fill on page load (was true) — user
+    // gesture (badge/hotkey/menu) fills instead.
+    autofill_on_load: false,
     auto_inject_totp: true,
     copy_totp_auto: true,
     show_context_menu: true,
@@ -21,6 +23,14 @@
     blocked_domains: [],
   };
   let settings = { ...DEFAULTS };
+  // H15: multi-step pending entry lives in this isolated-world closure var,
+  // NEVER in page-readable sessionStorage (any XSS/third-party script could
+  // read password+TOTP from there for the whole login window).
+  let pvPending = null;
+  function pvPendingClear() {
+    pvPending = null;
+    try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
+  }
   chrome.storage.local.get(DEFAULTS).then((s) => { settings = { ...DEFAULTS, ...s }; });
   chrome.storage.onChanged.addListener((ch, area) => {
     if (area !== "local") return;
@@ -239,8 +249,10 @@
     const all = [...document.querySelectorAll("input")].filter(isVisible);
     const pass = [], newPass = [], users = [], otp = [];
     for (const el of all) {
-      if (isSearchField(el)) continue;
       const type = (el.type || "").toLowerCase();
+      // M15: type=password is NEVER a search box (forgot/find-password
+      // pages like id="findPassword" were badge-less and unfillable).
+      if (type !== "password" && isSearchField(el)) continue;
       const ac = (el.autocomplete || "").toLowerCase();
       if (type === "password") {
         const nameId = ((el.name || "") + " " + (el.id || "")).toLowerCase();
@@ -267,6 +279,9 @@
   }
   function isSearchField(el) {
     if (!el || el.tagName !== "INPUT") return false;
+    // M15: password exemption — defense in depth alongside the findFields
+    // ordering fix above (any caller checking search-first stays safe).
+    if ((el.type || "").toLowerCase() === "password") return false;
     if ((el.type || "").toLowerCase() === "search") return true;
     if ((el.getAttribute("role") || "").toLowerCase() === "searchbox") return true;
     const form = el.closest("form");
@@ -312,6 +327,95 @@
       timer = setTimeout(() => reject(new Error("vault bridge timed out")), ms);
     });
     return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
+  }
+
+  // ---------- extension PIN gate (in-page actions) ----------
+  // SHA-256 hash only, read live from storage per page-load (a PIN set
+  // mid-session takes effect immediately; removal too). Verified once per
+  // page into `extPinOkPage`. Honest scope: stops casual viewing on a
+  // shared screen, not local malware. Non-HTTPS pages lack SubtleCrypto —
+  // gated actions there refuse loudly instead of comparing weakly.
+  let extPinOkPage = false;
+  let extPinPending = null;
+  async function sha256hex(s) {
+    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  function promptExtPin() {
+    return new Promise((resolve) => {
+      const ov = document.createElement("div");
+      ov.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#000a;" +
+        "display:flex;align-items:center;justify-content:center;";
+      const box = document.createElement("div");
+      box.style.cssText = "background:#0d131f;border:1px solid #8b7cf6;border-radius:14px;" +
+        "padding:20px 22px;max-width:300px;font:14px system-ui;color:#eef1ff;text-align:center;";
+      const h = document.createElement("div");
+      h.style.cssText = "font-weight:800;margin-bottom:8px;";
+      h.textContent = "🔐 Extension locked";
+      const p = document.createElement("div");
+      p.style.cssText = "color:#8e99c0;font-size:12px;margin-bottom:14px;";
+      p.textContent = "Enter your extension PIN to continue.";
+      const inp = document.createElement("input");
+      inp.type = "password";
+      inp.placeholder = "PIN";
+      inp.autocomplete = "off";
+      inp.style.cssText = "width:100%;box-sizing:border-box;background:#0b1226;color:#eef1ff;" +
+        "border:1px solid #26315c;border-radius:8px;padding:9px;margin-bottom:12px;" +
+        "font-size:15px;text-align:center;";
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;gap:8px;";
+      const ok = document.createElement("button");
+      ok.textContent = "🔓 Unlock";
+      ok.style.cssText = "flex:1;background:#8b7cf6;color:#fff;border:0;border-radius:8px;padding:9px;font-weight:700;cursor:pointer;";
+      const no = document.createElement("button");
+      no.textContent = "Cancel";
+      no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:9px;cursor:pointer;";
+      row.append(ok, no);
+      box.append(h, p, inp, row);
+      ov.append(box);
+      document.documentElement.append(ov);
+      const done = (v) => { ov.remove(); resolve(v); };
+      ok.addEventListener("click", () => done(inp.value));
+      no.addEventListener("click", () => done(null));
+      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") done(inp.value); if (e.key === "Escape") done(null); });
+      try { inp.focus(); } catch (_) {}
+    });
+  }
+  async function requireExtPin() {
+    // Single source of truth: the desktop app (DPAPI-sealed, managed in its
+    // Settings). Empty when unset, unreachable, or locked — all treated as
+    // "no PIN to enforce" here; the bridge's own locked/refused paths still
+    // gate data below. Never cached beyond this page lifetime.
+    let hash = "";
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "PV_EXT_PIN" });
+      hash = (res && res.ok && res.hash) || "";
+    } catch (_) { return false; }
+    if (!hash) return true;
+    if (extPinOkPage) return true;
+    // Session unlock shared with the popup: one PIN per browser session.
+    try {
+      const s = await chrome.storage.session.get({ extUnlocked: false });
+      if (s && s.extUnlocked) { extPinOkPage = true; return true; }
+    } catch (_) {}
+    if (extPinPending) return extPinPending;
+    extPinPending = (async () => {
+      try {
+        if (!crypto.subtle) {
+          toast("⚠️ Extension PIN needs HTTPS on this page.");
+          return false;
+        }
+        const pin = await promptExtPin();
+        if (pin == null) return false;
+        const ok = (await sha256hex(pin.trim())) === hash;
+        if (ok) extPinOkPage = true;
+        else toast("❌ Wrong extension PIN.");
+        return ok;
+      } finally {
+        extPinPending = null;
+      }
+    })();
+    return extPinPending;
   }
 
   // ---------- fill primitives ----------
@@ -381,12 +485,14 @@
     if (f.users[0] && entry.username) setNativeValue(f.users[0], entry.username);
     if (f.pass[0] && entry.password) {
       setNativeValue(f.pass[0], entry.password);
-      // Multi-step chaining: remember entry; password step may render later.
-      try { sessionStorage.setItem("__pv_pending", JSON.stringify(entry)); } catch (_) {}
+      // Multi-step chaining: remember secrets for a later password/OTP step.
+      pvPending = { password: entry.password, totp: entry.totp || "" };
+      try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     } else if (f.users[0] && entry.username && entry.password) {
-      // Step 1 filled email only: stash the entry so the password step
+      // Step 1 filled email only: stash the secrets so the password step
       // (rendered later) can chain via chainPendingStep/otpObserver.
-      try { sessionStorage.setItem("__pv_pending", JSON.stringify(entry)); } catch (_) {}
+      pvPending = { password: entry.password, totp: entry.totp || "" };
+      try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
     if (entry.totp) fillTotp(entry.totp, f);
     staleNudge(entry);
@@ -404,12 +510,14 @@
       // Paste-ready fallback, auto-cleared in 30s — only when the
       // "Copy TOTP automatically" setting is on.
       if (settings.copy_totp_auto !== false) copyWithAutoclear(code);
+      toast("✅ 2FA code filled");
       if (settings.auto_submit) {
         const form = f.otp[0].form;
         if (form && form.requestSubmit) form.requestSubmit();
       }
     } else if (settings.copy_totp_auto !== false) {
       copyWithAutoclear(code);
+      toast("✅ 2FA code copied (no OTP field found)");
     }
   }
   function fillCard(entry) {
@@ -559,6 +667,7 @@
     if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
     if (!location.host) return;
     if (isSearchField(anchor)) return; // search bars: never touch, never query
+    if (!(await requireExtPin())) return;
     try {
       const rows = await resolveRows(anchor, findFields());
       if (rows) showDrop(anchor, rows);
@@ -569,6 +678,7 @@
   async function badgeFill(field) {
     if (isBlocked() || phishingRefuse() || !location.host) return;
     if (dropEl && dropAnchor === field) { closeDrop(); return; }
+    if (!(await requireExtPin())) return;
     try {
       const rows = await resolveRows(field, findFields());
       if (!rows || !rows.length) { toast("🛡️ No matching credential for this site."); return; }
@@ -644,6 +754,22 @@
     crypto.getRandomValues(buf);
     return [...buf].map((x) => chars[x % chars.length]).join("");
   }
+  // Shared generator core: fills the target + its visible confirmation
+  // sibling, copies with auto-clear, and prompts to save. Used by the 🎲
+  // dice badge AND the right-click "Generate Password Here" menu.
+  function generateInto(field) {
+    if (!field || !isVisible(field)) return false;
+    const pw = genPassword();
+    setNativeValue(field, pw);
+    const form = field.form;
+    if (form) {
+      const confirm = [...form.querySelectorAll('input[type="password"]')].find((x) => x !== field && isVisible(x));
+      if (confirm) setNativeValue(confirm, pw);
+    }
+    copyWithAutoclear(pw);
+    toast("🎲 Strong password filled + copied — save it in PhantomVault!");
+    return true;
+  }
   function placeDice(field) {
     if (field.dataset.pvDice) return;
     field.dataset.pvDice = "1";
@@ -655,17 +781,10 @@
       "display:flex;align-items:center;justify-content:center;" +
       "border:1px solid #10b981;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
     b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
-    b.addEventListener("click", (ev) => {
+    b.addEventListener("click", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();
-      const pw = genPassword();
-      setNativeValue(field, pw);
-      const form = field.form;
-      if (form) {
-        const confirm = [...form.querySelectorAll('input[type="password"]')].find((x) => x !== field && isVisible(x));
-        if (confirm) setNativeValue(confirm, pw);
-      }
-      copyWithAutoclear(pw);
-      toast("🎲 Strong password filled + copied — save it in PhantomVault!");
+      if (!(await requireExtPin())) return;
+      generateInto(field);
     });
     document.documentElement.appendChild(b);
     badges.set(b, field);
@@ -676,6 +795,7 @@
   async function autofillOnLoad() {
     if (!settings.autofill_on_load || isBlocked() || phishingRefuse()) return;
     if (!location.host) return;
+    if (!(await requireExtPin())) return;
     try {
       const logins = await queryHost("PV_QUERY", pageBase());
       if (logins.length !== 1) {
@@ -690,15 +810,13 @@
     } catch (_) {}
   }
   async function chainPendingStep() {
-    let pending;
-    try { pending = JSON.parse(sessionStorage.getItem("__pv_pending") || "null"); }
-    catch (_) { return; }
+    const pending = pvPending;
     if (!pending) return;
     const f = findFields();
     if (f.pass[0] && pending.password) {
       setNativeValue(f.pass[0], pending.password);
       if (settings.auto_inject_totp && pending.totp) fillTotp(pending.totp, f);
-      try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
+      pvPendingClear();
     }
   }
   // OTP fields that render late (SPA step 3): inject live TOTP on sight.
@@ -706,17 +824,17 @@
     if (!settings.auto_inject_totp || isBlocked()) return;
     const f = findFields();
     if (!f.otp.length || f.otp[0].dataset.pvOtpFilled) return;
-    let pending = null;
-    try { pending = JSON.parse(sessionStorage.getItem("__pv_pending") || "null"); } catch (_) {}
+    const pending = pvPending;
     if (pending && pending.totp) {
       f.otp[0].dataset.pvOtpFilled = "1";
       fillTotp(pending.totp, f);
-      try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
+      pvPendingClear();
     }
   });
 
   async function hotkeyFill() {
     if (isBlocked() || phishingRefuse() || !location.host) return;
+    if (!(await requireExtPin())) return;
     const f = findFields();
     try {
       if (f.cards[0] && settings.suggest_cards) {
@@ -796,8 +914,23 @@
     form.addEventListener("submit", async () => {
       try {
         if (isBlocked() || phishingRefuse() || !location.host) return;
-        const user = [...form.querySelectorAll('input[type="text"], input[type="email"]')]
-          .find((el) => !isSearchField(el) && isVisible(el));
+        // M15: prefer real identity fields over "First name" — email type,
+        // username/email autocomplete, or email/user/login name-id first;
+        // bare first-text fallback last (was: first text input, so
+        // ["First name","Email","Password"] saved username="Jane").
+        const cands = [...form.querySelectorAll('input[type="text"], input[type="email"]')]
+          .filter((el) => !isSearchField(el) && isVisible(el));
+        const score = (el) => {
+          const t = (el.type || "").toLowerCase();
+          const ac = (el.autocomplete || "").toLowerCase();
+          const ni = ((el.name || "") + " " + (el.id || "")).toLowerCase();
+          if (t === "email" || ac === "email" || ac === "username") return 3;
+          if (/email|user(name)?|login|account/.test(ni)) return 2;
+          if (/first|last|fname|lname|full.?name|name/.test(ni)) return 0;
+          return 1;
+        };
+        cands.sort((a, b) => score(b) - score(a));
+        const user = cands[0];
         const pw = form.querySelector('input[type="password"]:not([autocomplete="new-password"])');
         const username = (user && user.value || "").trim();
         const password = (pw && pw.value || "");
@@ -813,6 +946,54 @@
     for (const f of document.querySelectorAll("form")) watchSubmit(f);
   }
 
+  // ---------- SPA save detection: page-world fetch/XHR credential hook ----
+  // React/Google/Twitter logins POST via fetch (no <form> submit ever fires),
+  // and content scripts live in an ISOLATED world where wrapping fetch would
+  // observe nothing. So hook.js runs in the MAIN world and sends a data-free
+  // ping; WE re-read the credentials from the DOM here. A hostile page can
+  // at worst trigger a prompt — never inject values. Pages whose CSP blocks
+  // the injected script gracefully degrade to the submit-watcher above.
+  let spaSaveOfferedFor = "";
+  function injectPageHook() {
+    if (document.documentElement.dataset.pvHook) return;
+    document.documentElement.dataset.pvHook = "1";
+    try {
+      const s = document.createElement("script");
+      s.src = chrome.runtime.getURL("hook.js");
+      s.onload = () => s.remove();
+      (document.head || document.documentElement).appendChild(s);
+    } catch (_) {}
+  }
+  async function maybeOfferSpaSave() {
+    try {
+      if (isBlocked() || phishingRefuse() || !location.host) return;
+      const f = findFields();
+      const userEl = (f.users[0] && isVisible(f.users[0])) ? f.users[0] : null;
+      const pwEl = (f.pass[0] && isVisible(f.pass[0])) ? f.pass[0] : null;
+      if (!userEl || !pwEl || isSearchField(userEl)) return;
+      const username = (userEl.value || "").trim();
+      const password = pwEl.value || "";
+      if (!username || !password) return;
+      const fp = username + "\n" + password;
+      if (spaSaveOfferedFor === fp) return; // one prompt per credential
+      spaSaveOfferedFor = fp;
+      const existing = await queryHost("PV_QUERY", pageBase());
+      const known = existing.some((e) =>
+        (e.username || "").toLowerCase() === username.toLowerCase() && e.password === password);
+      if (!known) saverToast(username, password);
+    } catch (_) {}
+  }
+  window.addEventListener("message", (e) => {
+    try {
+      if (e.source !== window) return;
+      const d = e.data || {};
+      if (d.source !== "__pv_hook" || d.type !== "PV_SPA_LOGIN") return;
+    } catch (_) { return; }
+    // Let the SPA finish its post-login render before reading the fields.
+    setTimeout(maybeOfferSpaSave, 2500);
+  });
+  injectPageHook();
+
   // ---------- messages from popup / menus / hotkey ----------
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     (async () => {
@@ -821,6 +1002,7 @@
         // Same guards as every other fill path: blocked domains, punycode /
         // spoofed hosts, and host-less pages (file://, about:blank) refuse.
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
+        if (!(await requireExtPin())) return { ok: false };
         const f = findFields();
         if (msg.menu === "pv_fill_login") {
           const l = await queryHost("PV_QUERY", pageBase());
@@ -833,10 +1015,24 @@
           if (ids[0]) fillIdentity(ids[0]);
         } else if (msg.menu === "pv_copy_password") {
           const l = await queryHost("PV_QUERY", pageBase());
-          if (l[0]) copyWithAutoclear(l[0].password);
+          if (l[0]) {
+            if (l[0].reprompt && !(await confirmSensitive(l[0]))) return { ok: true };
+            copyWithAutoclear(l[0].password);
+          }
         } else if (msg.menu === "pv_copy_totp") {
           const l = await queryHost("PV_QUERY", pageBase());
-          if (l[0] && l[0].totp) copyWithAutoclear(l[0].totp);
+          if (l[0] && l[0].totp) {
+            if (l[0].reprompt && !(await confirmSensitive(l[0]))) return { ok: true };
+            copyWithAutoclear(l[0].totp);
+          }
+        } else if (msg.menu === "pv_generate_password") {
+          // Registration pages: focused password field wins, else the first
+          // visible new-password field, else the first password field.
+          const ae = document.activeElement;
+          const target = (ae instanceof HTMLInputElement && ae.type === "password" && isVisible(ae))
+            ? ae
+            : (f.newPass[0] || f.pass[0]);
+          if (!generateInto(target)) toast("⚠️ No password field to fill here.");
         }
         return { ok: true };
       }

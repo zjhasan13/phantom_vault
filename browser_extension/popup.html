@@ -32,6 +32,17 @@
       color: #080c14; font-weight: 900; font-size: 15px; display: flex;
       align-items: center; justify-content: center; }
     .brandtx { flex: 1; min-width: 0; }
+    .emptycard { text-align: center; }
+    .emptyart { font-size: 30px; margin: 2px 0 4px; }
+    .emptycard .t { margin-bottom: 2px; }
+    .emptycard .u { margin-bottom: 8px; }
+    .pvinput { width: 100%; box-sizing: border-box; background: #0b1226; color: #eef1ff;
+      border: 1px solid #26315c; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+      margin-bottom: 6px; font-family: inherit; }
+    .emptycard .wide { margin-top: 2px; }
+    .t2fa { display: inline-block; font-size: 10px; font-weight: 800; color: #38e1ff;
+      background: #0b1226; border: 1px solid #26315c; border-radius: 6px;
+      padding: 1px 6px; margin-top: 3px; }
     #langToggle { float: right; flex: 0 0 auto; width: 44px; font-size: 11px; }
     .row.focused { outline: 2px solid #38bdf8; }
     .totp { display: flex; align-items: center; gap: 8px; margin-top: 6px;
@@ -54,9 +65,25 @@
               font-family: inherit; resize: vertical; }
     .hint { color: #5b6589; font-size: 11px; margin-top: 6px; }
     .hidden { display: none; }
+    #extLock { position: fixed; inset: 0; z-index: 50; background: #0b1226;
+      display: flex; align-items: center; justify-content: center; }
+    #extLock .lockcard { width: 260px; text-align: center; background: #0d1430;
+      border: 1px solid #26315c; border-radius: 12px; padding: 18px 16px; }
+    #extLock .lockart { font-size: 34px; margin-bottom: 6px; }
   </style>
 </head>
 <body>
+  <div id="extLock" class="hidden">
+    <div class="lockcard">
+      <div class="lockart">🔐</div>
+      <div class="t" id="extLockTitle">Extension locked</div>
+      <div class="u" id="extLockSub" style="margin:4px 0 10px">Enter your extension PIN</div>
+      <input id="extPinInput" class="pvinput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" />
+      <button id="extUnlockBtn" class="wide" style="width:100%">🔓 Unlock</button>
+      <div class="hint" id="extLockMsg"></div>
+      <div class="hint"><a href="#" id="extPinReset" style="color:#5b6589">Forgot PIN? Reset it here</a></div>
+    </div>
+  </div>
   <h1>🛡️ PhantomVault <button id="langToggle" title="BN/EN">EN</button></h1>
   <div class="tabs">
     <button id="tabVault" class="active">🔑 Vault</button>
@@ -76,6 +103,7 @@
       </select>
     </div>
     <div id="suggestHead" class="sechead"></div>
+    <button id="neverBtn" class="wide hidden" style="margin-bottom:8px">🚫 Never suggest on this site</button>
     <div id="suggestList"></div>
     <div id="allHead" class="sechead"></div>
     <div id="allList"></div>
@@ -86,6 +114,11 @@
   </div>
   <div id="settingsPane" class="hidden">
     <div class="row" id="settingsForm"></div>
+    <div class="row">
+      <div class="t">🔐 Extension PIN</div>
+      <div class="hint">Managed in the desktop app (Settings → Extension PIN). This browser only verifies — it never stores or sets the PIN.</div>
+      <div class="hint" id="pinMsg"></div>
+    </div>
     <div class="row">
       <div class="t">🚫 Blocked Domains</div>
       <div class="hint">One per line — no badges, no autofill here.</div>

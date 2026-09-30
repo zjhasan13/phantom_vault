@@ -59,15 +59,16 @@ phantom_vault/
 ├── src/
 │   ├── main.rs                # App entrypoint, event loop, hotkey dispatch & lifecycle
 │   ├── error.rs               # Custom VaultError enum (via thiserror)
-│   ├── core/
+│   ├── core/                # NOTE: real layout is flattened — crypto/storage/models live
+│   │   │                   # at src/{crypto,storage,models}.rs; core/ holds memory/pq_hybrid/passkey/etc.
 │   │   ├── mod.rs
-│   │   ├── crypto.rs          # Argon2id, XChaCha20Poly1305, key wrapping (wrap_dk/unwrap_dk)
-│   │   ├── pq_hybrid.rs       # NIST FIPS 203 ML-KEM-768 hybrid engine (PV2 envelope)
+│   │   ├── crypto.rs          # (actually src/crypto.rs) Argon2id, XChaCha20Poly1305, key wrapping
+│   │   ├── pq_hybrid.rs       # (actually src/core/pq_hybrid.rs) NIST FIPS 203 ML-KEM-768 hybrid engine
 │   │   ├── generator.rs       # Complex symbol + 7776-word EFF Diceware generator
 │   │   ├── memory.rs          # Zeroize allocators, DPAPI guard, VirtualLock paging protection
 │   │   ├── passkey.rs         # Ed25519 resident WebAuthn keys, RFC 8410 DER codec, assertions
-│   │   ├── storage.rs         # Portable versioned save/load, auto-migration, DoD shredder hook
-│   │   └── models.rs          # Credential, PaymentCard, IdentityItem, SshKeyItem, Passkey, Folder
+│   │   ├── storage.rs         # (actually src/storage.rs) Portable versioned save/load, auto-migration
+│   │   └── models.rs          # (actually src/models.rs) Credential, PaymentCard, IdentityItem, SshKeyItem
 │   ├── authenticator/
 │   │   ├── mod.rs
 │   │   ├── totp.rs            # RFC 6238 TOTP, RFC 4226 HOTP, and Steam Guard 5-char generators
@@ -117,9 +118,8 @@ phantom_vault/
 │       ├── mod.rs
 │       ├── github_sync.rs     # Octocrab API integration (private repo sync, sha conflict guard)
 │       ├── airgap_qr.rs       # Animated high-density QR camera sync for mobile
-│       ├── p2p_local.rs       # LocalSend-style LAN sync via mDNS and TLS
-│       ├── nostr_sync.rs      # Decentralized relay-based encrypted sync
-│       └── crdt_merge.rs      # Conflict-free Replicated Data Type offline merging
+│       ├── p2p_local.rs       # LocalSend-style LAN sync: UDP beacons + plain HTTP (mDNS/TLS NOT shipped — tracked)
+│       └── (planned, NOT shipped: nostr_sync.rs, crdt_merge.rs, airgap_qr.rs — spec below describes intent, not code)
 3. EXHAUSTIVE FEATURE SPECIFICATION (A TO Z)
 Category 1: Rich Vault & Item Management (Full Bitwarden Parity)
 Logins & Passwords: Username, password (masked, eye toggle, generator), multi-URLs, custom fields, notes.
@@ -238,11 +238,13 @@ IME Off in Password Fields: Cloud-IME keystroke leakage disabled in every passwo
 Authentication Strength:
 KDF Pepper: DPAPI-sealed machine-bound pepper mixed into the Argon2id input with transparent legacy re-seal migration (stolen-file brute-force resistance).
 Password + Hello AND-Mode: Optional toggle requiring BOTH master password and Windows Hello (default remains OR-mode).
-Brute-Force Backoff: Persisted wrong-attempt counter with growing unlock delay (plaintext counter, never secrets).
+App PIN Quick-Unlock (`security/app_pin.rs`): Optional 4–8 digit device-local PIN. Argon2id(PIN) rides as DPAPI `optionalEntropy` sealing the master — a stolen blob alone never opens without the live PIN *and* the machine key. 5 wrong guesses DoD-shreds the seal (re-enroll by master, never a lockout). Never synced, never portable, decoy refused, factory-reset shredded.
+Brute-Force Backoff: DPAPI-sealed wrong-attempt counter with growing unlock delay (counts are not secrets; deletion resets — documented limit).
 Secure Desktop Unlock: KeePass-style isolated-desktop master-password prompt immune to user-mode keyloggers and scrapers.
 Data Lifecycle & Visibility:
 Versioned Backup Rotation: Last N encrypted backups retained with DoD shred-rotation of expired generations.
 Shred Import Source: After successful plaintext import (CSV/JSON), prompt to DoD-shred the lingering source file.
+Factory Reset (triple-gated): Master password + typed DELETE + 5s countdown → DoD-shreds vault, generations, decoy, DPAPI seals (incl. PIN), purges RAM, lands on onboarding. Decoy refused.
 Password Age Reminders: Per-item last-changed tracking with stale-password (>1yr) warning badges in audit reports.
 Tamper-Evident Access Log: Hash-chained append-only log of unlock/copy/export events (metadata only, never secrets) for coercion detection.
 Global Offline Kill-Switch: Single master toggle silencing ALL network traffic (sync + HIBP) for hostile networks and border crossings.
@@ -299,16 +301,50 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 244 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 279 tests green)
 
-Scale: 60+ Rust modules (61 `.rs` files), 244 unit tests passing / 0 failing
+Scale: 60+ Rust modules (63 `.rs` files), 279 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
+(Counts verified 2026-09-30; update with `cargo test` output, not memory.)
 
 Architecture (all shipped, all tested):
 - NIST FIPS 203 ML-KEM-768 hybrid key layer (`PV2` portable container with
   wrapped DK; `core/pq_hybrid.rs`, `crypto.rs`).
-- Pure Slint GPU "Phantom Aura" 3-column Bitwarden UI + 2-column Proton 2FA
-  Hub (`ui/appwindow.slint`); per-card live countdown rings, HOTP/Steam paths.
+- Pure Slint GPU "Phantom Aura" 3-column Bitwarden UI + 3-column compact Proton
+  2FA Hub (`ui/appwindow.slint`); favorites-first + A→Z hub sort, per-card
+  live countdown rings, HOTP/Steam paths. Floating detail modal deleted —
+  Column 3 grouped inspector cards are the single detail surface.
+- Standalone 2FA in All Items/Favorites (kind 8): hub accounts appear in the
+  vault list/favorites with zero secrets in the row model (fresh codes
+  re-derived by id); excluded from QuickBar.
+- Bulk-select mode (Column 2 ☑️): Favorite All / Move to Folder / Trash
+  Selected in one lock + one re-seal + one sync push; RAM-only selection,
+  cleared on lock.
+- Paged list window (`FilterState.limit`, default 50): Load-More footer with
+  pre-truncate total; search/type/folder/fav/trash/health changes reset it.
+- First-run onboarding carousel (3 steps, live entropy meter, shard
+  comprehension gate) + one-shot post-unlock recovery-sheet nudge banner.
+- In-RAM attachment preview (images decoded to pixels, text truncated;
+  plaintext never touches disk) with export/delete/close.
+- Privacy favicon engine (`core/favicon.rs`): DuckDuckGo ip3 source, permanent
+  `%LOCALAPPDATA%` disk cache (disk-first, decode-validated), kill-switch +
+  proxy honored, per-session attempt set; per-domain user override layer
+  (`favicons/custom/`) with picker + clear. Toggle default ON.
+- Universal TOTP compat (`totp_engine.rs`): `TOTP::new_unchecked` over EXACT
+  raw bytes (80/128/160/256-bit all render — no padding, no 128-bit minimum);
+  `extract_pure_base32` tolerates pasted otpauth URIs; unambiguous HEX rescue;
+  digits clamped TOTP 6..=8 / HOTP 1..=9 (u32 overflow guard).
+- Password-aware import dedup (`importer/mod.rs`): duplicate ONLY on
+  title+username+EXACT password (URL overlap never dedups — decoy vs real
+  both survive); dry-run preview (parse → clone-merge counts → Confirm).
+- QuickBar live-TOTP copy (fresh code at click, reprompt-gated); 30s
+  auto-lock heads-up toast; portable-mode badge (never the path).
+- Release-notes changelog (`sync/updater.rs` + modal): GitHub `body` cleaned
+  + capped, shown before Download & Stage.
+- Audit-hardened paths: bridge origin/trust gates + bounded host lifetime,
+  CSV formula neutralization, shredder `sync_all` + honest rotation, DK
+  zeroize-on-early-return, HMAC access log, autotype focus guards, narrowest-
+  first bincode migration, strict bridge query matching.
 - Isolated 2FA Hub search (`totp_search_query`) — never cross-filters vault.
 - Windows System Tray (`windows_native/tray.rs`): icon + Open/QuickBar/Lock/
   Exit menu, close-to-tray (default ON, `tray_minimize.pref`), `EmptyWorkingSet`
@@ -357,9 +393,12 @@ Architecture (all shipped, all tested):
 - Native Messaging Host bridge (`windows_native/native_host.rs`): Hello-
   cached unlock, CWD fix, decoy-cover serving, save/stats/filled/cards/
   identities commands; registry install locks `allowed_origins` to one ID.
-- Browser extension (`browser_extension/`): smart autofill engine, save
-  prompt, badge count, popup TOTP + reprompt/domain guards, fill audit,
-  settings + i18n, debounced badge.
+- Browser extension (`browser_extension/`): search-blind strict field
+  classifier, full-width dropdown + right-side badge, page-world fetch/XHR
+  hook for SPA save detection, OTP fill toasts, context-menu password
+  generator, PV_PING fast lock gate, per-site never-suggest, username-first
+  suggestion rows (recent-use sort, 2FA pills, inline save form on empty),
+  reprompt/domain guards, fill audit, settings + i18n, debounced badge.
 - Resource diet: 2FA ticker + UIA probe deep-sleep when locked/hidden
   (`ui_visible` atomic); release `lto = "fat"`.
 - Packaging: `installer.iss` (Inno Setup 6, HKCU host keys, full uninstall);

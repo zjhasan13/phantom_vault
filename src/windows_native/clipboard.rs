@@ -21,7 +21,9 @@ use windows_sys::Win32::System::DataExchange::{
     CloseClipboard, EmptyClipboard, GetClipboardData, IsClipboardFormatAvailable, OpenClipboard,
     RegisterClipboardFormatW, SetClipboardData,
 };
-use windows_sys::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
+use windows_sys::Win32::System::Memory::{
+    GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE,
+};
 use zeroize::Zeroize;
 
 const CF_UNICODETEXT: u32 = 13;
@@ -119,7 +121,25 @@ fn open_guarded() -> Result<()> {
     Err(VaultError::AutoType("clipboard busy".into()))
 }
 
+/// FNV-1a 64-bit (no new dep) — identifies OUR last sensitive copy for the
+/// guarded lock/exit clear (M1) without retaining the secret itself.
+fn fnv_hash(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+static LAST_COPY_HASH: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+static LAST_COPY_LEN: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
+
 /// Read current CF_UNICODETEXT (if any) for the guarded-clear comparison.
+/// M2: bounded by the real GlobalSize allocation — never scans past a
+/// foreign non-NUL-terminated block (old code walked up to 1M u16 blind).
 fn read_text_locked() -> Option<String> {
     // SAFETY: read-only peek under an open clipboard owned by us in this fn.
     unsafe {
@@ -134,12 +154,10 @@ fn read_text_locked() -> Option<String> {
         if ptr.is_null() {
             return None;
         }
+        let alloc_units = (GlobalSize(h as HGLOBAL) / 2).min(1024 * 1024 + 1);
         let mut len = 0usize;
-        while *ptr.add(len) != 0 {
+        while len < alloc_units && *ptr.add(len) != 0 {
             len += 1;
-            if len > 1024 * 1024 {
-                break;
-            }
         }
         let slice = std::slice::from_raw_parts(ptr, len);
         let out = String::from_utf16_lossy(slice);
@@ -148,19 +166,30 @@ fn read_text_locked() -> Option<String> {
     }
 }
 
-/// Unconditional flush: empties the clipboard NOW regardless of content.
-/// Used on vault lock / process exit so a copied secret never outlives the
-/// session. Best effort — a busy clipboard simply stays as-is.
-/// Also retires the generation so any in-flight auto-clear worker dies quiet.
+/// Guarded flush (M1): empties the clipboard NOW only if it still holds
+/// OUR last sensitive copy (hash + length match). Locking the vault while
+/// copying an unrelated address no longer destroys it; a lingering secret
+/// is still caught by the 15-s auto-clear worker. Retires the generation.
 pub fn flush_now() {
     let _ = next_generation();
+    let want_hash = LAST_COPY_HASH.load(std::sync::atomic::Ordering::SeqCst);
+    let want_len = LAST_COPY_LEN.load(std::sync::atomic::Ordering::SeqCst) as usize;
+    if want_hash == 0 {
+        return; // no sensitive copy outstanding — never touch user data.
+    }
     if open_guarded().is_err() {
         return;
     }
+    let matched = read_text_locked().map(|t| fnv_hash(&t) == want_hash && t.len() == want_len);
     // SAFETY: classic empty+close sequence; nothing retained.
     unsafe {
-        EmptyClipboard();
+        if matched == Some(true) {
+            EmptyClipboard();
+        }
         CloseClipboard();
+    }
+    if matched == Some(true) {
+        LAST_COPY_HASH.store(0, std::sync::atomic::Ordering::SeqCst);
     }
 }
 
@@ -234,35 +263,63 @@ pub fn copy_sensitive(
         eprintln!("⚠️ clipboard privacy flags rejected — copy works, history exclusion uncertain");
     }
 
-    // Guarded auto-clear on a worker thread (never blocks UI).
-    // Generation gate FIRST (cheap, race-free), content check second.
-    let my_gen = next_generation();
-    let mut expect = text.to_string();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(auto_clear_secs));
-        if current_generation() != my_gen {
-            expect.zeroize();
-            return; // a newer copy (or flush) superseded us — no-op.
-        }
-        let matched = (|| {
-            open_guarded().ok()?;
-            let current = read_text_locked();
-            let same = current.as_deref() == Some(expect.as_str());
-            if same {
-                unsafe {
-                    EmptyClipboard();
+    // Record identity for the guarded lock/exit flush (M1).
+    LAST_COPY_HASH.store(fnv_hash(text), std::sync::atomic::Ordering::SeqCst);
+    LAST_COPY_LEN.store(text.len() as u64, std::sync::atomic::Ordering::SeqCst);
+    // M3: single long-lived auto-clear worker (not one 15-s thread per
+    // copy holding a secret). Jobs carry generation + secret + deadline;
+    // the worker sleeps per-job and applies the same generation-then-content
+    // gate. Type-erased callback so call sites keep `impl FnOnce`.
+    struct ClearJob {
+        gen: u64,
+        expect: String,
+        at: std::time::Instant,
+        cb: Box<dyn FnOnce() + Send>,
+    }
+    static WORKER: OnceLock<std::sync::mpsc::Sender<ClearJob>> = OnceLock::new();
+    let tx = WORKER.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<ClearJob>();
+        std::thread::spawn(move || {
+            while let Ok(mut job) = rx.recv() {
+                let now = std::time::Instant::now();
+                if job.at > now {
+                    std::thread::sleep(job.at - now);
+                }
+                if current_generation() != job.gen {
+                    job.expect.zeroize();
+                    continue; // superseded — no-op.
+                }
+                let matched = (|| {
+                    open_guarded().ok()?;
+                    let current = read_text_locked();
+                    let same = current.as_deref() == Some(job.expect.as_str());
+                    if same {
+                        unsafe {
+                            EmptyClipboard();
+                        }
+                    }
+                    unsafe {
+                        CloseClipboard();
+                    }
+                    Some(same)
+                })();
+                job.expect.zeroize();
+                if matched == Some(true) {
+                    (job.cb)();
                 }
             }
-            unsafe {
-                CloseClipboard();
-            }
-            Some(same)
-        })();
-        expect.zeroize();
-        if matched == Some(true) {
-            on_cleared();
-        }
+        });
+        tx
     });
+    let my_gen = next_generation();
+    let job = ClearJob {
+        gen: my_gen,
+        expect: text.to_string(),
+        at: std::time::Instant::now() + Duration::from_secs(auto_clear_secs),
+        cb: Box::new(on_cleared),
+    };
+    tx.send(job)
+        .map_err(|_| VaultError::AutoType("clipboard worker gone".into()))?;
     Ok(())
 }
 

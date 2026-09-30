@@ -7,7 +7,10 @@
 
 use std::path::Path;
 
-const COUNTER_FILE: &str = "unlock_backoff.dat";
+// H7: DPAPI-sealed counter (not CWD plaintext) + atomic tmp+rename writes.
+// Deletion still resets — documented limit without a server — but casual
+// `echo x >` corruption no longer resets, and concurrent writers don't tear.
+const COUNTER_FILE: &str = "unlock_backoff.dpapi";
 /// Growth cap: 1,2,4,8,16,30,30… seconds. Never locks the owner out.
 const MAX_DELAY_SECS: u64 = 30;
 
@@ -20,19 +23,37 @@ pub fn delay_for_failures(fails: u32) -> u64 {
     (1u64 << fails.saturating_sub(1).min(5)).min(MAX_DELAY_SECS)
 }
 
-/// Read the persisted failure count (missing/corrupt file = 0, fail open).
+/// Read the persisted failure count (missing/corrupt file = 0, fail open
+/// for the owner; DPAPI seal means attacker-written garbage also reads 0
+/// but cannot plant a large value to lock the owner out).
 pub fn read_failures(path: &Path) -> u32 {
-    std::fs::read_to_string(path)
+    let blob = match std::fs::read(path) {
+        Ok(b) => b,
+        Err(_) => {
+            // Legacy plaintext counter (pre-H7): honor it once, then migrate.
+            return std::fs::read_to_string(path)
+                .ok()
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(0);
+        }
+    };
+    crate::core::memory::DpapiGuard::unprotect(&blob)
         .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
+        .and_then(|s| {
+            String::from_utf8_lossy(s.expose()).trim().parse::<u32>().ok()
+        })
         .unwrap_or(0)
 }
 
-/// Bump the counter after a failed attempt. Best effort — failure to write
-/// must never block the error message from reaching the user.
+/// Bump the counter after a failed attempt. Atomic tmp+rename; best effort.
 pub fn record_failure(path: &Path) {
     let next = read_failures(path).saturating_add(1);
-    let _ = std::fs::write(path, next.to_string());
+    if let Ok(blob) = crate::core::memory::DpapiGuard::protect(next.to_string().as_bytes()) {
+        let tmp = path.with_extension("tmp");
+        if std::fs::write(&tmp, &blob).is_ok() {
+            let _ = std::fs::rename(&tmp, path);
+        }
+    }
 }
 
 /// Clear the counter after a successful unlock.

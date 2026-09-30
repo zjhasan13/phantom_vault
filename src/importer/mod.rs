@@ -137,13 +137,12 @@ fn to_custom(
     out
 }
 
-/// Master entrypoint: sniff → parse → dedup → merge → persist-ready summary.
-/// Never fails on bad ROWS (counts them); fails only on unreadable files or
-/// encrypted exports that need user action.
-pub fn import_any_file(
+/// Parse-only half of the import pipeline (sniff → parse, NO merge).
+/// Powers the dry-run preview: the caller dry-merges the returned rows into
+/// a CLONED vault for exact counts, then merges for real only on confirm.
+pub fn parse_import_file(
     path: &std::path::Path,
-    vault: &mut Vault,
-) -> Result<ImportSummary> {
+) -> Result<(Vec<RawItem>, ImportSummary)> {
     let bytes = std::fs::read(path)
         .map_err(|e| VaultError::Sync(format!("cannot read import file: {e}")))?;
     if bytes.len() > 64 * 1024 * 1024 {
@@ -164,6 +163,20 @@ pub fn import_any_file(
         sniffer::Format::GenericJson => bitwarden::parse_generic_json(&bytes, &mut summary)?,
         sniffer::Format::FuzzyCsv(delim) => fuzzy::parse(&bytes, delim, &mut summary)?,
     };
+    Ok((raws, summary))
+}
+
+/// Master entrypoint: sniff → parse → dedup → merge → persist-ready summary.
+/// Never fails on bad ROWS (counts them); fails only on unreadable files or
+/// encrypted exports that need user action.
+/// (The GUI dry-run flow calls parse_import_file + merge directly; this stays
+/// as the single-call convenience for tests and future headless callers.)
+#[allow(dead_code)]
+pub fn import_any_file(
+    path: &std::path::Path,
+    vault: &mut Vault,
+) -> Result<ImportSummary> {
+    let (raws, mut summary) = parse_import_file(path)?;
     merge(vault, raws, &mut summary);
     vault.ensure_folders();
     summary.folders = vault.folders.len();
@@ -700,6 +713,34 @@ mod tests {
         assert!(sniff_backup_in_notes("My recovery\nonlyone").is_empty());
         assert!(!looks_like_backup_name("Username"));
         assert!(looks_like_backup_name("recovery_codes"));
+    }
+
+    #[test]
+    fn dry_run_parse_never_touches_live_vault() {
+        // The GUI preview contract: parse → dry-merge on a CLONE for exact
+        // counts. The live vault must be byte-identical until Confirm.
+        let dir = std::env::temp_dir().join(format!("pv-dryrun-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("chrome.csv");
+        std::fs::write(
+            &file,
+            "name,url,username,password\nGitHub,https://github.com,me,pw1\nGitHub,https://github.com,me,pw2\n",
+        )
+        .unwrap();
+        let live = Vault::new();
+        let (raws, summary) = parse_import_file(&file).unwrap();
+        assert_eq!(raws.len(), 2);
+        assert!(live.credentials.is_empty());
+        let mut probe = live.clone();
+        let mut dry = ImportSummary { source: summary.source.clone(), ..Default::default() };
+        merge(&mut probe, raws.clone(), &mut dry);
+        // Same title+user, different passwords → both import, none skipped.
+        assert_eq!(dry.logins, 2);
+        assert_eq!(dry.duplicates_skipped, 0);
+        assert!(live.credentials.is_empty());
+        assert_eq!(probe.credentials.len(), 2);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

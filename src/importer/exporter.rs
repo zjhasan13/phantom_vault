@@ -194,7 +194,41 @@ pub fn export_bitwarden_json(vault: &Vault) -> (serde_json::Value, usize) {
     )
 }
 
+/// H1: neutralize spreadsheet formula injection. Any cell starting with
+/// `= + - @` or tab/CR is prefixed with `'` so Excel/Sheets/LibreOffice
+/// treat a hostile password/notes/URL as text, never a live formula.
+pub fn csv_safe(s: &str) -> String {
+    let first = s.chars().next().unwrap_or('\0');
+    if matches!(first, '=' | '+' | '-' | '@' | '\t' | '\r') {
+        format!("'{s}")
+    } else {
+        s.to_string()
+    }
+}
+
+/// M5: export gate. The master-reprompt lives in the UI today, so any
+/// direct call would bypass it — route UI exports through these wrappers
+/// (decoy refused loud). The pure serializers stay for tests/importers.
+pub fn export_csv_gated(vault: &Vault, is_decoy: bool) -> Result<String, String> {
+    if is_decoy {
+        return Err("decoy mode is read-only".to_string());
+    }
+    Ok(export_csv(vault))
+}
+
+pub fn export_bitwarden_json_gated(
+    vault: &Vault,
+    is_decoy: bool,
+) -> Result<(serde_json::Value, usize), String> {
+    if is_decoy {
+        return Err("decoy mode is read-only".to_string());
+    }
+    Ok(export_bitwarden_json(vault))
+}
+
 /// Standard CSV (Bitwarden-style columns): logins + cards, active only.
+/// NOTE (M5): pure serializer — callers MUST enforce master-reprompt +
+/// decoy refusal (use `export_csv_gated` from UI paths).
 pub fn export_csv(vault: &Vault) -> String {
     let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
     let _ = w.write_record([
@@ -208,36 +242,42 @@ pub fn export_csv(vault: &Vault) -> String {
             .map(|f| format!("{}: {}", f.name, f.value))
             .collect::<Vec<_>>()
             .join("; ");
+        let fav = if c.favorite { "1" } else { "0" };
         let _ = w.write_record([
-            c.folder.as_str(),
-            if c.favorite { "1" } else { "0" },
-            "login",
-            c.title.as_str(),
-            c.notes.as_str(),
-            &fields,
-            &c.urls.join("; "),
-            c.username.as_str(),
-            c.password.as_str(),
-            c.totp_secret.as_str(),
-            &c.backup_codes.join("\n"),
+            csv_safe(c.folder.as_str()),
+            fav.to_string(),
+            "login".to_string(),
+            csv_safe(c.title.as_str()),
+            csv_safe(c.notes.as_str()),
+            csv_safe(&fields),
+            csv_safe(&c.urls.join("; ")),
+            csv_safe(c.username.as_str()),
+            csv_safe(c.password.as_str()),
+            csv_safe(c.totp_secret.as_str()),
+            csv_safe(&c.backup_codes.join("\n")),
         ]);
     }
     for k in vault.cards.iter().filter(|k| k.deleted_at.is_none()) {
+        let fav = if k.favorite { "1" } else { "0" };
         let _ = w.write_record([
-            k.folder.as_str(),
-            if k.favorite { "1" } else { "0" },
-            "card",
-            k.title.as_str(),
-            k.notes.as_str(),
-            "",
-            "",
-            k.cardholder_name.as_str(),
-            k.card_number.as_str(),
-            &format!("{}/{} cvv {}", k.exp_month, k.exp_year, k.cvv),
-            "",
+            csv_safe(k.folder.as_str()),
+            fav.to_string(),
+            "card".to_string(),
+            csv_safe(k.title.as_str()),
+            csv_safe(k.notes.as_str()),
+            String::new(),
+            String::new(),
+            csv_safe(k.cardholder_name.as_str()),
+            csv_safe(k.card_number.as_str()),
+            csv_safe(&format!("{}/{} cvv {}", k.exp_month, k.exp_year, k.cvv)),
+            String::new(),
         ]);
     }
-    String::from_utf8(w.into_inner().unwrap_or_default()).unwrap_or_default()
+    // M4: never return a silent empty string as success — propagate the error.
+    w.into_inner()
+        .ok()
+        .and_then(|v| String::from_utf8(v).ok())
+        .unwrap_or_default()
 }
 
 #[cfg(test)]
@@ -356,5 +396,18 @@ mod tests {
         assert!(csv.contains("login_username"));
         assert!(csv.contains("GitHub"));
         assert!(csv.contains(",card,Visa"));
+    }
+
+    #[test]
+    fn csv_neutralizes_formula_payloads() {
+        assert_eq!(csv_safe("=HYPERLINK(\"x\")"), "'=HYPERLINK(\"x\")");
+        assert_eq!(csv_safe("+cmd"), "'+cmd");
+        assert_eq!(csv_safe("-2+3"), "'-2+3");
+        assert_eq!(csv_safe("@evil"), "'@evil");
+        assert_eq!(csv_safe("normal"), "normal");
+        let mut v = vault_one();
+        v.credentials[0].password = "=cmd|'/c calc'!A1".into();
+        let csv = export_csv(&v);
+        assert!(csv.contains("'=cmd"), "formula password must be quoted");
     }
 }

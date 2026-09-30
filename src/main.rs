@@ -423,6 +423,153 @@ fn secure_copy_with_feedback(
     }
 }
 
+/// Copy-button flash: records WHAT was copied (text + item id) so buttons
+/// flip to ✓, then clears after 1.5s. Generation-guarded: rapid copies
+/// restart the window instead of flickering or clearing early.
+fn copy_generation() -> &'static std::sync::atomic::AtomicU64 {
+    static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    &GEN
+}
+
+fn mark_copied(main_weak: slint::Weak<MainWindow>, text: String, id: String) {
+    use std::sync::atomic::Ordering::SeqCst;
+    let gen = copy_generation().fetch_add(1, SeqCst) + 1;
+    let weak = main_weak.clone();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = weak.upgrade() {
+            ui.set_last_copied(text.into());
+            ui.set_last_copied_id(id.into());
+        }
+    });
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(1500));
+        if copy_generation().load(SeqCst) != gen {
+            return;
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = main_weak.upgrade() {
+                ui.set_last_copied(String::new().into());
+                ui.set_last_copied_id(String::new().into());
+            }
+        });
+    });
+}
+
+/// Shred targets for a factory reset inside `dir`: primary vault, rotated
+/// generations, decoy container, Hello token, and every DPAPI seal.
+/// Prefs/schedules/icon cache are not secret stores — kept. Pure over the
+/// directory listing — unit tested with a temp dir.
+fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for name in [
+        VAULT_FILE,
+        &format!("{VAULT_FILE}.bak"),
+        security::decoy::DECOY_FILE,
+        HELLO_TOKEN_FILE,
+        security::app_pin::PIN_FILE,
+        security::app_pin::PIN_ATTEMPTS_FILE,
+        security::ext_pin::EXT_PIN_FILE,
+    ] {
+        let p = dir.join(name);
+        if p.is_file() && !out.contains(&p) {
+            out.push(p);
+        }
+    }
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            let p = e.path();
+            if !p.is_file() || out.contains(&p) {
+                continue;
+            }
+            if name.ends_with(".dpapi")
+                || (name.starts_with("my_secure_vault.bak.") && name.ends_with(".enc"))
+            {
+                out.push(p);
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// One-shot recovery-sheet nudge state (`shards_nudged.pref`). Missing = nag.
+fn shard_nudge_seen() -> bool {
+    std::fs::read_to_string("shards_nudged.pref")
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
+fn mark_shard_nudged() {
+    let _ = std::fs::write("shards_nudged.pref", "1");
+}
+
+/// Shared Shamir-split core behind Settings + the post-setup nudge banner.
+/// Needs an unlocked master; decoy vaults have no recovery sheet.
+fn generate_shards_into(ui: &MainWindow, master_arc: &Arc<Mutex<Option<SecretString>>>) {
+    if ui.get_is_decoy() {
+        ui.set_sync_status("⛔ Decoy mode has no recovery sheet.".into());
+        return;
+    }
+    let master_opt = lock_master_pw(master_arc).clone();
+    let Some(master_pw) = master_opt else {
+        ui.set_sync_status("⚠️ Vault not unlocked.".into());
+        return;
+    };
+    if master_pw.expose_secret().len() > security::shamir::WORD_SECRET_MAX {
+        ui.set_sync_status("⚠️ Master password over 64 bytes — shorten it to print shards.".into());
+        return;
+    }
+    match security::shamir::Shamir::split(master_pw.expose_secret()) {
+        Ok(sheets) => {
+            ui.set_shard_1(sheets[0].clone().into());
+            ui.set_shard_2(sheets[1].clone().into());
+            ui.set_shard_3(sheets[2].clone().into());
+            ui.set_shard_4(sheets[3].clone().into());
+            ui.set_shard_5(sheets[4].clone().into());
+            ui.set_show_shards(true);
+            ui.set_sync_status("📄 Sheet ready — print on paper, then Hide.".into());
+        }
+        Err(e) => {
+            ui.set_sync_status(format!("⚠️ {e}").into());
+        }
+    }
+}
+
+/// Post-shred UI landing: purged models, locked shell, clean onboarding
+/// wizard. Runs on the event loop after RAM + disk are already clean.
+fn finish_factory_reset_ui(ui: &MainWindow, qb: &slint::Weak<QuickBarWindow>) {
+    ui.set_credentials(ModelRc::new(VecModel::from(Vec::<CredentialView>::new())));
+    ui.set_total_matches_count(0);
+    ui.set_auth_accounts(ModelRc::new(VecModel::from(Vec::<AuthView>::new())));
+    ui.set_auth_rows(ModelRc::new(VecModel::from(Vec::<ModelRc<AuthView>>::new())));
+    ui.set_passkeys(ModelRc::new(VecModel::from(Vec::<PasskeyView>::new())));
+    ui.set_passkeys_trash(ModelRc::new(VecModel::from(Vec::<PasskeyView>::new())));
+    if let Some(q) = qb.upgrade() {
+        q.set_filtered_results(ModelRc::new(VecModel::from(Vec::<CredentialView>::new())));
+    }
+    ui.set_d_id(String::new().into());
+    ui.set_show_detail(false);
+    ui.set_show_factory_reset(false);
+    ui.set_fr_password(String::new().into());
+    ui.set_fr_delete_text(String::new().into());
+    ui.set_fr_error(String::new().into());
+    ui.set_fr_armed(false);
+    ui.set_fr_countdown(0);
+    ui.set_is_unlocked(false);
+    ui.set_is_decoy(false);
+    ui.set_has_vault_file(false);
+    ui.set_show_onboarding(true);
+    ui.set_onboarding_step(1);
+    ui.set_ob_strength_label(String::new().into());
+    ui.set_ob_strength_frac(0.0);
+    ui.set_ob_error(String::new().into());
+    ui.set_ob_new_text(String::new().into());
+    ui.set_ob_confirm_text(String::new().into());
+    set_trash_label(ui, &Vault::new());
+    security::access_log::log_event("factory-reset", "shred");
+}
+
 /// C1 Hardening: poison-recovering lock helpers. A panic in one worker must
 /// never death-spiral the rest of the app — recover the inner state, warn
 /// once on stderr, and carry on.
@@ -567,6 +714,9 @@ fn lock_vault_now(
     status_msg: &str,
     log_detail: &str,
 ) {
+    // C4: kill the Hello bridge credential FIRST — otherwise Win+L / idle /
+    // proximity lock wipes RAM but leaves vault_hello.dpapi for any process.
+    let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
     panic_wipe(vault_arc, master_arc);
     // Unsent form drafts (may hold Hidden custom-field secrets).
     if let Ok(mut p) = pending_cf.lock() {
@@ -594,11 +744,17 @@ fn lock_vault_now(
         // Bulk-select is session state, never persisted — drop it with the
         // secret-holding models so a stale check can't survive re-unlock.
         selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
+        // Staged import rows are plaintext-adjacent — never survive lock.
+        // H8: poison-recovering (a poisoned mutex under panic=abort would
+        // otherwise kill the lock-scrub mid-wipe, leaving secrets in UI).
+        *pending_import_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
+        clear_favicon_bytes();
         ui.set_select_mode(false);
         ui.set_selected_count(0);
         ui.set_selected_label(String::new().into());
         // Purge every secret-holding list model…
         ui.set_credentials(ModelRc::new(VecModel::from(Vec::<CredentialView>::new())));
+        ui.set_total_matches_count(0);
         ui.set_auth_accounts(ModelRc::new(VecModel::from(Vec::<AuthView>::new())));
         ui.set_auth_rows(ModelRc::new(VecModel::from(Vec::<ModelRc<AuthView>>::new())));
         ui.set_passkeys(ModelRc::new(VecModel::from(Vec::<PasskeyView>::new())));
@@ -620,7 +776,11 @@ fn lock_vault_now(
         ui.set_d_totp(String::new().into());
         ui.set_d_backup(String::new().into());
         ui.set_d_secret_visible(false);
+        ui.set_d_pw_strength(0.0);
+        ui.set_d_pw_strength_label(String::new().into());
         ui.set_show_detail(false);
+        ui.set_show_pin_pad(false);
+        ui.set_pin_error(String::new().into());
         ui.set_f_title(String::new().into());
         ui.set_f_a(String::new().into());
         ui.set_f_b(String::new().into());
@@ -867,6 +1027,7 @@ fn publish_unlocked_vault(
     sync_folders_to_ui(&vault, ui);
     let items = vault_to_items(&vault, &FilterState::default());
     ui.set_credentials(items.clone());
+    ui.set_total_matches_count(total_matches() as i32);
     set_trash_label(ui, &vault);
     if let Some(qb) = qb_weak.upgrade() {
         qb.set_filtered_results(vault_quickbar(&vault, "", search_state.lock().unwrap().travel_only));
@@ -877,10 +1038,16 @@ fn publish_unlocked_vault(
     *lock_vault(vault_arc) = vault;
     ui.set_is_unlocked(true);
     ui.set_show_onboarding(false);
+    ui.set_has_vault_file(true);
     ui.set_is_decoy(false);
     ui.set_show_totp_step(false);
     ui.set_totp_step_error("".into());
     ui.set_status_text("✅ Vault unlocked".into());
+    // One-shot recovery-sheet nudge (never nagged before → banner until the
+    // user Generates or defers; the decoy cover path above stays silent).
+    if !shard_nudge_seen() {
+        ui.set_show_shard_nudge(true);
+    }
     // Hardware binding (rules Cat 6): warn-only machine check.
     // Registry + DPAPI read is milliseconds — safe inline.
     if windows_native::device_bind::check_device() {
@@ -900,6 +1067,13 @@ fn publish_unlocked_vault(
     }
     security::access_log::log_event("unlock", "password ok");
     trigger_sync_push(ui.as_weak());
+    // Favicons resolve in the background (disk first, one gated batch for
+    // misses) and pop into the list when ready — unlock never waits.
+    trigger_favicon_prefetch(
+        Arc::clone(vault_arc),
+        Arc::clone(search_state),
+        ui.as_weak(),
+    );
 
     // Phase 24: authenticator list now + live refresh ticker.
     // The same 1s loop drives the hero countdown AND rebuilds every grid
@@ -1057,22 +1231,38 @@ fn unlock_with_password(    pass: String,
             match storage::load_vault_versioned(&pass, VAULT_FILE) {
                 Ok((vault, was_legacy)) => {
                     if was_legacy {
-                        // Best-effort forward migration: re-seal as v2 hybrid.
-                        // Unlock proceeds regardless; a retry happens next unlock.
-                        let _ = save_vault(&vault, &pass, VAULT_FILE);
+                        // C11: never re-seal blindly over the only good copy.
+                        // Stage to .migrating, reload-round-trip, then rename.
+                        let stage = format!("{VAULT_FILE}.migrating");
+                        match save_vault(&vault, &pass, &stage)
+                            .and_then(|_| storage::load_vault_versioned(&pass, &stage)
+                                .map(|_| ())
+                                .map_err(|e| e))
+                        {
+                            Ok(()) => {
+                                if std::fs::rename(&stage, VAULT_FILE).is_err() {
+                                    let _ = std::fs::remove_file(&stage);
+                                }
+                            }
+                            Err(e) => {
+                                let _ = std::fs::remove_file(&stage);
+                                eprintln!("migration re-seal refused: {e}");
+                            }
+                        }
                     }
                     Ok(vault)
                 }
                 Err(e) => Err(e),
             }
         } else {
-            // First run: initialize with demo credential
+            // First run: initialize with an obviously-fake demo credential
+            // (M18: never ship a live-looking `ghp_` PAT prefix).
             let mut init_vault = Vault::new();
             init_vault.credentials.push(Credential {
                 id: "1".into(),
-                title: "GitHub Personal Token".into(),
-                username: "developer@gmail.com".into(),
-                password: "ghp_SecretTokenLiveDemo999!".into(),
+                title: "Example Demo Login".into(),
+                username: "demo@example.invalid".into(),
+                password: "DEMO-ONLY-REPLACE-ME".into(),
                 totp_secret: String::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
@@ -1089,11 +1279,13 @@ fn unlock_with_password(    pass: String,
                     favorite: false,
                     deleted_at: None,
                 });
+            // M18: no preloaded 2FA secret — the Google-Authenticator docs
+            // example is universally known. Users add their own seed.
             init_vault.totp_accounts.push(TotpAccount {
                 id: "2".into(),
-                account_name: "Google Workspace".into(),
-                issuer: "Google".into(),
-                secret: "HXDMVJECJJWSRB3HWIZR4IFUGFTMXBOZ".into(),
+                account_name: "Example Demo 2FA (add your own seed)".into(),
+                issuer: "Example".into(),
+                secret: String::new(),
                 digits: 6,
                 period: 30,
                 algorithm: "SHA1".to_string(),
@@ -1277,6 +1469,7 @@ fn unlock_with_password(    pass: String,
                         ui.set_folder_filter("All".into());
                         let items = vault_to_items(&decoy, &FilterState::default());
                         ui.set_credentials(items.clone());
+                        ui.set_total_matches_count(total_matches() as i32);
                         set_trash_label(&ui, &decoy);
                         if let Some(qb) = qb_weak.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&decoy, "", search_state.lock().unwrap().travel_only));
@@ -1371,10 +1564,66 @@ fn brand_of(issuer: &str, fallback: &str) -> (char, slint::Color) {
 }
 
 /// Flat authenticator rows (single source; list + grid wrap it).
-fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
+/// Sort: ⭐ favorites first, then issuer A→Z, then account A→Z — starring
+/// GitHub moves it straight to the top. Pure — unit tested.
+/// 2FA issuer → domain (delegates to the shared favicon map; issuers are
+/// human names like "Google", not URLs).
+fn famous_issuer_domain(issuer: &str) -> Option<&'static str> {
+    crate::core::favicon::famous_domain(issuer)
+}
+
+/// Icon domain for a 2FA account: domain-like issuer/account first, then the
+/// famous-issuer map, then a vault-login match (same issuer/title text lends
+/// its URL). Pure — unit tested.
+fn totp_icon_domain(vault: &Vault, issuer: &str, account: &str) -> Option<String> {
+    if let Some(d) = crate::core::favicon::icon_domain(issuer, account) {
+        return Some(d);
+    }
+    if let Some(d) = famous_issuer_domain(issuer) {
+        return Some(d.to_string());
+    }
+    let needle = issuer.trim().to_lowercase();
+    if needle.is_empty() {
+        return None;
+    }
     vault
-        .totp_accounts
+        .credentials
         .iter()
+        .find(|c| {
+            c.deleted_at.is_none()
+                && (c.title.to_lowercase().contains(&needle) || needle.contains(&c.title.to_lowercase()))
+        })
+        .and_then(|c| c.urls.first())
+        .and_then(|u| crate::core::favicon::domain_of_url(u))
+}
+
+/// Cached favicon image for a domain (event-loop thread only — `Image`
+/// is !Send, same rule as the login list). None when toggled off/uncached.
+fn favicon_image_for_domain(domain: &str) -> Option<slint::Image> {
+    if !crate::core::favicon::show_favicons() {
+        return None;
+    }
+    let bytes = favicon_bytes()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(domain)
+        .cloned()?;
+    png_bytes_to_image(&bytes)
+}
+
+fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
+    let mut accs: Vec<&TotpAccount> = vault.totp_accounts.iter().collect();
+    accs.sort_by(|a, b| {
+        b.favorite
+            .cmp(&a.favorite)
+            .then_with(|| a.issuer.to_lowercase().cmp(&b.issuer.to_lowercase()))
+            .then_with(|| {
+                a.account_name
+                    .to_lowercase()
+                    .cmp(&b.account_name.to_lowercase())
+            })
+    });
+    accs.into_iter()
         .map(|a| {
             let gen = totp_engine::generate_code_for_account(a);
             let broken = gen.is_err();
@@ -1401,6 +1650,12 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
             };
             let countdown = if secs < 0 { "HOTP".to_string() } else { format!("{secs}s") };
             let (icon, tint) = brand_of(&a.issuer, &a.account_name);
+            // 2FA card icon: same favicon cache as the login list (letter
+            // circle stays as the fallback when uncached/toggled off).
+            let (has_icon, icon_img) = totp_icon_domain(vault, &a.issuer, &a.account_name)
+                .and_then(|d| favicon_image_for_domain(&d))
+                .map(|img| (true, img))
+                .unwrap_or((false, slint::Image::default()));
             AuthView {
                 id: a.id.clone().into(),
                 name: a.account_name.clone().into(),
@@ -1409,6 +1664,8 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 display: group_code(&code).into(),
                 next: group_code(&next).into(),
                 icon: icon.to_string().into(),
+                has_icon,
+                icon_img,
                 tint,
                 kind: kind.into(),
                 is_hotp,
@@ -1442,17 +1699,19 @@ fn totp_matches(name: &str, issuer: &str, query: &str) -> bool {
     issuer.to_lowercase().contains(&q) || name.to_lowercase().contains(&q)
 }
 
-/// Chunk a flat row vec into grid rows of 2 (last row may be short —
-/// the Slint grid pads it with a stretch spacer so single cards never
-/// stretch full-width). Pure — unit tested.
-fn chunk_rows<T: Clone>(items: Vec<T>) -> Vec<Vec<T>> {
-    items
-        .chunks(2)
-        .map(|c| c.to_vec())
-        .collect()
+/// Chunk a flat row vec into grid rows of N (last row may be short —
+/// the Slint grid pads it with invisible spacers so narrow rows keep the
+/// same column widths instead of zigzagging). Pure — unit tested.
+fn chunk_rows_of<T: Clone>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
+    let n = n.max(1);
+    items.chunks(n).map(|c| c.to_vec()).collect()
 }
 
-/// Grid model for the authenticator page: `[[AuthView]]` rows of 2,
+/// Authenticator grid stride: 3 compact columns (Google Authenticator /
+/// Aegis density — scan-and-copy wants cards, not billboards).
+const AUTH_GRID_COLS: usize = 3;
+
+/// Grid model for the authenticator page: `[[AuthView]]` rows of 3,
 /// filtered by the ISOLATED hub query (never the vault `search_query`).
 fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
     let q = query.trim().to_lowercase();
@@ -1464,7 +1723,7 @@ fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
             .filter(|r| totp_matches(r.name.as_str(), r.issuer.as_str(), &q))
             .collect()
     };
-    let rows: Vec<ModelRc<AuthView>> = chunk_rows(flat)
+    let rows: Vec<ModelRc<AuthView>> = chunk_rows_of(flat, AUTH_GRID_COLS)
         .into_iter()
         .map(|r| ModelRc::new(VecModel::from(r)))
         .collect();
@@ -1474,6 +1733,65 @@ fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
 /// Retired-password rows: secret + relative age, newest first.
 /// The secret rides the row (copy button needs it); the list lives only in
 /// RAM on the detail view and dies with it — never logged, never synced raw.
+/// Grouped health-report rows for the audit dialog: severity-ordered
+/// (breached → reused → weak → stale) with section headers.
+/// Header rows carry id "" (never clickable, never secrets). Pure — tested.
+fn health_rows_for(results: &[security::breach_check::BreachResult]) -> Vec<HealthRow> {
+    let mut rows: Vec<HealthRow> = Vec::new();
+    let mut groups: [Vec<&security::breach_check::BreachResult>; 4] =
+        [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
+    for r in results {
+        if r.breached.is_some() {
+            groups[0].push(r);
+        } else if r.reused {
+            groups[1].push(r);
+        } else if r.weak {
+            groups[2].push(r);
+        } else if r.stale {
+            groups[3].push(r);
+        }
+    }
+    let headers = [
+        "🚨 BREACHED — change these now",
+        "🔁 REUSED — give each site its own password",
+        "🔓 WEAK — strengthen or regenerate",
+        "🕰️ STALE — over 6 months old",
+    ];
+    for (sev, (group, header)) in groups.iter().zip(headers.iter()).enumerate() {
+        if group.is_empty() {
+            continue;
+        }
+        rows.push(HealthRow {
+            id: String::new().into(),
+            title: header.to_string().into(),
+            flags: String::new().into(),
+            sev: -1,
+        });
+        for r in group {
+            let mut flags = Vec::new();
+            if let Some(n) = r.breached {
+                flags.push(format!("breached×{n}"));
+            }
+            if r.reused {
+                flags.push("reused".to_string());
+            }
+            if r.weak {
+                flags.push("weak".to_string());
+            }
+            if r.stale {
+                flags.push("stale 6m+".to_string());
+            }
+            rows.push(HealthRow {
+                id: r.credential_id.clone().into(),
+                title: r.title.clone().into(),
+                flags: flags.join(" • ").into(),
+                sev: sev as i32,
+            });
+        }
+    }
+    rows
+}
+
 fn rebuild_history(c: &Credential) -> ModelRc<HistoryView> {
     let now = crate::models::current_timestamp();
     let rows: Vec<HistoryView> = c
@@ -1592,11 +1910,13 @@ struct FilterState {
     show_trash: bool,
     /// Health metric filter from the scoreboard ("", breached/reused/weak/stale).
     health: String,
+    /// Paged window: first N matches render (Load More grows it).
+    limit: usize,
 }
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false, health: String::new() }
+        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false, health: String::new(), limit: LIST_CAP }
     }
 }
 
@@ -1705,6 +2025,7 @@ fn push_item(
     travel_safe: bool,
     fav: bool,
     trashed: bool,
+    verified: bool,
 ) {
     if f.kind != 0 && f.kind != kind {
         return;
@@ -1748,8 +2069,22 @@ fn push_item(
         totp: totp.into(),
         health: health_badge_for(id).into(),
         fav,
+        verified,
         sel: selection_contains(kind, id),
+        has_icon: false,
+        icon: slint::Image::default(),
     });
+    // Favicons resolve after push (Image has no Default-dependent borrow):
+    // kind-1 rows with a cached domain icon show the site logo (URL first,
+    // domain-like title as fallback — imports often leave URL empty).
+    if kind == 1 {
+        if let Some(img) = favicon_for_item(title, url) {
+            if let Some(row) = out.last_mut() {
+                row.has_icon = true;
+                row.icon = img;
+            }
+        }
+    }
 }
 
 /// Bulk-select registry: "kind:id" set, read by every list build (same
@@ -1777,6 +2112,149 @@ fn selection_count() -> usize {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .len()
+}
+
+/// Staged import rows awaiting user Confirm (dry-run preview). RAM-only,
+/// process-global like the selection registry so pick/confirm/cancel/lock
+/// all reach it without threading handles. Dropped on cancel AND on lock.
+struct PendingImport {
+    raws: Vec<importer::RawItem>,
+    source: String,
+    path_str: String,
+}
+
+fn pending_import_store() -> &'static Mutex<Option<PendingImport>> {
+    static PENDING: std::sync::OnceLock<Mutex<Option<PendingImport>>> = std::sync::OnceLock::new();
+    PENDING.get_or_init(|| Mutex::new(None))
+}
+
+/// Raw cached favicon PNGs by domain (bytes are Send+Sync; decoding to
+/// `slint::Image` happens ONLY on the event-loop thread — Slint images are
+/// neither Send nor Sync). Filled by the prefetch worker; list/detail builds
+/// (always on the event loop) decode on demand.
+fn favicon_bytes() -> &'static Mutex<std::collections::HashMap<String, Vec<u8>>> {
+    static ICONS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<u8>>>> =
+        std::sync::OnceLock::new();
+    ICONS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn clear_favicon_bytes() {
+    favicon_bytes().lock().unwrap_or_else(|p| p.into_inner()).clear();
+    crate::core::favicon::clear_memory_cache();
+}
+
+fn favicon_for_item(title: &str, url: &str) -> Option<slint::Image> {
+    if !crate::core::favicon::show_favicons() {
+        return None;
+    }
+    let domain = crate::core::favicon::icon_domain(title, url)?;
+    let bytes = favicon_bytes()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&domain)
+        .cloned()?;
+    png_bytes_to_image(&bytes)
+}
+
+/// PNG bytes → Slint image (QR grayscale, favicon color — `image` decodes
+/// both; software buffer, safe to build on the event-loop thread).
+fn png_bytes_to_image(png: &[u8]) -> Option<slint::Image> {
+    let rgba = image::load_from_memory(png).ok()?.to_rgba8();
+    let (w, h) = (rgba.width(), rgba.height());
+    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
+        rgba.as_raw(),
+        w,
+        h,
+    );
+    Some(slint::Image::from_rgba8(buf))
+}
+
+/// Background favicon pass: disk cache first, one DuckDuckGo batch for
+/// misses (kill-switch + toggle gated), then rebuild the list so fresh
+/// icons pop in. Fire-and-forget — never blocks the UI thread.
+fn trigger_favicon_prefetch(
+    vault_arc: Arc<Mutex<Vault>>,
+    search_arc: Arc<Mutex<FilterState>>,
+    main_weak: slint::Weak<MainWindow>,
+) {
+    std::thread::spawn(move || {
+        if !crate::core::favicon::show_favicons() {
+            return;
+        }
+        // Titles count too: imports often carry the host as the title with
+        // an empty URL list (e.g. title `2captcha.com`, no urls).
+        let pairs: Vec<(String, String)> = {
+            let v = lock_vault(&vault_arc);
+            v.credentials
+                .iter()
+                .map(|c| (c.title.clone(), c.urls.first().cloned().unwrap_or_default()))
+                .collect()
+        };
+        let mut domains = crate::core::favicon::domains_for_items(&pairs);
+        // 2FA issuers ride along (famous names + domain-like issuers), so
+        // hub cards pop icons in on the same pass as the login list.
+        {
+            let v = lock_vault(&vault_arc);
+            for a in &v.totp_accounts {
+                let d = totp_icon_domain(&v, &a.issuer, &a.account_name);
+                if let Some(d) = d {
+                    if !domains.contains(&d) {
+                        domains.push(d);
+                    }
+                }
+            }
+        }
+        eprintln!("[favicon] {} candidate domains", domains.len());
+        if domains.is_empty() {
+            return;
+        }
+        let hits = crate::core::favicon::prefetch_blocking(&domains, net_allowed);
+        eprintln!("[favicon] {} hits (disk + fetch)", hits.len());
+        if hits.is_empty() {
+            return;
+        }
+        let mut fresh = 0;
+        {
+            // Bytes validated upstream (fetch decode-checks before saving;
+            // disk hits decode-checked on read). No Slint work here: images
+            // are !Send, so decoding happens on the event-loop thread only.
+            let mut cache = favicon_bytes().lock().unwrap_or_else(|p| p.into_inner());
+            for (d, bytes) in hits {
+                if cache.contains_key(&d) {
+                    continue;
+                }
+                cache.insert(d, bytes);
+                fresh += 1;
+            }
+        }
+        if fresh == 0 {
+            return;
+        }
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = main_weak.upgrade() else {
+                return;
+            };
+            let f = search_arc.lock().unwrap().clone();
+            let v = lock_vault(&vault_arc);
+            set_paged_credentials(&ui, vault_to_items(&v, &f));
+            // 2FA hub cards follow (icons may have arrived on this pass).
+            ui.set_auth_accounts(rebuild_auth_list(&v));
+            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+            // Detail header follows if it shows a login.
+            if ui.get_d_kind() == 1 {
+                if let Some(c) = v.credentials.iter().find(|c| c.id == ui.get_d_id().as_str()) {
+                    let first_url = c.urls.first().map(String::as_str).unwrap_or("");
+                    match favicon_for_item(&c.title, first_url) {
+                        Some(img) => {
+                            ui.set_d_icon(img);
+                            ui.set_d_has_icon(true);
+                        }
+                        None => ui.set_d_has_icon(false),
+                    }
+                }
+            }
+        });
+    });
 }
 
 /// Process-wide health badges from the last audit (id → badge text).
@@ -1815,34 +2293,36 @@ fn health_kind_for(id: &str) -> String {
 }
 
 /// Unified list builder: search query + type + folder over all 6 vectors.
-/// Windowing diet: NEVER instantiate more than LIST_CAP Slint cards at once
-/// (482 items = ~90MB of widget/GPU overhead). Search filters the FULL vault
-/// first, then the top slice renders — refine to find the rest.
+/// Windowing diet: search filters the FULL vault first, then only the first
+/// `f.limit` rows instantiate as Slint cards (482 items = ~90MB of
+/// widget/GPU overhead). The pre-truncate total is recorded for the
+/// Load-More footer — read it back with `total_matches()` on the same tick.
 const LIST_CAP: usize = 50;
+const LIST_PAGE: usize = 50;
 fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
     let q = f.query.trim().to_lowercase();
     let mut items = Vec::new();
     for c in &vault.credentials {
-        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some());
+        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id));
     }
     for l in &vault.licenses {
         push_item(&mut items, f, &q, &l.id, 2, &l.app_name, "Software license",
-            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some());
+            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some(), false);
     }
     for n in &vault.notes {
         let preview: String = n.content.lines().next().unwrap_or("").chars().take(48).collect();
-        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some());
+        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some(), false);
     }
     for k in &vault.cards {
         let exp = format!("{:0>2}/{:0>2}", k.exp_month, k.exp_year);
         let meta = format!("exp {exp}  CVV {}", k.cvv);
-        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some());
+        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some(), false);
     }
     for i in &vault.identities {
-        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some());
+        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some(), false);
     }
     for s in &vault.ssh_keys {
-        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some());
+        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some(), false);
     }
     // Standalone 2FA (kind 8): hub accounts also live in All items +
     // Favorites so the counts never desync. No secrets ride the list model
@@ -1856,10 +2336,42 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
             "steam" => "STEAM".to_string(),
             _ => "TOTP".to_string(),
         };
-        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false);
+        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false);
     }
-    items.truncate(LIST_CAP);
+    let total = items.len();
+    items.truncate(f.limit);
+    *total_matches_registry()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = total;
     ModelRc::new(VecModel::from(items))
+}
+
+/// Pre-truncate total from the last vault_to_items build (same tick).
+/// Backed by a process-wide cell because vault_to_items returns only the
+/// model (30+ call sites stay untouched).
+fn total_matches_registry() -> &'static Mutex<usize> {
+    static TOTAL: std::sync::OnceLock<Mutex<usize>> = std::sync::OnceLock::new();
+    TOTAL.get_or_init(|| Mutex::new(0))
+}
+
+fn total_matches() -> usize {
+    *total_matches_registry()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
+
+fn restore_total(n: usize) {
+    *total_matches_registry()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = n;
+}
+
+/// Paged list paint: model + total-matches count for the Load-More footer.
+/// Call with the model built on this tick (event-loop single-threaded —
+/// the QuickBar feed preserves/restores around its own build).
+fn set_paged_credentials(ui: &MainWindow, model: ModelRc<CredentialView>) {
+    ui.set_credentials(model);
+    ui.set_total_matches_count(total_matches() as i32);
 }
 
 /// QuickBar feed: logins only, optional query.
@@ -1867,10 +2379,13 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
 /// identities, ssh). Rows display title + subtitle only (numbers/keys stay
 /// masked until Copy/Type), so screen-sharers see no secrets.
 fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
+    // The feed must not disturb the main list's total: save/restore it.
+    let prev = total_matches();
     let model = vault_to_items(
         vault,
-        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new() },
+        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new(), limit: LIST_CAP },
     );
+    restore_total(prev);
     // Standalone 2FA stays out of the QuickBar: its copy/type flows dispatch
     // on secrets stored in the row, and kind-8 rows deliberately carry none
     // (fresh codes resolve by id in the main window only).
@@ -1900,13 +2415,20 @@ fn main() -> Result<(), slint::PlatformError> {
     // relative data file (vault, DPAPI seals, decoy, sync sidecars,
     // crash.log) lives on the USB/RAM-disk. Absolute picker/CLI paths are
     // unaffected. Point it at a RAM-disk for zero SSD artifacts.
+    // Portable badge source of truth: the USB/RAM-disk dir when the mode
+    // actually engaged, else None (UI shows a 📦 badge, never the path —
+    // shoulder-surfers don't need our drive layout).
+    let mut portable_dir: Option<String> = None;
     if let Ok(dir) = std::env::var("PHANTOM_VAULT_DIR") {
         let dir = dir.trim().to_string();
         if !dir.is_empty() {
             let res: std::io::Result<()> =
                 std::fs::create_dir_all(&dir).and_then(|()| std::env::set_current_dir(&dir));
             match res {
-                Ok(()) => eprintln!("📦 Portable mode: data dir = {dir}"),
+                Ok(()) => {
+                    eprintln!("📦 Portable mode: data dir = {dir}");
+                    portable_dir = Some(dir);
+                }
                 Err(e) => eprintln!("⚠️ Portable dir unusable ({dir}): {e} — using default."),
             }
         }
@@ -1914,6 +2436,7 @@ fn main() -> Result<(), slint::PlatformError> {
     // Cat 8 process hardening, applied before any secret exists in RAM:
     // refuse injected DLLs, opt out of WER crash-dump uploads, probe admin.
     let dll_guarded = windows_native::process_guard::block_injected_dlls();
+    let extra_hardened = windows_native::process_guard::harden_extra();
     let wer_excluded = windows_native::process_guard::exclude_from_crash_dumps();
     let elevated = windows_native::process_guard::is_elevated();
     // NOTE: stderr only — stdout belongs to the Native Messaging frame
@@ -1921,6 +2444,13 @@ fn main() -> Result<(), slint::PlatformError> {
     // length-prefixed pipe and the popup hangs on "Loading…").
     if dll_guarded {
         eprintln!("🛡️ DLL-injection block active (Microsoft-only binaries).");
+    }
+    if extra_hardened > 0 {
+        eprintln!("🛡️ Extra mitigations applied ({extra_hardened}/3: ext-point, fonts, handles).");
+    }
+    // M9: pagefile defense needs SeLockMemoryPrivilege — try once, warn loud.
+    if !core::memory::acquire_lock_privilege() {
+        eprintln!("⚠️ SeLockMemoryPrivilege unavailable — VirtualLock pagefile pinning will fail (see LockedBytes errors).");
     }
     if wer_excluded {
         eprintln!("🛡️ Crash-dump upload excluded (WER).");
@@ -2002,6 +2532,17 @@ fn main() -> Result<(), slint::PlatformError> {
     }));
     let main_window = MainWindow::new()?;
     main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
+    main_window.set_favicons_enabled(crate::core::favicon::show_favicons());
+    // App PIN button shows iff a sealed PIN exists on this machine.
+    main_window.set_pin_available(security::app_pin::is_enrolled(std::path::Path::new(".")));
+    main_window.set_ext_pin_set(security::ext_pin::is_set(std::path::Path::new(".")));
+    main_window.set_portable_badge(
+        portable_dir
+            .map(|_| "📦 Portable".to_string())
+            .unwrap_or_default()
+            .into(),
+    );
+    main_window.set_has_vault_file(std::path::Path::new(VAULT_FILE).exists());
     // First-run onboarding: no vault on disk → 3-step wizard (zero-knowledge
     // explainer + master-password setup with live strength meter) instead of
     // the bare lock screen. Hidden on first successful unlock.
@@ -2283,7 +2824,25 @@ fn main() -> Result<(), slint::PlatformError> {
                 .lock()
                 .map(|t| t.elapsed())
                 .unwrap_or(Duration::from_secs(0));
-            if idle < Duration::from_secs(mins * 60) {
+            let limit = Duration::from_secs(mins * 60);
+            if idle < limit {
+                // 30s heads-up before the guillotine: interact (copy, type,
+                // click) to stay awake. Re-arms whenever comfortably awake.
+                static WARNED: std::sync::atomic::AtomicBool =
+                    std::sync::atomic::AtomicBool::new(false);
+                if limit.saturating_sub(idle) > Duration::from_secs(30) {
+                    WARNED.store(false, std::sync::atomic::Ordering::SeqCst);
+                } else if !WARNED.swap(true, std::sync::atomic::Ordering::SeqCst) {
+                    let weak = main_weak_lock.clone();
+                    let secs = limit.saturating_sub(idle).as_secs().max(1);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_notification_text(
+                                format!("⏳ Auto-lock in ~{secs}s — interact to stay awake.").into(),
+                            );
+                        }
+                    });
+                }
                 continue;
             }
             lock_vault_now(
@@ -2575,6 +3134,80 @@ fn main() -> Result<(), slint::PlatformError> {
                 main_ui.as_weak(),
                 password.as_str().to_string(),
                 &format!("📋 Password copied! (Masked from Win+V, auto-clearing in {secs}s)"),
+                secs,
+            );
+        }
+    });
+
+    // QuickBar live-TOTP copy: fresh code generated at click time (never a
+    // stale row snapshot). Same reprompt gate as password copy for kind 1.
+    let qb_weak_totp = quick_bar.as_weak();
+    let main_weak_for_totp = main_window.as_weak();
+    let qb_visible_totp = Arc::clone(&quickbar_visible);
+    let ct_totp = Arc::clone(&clipboard_timeout_secs);
+    let activity_totp = Arc::clone(&last_activity);
+    let vault_arc_totp = Arc::clone(&active_vault);
+    quick_bar.on_copy_totp_selected(move |kind, id| {
+        if let Some(qb) = qb_weak_totp.upgrade() {
+            qb.hide().ok();
+        }
+        qb_visible_totp.store(false, std::sync::atomic::Ordering::SeqCst);
+        if let Some(main_ui) = main_weak_for_totp.upgrade() {
+            let gated = {
+                let v = lock_vault(&vault_arc_totp);
+                if kind == 1 {
+                    reprompt_gate(&v, kind, id.as_str())
+                } else {
+                    None
+                }
+            };
+            if let Some((g_user, g_secret)) = gated {
+                main_ui.set_rp_action(1);
+                main_ui.set_rp_kind(1);
+                main_ui.set_rp_id(id.as_str().into());
+                main_ui.set_rp_user(g_user.into());
+                main_ui.set_rp_secret(g_secret.into());
+                main_ui.set_rp_error(String::new().into());
+                main_ui.set_rp_show(true);
+                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                return;
+            }
+        }
+        if let Some(main_ui) = main_weak_for_totp.upgrade() {
+            if let Ok(mut t) = activity_totp.lock() {
+                *t = std::time::Instant::now();
+            }
+            let code: Option<String> = {
+                let v = lock_vault(&vault_arc_totp);
+                if kind == 1 {
+                    v.credentials
+                        .iter()
+                        .find(|c| c.id == id.as_str())
+                        .and_then(|c| {
+                            crate::totp_engine::generate_live_code(&c.totp_secret).ok()
+                        })
+                        .map(|(c, _)| c)
+                } else if kind == 8 {
+                    v.totp_accounts
+                        .iter()
+                        .find(|a| a.id == id.as_str())
+                        .and_then(|a| {
+                            crate::totp_engine::generate_code_for_account(a).ok()
+                        })
+                        .map(|(c, _)| c)
+                } else {
+                    None
+                }
+            };
+            let Some(code) = code else {
+                main_ui.set_notification_text("⚠️ No live TOTP code for this item.".into());
+                return;
+            };
+            let secs = ct_totp.load(std::sync::atomic::Ordering::SeqCst);
+            secure_copy_with_feedback(
+                main_ui.as_weak(),
+                code,
+                &format!("⏱️ TOTP copied! (Masked from Win+V, auto-clearing in {secs}s)"),
                 secs,
             );
         }
@@ -2924,7 +3557,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     match res {
                         Ok(v) => {
                             let f = search_clone.lock().unwrap().clone();
-                            ui.set_credentials(vault_to_items(&v, &f));
+                            set_paged_credentials(&ui, vault_to_items(&v, &f));
                             sync_folders_to_ui(&v, &ui);
                             if let Some(qb) = qb_clone.upgrade() {
                                 qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
@@ -3439,6 +4072,69 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
+    // App PIN quick-unlock (DPAPI-bound, device-local). Mirrors the Hello
+    // path: verify off-thread, then funnel into the SAME unlock pipeline
+    // (backoff, migration, AND-mode/TOTP gates all apply downstream).
+    let pin_weak = main_window.as_weak();
+    let pin_vault = Arc::clone(&active_vault);
+    let pin_master = Arc::clone(&active_master_pw);
+    let pin_search = Arc::clone(&search_state);
+    let pin_qb = quick_bar.as_weak();
+    let pin_uvis = Arc::clone(&ui_visible);
+    main_window.on_request_pin_unlock(move |pin| {
+        // Cat 8 AND-mode is password-FIRST, same as Hello-first: refuse.
+        if let Some(ui) = pin_weak.upgrade() {
+            if ui.get_and_mode() {
+                ui.set_pin_error(
+                    "Two-factor unlock is ON — enter your master password first.".into(),
+                );
+                return;
+            }
+            ui.set_pin_error("".into());
+            ui.set_status_text("🔢 Checking PIN…".into());
+        }
+        let pin = pin.as_str().trim().to_string();
+        let weak = pin_weak.clone();
+        let vault_clone = Arc::clone(&pin_vault);
+        let master_clone = Arc::clone(&pin_master);
+        let search_clone = Arc::clone(&pin_search);
+        let qb_clone = pin_qb.clone();
+        let uvis_clone = Arc::clone(&pin_uvis);
+        std::thread::spawn(move || {
+            // Argon2id + DPAPI happen here (never on the Slint thread).
+            match security::app_pin::verify_and_recover(Path::new("."), &pin) {
+                Ok(master) => {
+                    use secrecy::ExposeSecret;
+                    let pass = master.expose_secret().to_string();
+                    drop(master);
+                    unlock_with_password(
+                        pass, weak, vault_clone, master_clone, search_clone, qb_clone,
+                        Arc::clone(&uvis_clone), false, false,
+                    );
+                }
+                Err(security::app_pin::PinError::Wiped) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_pin_available(false);
+                            ui.set_show_pin_pad(false);
+                            ui.set_pin_error("Too many wrong PINs — PIN login wiped. Unlock with your master password to set a new PIN.".into());
+                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                        }
+                    });
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_pin_error(msg.into());
+                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
 /// Bitwarden-parity: construct + push any of the 6 item kinds.
 /// Pure field-mapping (no I/O) — heavily exercised via integration path.
 #[allow(clippy::too_many_arguments)]
@@ -3843,6 +4539,9 @@ fn replace_item(
                     }
                 };
 
+                let fav_vc = Arc::clone(&vault_clone);
+                let fav_sc = Arc::clone(&search_clone);
+                let fav_w = weak.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = weak.upgrade() else {
                         return;
@@ -3853,6 +4552,7 @@ fn replace_item(
                             let f = search_clone.lock().unwrap().clone();
                             let items = vault_to_items(&vault_snapshot, &f);
                             ui.set_credentials(items.clone());
+                            ui.set_total_matches_count(total_matches() as i32);
                             if let Some(qb) = qb_weak.upgrade() {
                                 qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
                             }
@@ -3879,6 +4579,8 @@ fn replace_item(
                             ui.set_custom_fields(ModelRc::new(VecModel::from(Vec::<CustomFieldView>::new())));
                             sync_folders_to_ui(&vault_snapshot, &ui);
                             trigger_sync_push(ui.as_weak());
+                            // New URLs may need icons — background pass only.
+                            trigger_favicon_prefetch(fav_vc, fav_sc, fav_w);
                         }
                         Err(e) => {
                             ui.set_notification_text(format!("❌ Save failed: {}", e).into());
@@ -3965,7 +4667,7 @@ fn replace_item(
                 match save_result {
                     Ok((vault_snapshot, permanent)) => {
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&vault_snapshot, &f));
+                        set_paged_credentials(&ui, vault_to_items(&vault_snapshot, &f));
                         set_trash_label(&ui, &vault_snapshot);
                         if kind == 8 {
                             // Keep the 2FA Hub in sync with list-side deletes.
@@ -4046,7 +4748,7 @@ fn replace_item(
                 match save_result {
                     Ok(vault_snapshot) => {
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&vault_snapshot, &f));
+                        set_paged_credentials(&ui, vault_to_items(&vault_snapshot, &f));
                         set_trash_label(&ui, &vault_snapshot);
                         if let Some(qb) = qb_weak.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
@@ -4060,6 +4762,206 @@ fn replace_item(
                     Err(e) => {
                         ui.set_notification_text(format!("❌ Restore failed: {}", e).into());
                     }
+                }
+            });
+        });
+    });
+
+    // Factory Reset triple-gate: master password + typed DELETE + 5s
+    // countdown → DoD-shred vault + generations + DPAPI seals, RAM purge,
+    // back to onboarding. Decoy mode is strictly read-only.
+    fn factory_gen() -> &'static std::sync::atomic::AtomicU64 {
+        static GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        &GEN
+    }
+    let fr_weak = main_window.as_weak();
+    main_window.on_factory_reset_start(move || {
+        let Some(ui) = fr_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_fr_password(String::new().into());
+        ui.set_fr_delete_text(String::new().into());
+        ui.set_fr_error(String::new().into());
+        ui.set_fr_armed(false);
+        ui.set_fr_countdown(0);
+        ui.set_show_factory_reset(true);
+    });
+    let frc_weak = main_window.as_weak();
+    main_window.on_factory_reset_cancel(move || {
+        use std::sync::atomic::Ordering::SeqCst;
+        factory_gen().fetch_add(1, SeqCst);
+        if let Some(ui) = frc_weak.upgrade() {
+            ui.set_show_factory_reset(false);
+            ui.set_fr_password(String::new().into());
+            ui.set_fr_delete_text(String::new().into());
+            ui.set_fr_error(String::new().into());
+            ui.set_fr_armed(false);
+            ui.set_fr_countdown(0);
+        }
+    });
+    let fra_weak = main_window.as_weak();
+    main_window.on_factory_reset_arm(move || {
+        use std::sync::atomic::Ordering::SeqCst;
+        let Some(ui) = fra_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_fr_error("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let pw = ui.get_fr_password().to_string();
+        if pw.is_empty() {
+            ui.set_fr_error("⚠️ Enter your master password first.".into());
+            return;
+        }
+        if ui.get_fr_delete_text().to_string().trim() != "DELETE" {
+            ui.set_fr_error("⚠️ Type DELETE in the box to continue.".into());
+            return;
+        }
+        ui.set_fr_error("⏳ Verifying master password…".into());
+        ui.set_fr_armed(false);
+        let gen = factory_gen().fetch_add(1, SeqCst) + 1;
+        let weak = fra_weak.clone();
+        std::thread::spawn(move || {
+            // Trial decrypt proves the password WITHOUT unlocking anything.
+            if storage::load_vault_versioned(&pw, VAULT_FILE).is_err() {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_fr_error("❌ Wrong master password.".into());
+                    }
+                });
+                return;
+            }
+            // Deliberate 5s countdown — no click-through deletes.
+            for n in (1..=5).rev() {
+                if factory_gen().load(SeqCst) != gen {
+                    return; // cancelled / re-armed
+                }
+                let weak_n = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak_n.upgrade() {
+                        ui.set_fr_countdown(n);
+                        ui.set_fr_error(String::new().into());
+                    }
+                });
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+            if factory_gen().load(SeqCst) != gen {
+                return;
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_fr_countdown(0);
+                    ui.set_fr_armed(true);
+                    ui.set_fr_error("🔥 Armed. This is your last chance.".into());
+                }
+            });
+        });
+    });
+    let frc2_weak = main_window.as_weak();
+    let frc2_vault = Arc::clone(&active_vault);
+    let frc2_master = Arc::clone(&active_master_pw);
+    let frc2_qb = quick_bar.as_weak();
+    main_window.on_factory_reset_confirm(move || {
+        let Some(ui) = frc2_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_fr_error("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if !ui.get_fr_armed() {
+            ui.set_fr_error("⚠️ Arm the countdown first.".into());
+            return;
+        }
+        let pw = ui.get_fr_password().to_string();
+        if pw.is_empty() {
+            ui.set_fr_error("⚠️ Master password required.".into());
+            return;
+        }
+        ui.set_fr_error("🔥 Shredding…".into());
+        ui.set_fr_armed(false);
+        let weak = frc2_weak.clone();
+        let vault_clone = Arc::clone(&frc2_vault);
+        let master_clone = Arc::clone(&frc2_master);
+        let qb_clone = frc2_qb.clone();
+        std::thread::spawn(move || {
+            // Re-verify at execution time (seconds may have passed).
+            if storage::load_vault_versioned(&pw, VAULT_FILE).is_err() {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_fr_error("❌ Wrong master password.".into());
+                    }
+                });
+                return;
+            }
+            let mut targets = collect_factory_targets_in(std::path::Path::new("."));
+            // C10: scheduled Documents backups + scheduler config + metadata
+            // sidecars survived Factory Reset. Shred them too.
+            let backup_dir = std::path::PathBuf::from(
+                storage::backup_scheduler::default_backup_dir(),
+            );
+            if backup_dir.is_dir() {
+                if let Ok(rd) = std::fs::read_dir(&backup_dir) {
+                    for e in rd.flatten() {
+                        let p = e.path();
+                        if p.is_file() {
+                            targets.push(p);
+                        }
+                    }
+                }
+                // Remove the (now empty) backup tree + schedule + audit trails.
+                for extra in [
+                    std::path::PathBuf::from(storage::backup_scheduler::SCHEDULE_FILE),
+                    std::path::PathBuf::from("access.log"),
+                    std::path::PathBuf::from("access.log.head"),
+                    std::path::PathBuf::from("pv_ext_stats.json"),
+                ] {
+                    if extra.is_file() {
+                        targets.push(extra);
+                    }
+                }
+            }
+            let mut failed = Vec::new();
+            for t in &targets {
+                if let Err(e) = security::shredder::shred_file(t) {
+                    failed.push(format!("{}: {e}", t.display()));
+                }
+            }
+            let _ = std::fs::remove_dir_all(&backup_dir);
+            // RAM purge: vault, master, session registries, clipboard.
+            // (SecretString zeroizes on drop; the guard assignment below
+            // drops the old master here.)
+            *lock_vault(&vault_clone) = Vault::new();
+            *lock_master_pw(&master_clone) = None;
+            selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
+            // Staged import rows are plaintext-adjacent — must not survive.
+            // H8: poison-recovering (see lock_vault_now).
+            *pending_import_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
+            // Fresh vault deserves a fresh one-shot shard nudge.
+            let _ = std::fs::remove_file("shards_nudged.pref");
+            clear_favicon_bytes();
+            if let Ok(mut reg) = health_registry().lock() {
+                reg.clear();
+            }
+            windows_native::clipboard::flush_now();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                finish_factory_reset_ui(&ui, &qb_clone);
+                if failed.is_empty() {
+                    ui.set_status_text(
+                        format!("🔥 Vault shredded ({} files). Create a new master password.", targets.len()).into(),
+                    );
+                } else {
+                    ui.set_status_text(
+                        format!("⚠️ Reset partial — {} failed: {}", failed.len(), failed.join("; ")).into(),
+                    );
                 }
             });
         });
@@ -4119,7 +5021,7 @@ fn replace_item(
                 match save_result {
                     Ok((vault_snapshot, n)) => {
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&vault_snapshot, &f));
+                        set_paged_credentials(&ui, vault_to_items(&vault_snapshot, &f));
                         set_trash_label(&ui, &vault_snapshot);
                         if let Some(qb) = qb_weak.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
@@ -4148,11 +5050,13 @@ fn replace_item(
     main_window.on_search_changed(move |query| {
         let mut f = search_state_search.lock().unwrap().clone();
         f.query = query.as_str().to_string();
+        // New search starts fast at the first page.
+        f.limit = LIST_CAP;
         // Search stays inside the current view (vault or Trash).
         *search_state_search.lock().unwrap() = f.clone();
         let vault = lock_vault(&vault_arc_search);
         if let Some(ui) = window_weak_search.upgrade() {
-            ui.set_credentials(vault_to_items(&vault, &f));
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
 
@@ -4174,28 +5078,44 @@ fn replace_item(
     main_window.on_type_filter_changed(move |kind| {
         let mut f = search_state_type.lock().unwrap().clone();
         f.kind = kind;
+        f.limit = LIST_CAP;
         // Leaving any view always exits Trash (prop mirrors the state).
         f.show_trash = false;
         *search_state_type.lock().unwrap() = f.clone();
         let vault = lock_vault(&vault_arc_type);
         if let Some(ui) = window_weak_type.upgrade() {
             ui.set_showing_trash(false);
-            ui.set_credentials(vault_to_items(&vault, &f));
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
 
     let window_weak_folder = main_window.as_weak();
     let vault_arc_folder = Arc::clone(&active_vault);
     let search_state_folder = Arc::clone(&search_state);
+    // Paged window: Load More grows the slice by one page per tap.
+    let window_weak_more = main_window.as_weak();
+    let vault_arc_more = Arc::clone(&active_vault);
+    let search_state_more = Arc::clone(&search_state);
+    main_window.on_load_more_items(move || {
+        let Some(ui) = window_weak_more.upgrade() else {
+            return;
+        };
+        let mut f = search_state_more.lock().unwrap().clone();
+        f.limit = f.limit.saturating_add(LIST_PAGE);
+        *search_state_more.lock().unwrap() = f.clone();
+        let vault = lock_vault(&vault_arc_more);
+        set_paged_credentials(&ui, vault_to_items(&vault, &f));
+    });
     main_window.on_folder_filter_changed(move |folder| {
         let mut f = search_state_folder.lock().unwrap().clone();
         f.folder = folder.as_str().to_string();
+        f.limit = LIST_CAP;
         f.show_trash = false;
         *search_state_folder.lock().unwrap() = f.clone();
         let vault = lock_vault(&vault_arc_folder);
         if let Some(ui) = window_weak_folder.upgrade() {
             ui.set_showing_trash(false);
-            ui.set_credentials(vault_to_items(&vault, &f));
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
 
@@ -4206,6 +5126,7 @@ fn replace_item(
     main_window.on_fav_filter_changed(move |only| {
         let mut f = search_state_favf.lock().unwrap().clone();
         f.fav_only = only;
+        f.limit = LIST_CAP;
         if only {
             f.show_trash = false;
         }
@@ -4216,7 +5137,7 @@ fn replace_item(
             if only {
                 ui.set_showing_trash(false);
             }
-            ui.set_credentials(vault_to_items(&vault, &f));
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
             // Hub parity: the passkey list honors the same ⭐ filter.
             ui.set_passkeys(rebuild_passkeys(&vault, f.fav_only));
         }
@@ -4232,6 +5153,7 @@ fn replace_item(
         f.folder = "All".to_string();
         f.fav_only = false;
         f.show_trash = true;
+        f.limit = LIST_CAP;
         *search_state_trash.lock().unwrap() = f.clone();
         let vault = lock_vault(&vault_arc_trash);
         if let Some(ui) = window_weak_trash.upgrade() {
@@ -4240,7 +5162,7 @@ fn replace_item(
             ui.set_show_fav_only(false);
             ui.set_showing_trash(true);
             ui.set_show_empty_confirm(false);
-            ui.set_credentials(vault_to_items(&vault, &f));
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
 
@@ -4316,7 +5238,7 @@ fn replace_item(
                 }
                 let f = search_clone.lock().unwrap().clone();
                 let v = lock_vault(&vault_clone);
-                ui.set_credentials(vault_to_items(&v, &f));
+                set_paged_credentials(&ui, vault_to_items(&v, &f));
                 ui.set_notification_text(
                     match flipped {
                         Some(true) => "⭐ Pinned to Favorites.".into(),
@@ -4325,6 +5247,73 @@ fn replace_item(
                         None => "⚠️ Toggle failed (missing item or save error).".into(),
                     }
                 );
+            });
+        });
+    });
+
+    // Verified-working toggle (logins only): flips Vault.verified_ids with
+    // the same save + rollback + refresh + sync discipline as favorites.
+    let ver_weak = main_window.as_weak();
+    let ver_vault = Arc::clone(&active_vault);
+    let ver_master = Arc::clone(&active_master_pw);
+    let ver_search = Arc::clone(&search_state);
+    main_window.on_toggle_verified(move |kind, id| {
+        let Some(ui) = ver_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if kind != 1 {
+            ui.set_notification_text("⚠️ Only logins can be marked verified.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&ver_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_notification_text("❌ Vault not unlocked!".into());
+            return;
+        };
+        let weak = ver_weak.clone();
+        let vault_clone = Arc::clone(&ver_vault);
+        let search_clone = Arc::clone(&ver_search);
+        let id = id.as_str().to_string();
+        std::thread::spawn(move || {
+            let flipped: Option<bool> = (|| {
+                let mut vault = lock_vault(&vault_clone);
+                let cur = vault.is_verified(&id);
+                if !vault.set_verified(&id, !cur) {
+                    return None;
+                }
+                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                    // Roll back the flip on disk failure.
+                    vault.set_verified(&id, cur);
+                    let _ = save_vault(&vault, master_pw.expose_secret(), VAULT_FILE);
+                    return None;
+                }
+                Some(!cur)
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                {
+                    let v = lock_vault(&vault_clone);
+                    if ui.get_d_id() == id.as_str() {
+                        ui.set_d_verified(v.is_verified(&id));
+                    }
+                }
+                let f = search_clone.lock().unwrap().clone();
+                let v = lock_vault(&vault_clone);
+                set_paged_credentials(&ui, vault_to_items(&v, &f));
+                ui.set_notification_text(
+                    match flipped {
+                        Some(true) => "✅ Marked as verified working.".into(),
+                        Some(false) => "Verification mark removed.".into(),
+                        None => "⚠️ Toggle failed (missing item or save error).".into(),
+                    }
+                );
+                trigger_sync_push(ui.as_weak());
             });
         });
     });
@@ -4342,7 +5331,7 @@ fn replace_item(
             }
             .into(),
         );
-        ui.set_credentials(vault_to_items(vault, search));
+        set_paged_credentials(&ui, vault_to_items(vault, search));
     }
     let sel_weak = main_window.as_weak();
     let sel_vault = Arc::clone(&active_vault);
@@ -4572,18 +5561,6 @@ struct GaPage {
     png: Vec<u8>,
 }
 
-/// PNG bytes → Slint image (grayscale QR on white — no theme work needed).
-fn png_bytes_to_image(png: &[u8]) -> Option<slint::Image> {
-    let rgba = image::load_from_memory(png).ok()?.to_rgba8();
-    let (w, h) = (rgba.width(), rgba.height());
-    let buf = slint::SharedPixelBuffer::<slint::Rgba8Pixel>::clone_from_slice(
-        rgba.as_raw(),
-        w,
-        h,
-    );
-    Some(slint::Image::from_rgba8(buf))
-}
-
 fn ga_warn_text(skipped: &[String], lossy: &[String], capped: usize) -> String {
     let mut parts = Vec::new();
     if !lossy.is_empty() {
@@ -4679,7 +5656,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                 ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                                 // Standalone 2FA also lives in All items / Favorites.
                                 let f = search_arc.lock().unwrap().clone();
-                                ui.set_credentials(vault_to_items(&v, &f));
+                                set_paged_credentials(&ui, vault_to_items(&v, &f));
                             }
                             trigger_sync_push(ui.as_weak());
                         }
@@ -4887,7 +5864,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                 ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                                 // Standalone 2FA also lives in All items / Favorites.
                                 let f = search_clone.lock().unwrap().clone();
-                                ui.set_credentials(vault_to_items(&v, &f));
+                                set_paged_credentials(&ui, vault_to_items(&v, &f));
                             }
                             trigger_sync_push(ui.as_weak());
                         }
@@ -4993,7 +5970,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                 ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                                     // Standalone 2FA also lives in All items / Favorites.
                                     let f = search_clone_cam.lock().unwrap().clone();
-                                    ui.set_credentials(vault_to_items(&v, &f));
+                                    set_paged_credentials(&ui, vault_to_items(&v, &f));
                                 }
                                 trigger_sync_push(ui.as_weak());
                             }
@@ -5172,6 +6149,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             &copied_msg,
             secs,
         );
+        mark_copied(ui.as_weak(), password_to_copy.as_str().to_string(), String::new());
     });
 
     // Middle-list 1-click copy: resolves the secret by (kind, id) so the row
@@ -5235,7 +6213,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             Some(title) => format!("🚨 CANARY TRIPPED: '{title}' — copied + ransack logged!"),
             None => copied_msg,
         };
-        secure_copy_with_feedback(ui.as_weak(), text, &copied_msg, secs);
+        secure_copy_with_feedback(ui.as_weak(), text.clone(), &copied_msg, secs);
+        mark_copied(ui.as_weak(), text, id);
     });
 
     // Website launch: http(s) only (never file://, javascript:, or bare
@@ -5537,7 +6516,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     Ok(msg) => {
                         if let Some(v) = reloaded {
                             let f = search_clone.lock().unwrap().clone();
-                            ui.set_credentials(vault_to_items(&v, &f));
+                            set_paged_credentials(&ui, vault_to_items(&v, &f));
                             sync_folders_to_ui(&v, &ui);
                             ui.set_d_id(String::new().into());
                             trigger_sync_push(ui.as_weak());
@@ -5578,11 +6557,18 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     Ok(None) => {
                         ui.set_update_tag(String::new().into());
                         ui.set_update_ready(false);
+                        ui.set_update_notes(String::new().into());
+                        ui.set_show_changelog(false);
                         ui.set_update_status(format!("✅ Already on latest (v{}).", env!("CARGO_PKG_VERSION")).into());
                     }
                     Ok(Some(info)) => {
                         ui.set_update_tag(info.tag.clone().into());
                         ui.set_update_ready(false);
+                        ui.set_update_notes(if info.notes.trim().is_empty() {
+                            "No release notes shipped with this version.".into()
+                        } else {
+                            info.notes.clone().into()
+                        });
                         ui.set_update_status(
                             format!("🎉 {} available — {} ({} bytes). Download, then restart.", info.tag, info.asset_name, info.asset_size).into(),
                         );
@@ -5657,8 +6643,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             return;
         };
         let id = ext_id.as_str().trim().to_string();
-        if id.is_empty() {
-            ui.set_bridge_status("⚠️ Paste your extension ID first (chrome://extensions → Developer mode).".into());
+        // L5: Chrome/Edge/Brave IDs are 32 lowercase chars — reject
+        // `*`/short/prefixed paste before it becomes a wildcard manifest.
+        if !(id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase())) {
+            ui.set_bridge_status("⚠️ Extension ID must be 32 lowercase letters (chrome://extensions → Developer mode).".into());
             return;
         }
         let origin = format!("chrome-extension://{id}/");
@@ -5842,6 +6830,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         let f = search_clone.lock().unwrap().clone();
                         let items = vault_to_items(&vault, &f);
                         ui.set_credentials(items.clone());
+                        ui.set_total_matches_count(total_matches() as i32);
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&vault, "", search_clone.lock().unwrap().travel_only));
                         }
@@ -6046,7 +7035,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
                         // Standalone 2FA also lives in All items / Favorites.
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&v, &f));
+                        set_paged_credentials(&ui, vault_to_items(&v, &f));
                         // Hero ticker rebuilds from the vault every second,
                         // so it drops the deleted account on its next tick.
                         ui.set_notification_text(
@@ -6367,7 +7356,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let v = lock_vault(&vault_clone);
                 ui.set_auth_accounts(rebuild_auth_list(&v));
                 ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
-                ui.set_credentials(vault_to_items(&v, &f));
+                set_paged_credentials(&ui, vault_to_items(&v, &f));
                 // Keep the open inspector star honest when it shows this account.
                 if ui.get_d_id() == target.as_str() {
                     if let Some(fav_now) = fav_flag(&v, 8, &target) {
@@ -6754,6 +7743,48 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     // --- Detail: fetch full item into modal props (single source of truth) ---
     let detail_weak = main_window.as_weak();
     let detail_vault = Arc::clone(&active_vault);
+    // Column-3 deselect: clears the selection so the empty-state placeholder
+    // returns (the floating modal is gone — nothing else to dismiss).
+    let close_weak = main_window.as_weak();
+    main_window.on_close_detail(move || {
+        if let Some(ui) = close_weak.upgrade() {
+            ui.set_d_id(String::new().into());
+            ui.set_show_detail(false);
+        }
+    });
+    // Column-2 keyboard nav: ↑↓ cycle the rendered rows with wraparound,
+    // reusing the full open_detail path (no detail-logic fork to rot).
+    let cycle_weak = main_window.as_weak();
+    let cycle_vault = Arc::clone(&active_vault);
+    let cycle_search = Arc::clone(&search_state);
+    main_window.on_cycle_select(move |delta| {
+        let Some(ui) = cycle_weak.upgrade() else {
+            return;
+        };
+        let cur = ui.get_d_id().to_string();
+        let ids: Vec<String> = {
+            let f = cycle_search.lock().unwrap().clone();
+            let v = lock_vault(&cycle_vault);
+            vault_to_items(&v, &f).iter().map(|r| r.id.to_string()).collect()
+        };
+        if ids.is_empty() {
+            return;
+        }
+        let next = match ids.iter().position(|x| *x == cur) {
+            Some(i) => {
+                let n = (i as i32 + delta).rem_euclid(ids.len() as i32) as usize;
+                ids[n].clone()
+            }
+            None => {
+                if delta >= 0 {
+                    ids[0].clone()
+                } else {
+                    ids[ids.len() - 1].clone()
+                }
+            }
+        };
+        ui.invoke_open_detail(next.into());
+    });
     main_window.on_open_detail(move |id| {
         let Some(ui) = detail_weak.upgrade() else {
             return;
@@ -6765,6 +7796,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         ui.set_d_age_info(String::new().into());
         ui.set_d_fav(false);
         ui.set_d_trashed(false);
+        ui.set_d_has_icon(false);
+        ui.set_d_verified(false);
+        ui.set_d_fill_info(String::new().into());
+        ui.set_d_health(health_badge_for(id).into());
+        ui.set_d_pw_strength(0.0);
+        ui.set_d_pw_strength_label(String::new().into());
         ui.set_d_history(ModelRc::new(VecModel::from(Vec::<HistoryView>::new())));
         // Logins carry the richest payload (reprompt, totp, codes, customs).
         if let Some(c) = vault.credentials.iter().find(|c| c.id == id) {
@@ -6787,8 +7824,44 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 c.last_changed,
                 crate::models::current_timestamp(),
             ));
+            // Per-password strength meter (local estimate + reuse + age).
+            {
+                let reused = vault
+                    .credentials
+                    .iter()
+                    .filter(|o| {
+                        o.id != c.id && o.deleted_at.is_none() && o.password == c.password
+                    })
+                    .count();
+                let stale = crate::models::is_stale(
+                    c.last_changed,
+                    crate::models::current_timestamp(),
+                );
+                ui.set_d_pw_strength(crate::core::password_strength::fraction(&c.password));
+                ui.set_d_pw_strength_label(
+                    crate::core::password_strength::detail(&c.password, reused, stale).into(),
+                );
+            }
             ui.set_d_fav(c.favorite);
             ui.set_d_history(rebuild_history(c));
+            ui.set_d_verified(vault.is_verified(&c.id));
+            {
+                let (fills, last) = crate::windows_native::native_host::fill_stats_for(&c.id);
+                let now = crate::models::current_timestamp();
+                let fill_info: String = if fills == 0 {
+                    "Never filled via autofill yet.".to_string()
+                } else if last == 0 {
+                    format!("Filled {fills}× via autofill.")
+                } else {
+                    format!("Filled {fills}× via autofill • Last: {}.", crate::models::ago(last, now))
+                };
+                ui.set_d_fill_info(fill_info.into());
+            }
+            let first_url = c.urls.first().map(String::as_str).unwrap_or("");
+            if let Some(img) = favicon_for_item(&c.title, first_url) {
+                ui.set_d_icon(img);
+                ui.set_d_has_icon(true);
+            }
             {
                 let now = crate::models::current_timestamp();
                 let days = now.saturating_sub(c.last_changed) / 86400;
@@ -7119,9 +8192,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let qb_clone = rp_del_qb.clone();
                 let kind = ui.get_rp_kind();
                 let id = ui.get_rp_id().to_string();
-                std::thread::spawn(move || {
-                    let master_opt = lock_master_pw(&master_clone).clone();
-                    let Some(master_pw) = master_opt else {
+                    std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
                         return;
                     };
                     // Same two-phase rule as the plain delete path.
@@ -7151,7 +8224,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             match res {
                                 Ok((v, permanent)) => {
                                     let f = search_clone.lock().unwrap().clone();
-                                    ui.set_credentials(vault_to_items(&v, &f));
+                                    set_paged_credentials(&ui, vault_to_items(&v, &f));
                                     set_trash_label(&ui, &v);
                                     if let Some(qb) = qb_clone.upgrade() {
                                         qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
@@ -7182,7 +8255,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     let mut f = rp_search.lock().unwrap().clone();
                     f.travel_only = false;
                     *rp_search.lock().unwrap() = f.clone();
-                    ui.set_credentials(vault_to_items(&vault, &f));
+                    set_paged_credentials(&ui, vault_to_items(&vault, &f));
                     ui.set_notification_text("Travel Mode OFF — full vault restored.".into());
                 }
             }
@@ -7198,10 +8271,19 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let vault_clone = Arc::clone(&rp_del_vault);
                 std::thread::spawn(move || {
                     // Snapshot under lock, then release before the dialog blocks.
+                    // M5: decoy already refused on the event-loop thread
+                    // above (`false` here); the gated serializers refuse
+                    // again loud if that ever regresses.
                     let (payload, filename, filters, summary) = {
                         let v = lock_vault(&vault_clone);
                         if fmt == 2 {
-                            let csv = importer::exporter::export_csv(&v);
+                            let csv = match importer::exporter::export_csv_gated(&v, false) {
+                                Ok(s) => s,
+                                Err(e) => {
+                                    eprintln!("export refused: {e}");
+                                    return;
+                                }
+                            };
                             let n: usize = v.credentials.iter().filter(|c| c.deleted_at.is_none()).count()
                                 + v.cards.iter().filter(|k| k.deleted_at.is_none()).count();
                             (
@@ -7211,7 +8293,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                 format!("{n} logins/cards"),
                             )
                         } else {
-                            let (doc, atts) = importer::exporter::export_bitwarden_json(&v);
+                            let (doc, atts) = match importer::exporter::export_bitwarden_json_gated(&v, false) {
+                                Ok(t) => t,
+                                Err(e) => {
+                                    eprintln!("export refused: {e}");
+                                    return;
+                                }
+                            };
                             let n = doc["items"].as_array().map(|a| a.len()).unwrap_or(0);
                             let f = doc["folders"].as_array().map(|a| a.len()).unwrap_or(0);
                             (
@@ -7271,32 +8359,25 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let Some(ui) = shard_weak.upgrade() else {
             return;
         };
-        if ui.get_is_decoy() {
-            ui.set_sync_status("⛔ Decoy mode has no recovery sheet.".into());
-            return;
-        }
-        let master_opt = lock_master_pw(&shard_master).clone();
-        let Some(master_pw) = master_opt else {
-            ui.set_sync_status("⚠️ Vault not unlocked.".into());
+        generate_shards_into(&ui, &shard_master);
+    });
+    // Post-setup nudge actions: Generate runs the same split core (marks the
+    // one-shot pref either way — nagged once, never again).
+    let nudge_weak = main_window.as_weak();
+    let nudge_master = Arc::clone(&active_master_pw);
+    main_window.on_shard_nudge_generate(move || {
+        mark_shard_nudged();
+        let Some(ui) = nudge_weak.upgrade() else {
             return;
         };
-        if master_pw.expose_secret().len() > security::shamir::WORD_SECRET_MAX {
-            ui.set_sync_status("⚠️ Master password over 64 bytes — shorten it to print shards.".into());
-            return;
-        }
-        match security::shamir::Shamir::split(master_pw.expose_secret()) {
-            Ok(sheets) => {
-                ui.set_shard_1(sheets[0].clone().into());
-                ui.set_shard_2(sheets[1].clone().into());
-                ui.set_shard_3(sheets[2].clone().into());
-                ui.set_shard_4(sheets[3].clone().into());
-                ui.set_shard_5(sheets[4].clone().into());
-                ui.set_show_shards(true);
-                ui.set_sync_status("📄 Sheet ready — print on paper, then Hide.".into());
-            }
-            Err(e) => {
-                ui.set_sync_status(format!("⚠️ {e}").into());
-            }
+        ui.set_show_shard_nudge(false);
+        generate_shards_into(&ui, &nudge_master);
+    });
+    let later_weak = main_window.as_weak();
+    main_window.on_shard_nudge_later(move || {
+        mark_shard_nudged();
+        if let Some(ui) = later_weak.upgrade() {
+            ui.set_show_shard_nudge(false);
         }
     });
 
@@ -7349,11 +8430,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     });
 
     // Phase 18: Omni-Importer — file picker + sniff + merge, all off-UI-thread.
+    // Dry-run preview: pick → parse → dry-merge on a CLONE for exact counts
+    // → user confirms → real merge + re-seal. Nothing touches the live vault
+    // before Confirm. Staged rows wait in RAM only (never logged, never synced).
     let import_weak = main_window.as_weak();
     let import_vault = Arc::clone(&active_vault);
     let import_master = Arc::clone(&active_master_pw);
-    let import_search = Arc::clone(&search_state);
-    let import_qb = quick_bar.as_weak();
     main_window.on_pick_import_file(move || {
         if let Some(ui) = import_weak.upgrade() {
             if ui.get_is_decoy() {
@@ -7365,8 +8447,6 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let weak = import_weak.clone();
         let vault_clone = Arc::clone(&import_vault);
         let master_clone = Arc::clone(&import_master);
-        let search_clone = Arc::clone(&import_search);
-        let qb_clone = import_qb.clone();
         std::thread::spawn(move || {
             // Native dialog blocks this worker only — UI stays at 60 FPS.
             let picked = rfd::FileDialog::new()
@@ -7383,7 +8463,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 return;
             };
             let master_opt = lock_master_pw(&master_clone).clone();
-            let Some(master_pw) = master_opt else {
+            let Some(_) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_import_status("⚠️ Vault not unlocked.".into());
@@ -7391,22 +8471,102 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 });
                 return;
             };
-            // Merge + re-seal under one lock (rollback on disk failure).
-            let res: Result<importer::ImportSummary, String> = {
-                let mut vault = lock_vault(&vault_clone);
-                let snapshot = vault.clone();
-                match importer::import_any_file(&path, &mut vault) {
-                    Ok(summary) => match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                        Ok(()) => Ok(summary),
-                        Err(e) => {
-                            *vault = snapshot;
-                            Err(e)
-                        }
-                    },
+            // Parse only; dry-merge into a CLONE for exact counts; stash the
+            // rows for the Confirm step. Live vault untouched.
+            let res: Result<(importer::ImportSummary, Vec<importer::RawItem>, String), String> = {
+                let vault = lock_vault(&vault_clone);
+                match importer::parse_import_file(&path) {
+                    Ok((raws, mut summary)) => {
+                        let mut probe = vault.clone();
+                        importer::merge(&mut probe, raws.clone(), &mut summary);
+                        probe.ensure_folders();
+                        summary.folders = probe.folders.len();
+                        Ok((summary, raws, path.to_string_lossy().into_owned()))
+                    }
                     Err(e) => Err(e.to_string()),
                 }
             };
-            let path_str = path.to_string_lossy().into_owned();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match res {
+                    Ok((summary, raws, path_str)) => {
+                        *pending_import_store().lock().unwrap() = Some(PendingImport {
+                            raws,
+                            source: summary.source.clone(),
+                            path_str,
+                        });
+                        ui.set_import_preview_text(
+                            format!("👁️ Preview — {} — review, then Confirm to merge.", summary.headline()).into(),
+                        );
+                        ui.set_show_import_preview(true);
+                        ui.set_import_status("👁️ Preview ready — nothing merged yet.".into());
+                    }
+                    Err(e) => {
+                        ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
+                    }
+                }
+            });
+        });
+    });
+    let confirm_weak = main_window.as_weak();
+    let confirm_vault = Arc::clone(&active_vault);
+    let confirm_master = Arc::clone(&active_master_pw);
+    let confirm_search = Arc::clone(&search_state);
+    let confirm_qb = quick_bar.as_weak();
+    main_window.on_confirm_import_file(move || {
+        let staged = pending_import_store().lock().unwrap().take();
+        let Some(staged) = staged else {
+            if let Some(ui) = confirm_weak.upgrade() {
+                ui.set_import_status("⚠️ Nothing staged — pick a file first.".into());
+            }
+            return;
+        };
+        if let Some(ui) = confirm_weak.upgrade() {
+            ui.set_show_import_preview(false);
+            ui.set_import_status("⏳ Merging…".into());
+        }
+        let weak = confirm_weak.clone();
+        let vault_clone = Arc::clone(&confirm_vault);
+        let master_clone = Arc::clone(&confirm_master);
+        let search_clone = Arc::clone(&confirm_search);
+        let qb_clone = confirm_qb.clone();
+        std::thread::spawn(move || {
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master_pw) = master_opt else {
+                *pending_import_store().lock().unwrap() = Some(staged);
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_show_import_preview(true);
+                        ui.set_import_status("⚠️ Vault not unlocked.".into());
+                    }
+                });
+                return;
+            };
+            // Real merge + re-seal under one lock (rollback on disk failure).
+            let res: Result<importer::ImportSummary, String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                let mut summary = importer::ImportSummary {
+                    source: staged.source.clone(),
+                    ..Default::default()
+                };
+                importer::merge(&mut vault, staged.raws, &mut summary);
+                vault.ensure_folders();
+                summary.folders = vault.folders.len();
+                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    Ok(()) => Ok(summary),
+                    Err(e) => {
+                        *vault = snapshot;
+                        Err(e)
+                    }
+                }
+            };
+            let path_str = staged.path_str.clone();
+            let imp_fav_vc = Arc::clone(&vault_clone);
+            let imp_fav_sc = Arc::clone(&search_clone);
+            let imp_fav_w = weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else {
                     return;
@@ -7416,7 +8576,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         {
                             let vault = lock_vault(&vault_clone);
                             let f = search_clone.lock().unwrap().clone();
-                            ui.set_credentials(vault_to_items(&vault, &f));
+                            set_paged_credentials(&ui, vault_to_items(&vault, &f));
                             sync_folders_to_ui(&vault, &ui);
                             if let Some(qb) = qb_clone.upgrade() {
                                 qb.set_filtered_results(vault_quickbar(&vault, "", f.travel_only));
@@ -7431,6 +8591,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         ui.set_shred_source_path(path_str.into());
                         ui.set_show_shred_source(true);
                         trigger_sync_push(ui.as_weak());
+                        // Fresh URLs may need icons — background pass only.
+                        trigger_favicon_prefetch(imp_fav_vc, imp_fav_sc, imp_fav_w);
                     }
                     Err(e) => {
                         ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
@@ -7438,6 +8600,15 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 }
             });
         });
+    });
+
+    let cancel_weak = main_window.as_weak();
+    main_window.on_cancel_import_file(move || {
+        *pending_import_store().lock().unwrap() = None;
+        if let Some(ui) = cancel_weak.upgrade() {
+            ui.set_show_import_preview(false);
+            ui.set_import_status("Import cancelled — nothing merged.".into());
+        }
     });
 
     // Cat 8: shred the plaintext import source (DoD 3-pass) on confirm.
@@ -7629,7 +8800,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let mut f = travel_search.lock().unwrap().clone();
         f.travel_only = true;
         *travel_search.lock().unwrap() = f.clone();
-        ui.set_credentials(vault_to_items(&vault, &f));
+        set_paged_credentials(&ui, vault_to_items(&vault, &f));
         ui.set_notification_text("✈️ TRAVEL MODE ACTIVE — only travel-safe items shown.".into());
     });
 
@@ -7748,7 +8919,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         };
                         ui.set_d_attachments(attachments_to_ui(&files));
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&v, &f));
+                        set_paged_credentials(&ui, vault_to_items(&v, &f));
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
@@ -7935,7 +9106,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         };
                         ui.set_d_attachments(attachments_to_ui(&files));
                         let f = search_clone.lock().unwrap().clone();
-                        ui.set_credentials(vault_to_items(&v, &f));
+                        set_paged_credentials(&ui, vault_to_items(&v, &f));
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
@@ -8185,6 +9356,153 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_blackout_enabled(on);
         }
     });
+    // Favicons toggle: persisted pref, list repaint, prefetch when ON.
+    let fav_weak = main_window.as_weak();
+    let fav_vault = Arc::clone(&active_vault);
+    let fav_search = Arc::clone(&search_state);
+    main_window.on_set_favicons(move |on| {
+        let Some(ui) = fav_weak.upgrade() else {
+            return;
+        };
+        crate::core::favicon::set_show_favicons(on);
+        ui.set_favicons_enabled(on);
+        ui.set_notification_text(if on {
+            "🖼️ Website favicons ON (cached, offline-friendly).".into()
+        } else {
+            "🖼️ Website favicons OFF (letter icons).".into()
+        });
+        if on {
+            trigger_favicon_prefetch(
+                Arc::clone(&fav_vault),
+                Arc::clone(&fav_search),
+                fav_weak.clone(),
+            );
+        } else {
+            let f = fav_search.lock().unwrap().clone();
+            let v = lock_vault(&fav_vault);
+            set_paged_credentials(&ui, vault_to_items(&v, &f));
+            ui.set_d_has_icon(false);
+        }
+    });
+    // Per-domain logo override: pick a local image for the open login's
+    // domain (worker thread — the native dialog blocks). Validated before a
+    // byte hits disk; RAM + list + detail repaint on success.
+    let ov_weak = main_window.as_weak();
+    let ov_vault = Arc::clone(&active_vault);
+    let ov_search = Arc::clone(&search_state);
+    main_window.on_override_favicon(move |id| {
+        let Some(ui) = ov_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let id = id.as_str().to_string();
+        let weak = ov_weak.clone();
+        let vault_clone = Arc::clone(&ov_vault);
+        let search_clone = Arc::clone(&ov_search);
+        std::thread::spawn(move || {
+            let target: Option<(String, String)> = {
+                let v = lock_vault(&vault_clone);
+                v.credentials.iter().find(|c| c.id == id).map(|c| {
+                    (c.title.clone(), c.urls.first().cloned().unwrap_or_default())
+                })
+            };
+            let Some((title, url)) = target else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ Logo override needs an open login.".into());
+                    }
+                });
+                return;
+            };
+            let Some(domain) = crate::core::favicon::icon_domain(&title, &url) else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ No domain on this item (title/URL).".into());
+                    }
+                });
+                return;
+            };
+            let picked = rfd::FileDialog::new()
+                .set_title(format!("Logo for {domain} (PNG/ICO/JPG)"))
+                .add_filter("images", &["png", "ico", "jpg", "jpeg", "webp", "bmp", "gif"])
+                .pick_file();
+            let Some(path) = picked else {
+                return;
+            };
+            let bytes = match std::fs::read(&path) {
+                Ok(b) => b,
+                Err(e) => {
+                    let msg = format!("⚠️ Cannot read file: {e}");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_notification_text(msg.into());
+                        }
+                    });
+                    return;
+                }
+            };
+            match crate::core::favicon::save_custom_icon(&domain, &bytes) {
+                Err(e) => {
+                    let msg = format!("⚠️ Not a usable logo: {e}");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_notification_text(msg.into());
+                        }
+                    });
+                }
+                Ok(_) => {
+                    {
+                        let mut cache = favicon_bytes().lock().unwrap_or_else(|p| p.into_inner());
+                        cache.insert(domain.clone(), bytes);
+                    }
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            let f = search_clone.lock().unwrap().clone();
+                            let v = lock_vault(&vault_clone);
+                            set_paged_credentials(&ui, vault_to_items(&v, &f));
+                            if ui.get_d_kind() == 1 && ui.get_d_id().as_str() == id.as_str() {
+                                if let Some(img) = favicon_for_item(&title, &url) {
+                                    ui.set_d_icon(img);
+                                    ui.set_d_has_icon(true);
+                                }
+                            }
+                            ui.set_notification_text(
+                                format!("🖼️ Custom logo saved for {domain}.").into(),
+                            );
+                        }
+                    });
+                }
+            }
+        });
+    });
+    // Clear all custom logos (fetched cache + disk untouched).
+    let cc_weak = main_window.as_weak();
+    let cc_vault = Arc::clone(&active_vault);
+    let cc_search = Arc::clone(&search_state);
+    main_window.on_clear_custom_favicons(move || {
+        let Some(ui) = cc_weak.upgrade() else {
+            return;
+        };
+        let n = crate::core::favicon::clear_custom_icons();
+        clear_favicon_bytes();
+        crate::core::favicon::clear_memory_cache();
+        let f = cc_search.lock().unwrap().clone();
+        let v = lock_vault(&cc_vault);
+        set_paged_credentials(&ui, vault_to_items(&v, &f));
+        ui.set_d_has_icon(false);
+        ui.set_notification_text(
+            if n == 0 {
+                "🖼️ No custom logos to clear.".into()
+            } else {
+                format!("🧹 Cleared {n} custom logo{}.", if n == 1 { "" } else { "s" }).into()
+            },
+        );
+        // Re-resolve fetched icons in the background (attempted-set was reset).
+        trigger_favicon_prefetch(Arc::clone(&cc_vault), Arc::clone(&cc_search), cc_weak.clone());
+    });
     // Cat 8 AND-mode toggle: password + Hello both required to unlock.
     let and_weak = main_window.as_weak();
     main_window.on_set_and_mode(move |on| {
@@ -8196,6 +9514,109 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 "🔓 Two-factor unlock OFF.".into()
             });
         }
+    });
+    // App PIN setup/removal (Settings, unlocked only — seals the LIVE master;
+    // decoy mode is read-only like every other mutation path).
+    let pinset_weak = main_window.as_weak();
+    let pinset_master = Arc::clone(&active_master_pw);
+    main_window.on_setup_app_pin(move |pin, confirm| {
+        let Some(ui) = pinset_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_pin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
+        if pin != confirm {
+            ui.set_pin_status("⚠️ PINs do not match.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&pinset_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_pin_status("❌ Vault not unlocked!".into());
+            return;
+        };
+        use secrecy::ExposeSecret;
+        match security::app_pin::enroll(Path::new("."), &pin, master_pw.expose_secret()) {
+            Ok(()) => {
+                ui.set_pin_available(true);
+                ui.set_pin_status("✅ App PIN set — lock screen shows PIN unlock on this PC.".into());
+            }
+            Err(e) => {
+                ui.set_pin_status(format!("⚠️ {e}").into());
+            }
+        }
+    });
+    let pindis_weak = main_window.as_weak();
+    main_window.on_disable_app_pin(move || {
+        let Some(ui) = pindis_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_pin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        security::app_pin::disable(Path::new("."));
+        ui.set_pin_available(false);
+        ui.set_pin_status("App PIN removed from this PC.".into());
+    });
+    // Extension PIN management (Settings is the ONLY writer — the extension
+    // itself only reads the served hash). Unlocked + non-decoy required.
+    // Raw PINs arrive here (Slint has no SHA-256); they are hashed then
+    // dropped before sealing — never logged, never stored.
+    let epinset_weak = main_window.as_weak();
+    let epinset_master = Arc::clone(&active_master_pw);
+    main_window.on_setup_ext_pin(move |pin, confirm| {
+        let Some(ui) = epinset_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ext_pin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
+        if pin != confirm {
+            ui.set_ext_pin_status("⚠️ PINs do not match.".into());
+            return;
+        }
+        if pin.len() < 4 || pin.len() > 8 || !pin.bytes().all(|c| c.is_ascii_digit()) {
+            ui.set_ext_pin_status("⚠️ PIN must be 4–8 digits.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&epinset_master).clone();
+        if master_opt.is_none() {
+            ui.set_ext_pin_status("❌ Vault not unlocked!".into());
+            return;
+        }
+        use sha2::Digest;
+        let mut hasher = sha2::Sha256::new();
+        hasher.update(pin.as_bytes());
+        let hash_hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
+        drop(pin);
+        drop(confirm);
+        match security::ext_pin::set(Path::new("."), &hash_hex) {
+            Ok(()) => {
+                ui.set_ext_pin_set(true);
+                ui.set_ext_pin_status("✅ Extension PIN set — browser will ask for it.".into());
+            }
+            Err(e) => {
+                ui.set_ext_pin_status(format!("⚠️ {e}").into());
+            }
+        }
+    });
+    let epindis_weak = main_window.as_weak();
+    main_window.on_disable_ext_pin(move || {
+        let Some(ui) = epindis_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ext_pin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        security::ext_pin::clear(Path::new("."));
+        ui.set_ext_pin_set(false);
+        ui.set_ext_pin_status("Extension PIN removed — browser is unmanaged.".into());
     });
     // Wire-up #3: dynamic clipboard timeout (all copy paths read the atomic).
     let ct_weak = main_window.as_weak();
@@ -8532,6 +9953,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_health_report("Vault is empty — nothing to audit.".into());
+                        ui.set_health_rows(ModelRc::new(VecModel::from(Vec::<HealthRow>::new())));
                         ui.set_show_health(true);
                         ui.set_health_status("Vault is empty.".into());
                         ui.set_health_score(100);
@@ -8571,6 +9993,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 report.coverage_pct() as i32,
             );
             // Detailed per-item lines (titles + flags only, never passwords).
+            // Kept as the accessible plain-text fallback (health_report prop).
             let mut detail = String::new();
             for r in &report.results {
                 if r.breached.is_some() || r.reused || r.weak || r.stale {
@@ -8593,6 +10016,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             if detail.is_empty() {
                 detail = "All passwords look healthy — no breaches, reuse, or weakness found.".to_string();
             }
+            // Grouped tappable rows: severity-ordered (breached → reused →
+            // weak → stale) with section headers. Header rows carry id "".
+            let rows = health_rows_for(&report.results);
             let full = format!("{headline}\n\n{detail}");
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
@@ -8606,6 +10032,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         reg.extend(kinds);
                     }
                     ui.set_health_report(full.into());
+                    ui.set_health_rows(ModelRc::new(VecModel::from(rows)));
                     ui.set_show_health(true);
                     ui.set_health_status(headline.into());
                     // Scoreboard dashboard props.
@@ -8619,7 +10046,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     security::access_log::log_event("audit", "health scan");
                     let f = search_clone.lock().map(|s| s.clone()).unwrap_or_default();
                     let v = lock_vault(&vault_clone);
-                    ui.set_credentials(vault_to_items(&v, &f));
+                    set_paged_credentials(&ui, vault_to_items(&v, &f));
                 }
             });
         });
@@ -8642,11 +10069,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let mut f = filter_search.lock().map(|s| s.clone()).unwrap_or_default();
         // Toggle off when clicking the active metric.
         f.health = if f.health == want { String::new() } else { want.to_string() };
+        f.limit = LIST_CAP;
         *filter_search.lock().unwrap() = f.clone();
         ui.set_health_filter(f.health.clone().into());
         ui.set_active_nav(0);
         let v = lock_vault(&filter_vault);
-        ui.set_credentials(vault_to_items(&v, &f));
+        set_paged_credentials(&ui, vault_to_items(&v, &f));
         if let Some(qb) = filter_qb.upgrade() {
             qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
         }
@@ -8794,14 +10222,95 @@ mod grid_tests {
     }
 
     #[test]
-    fn grid_chunks_in_pairs() {
-        assert!(chunk_rows::<u8>(vec![]).is_empty());
-        assert_eq!(chunk_rows(vec![1, 2]), vec![vec![1, 2]]);
-        // 5 items → 2 + 2 + 1; the lone card gets a stretch spacer.
+    fn paging_grows_window_and_reports_total() {
+        fn login(id: &str) -> Credential {
+            Credential {
+                id: id.into(),
+                title: "t".into(),
+                username: "u".into(),
+                password: "p".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 0,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            }
+        }
+        let mut v = Vault::new();
+        for i in 0..120 {
+            v.credentials.push(login(&format!("c{i}")));
+        }
+        // Default window: first page only, total recorded.
+        let f = FilterState::default();
+        assert_eq!(f.limit, LIST_CAP);
+        let page1 = vault_to_items(&v, &f);
+        assert_eq!(page1.iter().count(), LIST_CAP);
+        assert_eq!(total_matches(), 120);
+        // Load More: window grows, same total.
+        let mut f2 = f.clone();
+        f2.limit += LIST_PAGE;
+        let page2 = vault_to_items(&v, &f2);
+        assert_eq!(page2.iter().count(), LIST_CAP + LIST_PAGE);
+        assert_eq!(total_matches(), 120);
+        // Narrow query resets are the caller's job; the builder honors any
+        // window, including beyond-total (no panic, no padding).
+        let mut f3 = f.clone();
+        f3.limit = 10_000;
+        assert_eq!(vault_to_items(&v, &f3).iter().count(), 120);
+    }
+
+    #[test]
+    fn grid_chunks_in_pairs() {        assert!(chunk_rows_of::<u8>(vec![], 2).is_empty());
+        assert_eq!(chunk_rows_of(vec![1, 2], 2), vec![vec![1, 2]]);
+        // 5 items → 2 + 2 + 1; the lone card gets spacers, never full-width.
         assert_eq!(
-            chunk_rows(vec![1, 2, 3, 4, 5]),
+            chunk_rows_of(vec![1, 2, 3, 4, 5], 2),
             vec![vec![1, 2], vec![3, 4], vec![5]]
         );
+    }
+
+    #[test]
+    fn grid_chunks_in_threes_for_hub() {
+        assert_eq!(
+            chunk_rows_of(vec![1, 2, 3, 4, 5, 6, 7], 3),
+            vec![vec![1, 2, 3], vec![4, 5, 6], vec![7]]
+        );
+        // Degenerate stride never panics or drops items.
+        assert_eq!(chunk_rows_of(vec![1, 2], 0), vec![vec![1], vec![2]]);
+    }
+
+    #[test]
+    fn hub_sorts_favorites_first_then_alpha() {
+        fn acc(issuer: &str, name: &str, fav: bool) -> TotpAccount {
+            TotpAccount {
+                id: format!("{issuer}:{name}"),
+                account_name: name.into(),
+                issuer: issuer.into(),
+                secret: "JBSWY3DPEHPK3PXP".into(),
+                digits: 6,
+                period: 30,
+                algorithm: "SHA1".into(),
+                otp_type: "totp".into(),
+                counter: 0,
+                favorite: fav,
+            }
+        }
+        let mut v = Vault::new();
+        v.totp_accounts.push(acc("Twitter", "z", false));
+        v.totp_accounts.push(acc("GitHub", "z", false));
+        v.totp_accounts.push(acc("Google", "a", true));
+        v.totp_accounts.push(acc("Facebook", "m", false));
+        let rows = build_auth_rows(&v);
+        let order: Vec<String> = rows.iter().map(|r| r.issuer.to_string()).collect();
+        assert_eq!(order, vec!["Google", "Facebook", "GitHub", "Twitter"]);
     }
 
     #[test]
@@ -8930,6 +10439,128 @@ mod grid_tests {
         *fav_flag_mut(&mut v, 8, "t1").unwrap() = true;
         assert_eq!(fav_flag(&v, 8, "t1"), Some(true));
         assert_eq!(fav_flag(&v, 8, "nope"), None);
+    }
+
+    #[test]
+    fn factory_targets_cover_vault_backups_and_seals_only() {
+        let dir = std::env::temp_dir().join(format!("pv-factory-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for name in [
+            "my_secure_vault.enc",
+            "my_secure_vault.enc.bak",
+            "my_secure_vault.bak.1.enc",
+            "my_secure_vault.bak.2.enc",
+            "decoy_vault.enc",
+            "vault_hello.dpapi",
+            "device.dpapi",
+            "pin.dpapi",
+            "pin_attempts.dpapi",
+            "ext_pin.dpapi",
+            "blackout.pref",
+            "favicons.pref",
+        ] {
+            std::fs::write(dir.join(name), b"x").unwrap();
+        }
+        let got: Vec<String> = collect_factory_targets_in(&dir)
+            .iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        // Vault + generations + decoy + seals (+ PIN seals) shred; prefs survive.
+        for want in [
+            "my_secure_vault.enc",
+            "my_secure_vault.enc.bak",
+            "my_secure_vault.bak.1.enc",
+            "my_secure_vault.bak.2.enc",
+            "decoy_vault.enc",
+            "vault_hello.dpapi",
+            "device.dpapi",
+            "pin.dpapi",
+            "pin_attempts.dpapi",
+            "ext_pin.dpapi",
+        ] {
+            assert!(got.contains(&want.to_string()), "missing {want}: {got:?}");
+        }
+        assert!(!got.iter().any(|n| n.ends_with(".pref")), "{got:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn health_rows_group_and_order() {
+        use crate::security::breach_check::BreachResult;
+        let mk = |id: &str, breached: Option<u64>, reused, weak, stale| BreachResult {
+            credential_id: id.into(),
+            title: id.into(),
+            breached,
+            reused,
+            weak,
+            stale,
+        };
+        let results = vec![
+            mk("stale1", None, false, false, true),
+            mk("weak1", None, false, true, false),
+            mk("ok", None, false, false, false),
+            mk("breach1", Some(5), true, true, true),
+            mk("reuse1", None, true, false, false),
+        ];
+        let rows = health_rows_for(&results);
+        // 4 headers + 4 items (ok excluded), breached group first.
+        assert_eq!(rows.len(), 8);
+        assert_eq!(rows[0].sev, -1);
+        assert_eq!(rows[1].id.as_str(), "breach1");
+        assert_eq!(rows[1].sev, 0);
+        assert!(rows[1].flags.as_str().contains("breached×5"));
+        assert_eq!(rows[3].id.as_str(), "reuse1");
+        assert_eq!(rows[3].sev, 1);
+        // Priority: breached wins even when all flags set.
+        assert!(!rows.iter().any(|r| r.id.as_str() == "ok"));
+        // Empty input → no rows (dialog shows the healthy line).
+        assert!(health_rows_for(&[]).is_empty());
+    }
+
+    #[test]
+    fn totp_icon_domain_resolution() {
+        let v = Vault::new();
+        // Famous issuers resolve without any vault data.
+        assert_eq!(famous_issuer_domain("Google"), Some("google.com"));
+        assert_eq!(famous_issuer_domain("  DISCORD "), Some("discord.com"));
+        assert_eq!(famous_issuer_domain("my-unknown-app"), None);
+        assert_eq!(
+            totp_icon_domain(&v, "GitHub", "octo").as_deref(),
+            Some("github.com")
+        );
+        // Domain-like issuer works directly.
+        assert_eq!(
+            totp_icon_domain(&v, "2captcha.com", "u").as_deref(),
+            Some("2captcha.com")
+        );
+        // Unknown issuer with no vault match → None (letter fallback).
+        assert!(totp_icon_domain(&v, "my-unknown-app", "u").is_none());
+        // Vault-login match lends its URL.
+        let mut v2 = Vault::new();
+        v2.credentials.push(models::Credential {
+            id: "c1".into(),
+            title: "ACME Corp".into(),
+            username: "u".into(),
+            password: "p".into(),
+            totp_secret: String::new(),
+            urls: vec!["https://login.acme.example.com".into()],
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: crate::models::DEFAULT_FOLDER.to_string(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        assert_eq!(
+            totp_icon_domain(&v2, "ACME Corp", "u").as_deref(),
+            Some("login.acme.example.com")
+        );
     }
 
     #[test]
