@@ -38,21 +38,15 @@
       match_label: "Default URI Match Detection", blocked_h: "🚫 Blocked Domains",
       blocked_hint: "One per line — no badges, no autofill here.",
       retry: "🔄 Retry", fill: "⚡ Fill", copy: "📋 Copy", copied: "✅ Copied", blocked_cb: "⚠️ Blocked",
+      pass_btn: "📋 Pass", user_btn: "👤 User", eye_show: "👁️", eye_hide: "🙈",
+      sync_locked: "🔒 Vault is Locked",
+      sync_locked_sub: "Unlock PhantomVault desktop app.",
+      sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
+      sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
+      retry_btn: "🔄 Retry",
+      lock_timeout_h: "⏱️ Auto-Lock Timeout",
+      lock_timeout_hint: "Lock after inactivity. A locked desktop app always locks instantly.",
       copy2fa: "📋 Copy 2FA", no_match: (h) => `No credentials match “${h}”.`,
-      pin_locked: "Extension locked",
-      pin_enter: "Enter your extension PIN",
-      pin_unlock: "🔓 Unlock",
-      pin_wrong: "❌ Wrong PIN",
-      pin_reset_link: "Forgot PIN? Reset it here",
-      pin_reset_sure: "⚠️ Sure? Click again to reset",
-      pin_reset: "Extension PIN cleared — set a new one in Settings.",
-      pin_reset_confirm: "Remove the extension PIN on this browser?",
-      pin_mismatch: "⚠️ PINs do not match",
-      pin_digits: "⚠️ PIN must be 4–8 digits",
-      pin_saved: "✅ Extension PIN set on this browser.",
-      pin_removed: "Extension PIN removed.",
-      pin_not_set: "No extension PIN set.",
-      pin_is_set: "🔐 Extension PIN is SET on this browser.",
       empty_title: "No credentials match this domain",
       empty_save: "➕ Save login for this site",
       empty_saved: "✅ Login saved to PhantomVault.",
@@ -84,21 +78,15 @@
       match_label: "ডিফল্ট URI মিল", blocked_h: "🚫 ব্লকড ডোমেইন",
       blocked_hint: "প্রতি লাইনে একটি — এখানে ব্যাজ/অটোফিল বন্ধ।",
       retry: "🔄 পুনরায়", fill: "⚡ পূরণ", copy: "📋 কপি", copied: "✅ কপি হয়েছে", blocked_cb: "⚠️ ব্যর্থ",
+      pass_btn: "📋 পাস", user_btn: "👤 ইউজার", eye_show: "👁️", eye_hide: "🙈",
+      sync_locked: "🔒 ভল্ট লকড",
+      sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
+      sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
+      sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
+      retry_btn: "🔄 পুনরায়",
+      lock_timeout_h: "⏱️ অটো-লক সময়",
+      lock_timeout_hint: "নিষ্ক্রিয়তার পর লক হবে। ডেস্কটপ লক হলে সাথে সাথে লক হবে।",
       copy2fa: "📋 2FA কপি", no_match: (h) => `“${h}” এর কোনো তথ্য নেই।`,
-      pin_locked: "এক্সটেনশন লকড",
-      pin_enter: "তোমার এক্সটেনশন PIN দাও",
-      pin_unlock: "🔓 আনলক",
-      pin_wrong: "❌ ভুল PIN",
-      pin_reset_link: "PIN ভুলে গেছো? এখানে রিসেট করো",
-      pin_reset_sure: "⚠️ নিশ্চিত? আবার ক্লিক করে রিসেট করো",
-      pin_reset: "এক্সটেনশন PIN মুছে ফেলা হয়েছে — সেটিংস থেকে নতুন সেট করো।",
-      pin_reset_confirm: "এই ব্রাউজারের এক্সটেনশন PIN মুছবে?",
-      pin_mismatch: "⚠️ PIN মিলছে না",
-      pin_digits: "⚠️ PIN ৪–৮ সংখ্যার হতে হবে",
-      pin_saved: "✅ এই ব্রাউজারে এক্সটেনশন PIN সেট হয়েছে।",
-      pin_removed: "এক্সটেনশন PIN মুছে ফেলা হয়েছে।",
-      pin_not_set: "কোনো এক্সটেনশন PIN সেট নেই।",
-      pin_is_set: "🔐 এই ব্রাউজারে এক্সটেনশন PIN সেট আছে।",
       empty_title: "এই ডোমেইনের কোনো তথ্য নেই",
       empty_save: "➕ এই সাইটের লগইন সংরক্ষণ করো",
       empty_saved: "✅ লগইন সংরক্ষিত হয়েছে।",
@@ -146,7 +134,7 @@
       document.getElementById(b).classList.toggle("active", b === id);
       document.getElementById(p).classList.toggle("hidden", b !== id);
     }
-    if (id === "tabStats") ensurePopupUnlocked().then((ok) => { if (ok) loadStats(); });
+    if (id === "tabStats") ensureUnlocked().then((ok) => { if (ok) loadStats(); });
   }
   for (const b of Object.keys(panes)) {
     document.getElementById(b).addEventListener("click", () => selectTab(b));
@@ -422,19 +410,33 @@
     }
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (e) => {
-        const set = (el, v) => {
-          if (!el) return;
-          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-        };
-        set(document.querySelector('input[type="text"], input[type="email"]'), e.username || "");
-        set(document.querySelector('input[type="password"]'), e.password || "");
-      },
-      args: [{ username: entry.username, password: entry.password }],
-    });
+    let found = { u: false, p: false };
+    try {
+      const [res] = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (e) => {
+          const set = (el, v) => {
+            if (!el) return false;
+            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
+            el.dispatchEvent(new Event("input", { bubbles: true }));
+            return true;
+          };
+          return {
+            u: set(document.querySelector('input[type="text"], input[type="email"]'), e.username || ""),
+            p: set(document.querySelector('input[type="password"]'), e.password || ""),
+          };
+        },
+        args: [{ username: entry.username, password: entry.password }],
+      });
+      if (res && res.result) found = res.result;
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || "inject failed");
+      return;
+    }
+    if (!found.u && !found.p) {
+      status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
+      return;
+    }
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }
@@ -510,137 +512,79 @@
     return p.length <= 2 ? p.join(".") : p.slice(-2).join(".");
   }
 
-  // ---------- extension PIN (shoulder-surfing lock for the popup) ----------
-  // SHA-256 hash only, never the PIN. Popup-lifetime memory flag: closing
-  // the popup re-locks automatically. Honest scope: stops casual viewing,
-  // not local malware (which could read extension storage anyway).
-  let extUnlocked = false;
-  async function sha256hex(s) {
-    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
-  }
-  async function extPinHash() {
-    // Single source of truth: the desktop app (DPAPI-sealed). Empty when
-    // unset, unreachable, or locked — all treated as "no PIN to enforce"
-    // here; the bridge's own locked/refused paths still gate data below.
+  // ---------- desktop-synced lock (no PIN anywhere) ----------
+  // UNLOCKED whenever the desktop vault is reachable. Inactivity auto-lock
+  // (lock_timeout_min, background session state) overlays the same screen.
+  // Retry re-confirms desktop presence and restarts the idle clock.
+  async function desktopReachable() {
     try {
-      const res = await withTimeout(
-        chrome.runtime.sendMessage({ type: "PV_EXT_PIN" }), 5000, "ext pin");
-      return (res && res.ok && res.hash) || "";
-    } catch (_) { return ""; }
+      const pong = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_PING" }), 5000, "ping");
+      return !!(pong && pong.ok && pong.unlocked !== false);
+    } catch (_) { return false; }
   }
-  async function ensurePopupUnlocked() {
-    console.log("PV popup v3 (host-pin) boot");
-    // Session unlock: one successful PIN per browser session is enough.
-    // chrome.storage.session lives in memory only — cleared on browser
-    // exit, never synced. Falls back to per-open gating when unavailable.
-    try {
-      const s = await chrome.storage.session.get({ extUnlocked: false });
-      if (s && s.extUnlocked) {
-        extUnlocked = true;
-        console.log("PV ext-pin: session unlock reused");
-        return true;
-      }
-    } catch (_) {}
-    const hash = await extPinHash();
-    console.log("PV ext-pin hash loaded:", hash ? `yes (${hash.length} chars)` : "no (unset/unreachable/locked)");
-    if (!hash) { extUnlocked = true; return true; }
-    if (extUnlocked) return true;
-    document.getElementById("extLockTitle").textContent = t("pin_locked");
-    document.getElementById("extLockSub").textContent = t("pin_enter");
-    document.getElementById("extUnlockBtn").textContent = t("pin_unlock");
+  function showSyncLock(sub) {
+    document.getElementById("extLockTitle").textContent = t("sync_locked");
+    document.getElementById("extLockSub").textContent = sub || t("sync_locked_sub");
+    document.getElementById("extRetryBtn").textContent = t("retry_btn");
     document.getElementById("extLockMsg").textContent = "";
-    const input = document.getElementById("extPinInput");
-    input.value = "";
     document.getElementById("extLock").classList.remove("hidden");
-    input.focus();
-    // Forgot-PIN escape hatch (the PIN only guards viewing; clearing it
-    // loses no vault data — everything lives in the desktop app).
-    // Two-step inline confirm (no window.confirm — it can be suppressed
-    // without any visible error, which looks exactly like "nothing happens").
-    // Any throw lands in extLockMsg instead of dying silently.
-    let resetArmed = false;
-    let resetTimer = 0;
-    document.getElementById("extPinReset").onclick = async (ev) => {
-      try {
-        ev.preventDefault();
-        if (!resetArmed) {
-          resetArmed = true;
-          ev.target.textContent = t("pin_reset_sure");
-          clearTimeout(resetTimer);
-          resetTimer = setTimeout(() => {
-            resetArmed = false;
-            const link = document.getElementById("extPinReset");
-            if (link) link.textContent = t("pin_reset_link");
-          }, 8000);
-          return;
-        }
-        clearTimeout(resetTimer);
-        resetArmed = false;
-        await chrome.storage.local.remove("ext_pin_hash");
-        try { await chrome.storage.session.remove("extUnlocked"); } catch (_) {}
-        extUnlocked = true;
-        input.value = "";
-        document.getElementById("extLockMsg").textContent = t("pin_reset");
-        document.getElementById("extLock").classList.add("hidden");
-        refresh();
-      } catch (err) {
-        document.getElementById("extLockMsg").textContent =
-          "⚠️ " + String((err && err.message) || err);
-      }
-    };
-    for (;;) {
-      const ok = await new Promise((resolve) => {
-        const btn = document.getElementById("extUnlockBtn");
-        const done = (v) => {
-          btn.onclick = null;
-          input.onkeydown = null;
-          resolve(v);
-        };
-        btn.onclick = async () => {
-          try {
-            const enteredPin = input.value.trim();
-            console.log("PIN unlock clicked:", enteredPin);
-            const computed = await sha256hex(enteredPin);
-            if (computed !== hash) {
-              console.log("PIN mismatch. computed:", computed, "expected:", hash);
-            }
-            done(computed === hash);
-          } catch (err) { console.log("PIN unlock error:", err); done(false); }
-        };
-        input.onkeydown = (ev) => { if (ev.key === "Enter") btn.click(); };
-      });
-      if (ok) {
-        extUnlocked = true;
-        try { await chrome.storage.session.set({ extUnlocked: true }); } catch (_) {}
-        input.value = "";
-        document.getElementById("extLock").classList.add("hidden");
-        console.log("PIN unlock success — lock hidden (session remembered)");
-        return true;
-      }
-      const msgEl = document.getElementById("extLockMsg");
-      msgEl.style.color = "#ff6b6b";
-      msgEl.textContent = "❌ Invalid PIN. Please try again.";
-      input.value = "";
-      input.focus();
-      // loop: re-arm the button so the next attempt works
-    }
   }
-  // PIN status readout (managed ONLY in the desktop app → Settings →
-  // Extension PIN; this pane never writes PIN state anymore).
-  const pinMsg = document.getElementById("pinMsg");
-  async function refreshPinState(note) {
-    let state = "";
+  function hideSyncLock() {
+    document.getElementById("extLock").classList.add("hidden");
+  }
+  async function ensureUnlocked() {
+    console.log("PV popup v4 (desktop-synced) boot");
     try {
-      const res = await withTimeout(
-        chrome.runtime.sendMessage({ type: "PV_EXT_PIN" }), 5000, "ext pin");
-      state = (res && res.ok && res.hash) ? t("pin_is_set") : t("pin_not_set");
-    } catch (_) {
-      state = t("pin_not_set");
+      const st = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }), 3000, "session");
+      if (st && st.ok && st.locked) {
+        console.log("PV session inactive — lock shown");
+        showSyncLock(t("sync_inactive"));
+        return false;
+      }
+    } catch (e) { console.log("PV session check failed:", (e && e.message) || e); }
+    if (await desktopReachable()) {
+      try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
+      hideSyncLock();
+      return true;
     }
-    pinMsg.textContent = note || state;
+    console.log("PV desktop unreachable — lock shown");
+    showSyncLock();
+    return false;
   }
-  refreshPinState();
+  // Retry (wired once): re-probe desktop, restart idle clock, load vault.
+  document.getElementById("extRetryBtn").addEventListener("click", async () => {
+    const msg = document.getElementById("extLockMsg");
+    msg.style.color = "";
+    msg.textContent = "⏳ …";
+    if (await desktopReachable()) {
+      try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
+      hideSyncLock();
+      msg.textContent = "";
+      refresh();
+    } else {
+      msg.style.color = "#ff6b6b";
+      msg.textContent = t("sync_still_locked");
+    }
+  });
+  // Popup interaction counts as activity (throttled 30s): keeps the idle
+  // clock fresh while the user browses/copies inside the popup.
+  // (lastActPing/touchActivityPing are declared near clipText above.)
+  for (const ev of ["click", "keydown"]) {
+    document.addEventListener(ev, () => touchActivityPing(), { passive: true });
+  }
+  // Auto-lock timeout pref (minutes; 0 = Never). Read by background
+  // session checks on every popup boot / autofill.
+  const lockTimeoutSel = document.getElementById("lockTimeout");
+  chrome.storage.local.get({ lock_timeout_min: 10 }).then((s) => {
+    lockTimeoutSel.value = String(s.lock_timeout_min ?? 10);
+  }).catch(() => {});
+  lockTimeoutSel.addEventListener("change", async () => {
+    await chrome.storage.local.set({ lock_timeout_min: Number(lockTimeoutSel.value) || 0 });
+    try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
+    console.log("PV auto-lock timeout set:", lockTimeoutSel.value);
+  });
 
   async function refresh() {
     console.log("PV refresh start");
@@ -928,6 +872,53 @@
     try { await navigator.clipboard.writeText(text || ""); btn.textContent = t("copied"); }
     catch (_) { btn.textContent = t("blocked_cb"); }
   }
+  let lastActPing = 0;
+  function touchActivityPing() {
+    try {
+      const now = Date.now();
+      if (now - lastActPing < 30000) return;
+      lastActPing = now;
+      const p = chrome.runtime.sendMessage({ type: "PV_ACTIVITY" });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
+  }
+  // In-popup password view: masked dots + 👁️ toggle. Plaintext lives only
+  // in the row element; re-masks on second click or after 15 s (ephemeral).
+  // getSecret resolves the plaintext (direct or via PV_FETCH); gateLabel
+  // enables the master-reprompt confirm for sensitive rows.
+  function passwordReveal(parent, getSecret, gateLabel) {
+    const line = document.createElement("div");
+    line.className = "pwline";
+    const dots = document.createElement("code");
+    dots.className = "pwDots";
+    dots.textContent = "••••••••";
+    const eye = document.createElement("button");
+    eye.className = "eye";
+    eye.textContent = t("eye_show");
+    eye.title = "Reveal password";
+    let timer = 0;
+    const mask = () => {
+      clearTimeout(timer); timer = 0;
+      dots.textContent = "••••••••";
+      eye.textContent = t("eye_show");
+    };
+    eye.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      touchActivityPing();
+      if (timer) { mask(); return; }
+      if (gateLabel && !window.confirm(`🔒 "${gateLabel}" needs verification before revealing. Reveal now?`)) return;
+      eye.textContent = "…";
+      try {
+        const secret = await getSecret();
+        if (!secret) { eye.textContent = t("eye_show"); return; }
+        dots.textContent = secret;
+        eye.textContent = t("eye_hide");
+        timer = setTimeout(() => { if (dots.isConnected) mask(); }, 15000);
+      } catch (err) { status.textContent = "⚠️ " + ((err && err.message) || err); eye.textContent = t("eye_show"); }
+    });
+    line.append(dots, eye);
+    parent.append(line);
+  }
 
   // Full login row (suggestion tier): USERNAME is the bold primary line,
   // domain/title secondary — 20+ same-domain accounts scan by email, not
@@ -967,19 +958,22 @@
       audit.textContent = t("last_filled", ago(lastFilledMap[e.id]));
       row.append(audit);
     }
+    // In-popup password view (Tier 1 rows carry the secret already).
+    passwordReveal(row, async () => e.password || "", e.reprompt ? (e.title || "Sensitive credential") : null);
     // H14: password Copy on a reprompt row needs the same gate as Fill
     // (previously only the Fill button was protected).
-    actionButtons(row, () => doFill(e), (btn) => {
+    const { copy: passBtn } = actionButtons(row, () => doFill(e), (btn) => {
       if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying. Copy now?`)) return;
       clipText(e.password, btn);
     });
-    // Quick username copy beside Fill/Copy-password.
+    passBtn.textContent = t("pass_btn");
+    // Quick username copy beside Fill/Pass.
     const btns = row.querySelector(".btns");
     if (btns && e.username) {
       const cu = document.createElement("button");
-      cu.textContent = "👤 User";
+      cu.textContent = t("user_btn");
       cu.title = "Copy username";
-      cu.addEventListener("click", (ev) => { ev.stopPropagation(); clipText(e.username, cu); });
+      cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
       btns.append(cu);
     }
     wireKeys(row, idx, e, doFill);
@@ -1022,14 +1016,24 @@
         } catch (_) { btn.textContent = t("blocked_cb"); }
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); btn.textContent = "🔑 2FA"; }
     };
-    actionButtons(row, fillOne, copyOne);
-    // Extra 2FA button beside Fill/Copy.
+    // In-popup password view (metadata tier: secret fetched on demand).
+    passwordReveal(row, async () => (await fetchEntry(1, e.id)).password || "", e.reprompt ? (e.title || "Sensitive credential") : null);
+    const { copy: passBtn } = actionButtons(row, fillOne, copyOne);
+    passBtn.textContent = t("pass_btn");
+    // Extra 2FA button beside Fill/Pass, plus username copy.
     const btns = row.querySelector(".btns");
     if (btns) {
       const tb = document.createElement("button");
       tb.textContent = "🔑 2FA";
       tb.addEventListener("click", (ev) => { ev.stopPropagation(); totpOne(tb); });
       btns.append(tb);
+      if (e.username) {
+        const cu = document.createElement("button");
+        cu.textContent = t("user_btn");
+        cu.title = "Copy username";
+        cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
+        btns.append(cu);
+      }
     }
     wireKeys(row, idx, e, fillOne);
     rows.push(row);
@@ -1136,6 +1140,6 @@
     rows[j].classList.add("focused");
     rows[j].focus();
   }
-  // Boot: PIN gate first (popup-lifetime lock), then data.
-  ensurePopupUnlocked().then((ok) => { if (ok) refresh(); });
+  // Boot: desktop-synced gate first, then data.
+  ensureUnlocked().then((ok) => { if (ok) refresh(); });
 })();

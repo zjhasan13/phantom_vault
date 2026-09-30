@@ -38,6 +38,30 @@ function hostRequest(payload, timeoutMs = 10000) {
   });
 }
 
+// ---- Desktop-synced session + inactivity auto-lock ----
+// The extension holds NO lock of its own: unlocked = desktop vault reachable.
+// On top, user activity (autofill/popup use) refreshes a timestamp kept in
+// session storage (memory-only, cleared on browser exit). Past the configured
+// timeout (lock_timeout_min: 5/10/15, 0 = Never) the session counts as locked
+// until the popup re-confirms desktop presence via Retry.
+async function touchActivity() {
+  try { await chrome.storage.session.set({ pv_last_active: Date.now() }); } catch (_) {}
+}
+async function sessionState() {
+  try {
+    const s = await chrome.storage.session.get({ pv_last_active: 0 });
+    const cfg = await chrome.storage.local.get({ lock_timeout_min: 10 });
+    const mins = Number(cfg.lock_timeout_min) || 0;
+    if (!mins) return { ok: true, locked: false, reason: "never" };
+    if (!s.pv_last_active) return { ok: true, locked: false, reason: "fresh" };
+    const idleMs = Date.now() - Number(s.pv_last_active);
+    if (idleMs > mins * 60 * 1000) return { ok: true, locked: true, reason: "inactive", idleMs };
+    return { ok: true, locked: false, reason: "active" };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 // Content scripts + popup talk to us here; we only proxy to the vault.
 // After mutating calls (save/fill) the toolbar count may change, so the
 // originating tab's badge refreshes on the next tick.
@@ -50,12 +74,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } catch (_) {}
     };
     if (msg.type === "PV_QUERY") {
+      touchActivity();
       return await hostRequest({ cmd: "query", app: msg.app || msg.url || "" });
     }
     if (msg.type === "PV_LIST") {
+      touchActivity();
       return await hostRequest({ cmd: "list" });
     }
     if (msg.type === "PV_FETCH") {
+      touchActivity();
       return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });
     }
     if (msg.type === "PV_CARDS") {
@@ -67,10 +94,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_PING") {
       return await hostRequest({ cmd: "ping" });
     }
-    // Extension PIN hash — single source of truth lives in the desktop app
-    // (DPAPI-sealed). The extension keeps zero PIN state of its own.
-    if (msg.type === "PV_EXT_PIN") {
-      return await hostRequest({ cmd: "ext_pin_hash" });
+    // Session state for the desktop-synced lock (no PIN anywhere).
+    if (msg.type === "PV_ACTIVITY") {
+      await touchActivity();
+      return { ok: true };
+    }
+    if (msg.type === "PV_SESSION_STATE") {
+      return await sessionState();
+    }
+    if (msg.type === "PV_UNLOCKED_TOUCH") {
+      // Popup Retry confirmed desktop presence — restart the idle clock.
+      await touchActivity();
+      return { ok: true };
     }
     if (msg.type === "PV_SAVE_LOGIN") {
       // Sender check (MISSING-HIGH): a malicious page must not save under
@@ -87,10 +122,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
       } catch (_) {}
       const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
-      if (r && r.ok) retouchBadge();
+      if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }
     if (msg.type === "PV_FILLED") {
+      touchActivity();
       const r = await hostRequest({ cmd: "filled", id: msg.id || "" });
       retouchBadge();
       return r;
