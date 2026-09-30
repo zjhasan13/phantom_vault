@@ -329,93 +329,40 @@
     return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
   }
 
-  // ---------- extension PIN gate (in-page actions) ----------
-  // SHA-256 hash only, read live from storage per page-load (a PIN set
-  // mid-session takes effect immediately; removal too). Verified once per
-  // page into `extPinOkPage`. Honest scope: stops casual viewing on a
-  // shared screen, not local malware. Non-HTTPS pages lack SubtleCrypto —
-  // gated actions there refuse loudly instead of comparing weakly.
-  let extPinOkPage = false;
-  let extPinPending = null;
-  async function sha256hex(s) {
-    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
-  }
-  function promptExtPin() {
-    return new Promise((resolve) => {
-      const ov = document.createElement("div");
-      ov.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#000a;" +
-        "display:flex;align-items:center;justify-content:center;";
-      const box = document.createElement("div");
-      box.style.cssText = "background:#0d131f;border:1px solid #8b7cf6;border-radius:14px;" +
-        "padding:20px 22px;max-width:300px;font:14px system-ui;color:#eef1ff;text-align:center;";
-      const h = document.createElement("div");
-      h.style.cssText = "font-weight:800;margin-bottom:8px;";
-      h.textContent = "🔐 Extension locked";
-      const p = document.createElement("div");
-      p.style.cssText = "color:#8e99c0;font-size:12px;margin-bottom:14px;";
-      p.textContent = "Enter your extension PIN to continue.";
-      const inp = document.createElement("input");
-      inp.type = "password";
-      inp.placeholder = "PIN";
-      inp.autocomplete = "off";
-      inp.style.cssText = "width:100%;box-sizing:border-box;background:#0b1226;color:#eef1ff;" +
-        "border:1px solid #26315c;border-radius:8px;padding:9px;margin-bottom:12px;" +
-        "font-size:15px;text-align:center;";
-      const row = document.createElement("div");
-      row.style.cssText = "display:flex;gap:8px;";
-      const ok = document.createElement("button");
-      ok.textContent = "🔓 Unlock";
-      ok.style.cssText = "flex:1;background:#8b7cf6;color:#fff;border:0;border-radius:8px;padding:9px;font-weight:700;cursor:pointer;";
-      const no = document.createElement("button");
-      no.textContent = "Cancel";
-      no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:9px;cursor:pointer;";
-      row.append(ok, no);
-      box.append(h, p, inp, row);
-      ov.append(box);
-      document.documentElement.append(ov);
-      const done = (v) => { ov.remove(); resolve(v); };
-      ok.addEventListener("click", () => done(inp.value));
-      no.addEventListener("click", () => done(null));
-      inp.addEventListener("keydown", (e) => { if (e.key === "Enter") done(inp.value); if (e.key === "Escape") done(null); });
-      try { inp.focus(); } catch (_) {}
-    });
-  }
+  // ---------- desktop-synced gate (in-page actions, no PIN) ----------
+  // Allowed when the desktop vault is reachable AND the background session
+  // is not inactivity-locked. Verified once per page into `extDeskOkPage`.
+  // A locked desktop (or idle timeout) refuses with a toast pointing at the
+  // popup Retry — the bridge itself still gates every secret below.
+  let extDeskOkPage = false;
+  let extDeskPending = null;
   async function requireExtPin() {
-    // Single source of truth: the desktop app (DPAPI-sealed, managed in its
-    // Settings). Empty when unset, unreachable, or locked — all treated as
-    // "no PIN to enforce" here; the bridge's own locked/refused paths still
-    // gate data below. Never cached beyond this page lifetime.
-    let hash = "";
-    try {
-      const res = await chrome.runtime.sendMessage({ type: "PV_EXT_PIN" });
-      hash = (res && res.ok && res.hash) || "";
-    } catch (_) { return false; }
-    if (!hash) return true;
-    if (extPinOkPage) return true;
-    // Session unlock shared with the popup: one PIN per browser session.
-    try {
-      const s = await chrome.storage.session.get({ extUnlocked: false });
-      if (s && s.extUnlocked) { extPinOkPage = true; return true; }
-    } catch (_) {}
-    if (extPinPending) return extPinPending;
-    extPinPending = (async () => {
+    if (extDeskOkPage) return true;
+    if (extDeskPending) return extDeskPending;
+    extDeskPending = (async () => {
       try {
-        if (!crypto.subtle) {
-          toast("⚠️ Extension PIN needs HTTPS on this page.");
+        let sess = null;
+        try { sess = await chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }); } catch (_) {}
+        if (sess && sess.ok && sess.locked) {
+          console.log("PV gate: session inactive — refusing page action");
+          toast("🔒 Session auto-locked — open the PhantomVault popup and press Retry.");
           return false;
         }
-        const pin = await promptExtPin();
-        if (pin == null) return false;
-        const ok = (await sha256hex(pin.trim())) === hash;
-        if (ok) extPinOkPage = true;
-        else toast("❌ Wrong extension PIN.");
-        return ok;
+        let pong = null;
+        try { pong = await chrome.runtime.sendMessage({ type: "PV_PING" }); } catch (_) {}
+        if (pong && pong.ok && pong.unlocked !== false) {
+          extDeskOkPage = true;
+          console.log("PV gate: desktop present — page action allowed");
+          return true;
+        }
+        console.log("PV gate: desktop unreachable — refusing page action");
+        toast("🔒 Vault is locked. Unlock PhantomVault desktop app.");
+        return false;
       } finally {
-        extPinPending = null;
+        extDeskPending = null;
       }
     })();
-    return extPinPending;
+    return extDeskPending;
   }
 
   // ---------- fill primitives ----------
@@ -798,14 +745,18 @@
     if (!(await requireExtPin())) return;
     try {
       const logins = await queryHost("PV_QUERY", pageBase());
+      console.log(`PV autofill-on-load: ${logins.length} login(s) for ${pageBase()}`);
       if (logins.length !== 1) {
         // Multi-step: a pending entry from step 1 + password field now visible?
         await chainPendingStep();
         return;
       }
       const f = findFields();
+      console.log(`PV fields: users=${f.users.length} pass=${f.pass.length} newPass=${f.newPass.length}`);
       if ((f.users[0] || f.pass[0]) && (logins[0].username || logins[0].password)) {
         fillLogin(logins[0], f);
+      } else {
+        console.log("PV autofill-on-load: no fillable field on this page");
       }
     } catch (_) {}
   }
@@ -1043,6 +994,7 @@
 
   scan();
   scanForms();
+  console.log("PV content boot:", location.host || "(no host)");
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
   new MutationObserver(scanForms).observe(document.documentElement, { childList: true, subtree: true });
   // Fixed overlays must track the viewport (passive listeners, no jank).

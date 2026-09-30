@@ -70,18 +70,22 @@
     #extLock .lockcard { width: 260px; text-align: center; background: #0d1430;
       border: 1px solid #26315c; border-radius: 12px; padding: 18px 16px; }
     #extLock .lockart { font-size: 34px; margin-bottom: 6px; }
+    .pwline { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px 44px; }
+    .pwDots { flex: 1; color: #8e99c0; font-size: 12px; letter-spacing: 1px;
+      background: #0b1226; border: 1px solid #26315c; border-radius: 6px;
+      padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .eye { background: #1a2450; color: #eef1ff; border: 1px solid #26315c;
+      border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 13px; }
   </style>
 </head>
 <body>
   <div id="extLock" class="hidden">
     <div class="lockcard">
       <div class="lockart">🔐</div>
-      <div class="t" id="extLockTitle">Extension locked</div>
-      <div class="u" id="extLockSub" style="margin:4px 0 10px">Enter your extension PIN</div>
-      <input id="extPinInput" class="pvinput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" />
-      <button id="extUnlockBtn" class="wide" style="width:100%">🔓 Unlock</button>
+      <div class="t" id="extLockTitle">🔒 Vault is Locked</div>
+      <div class="u" id="extLockSub" style="margin:4px 0 10px">Unlock PhantomVault desktop app.</div>
+      <button id="extRetryBtn" class="wide" style="width:100%">🔄 Retry</button>
       <div class="hint" id="extLockMsg"></div>
-      <div class="hint"><a href="#" id="extPinReset" style="color:#5b6589">Forgot PIN? Reset it here</a></div>
     </div>
   </div>
   <h1>🛡️ PhantomVault <button id="langToggle" title="BN/EN">EN</button></h1>
@@ -115,9 +119,14 @@
   <div id="settingsPane" class="hidden">
     <div class="row" id="settingsForm"></div>
     <div class="row">
-      <div class="t">🔐 Extension PIN</div>
-      <div class="hint">Managed in the desktop app (Settings → Extension PIN). This browser only verifies — it never stores or sets the PIN.</div>
-      <div class="hint" id="pinMsg"></div>
+      <div class="t">⏱️ Auto-Lock Timeout</div>
+      <div class="hint">No PIN — the extension follows the desktop app. After inactivity it re-asks desktop presence.</div>
+      <select id="lockTimeout" style="width:100%;box-sizing:border-box;background:#0b1226;color:#eef1ff;border:1px solid #26315c;border-radius:8px;padding:8px;margin-top:6px;">
+        <option value="5">5 minutes</option>
+        <option value="10" selected>10 minutes</option>
+        <option value="15">15 minutes</option>
+        <option value="0">Never</option>
+      </select>
     </div>
     <div class="row">
       <div class="t">🚫 Blocked Domains</div>
