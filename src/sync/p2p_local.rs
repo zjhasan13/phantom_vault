@@ -66,11 +66,22 @@ pub fn get_or_create_pin() -> Result<String, String> {
     if let Some(pin) = load_pin() {
         return Ok(pin);
     }
+    // H13: rejection sampling removes the `% 1_000_000` modulo bias
+    // (2^32 % 1M != 0). NOTE residual: pairing HTTP is still plaintext LAN
+    // (rustls + fingerprint pinning is the full fix, tracked separately);
+    // throttle (5 fails/30s per IP) + DPAPI-sealed PIN + constant-time
+    // compare are already in place below.
     use rand_core::RngCore as _;
     let mut rng = rand_core::OsRng;
-    let mut buf = [0u8; 4];
-    rng.fill_bytes(&mut buf);
-    let pin = format!("{:06}", u32::from_le_bytes(buf) % 1_000_000);
+    let pin_val = loop {
+        let mut buf = [0u8; 4];
+        rng.fill_bytes(&mut buf);
+        let v = u32::from_le_bytes(buf);
+        if v < 4_294_000_000 {
+            break v % 1_000_000;
+        }
+    };
+    let pin = format!("{pin_val:06}");
     let blob = crate::core::memory::DpapiGuard::protect(pin.as_bytes())
         .map_err(|e| format!("pin seal failed: {e}"))?;
     std::fs::write(pin_path(), blob).map_err(|e| format!("pin store failed: {e}"))?;
@@ -169,10 +180,18 @@ pub(crate) fn pin_throttle_test_clear() {
 }
 
 /// Presence beacon. `head_sha`/`mtime` describe the CIPHERTEXT only.
+/// M5: carries a `ts` send-time; receivers reject beacons older than 120 s
+/// so stale replays die. Residual: live LAN spoofing is still possible on
+/// plaintext UDP — the UI must show peer IP+name for out-of-band check and
+/// the PIN stays plaintext-checked + throttled (full mDNS/TLS tracked sep).
 pub fn beacon_json(version: &str, head_sha: &str) -> String {
     let name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "PC".to_string());
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     serde_json::json!({
         "app": "phantom_vault",
         "name": name,
@@ -180,6 +199,7 @@ pub fn beacon_json(version: &str, head_sha: &str) -> String {
         "port": P2P_PORT,
         "head_sha": head_sha,
         "pin_required": pin_required(),
+        "ts": ts,
     })
     .to_string()
 }
@@ -194,6 +214,18 @@ pub fn parse_beacon(text: &str, from_ip: &str) -> Option<Peer> {
     // Never peer with ourselves (our own broadcast echo).
     if let Ok(local) = local_lan_ips() {
         if local.iter().any(|ip| ip == from_ip) {
+            return None;
+        }
+    }
+    // M5: freshness — replayed beacons older than 120 s (or clock-skewed
+    // future stamps) are dropped. Beacons without `ts` are pre-upgrade and
+    // accepted once (interim compat).
+    if let Some(ts) = v.get("ts").and_then(|t| t.as_u64()) {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(ts);
+        if now.saturating_sub(ts) > 120 || ts.saturating_sub(now) > 60 {
             return None;
         }
     }
@@ -649,6 +681,10 @@ mod tests {
         assert_eq!(p.ip, "192.168.1.99");
         assert!(parse_beacon(r#"{"app":"something_else"}"#, "192.168.1.99").is_none());
         assert!(parse_beacon("garbage", "192.168.1.99").is_none());
+        // M5: stale replays die; fresh beacons pass.
+        let stale = serde_json::json!({"app": "phantom_vault", "name": "X",
+            "version": "1", "port": P2P_PORT, "ts": 1}).to_string();
+        assert!(parse_beacon(&stale, "192.168.1.99").is_none());
     }
 
     #[test]

@@ -105,10 +105,14 @@ pub fn rotate_backups(path: &Path) -> Result<(), String> {
     }
     // Oldest generation is shredded first so a crash mid-rotation can only
     // ever leave an EXTRA backup behind, never a missing one.
+    // H4: a shred failure (e.g. read-only attribute restored from media)
+    // must NEVER brick all future saves — warn and rotate anyway.
     let oldest = backup_name(path, BACKUP_KEEP);
     if oldest.exists() {
-        crate::security::shredder::shred_file(&oldest)
-            .map_err(|e| format!("Backup shred failed: {e}"))?;
+        if let Err(e) = crate::security::shredder::shred_file(&oldest) {
+            eprintln!("warning: oldest backup shred failed (continuing): {e}");
+            let _ = std::fs::remove_file(&oldest);
+        }
     }
     for gen in (1..BACKUP_KEEP).rev() {
         let src = backup_name(path, gen);
@@ -161,13 +165,29 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     // ১. ডিস্ক থেকে বাইনারি পড়া
     let payload = fs::read(&file_path).map_err(|e| format!("File read error: {}", e))?;
 
+    // M7: single-byte magic flip (PV2\0 → PV2) forces the legacy branch
+    // and bricks the open when the sidecar is absent. Fall back across
+    // branches before failing — an attacker who can rewrite the file can
+    // already delete it; a flipped magic must not brick a good vault.
     let decrypted = match detect_version(&payload) {
-        VaultVersion::V2Portable => decrypt_vault_portable(master_password, &payload)?,
+        VaultVersion::V2Portable => decrypt_vault_portable(master_password, &payload)
+            .or_else(|_| {
+                let dk = load_legacy_pq_dk()?;
+                let out = decrypt_vault_hybrid_legacy(master_password, &payload, dk.expose());
+                drop(dk);
+                out
+            })?,
         VaultVersion::V2Legacy => {
-            let dk = load_legacy_pq_dk()?;
-            let out = decrypt_vault_hybrid_legacy(master_password, &payload, dk.expose());
-            drop(dk);
-            out?
+            let primary = (|| {
+                let dk = load_legacy_pq_dk()?;
+                let out = decrypt_vault_hybrid_legacy(master_password, &payload, dk.expose());
+                drop(dk);
+                out
+            })();
+            match primary {
+                Ok(d) => d,
+                Err(_) => decrypt_vault_portable(master_password, &payload)?,
+            }
         }
         VaultVersion::V1Classical => decrypt_vault(master_password, &payload)?,
     };
@@ -176,31 +196,46 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     if let Ok(vault) = serde_json::from_slice::<Vault>(&decrypted) {
         return Ok((vault, false));
     }
-    // Legacy bincode Gen-chain (pre-JSON vaults), newest-first: Gen4
-    // (pre-unlock-2FA), Gen3 (pre-dynamic-TOTP), Gen2 (pre-attachments/
-    // travel), Gen1 (folders, lean credential), Gen0. Always migrates to JSON.
-    let vault: Vault = match bincode::deserialize(&decrypted) {
-        Ok(v) => v,
-        Err(_) => match bincode::deserialize::<crate::models::VaultGen4>(&decrypted) {
-            Ok(g4) => g4.into(),
-            Err(_) => match bincode::deserialize::<crate::models::VaultGen3>(&decrypted) {
-                Ok(g3) => g3.into(),
-                Err(_) => match bincode::deserialize::<crate::models::VaultGen2>(&decrypted) {
-                    Ok(g2) => g2.into(),
-                    Err(_) => match bincode::deserialize::<crate::models::VaultGen1>(&decrypted) {
-                        Ok(g1) => g1.into(),
-                        Err(_) => {
-                            let legacy: crate::models::VaultLegacy =
-                                bincode::deserialize(&decrypted)
-                                    .map_err(|e| format!("Deserialization error: {}", e))?;
-                            legacy.into()
-                        }
-                    },
-                },
-            },
-        },
-    };
-    Ok((vault, true))
+    // Legacy bincode Gen-chain (pre-JSON vaults), NARROWEST-first (C11):
+    // bincode is not self-describing — trying the current Vault first can
+    // mis-parse an older stream into a plausible-but-wrong Vault and then
+    // re-seal the garbage over the only good copy. Size-capped options
+    // prevent garbage-length OOM aborts on corrupt input.
+    use bincode::Options;
+    // Reject trailing bytes: with allow_trailing_bytes a current-Vault
+    // payload prefix-parses as a legacy gen (false positive, empty vault).
+    // fixint matches `bincode::serialize`/`deserialize` (the pre-JSON writer).
+    let opts = bincode::DefaultOptions::new()
+        .with_fixint_encoding()
+        .with_limit(16 * 1024 * 1024);
+    if decrypted.len() > 16 * 1024 * 1024 {
+        return Err("Deserialization error: payload too large".to_string());
+    }
+    if let Ok(legacy) = opts.deserialize::<crate::models::VaultLegacy>(&decrypted) {
+        let v: Vault = legacy.into();
+        return Ok((v, true));
+    }
+    if let Ok(g1) = opts.deserialize::<crate::models::VaultGen1>(&decrypted) {
+        let v: Vault = g1.into();
+        return Ok((v, true));
+    }
+    if let Ok(g2) = opts.deserialize::<crate::models::VaultGen2>(&decrypted) {
+        let v: Vault = g2.into();
+        return Ok((v, true));
+    }
+    if let Ok(g3) = opts.deserialize::<crate::models::VaultGen3>(&decrypted) {
+        let v: Vault = g3.into();
+        return Ok((v, true));
+    }
+    if let Ok(g4) = opts.deserialize::<crate::models::VaultGen4>(&decrypted) {
+        let v: Vault = g4.into();
+        return Ok((v, true));
+    }
+    // Current-schema bincode LAST (pre-JSON writers only).
+    if let Ok(v) = opts.deserialize::<Vault>(&decrypted) {
+        return Ok((v, true));
+    }
+    Err("Deserialization error: unknown legacy payload".to_string())
 }
 
 /// Legacy entrypoint: loads any version (migration flag discarded).

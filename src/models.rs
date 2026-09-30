@@ -394,6 +394,11 @@ pub struct Vault {
     /// against the device clock (same dispatcher as authenticator codes).
     #[serde(default)]
     pub totp_unlock_secret: String,
+    /// Login ids the user confirmed as working ("✅ Verified" — the real
+    /// password among decoys/rotations). Syncs with the vault by design.
+    /// Stale ids (deleted/unknown) are ignored by readers and swept on write.
+    #[serde(default)]
+    pub verified_ids: Vec<String>,
 }
 
 impl Vault {
@@ -411,7 +416,34 @@ impl Vault {
             passkeys: Vec::new(),
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         }
+    }
+
+    /// True when `id` is both marked AND a live login (stale marks from
+    /// deleted items never render). Pure.
+    pub fn is_verified(&self, id: &str) -> bool {
+        self.verified_ids.iter().any(|v| v == id)
+            && self.credentials.iter().any(|c| c.id == id)
+    }
+
+    /// Mark/unmark a login as working. Unknown ids are refused (typos can't
+    /// pollute the list); stale ids are swept opportunistically. Pure.
+    /// Returns false when `id` is not a login in this vault.
+    pub fn set_verified(&mut self, id: &str, on: bool) -> bool {
+        if !self.credentials.iter().any(|c| c.id == id) {
+            return false;
+        }
+        if on {
+            if !self.verified_ids.iter().any(|v| v == id) {
+                self.verified_ids.push(id.to_string());
+            }
+        } else {
+            self.verified_ids.retain(|v| v != id);
+        }
+        let live: Vec<String> = self.credentials.iter().map(|c| c.id.clone()).collect();
+        self.verified_ids.retain(|v| live.iter().any(|id| id == v));
+        true
     }
 
     /// Seed built-ins into vaults that predate the folder engine.
@@ -719,6 +751,7 @@ impl From<VaultLegacy> for Vault {
             passkeys: Vec::new(),
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -874,6 +907,7 @@ impl From<VaultGen1> for Vault {
             passkeys: Vec::new(),
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1079,6 +1113,7 @@ impl From<VaultGen2> for Vault {
             passkeys: Vec::new(),
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1142,6 +1177,7 @@ impl From<VaultGen3> for Vault {
             passkeys: Vec::new(),
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1180,6 +1216,7 @@ impl From<VaultGen4> for Vault {
             passkeys: old.passkeys,
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
+            verified_ids: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1278,6 +1315,46 @@ mod tests {
         let v: Vault = decoded.into();
         assert!(!v.totp_unlock_enabled);
         assert!(v.totp_unlock_secret.is_empty());
+    }
+
+    #[test]
+    fn verified_marks_only_live_logins_and_sweeps_stale() {
+        let mut v = Vault::new();
+        // Unknown id refused (typos can't pollute).
+        assert!(!v.set_verified("ghost", true));
+        assert!(!v.is_verified("ghost"));
+        v.credentials.push(Credential {
+            id: "t1".into(),
+            title: "t".into(),
+            username: "u".into(),
+            password: "p".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        assert!(!v.is_verified("t1"));
+        assert!(v.set_verified("t1", true));
+        assert!(v.is_verified("t1"));
+        // Idempotent re-mark; unmark clears.
+        assert!(v.set_verified("t1", true));
+        assert_eq!(v.verified_ids.len(), 1);
+        assert!(v.set_verified("t1", false));
+        assert!(!v.is_verified("t1"));
+        // Stale id swept on next write.
+        v.verified_ids.push("deleted-id".into());
+        assert!(v.set_verified("t1", true));
+        assert!(!v.verified_ids.iter().any(|x| x == "deleted-id"));
+        assert!(v.is_verified("t1"));
     }
 
     #[test]

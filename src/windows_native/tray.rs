@@ -325,6 +325,11 @@ pub fn remove(handle: TrayHandle) {
 mod tests {
     use super::*;
 
+    // Both action tests below mutate the process-global ACTIONS static, so
+    // they must never run concurrently (parallel harness flaked ~1/8 runs:
+    // fire_without_handlers reset the table between dispatch's set and fire).
+    static ACTION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     #[test]
     fn tray_pref_roundtrips_without_clobbering() {
         // Preserve whatever the developer's real pref is (tests run with
@@ -346,6 +351,7 @@ mod tests {
 
     #[test]
     fn tray_actions_fire_without_handlers() {
+        let _guard = ACTION_TEST_LOCK.lock().unwrap();
         // No handlers registered → fire() is a silent no-op, never panics.
         set_actions(TrayActions::default());
         fire(|a| a.on_open.clone());
@@ -354,6 +360,7 @@ mod tests {
 
     #[test]
     fn tray_actions_dispatch() {
+        let _guard = ACTION_TEST_LOCK.lock().unwrap();
         let hit = Arc::new(AtomicBool::new(false));
         let hit2 = hit.clone();
         set_actions(TrayActions {

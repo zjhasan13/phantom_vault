@@ -28,11 +28,54 @@ const HELLO_TOKEN_FILE: &str = "vault_hello.dpapi";
 
 /// Length-prefixed frame for one JSON value.
 pub fn encode_frame(msg: &serde_json::Value) -> Vec<u8> {
-    let body = serde_json::to_vec(msg).unwrap_or_else(|_| b"{\"ok\":false}".to_vec());
+    let mut body = serde_json::to_vec(msg).unwrap_or_else(|_| b"{\"ok\":false}".to_vec());
+    if body.len() > MAX_MSG_BYTES {
+        body = b"{\"ok\":false,\"error\":\"reply too large\"}".to_vec();
+    }
     let mut out = Vec::with_capacity(4 + body.len());
     out.extend_from_slice(&(body.len() as u32).to_le_bytes());
     out.extend_from_slice(&body);
     out
+}
+
+/// Strict `chrome-extension://<32-char-id>/` format check (Chrome IDs are
+/// `[a-p]{32}`; accept `[a-z]{32}` to cover Edge/Brave variants). Rejects
+/// `chrome-extension://*/` and any non-matching string.
+pub(crate) fn valid_origin_format(origin: &str) -> bool {
+    let rest = match origin.strip_prefix("chrome-extension://") {
+        Some(r) => r,
+        None => return false,
+    };
+    let id = match rest.strip_suffix('/') {
+        Some(id) => id,
+        None => return false,
+    };
+    id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase())
+}
+
+/// Origins pinned at install time in `%LOCALAPPDATA%\PhantomVault\native-host.json`.
+fn registered_origins() -> Vec<String> {
+    let doc: serde_json::Value = std::fs::read_to_string(bridge_dir().join("native-host.json"))
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or(serde_json::Value::Null);
+    doc.get("allowed_origins")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// Origin allow check: strict format AND (if a manifest is registered) listed
+/// there. Fail-closed: unknown/missing manifest still requires valid format.
+pub(crate) fn origin_allowed(origin: &str) -> bool {
+    if !valid_origin_format(origin) {
+        return false;
+    }
+    let reg = registered_origins();
+    if reg.is_empty() {
+        return true;
+    }
+    reg.iter().any(|o| o == origin)
 }
 
 /// Read one frame: 4-byte LE length, cap enforced, exact JSON body.
@@ -70,6 +113,73 @@ fn b64_any(s: &str) -> Option<Vec<u8>> {
         .ok()
 }
 
+/// C5: token-bucket for WebAuthn asserts (100/min per host process).
+/// Single-shot phishing is blocked by the `uv` gate above; this caps
+/// automated relay loops. Lock-free atomics — never panics.
+use std::sync::atomic::{AtomicU64, Ordering};
+static ASSERT_COUNT: AtomicU64 = AtomicU64::new(0);
+static ASSERT_WINDOW: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(crate) fn reset_assert_rate() {
+    ASSERT_COUNT.store(0, Ordering::SeqCst);
+    ASSERT_WINDOW.store(0, Ordering::SeqCst);
+}
+fn assert_rate_ok() -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    let win = ASSERT_WINDOW.load(Ordering::SeqCst);
+    if win != now {
+        ASSERT_WINDOW.store(now, Ordering::SeqCst);
+        ASSERT_COUNT.store(1, Ordering::SeqCst);
+        return true;
+    }
+    let n = ASSERT_COUNT.fetch_add(1, Ordering::SeqCst);
+    n < 100
+}
+
+/// M12: fill-event brake (120/min per host process — popup tiles report
+/// per frame; unauthenticated floods must not spin the sidecar).
+fn fill_rate_ok() -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    static WINDOW: AtomicU64 = AtomicU64::new(0);
+    if WINDOW.load(Ordering::SeqCst) != now {
+        WINDOW.store(now, Ordering::SeqCst);
+        COUNT.store(1, Ordering::SeqCst);
+        return true;
+    }
+    COUNT.fetch_add(1, Ordering::SeqCst) < 120
+}
+
+fn short_id(id: &str) -> String {
+    crate::security::access_log::short_hash(id)
+}
+
+/// M13: re-seal brake (30/min per host process). Each save is a full
+/// Argon2id + ML-KEM reseal + backup rotation — unthrottled, one caller
+/// can pin the disk. Bumps still reach disk under the cap.
+fn save_rate_ok() -> bool {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    static COUNT: AtomicU64 = AtomicU64::new(0);
+    static WINDOW: AtomicU64 = AtomicU64::new(0);
+    if WINDOW.load(Ordering::SeqCst) != now {
+        WINDOW.store(now, Ordering::SeqCst);
+        COUNT.store(1, Ordering::SeqCst);
+        return true;
+    }
+    COUNT.fetch_add(1, Ordering::SeqCst) < 30
+}
+
 fn live_totp(secret: &str) -> String {
     if secret.trim().is_empty() {
         return String::new();
@@ -91,6 +201,34 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             reply: serde_json::json!({"ok": true, "pong": true, "unlocked": unlocked}),
             persist: false,
         },
+        // Extension PIN state/hash — managed ONLY from the desktop app.
+        // The extension keeps zero PIN state and enforces against this hash.
+        // Gated on unlocked like stats: a locked vault reveals nothing,
+        // and the extension already gates on lock separately.
+        "ext_pin_state" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            Answer {
+                reply: serde_json::json!({
+                    "ok": true,
+                    "set": crate::security::ext_pin::is_set(std::path::Path::new(".")),
+                }),
+                persist: false,
+            }
+        }
+        "ext_pin_hash" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            match crate::security::ext_pin::read_hash(std::path::Path::new(".")) {
+                Some(h) => Answer {
+                    reply: serde_json::json!({"ok": true, "hash": h}),
+                    persist: false,
+                },
+                None => no("no extension PIN set"),
+            }
+        }
         "query" => {
             if !unlocked {
                 return no("vault locked");
@@ -102,16 +240,20 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 .unwrap_or("")
                 .trim()
                 .to_lowercase();
-            if q.is_empty() {
-                return no("empty query (refusing vault dump)");
+            // C7: refuse 1-char dump probes ("a" matches everything).
+            if q.is_empty() || q.chars().count() < 2 {
+                return no("query too short (refusing vault dump)");
             }
             // Omni-domain: the raw query plus equivalent siblings, brand
             // stems, and stripped registrables all match (any-hit).
             let variants = expand_query(&q);
-            let entries: Vec<serde_json::Value> = vault
+            let mut entries: Vec<serde_json::Value> = vault
                 .credentials
                 .iter()
                 .filter(|c| {
+                    if c.deleted_at.is_some() {
+                        return false;
+                    }
                     let title = c.title.to_lowercase();
                     let user = c.username.to_lowercase();
                     variants.iter().any(|v| {
@@ -129,9 +271,12 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "folder": c.folder,
                         "reprompt": c.reprompt,
                         "last_changed": c.last_changed,
+                        "verified": vault.is_verified(&c.id),
                     })
                 })
                 .collect();
+            // C7: cap bulk exfil — one query never dumps the whole vault.
+            entries.truncate(25);
             crate::security::access_log::log_event("bridge-query", &q);
             Answer {
                 reply: serde_json::json!({"ok": true, "entries": entries}),
@@ -223,6 +368,16 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
         "assert" => {
             if !unlocked {
                 return no("vault locked");
+            }
+            // C5: silent signing was a 2FA-bypass primitive (any page could
+            // relay a caller-supplied challenge). Fail-closed: the caller
+            // must present a fresh user-verification flag minted by an
+            // out-of-band Hello prompt in the desktop app.
+            if req.get("uv").and_then(|v| v.as_bool()) != Some(true) {
+                return no("user verification required");
+            }
+            if !assert_rate_ok() {
+                return no("assert rate limited");
             }
             let rp = req
                 .get("rp_id")
@@ -347,6 +502,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "urls": c.urls,
                         "folder": c.folder,
                         "reprompt": c.reprompt,
+                        "verified": vault.is_verified(&c.id),
                     })
                 })
                 .collect();
@@ -443,13 +599,22 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             };
             match entry {
                 Some(e) => {
-                    crate::security::access_log::log_event("bridge-fetch", &format!("{kind}:{id}"));
+                    // M11: `id` is caller-controlled text — log a truncated
+                    // hash, never the raw string (narrative injection into a
+                    // valid chain, e.g. "c1 — user confirmed verbally").
+                    crate::security::access_log::log_event(
+                        "bridge-fetch",
+                        &format!("{kind}:{}", &crate::security::access_log::short_hash(id)),
+                    );
                     Answer { reply: serde_json::json!({"ok": true, "entry": e}), persist: false }
                 }
                 None => no("item not found"),
             }
         }
         // Smart-autofill: record a fill (audit sidecar only, no vault write).
+        // M12: the id must resolve to a real, untrashed item (was blind
+        // saturating_add per frame), rate-limited, and access-logged like
+        // every other mutating command.
         "filled" => {
             if !unlocked {
                 return no("vault locked");
@@ -462,10 +627,31 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if id.is_empty() {
                 return no("id required");
             }
+            let known = vault.credentials.iter().any(|c| c.id == id && c.deleted_at.is_none())
+                || vault.cards.iter().any(|k| k.id == id && k.deleted_at.is_none())
+                || vault.notes.iter().any(|n| n.id == id && n.deleted_at.is_none())
+                || vault.identities.iter().any(|i| i.id == id && i.deleted_at.is_none())
+                || vault.ssh_keys.iter().any(|s| s.id == id && s.deleted_at.is_none())
+                || vault.licenses.iter().any(|l| l.id == id && l.deleted_at.is_none())
+                || vault.passkeys.iter().any(|p| {
+                    use base64::Engine as _;
+                    p.deleted_at.is_none()
+                        && (base64::engine::general_purpose::STANDARD.encode(&p.credential_id) == id
+                            || p.credential_id.iter().map(|b| format!("{b:02x}")).collect::<String>() == id)
+                })
+                || vault.totp_accounts.iter().any(|t| t.id == id);
+            if !known {
+                return no("unknown id");
+            }
+            if !fill_rate_ok() {
+                return no("fill rate limited");
+            }
+            crate::security::access_log::log_event("bridge-filled", &short_id(id));
             let mut st = read_ext_stats();
             let now = crate::models::current_timestamp();
             st["total_fills"] = serde_json::json!(st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
             st["last_filled"][id] = serde_json::json!(now);
+            st["fill_counts"][id] = serde_json::json!(st.get("fill_counts").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
             write_ext_stats(&st);
             Answer {
                 reply: serde_json::json!({"ok": true}),
@@ -515,6 +701,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     "score": score,
                     "total_fills": st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0),
                     "last_filled": st.get("last_filled").cloned().unwrap_or_else(|| serde_json::json!({})),
+                    "fill_counts": st.get("fill_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
                 }),
                 persist: false,
             }
@@ -536,13 +723,17 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let totp = req.get("totp").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let now = crate::models::current_timestamp();
             let dom = url_domain(&url);
+            // C6: strict registrable-domain equality — substring matching let
+            // https://co/ overwrite a github.com credential. Single-label
+            // domains (e.g. "co") never match.
+            if dom.split('.').filter(|p| !p.is_empty()).count() < 2 {
+                return no("url domain invalid");
+            }
             let existing = vault.credentials.iter_mut().find(|c| {
                 c.deleted_at.is_none()
                     && c.username.to_lowercase() == username.to_lowercase()
-                    && (c.urls.iter().any(|u| {
-                        let d = url_domain(u);
-                        !d.is_empty() && (d == dom || dom.contains(&d) || d.contains(&dom))
-                    }) || c.title.to_lowercase() == dom)
+                    && (c.urls.iter().any(|u| url_domain(u) == dom)
+                        || c.title.to_lowercase() == dom)
             });
             let updated;
             if let Some(c) = existing {
@@ -609,11 +800,17 @@ pub fn manifest_json(allowed_origin: &str, exe_path: &str) -> serde_json::Value 
 /// Print a manifest for `allowed_origin` (e.g. `chrome-extension://<id>/`).
 /// Install path: registry
 /// `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.phantomvault.host`.
+/// M4: fail-closed on arbitrary origins — an attacker with local exec must
+/// not mint a valid manifest for `chrome-extension://malicious_id/`.
 pub fn print_manifest(allowed_origin: &str) {
+    if !valid_origin_format(allowed_origin.trim()) {
+        eprintln!("refusing to mint manifest for invalid origin (want chrome-extension://<32-char-id>/)");
+        return;
+    }
     let path = std::env::current_exe()
         .map(|p| p.to_string_lossy().into_owned())
         .unwrap_or_else(|_| "phantom_vault.exe".to_string());
-    println!("{}", manifest_json(allowed_origin, &path));
+    println!("{}", manifest_json(allowed_origin.trim(), &path));
 }
 
 /// `%LOCALAPPDATA%\PhantomVault` — home of the host manifest, the recorded
@@ -657,8 +854,9 @@ fn resolve_data_dir() -> Option<std::path::PathBuf> {
 }
 
 /// Extension sidecar (NOT encrypted — metadata only, no secrets):
-/// `{"total_fills":N,"last_filled":{"<id>":<unix_ts>}}`. Lives beside the
-/// vault so fill-audit + stats survive restarts without touching the model.
+/// `{"total_fills":N,"last_filled":{"<id>":<unix_ts>},"fill_counts":{"<id>":N}}`.
+/// Lives beside the vault so fill-audit + stats survive restarts without
+/// touching the model.
 const EXT_STATS_FILE: &str = "pv_ext_stats.json";
 
 fn read_ext_stats() -> serde_json::Value {
@@ -685,7 +883,17 @@ pub(crate) fn record_ext_fill(id: &str) {
     let now = crate::models::current_timestamp();
     st["total_fills"] = serde_json::json!(st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
     st["last_filled"][id.trim()] = serde_json::json!(now);
+    st["fill_counts"][id.trim()] = serde_json::json!(st.get("fill_counts").and_then(|m| m.get(id.trim())).and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
     write_ext_stats(&st);
+}
+
+/// Per-item usage for the desktop detail card: (fill count, last-fill ts).
+/// Metadata only — safe to show beside secrets. Pure read.
+pub(crate) fn fill_stats_for(id: &str) -> (u64, u64) {
+    let st = read_ext_stats();
+    let count = st.get("fill_counts").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0);
+    let last = st.get("last_filled").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0);
+    (count, last)
 }
 
 /// Lowercased registrable-ish domain of a URL (mirrors the extension's
@@ -827,9 +1035,11 @@ pub fn register_native_host(
     use crate::error::VaultError;
 
     let origin = allowed_origin.trim().to_string();
-    if !origin.starts_with("chrome-extension://") || !origin.ends_with('/') {
+    // L5: strict ID charset (matches valid_origin_format) — never write a
+    // wildcard/placeholder manifest to HKCU.
+    if !valid_origin_format(&origin) {
         return Err(VaultError::Sync(
-            "allowed origin must look like chrome-extension://<id>/".into(),
+            "allowed origin must look like chrome-extension://<32-lowercase-id>/".into(),
         ));
     }
     let dir = bridge_dir();
@@ -916,8 +1126,22 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
 
 /// Foreground entrypoint: `vault native-host`. Hello-cached unlock only
 /// (stdin is the protocol pipe), then serve frames until EOF.
+///
+/// Trust boundary (C2+C3+C4): argv[1] origin is enforced against the
+/// registered manifest; `unlocked` is re-derived every frame from the live
+/// Hello token + idle/max lifetimes (lock deletes the token → host exits).
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
+    const IDLE_SECS: u64 = 300;
+    const MAX_SECS: u64 = 8 * 3600;
+    let origin = std::env::args().nth(1).unwrap_or_default();
+    if origin != "native-host" && !origin_allowed(&origin) {
+        let frame = encode_frame(&err("origin not allowed"));
+        let _ = std::io::stdout().write_all(&frame);
+        let _ = std::io::stdout().flush();
+        bridge_log("origin rejected");
+        return 2;
+    }
     // Chrome spawns us with CWD=System32: jump back to the recorded data
     // dir so vault_hello.dpapi / my_secure_vault.enc resolve correctly.
     match resolve_data_dir() {
@@ -935,6 +1159,16 @@ pub fn serve_cli() -> i32 {
         let _ = std::io::stdout().write_all(&frame);
         let _ = std::io::stdout().flush();
     };
+    // H7: share the unlock throttle — an unthrottled second Argon2id path
+    // defeats the UI backoff. Sleep the persisted delay before touching DPAPI.
+    {
+        let bp = crate::security::backoff::default_path();
+        let fails = crate::security::backoff::read_failures(&bp);
+        let wait = crate::security::backoff::delay_for_failures(fails);
+        if wait > 0 {
+            std::thread::sleep(std::time::Duration::from_secs(wait));
+        }
+    }
     // No TTY prompt possible here — stdin belongs to the browser.
     let blob = match std::fs::read(HELLO_TOKEN_FILE) {
         Ok(b) => b,
@@ -982,7 +1216,52 @@ pub fn serve_cli() -> i32 {
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout();
+    let start = std::time::Instant::now();
+    let mut last_active = std::time::Instant::now();
+    // M1: watchdog — the loop blocks on stdin, so per-frame checks alone
+    // leave the decrypted vault in heap indefinitely while idle. Poll every
+    // 5 s: token deleted (app locked) / idle / max lifetime → hard exit.
+    // INTERACTION (H14): this bounds ALL secret serving, including
+    // reprompt-flagged entries the host still ships with the flag (the
+    // one-time reauth-token flow stays the follow-up).
+    let watch_start = start;
+    let watch_last = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    ));
+    let watch_last2 = watch_last.clone();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(5));
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let idle = now.saturating_sub(watch_last2.load(std::sync::atomic::Ordering::SeqCst));
+        let total = watch_start.elapsed().as_secs();
+        if !std::path::Path::new(HELLO_TOKEN_FILE).exists()
+            || idle > IDLE_SECS
+            || total > MAX_SECS
+        {
+            bridge_log("host watchdog expired/locked — exiting");
+            std::process::exit(0);
+        }
+    });
     loop {
+        // Live lock state: token deleted (app locked) / idle / max lifetime
+        // → zeroize + exit instead of serving secrets indefinitely.
+        let token_alive = std::path::Path::new(HELLO_TOKEN_FILE).exists();
+        if !token_alive
+            || last_active.elapsed().as_secs() > IDLE_SECS
+            || start.elapsed().as_secs() > MAX_SECS
+        {
+            use zeroize::Zeroize;
+            let mut m = master.expose_secret().clone();
+            m.zeroize();
+            bridge_log("host session expired/locked — exiting");
+            break;
+        }
         let req = match decode_frame(&mut input) {
             Ok(v) => v,
             Err(e) => {
@@ -997,8 +1276,9 @@ pub fn serve_cli() -> i32 {
                 continue;
             }
         };
-        // Cover integrity: a coerced session must never write into the decoy
-        // (which would prove the cover is fake) — refuse saves silently.
+        // Cover integrity (H9): a coerced session must never write into the
+        // decoy — refuse every persisting command, not just save_login
+        // (assert also has persist:true via the sign-count bump).
         if serving_decoy && req.get("cmd").and_then(|c| c.as_str()).unwrap_or("") == "save_login" {
             let frame = encode_frame(&err("save refused"));
             if output.write_all(&frame).and(output.flush()).is_err() {
@@ -1006,8 +1286,32 @@ pub fn serve_cli() -> i32 {
             }
             continue;
         }
-        let ans = answer(&mut vault, true, &req);
+        let unlocked = std::path::Path::new(HELLO_TOKEN_FILE).exists();
+        let ans = answer(&mut vault, unlocked, &req);
+        last_active = std::time::Instant::now();
+        watch_last.store(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs())
+                .unwrap_or(0),
+            std::sync::atomic::Ordering::SeqCst,
+        );
+        // H9: decoy cover must never persist (save_login early-returns
+        // above; assert's sign-count bump is caught here).
+        if serving_decoy && ans.persist {
+            let frame = encode_frame(&err("save refused"));
+            let _ = output.write_all(&frame);
+            let _ = output.flush();
+            continue;
+        }
         if ans.persist {
+            // M13: brake before the full re-seal.
+            if !save_rate_ok() {
+                let frame = encode_frame(&err("save rate limited"));
+                let _ = output.write_all(&frame);
+                let _ = output.flush();
+                continue;
+            }
             // Clone-detection honesty: a bumped counter MUST reach disk.
             if crate::storage::save_vault(
                 &vault,
@@ -1085,8 +1389,34 @@ mod tests {
     }
 
     #[test]
-    fn ping_reports_lock_state() {
-        let mut v = Vault::new();
+    fn fill_counts_and_verified_propagate() {
+        // Distinctive id: the CWD sidecar is shared with other tests running
+        // in parallel — only assert on keys this test owns.
+        let mut v = vault_with_login();
+        v.credentials[0].id = "verify-count-id".into();
+        assert!(v.set_verified("verify-count-id", true));
+        // Query entries carry the verified flag (popup ✅ source).
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "git"}));
+        assert_eq!(r.reply["entries"][0]["verified"], true);
+        // List metadata carries it too (All-items rows).
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "list"}));
+        let logins = r.reply["logins"].as_array().unwrap();
+        assert_eq!(logins.iter().find(|e| e["id"] == "verify-count-id").unwrap()["verified"], true);
+        // Two fills → count 2; helper agrees.
+        for _ in 0..2 {
+            let r = answer(&mut v, true, &serde_json::json!({"cmd": "filled", "id": "verify-count-id"}));
+            assert_eq!(r.reply["ok"], true);
+        }
+        let (n, last) = fill_stats_for("verify-count-id");
+        assert_eq!(n, 2);
+        assert!(last > 0);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
+        assert_eq!(r.reply["fill_counts"]["verify-count-id"], 2);
+        let _ = std::fs::remove_file(EXT_STATS_FILE);
+    }
+
+    #[test]
+    fn ping_reports_lock_state() {        let mut v = Vault::new();
         let r = answer(&mut v, false, &serde_json::json!({"cmd": "ping"}));
         assert_eq!(r.reply["unlocked"], false);
         assert!(!r.persist);
@@ -1233,32 +1563,40 @@ mod tests {
         use base64::Engine as _;
         let mut v = vault_with_passkey();
         let chal = base64::engine::general_purpose::STANDARD.encode(b"rp-challenge-123");
+        // C5: missing uv → deny even with good challenge.
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+        );
+        assert_eq!(r.reply["ok"], false);
+        assert_eq!(r.reply["error"], "user verification required");
         // Unknown rp → clean error.
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "evil.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "evil.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], false);
         // Locked → deny.
         let r = answer(
             &mut v,
             false,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], false);
         // Bad challenge → deny.
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": "!!!"}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": "!!!", "uv": true}),
         );
         assert_eq!(r.reply["ok"], false);
         // Happy path: valid signature over the challenge, counter 0→1.
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], true);
         assert!(r.persist);
@@ -1286,7 +1624,7 @@ mod tests {
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], true);
         // …but once trashed it leaves the auth set (same as missing).
@@ -1294,7 +1632,7 @@ mod tests {
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], false);
         assert_eq!(r.reply["error"], "no passkey for rp_id");
@@ -1311,7 +1649,7 @@ mod tests {
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "uv": true}),
         );
         assert_eq!(r.reply["ok"], false);
         assert_eq!(r.reply["credential_ids"].as_array().unwrap().len(), 2);
@@ -1320,7 +1658,7 @@ mod tests {
         let r = answer(
             &mut v,
             true,
-            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "credential_id": want}),
+            &serde_json::json!({"cmd": "assert", "rp_id": "github.com", "challenge": chal, "credential_id": want, "uv": true}),
         );
         assert_eq!(r.reply["ok"], true);
         assert_eq!(v.passkeys[1].sign_count, 1);
@@ -1487,5 +1825,37 @@ mod tests {
         assert_eq!(r.reply["ok"], false);
         let r = answer(&mut v, false, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": "c1"}));
         assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn c2_origin_format_strict() {
+        assert!(valid_origin_format("chrome-extension://abcdefghijklmnopqrstuvwxyzabcdef/"));
+        assert!(!valid_origin_format("chrome-extension://*/"));
+        assert!(!valid_origin_format("chrome-extension://abc/"));
+        assert!(!valid_origin_format("native-host"));
+        assert!(!valid_origin_format("https://github.com/"));
+    }
+
+    #[test]
+    fn c6_substring_domain_does_not_overwrite() {
+        let mut v = vault_with_login(); // octo / github.com
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "save_login", "username": "octo",
+                "password": "ATTACKER", "url": "https://co/"}),
+        );
+        assert_eq!(r.reply["ok"], false);
+        assert_eq!(v.credentials[0].password, "ghp_x");
+    }
+
+    #[test]
+    fn c7_single_char_and_trashed_never_dump() {
+        let mut v = vault_with_login();
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "a"}));
+        assert_eq!(r.reply["ok"], false);
+        v.credentials[0].deleted_at = Some(1);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "github"}));
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
     }
 }

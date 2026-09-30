@@ -37,6 +37,9 @@ pub struct ReleaseInfo {
     /// Detached Ed25519 signature (`<asset>.sig`, raw 64 bytes or hex).
     /// `None` = release ships no signature (download refuses).
     pub sig_url: Option<String>,
+    /// Release notes (`body`), cleaned + capped for the What's New dialog.
+    /// Empty when the release ships no notes — the dialog then says so.
+    pub notes: String,
 }
 
 /// `v1.2.3` / `1.2` / `1.2.3-beta.1` → numeric triple (suffix ignored for
@@ -173,6 +176,7 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
                     asset_size,
                     checksum_url,
                     sig_url,
+                    notes: clean_notes(doc.get("body").and_then(|b| b.as_str()).unwrap_or("")),
                 }))
             }
             None => Err(VaultError::Sync(format!(
@@ -180,6 +184,32 @@ pub fn check_latest() -> Result<Option<ReleaseInfo>> {
             ))),
         }
     })
+}
+
+/// Clean GitHub release notes for in-app display: trimmed, runs of blank
+/// lines collapsed to one, capped at 1500 chars (whole words). Pure.
+pub fn clean_notes(body: &str) -> String {
+    let mut out = String::new();
+    let mut blanks = 0u32;
+    for line in body.lines() {
+        if line.trim().is_empty() {
+            blanks += 1;
+            if blanks == 1 {
+                out.push('\n');
+            }
+            continue;
+        }
+        blanks = 0;
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    let out = out.trim().to_string();
+    if out.chars().count() <= 1500 {
+        return out;
+    }
+    let cut: String = out.chars().take(1490).collect();
+    let cut = cut.rsplit_once(char::is_whitespace).map(|(h, _)| h).unwrap_or(&cut);
+    format!("{cut}…")
 }
 
 /// Parse a checksum sidecar: GNU `SHA256SUMS` lines (`<hex>[ *]filename`)
@@ -296,8 +326,25 @@ pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
                 info.asset_size
             )));
         }
-        let dest = std::env::temp_dir().join(format!("phantom-vault-update-{}.exe", info.tag.replace(['/', '\\', ':'], "_")));
-        std::fs::write(&dest, &bytes).map_err(|e| VaultError::Sync(format!("stage write failed: {e}")))?;
+        // H11: unpredictable stage name (OsRng suffix) + create_new so a
+        // pre-planted %TEMP% symlink/name can't be swapped under us.
+        use rand_core::RngCore;
+        let mut nonce = [0u8; 8];
+        rand_core::OsRng.fill_bytes(&mut nonce);
+        let dest = std::env::temp_dir().join(format!(
+            "phantom-vault-update-{}-{:016x}.exe",
+            info.tag.replace(['/', '\\', ':'], "_"),
+            u64::from_le_bytes(nonce)
+        ));
+        std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&dest)
+            .and_then(|mut f| {
+                use std::io::Write;
+                f.write_all(&bytes)
+            })
+            .map_err(|e| VaultError::Sync(format!("stage write failed: {e}")))?;
         // Integrity gate BEFORE anything may execute or replace.
         let sums_url = info.checksum_url.clone().ok_or_else(|| {
             VaultError::Sync("release ships no checksum file — refusing unverified binary".to_string())
@@ -372,7 +419,15 @@ pub fn stage_swap_script(staged_exe: &std::path::Path, tag: &str) -> Result<std:
         }
     }
     let pid = std::process::id();
-    let bat = std::env::temp_dir().join(format!("phantom-vault-apply-{}.bat", tag.replace(['/', '\\', ':'], "_")));
+    // H11: randomize the swap-script name too (same %TEMP% plant concern).
+    use rand_core::RngCore as _;
+    let mut nonce2 = [0u8; 8];
+    rand_core::OsRng.fill_bytes(&mut nonce2);
+    let bat = std::env::temp_dir().join(format!(
+        "phantom-vault-apply-{}-{:016x}.bat",
+        tag.replace(['/', '\\', ':'], "_"),
+        u64::from_le_bytes(nonce2)
+    ));
     let script = format!(
         "@echo off\r\n\
          :wait\r\n\
@@ -405,6 +460,18 @@ mod tests {
         assert!(!is_newer("v1.2.2", "1.2.3"));
         assert!(!is_newer("garbage", "1.2.3"));
         assert!(!is_newer("v9.9.9", "garbage"));
+    }
+
+    #[test]
+    fn notes_cleaned_and_capped() {
+        assert_eq!(clean_notes("  hello  \n\n\n\nworld  "), "hello\n\nworld");
+        assert_eq!(clean_notes(""), "");
+        assert_eq!(clean_notes("   \n  "), "");
+        let long = "word ".repeat(400);
+        let out = clean_notes(&long);
+        assert!(out.chars().count() <= 1501);
+        assert!(out.ends_with('…'));
+        assert!(!out.contains("  "));
     }
 
     #[test]

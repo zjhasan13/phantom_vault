@@ -5,6 +5,10 @@ test_vault.enc
 # NEVER commit these — sync pushes ciphertext via API, not via git.
 *.dpapi
 *.enc
+*.enc.*
+*.enc.bak
+my_secure_vault.*
+vault_hello.dpapi
 sync_repo.txt
 sync_head.sha
 crash.log
@@ -13,6 +17,8 @@ duress.dpapi
 *.bak.enc
 # Runtime artifacts: access trail (metadata) + dev debug logs. Never push.
 access.log
+access.log.head
+access_log.key.dpapi
 debug.log
 # Local scheduler/UI prefs (machine-specific state, recreated on boot).
 backup_schedule.json

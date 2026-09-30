@@ -131,28 +131,34 @@ pub fn build_tabbed_sequence(fields: &[&str], press_enter: bool) -> Vec<KeyStrok
 }
 
 /// Type N fields joined by Tab into the focused control (worker thread).
-/// Settles like `type_sequence`, then walks the fields with guarded Tabs.
+/// C9: target is captured BEFORE the settle sleeps; any focus change during
+/// the sleep aborts, and every field re-checks (per-char for secrets).
 pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
     if fields.iter().all(|f| sanitize_field(f).is_empty()) {
         return Err(VaultError::AutoType("nothing to type".into()));
     }
+    let expected = foreground_token();
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
+    ensure_focus(expected)?;
     let mut rng = OsRng;
-    let target = foreground_token();
+    let target = expected;
     for (i, f) in fields.iter().enumerate() {
         if i > 0 {
             ensure_focus(target)?;
             std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
             press_vk(VK_TAB, &mut rng)?;
             std::thread::sleep(Duration::from_millis(TAB_POST_MS));
+            ensure_focus(target)?;
         }
         for unit in field_units(f) {
+            ensure_focus(target)?;
             press_unicode(unit, &mut rng)?;
             sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
         }
     }
     if press_enter {
+        ensure_focus(target)?;
         press_vk(VK_RETURN, &mut rng)?;
     }
     Ok(())
@@ -222,10 +228,10 @@ fn press_vk(vk: VIRTUAL_KEY, rng: &mut OsRng) -> Result<()> {
     Ok(())
 }
 
-/// Foreground-window token for the focus guard below. Captured after the
-/// settle sleeps (target assumed focused), re-checked before every field
-/// after the first: if the user Alt+Tabbed mid-type, we abort instead of
-/// spraying the password into a chat box. HWND reuse errs to abort (safe).
+/// Foreground-window token for the focus guard below. Captured BEFORE the
+/// settle sleeps, re-checked after and per character: if the user Alt+Tabbed
+/// mid-type, we abort instead of spraying the password into a chat box.
+/// HWND reuse errs to abort (safe).
 fn foreground_token() -> isize {
     use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
     // SAFETY: no buffers; null handle = no foreground window.
@@ -243,13 +249,17 @@ fn ensure_focus(target: isize) -> Result<()> {
 
 /// Type arbitrary text (e.g. a live TOTP code) with the same per-key
 /// down/hold/up discipline. Used by the 2FA auto-chain watcher.
+/// C9: same focus guard as the main paths (was unguarded).
 pub fn type_text_raw(text: &str, press_enter: bool) -> Result<()> {
+    let target = foreground_token();
     let mut rng = OsRng;
     for unit in field_units(text) {
+        ensure_focus(target)?;
         press_unicode(unit, &mut rng)?;
         sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
     }
     if press_enter {
+        ensure_focus(target)?;
         press_vk(VK_RETURN, &mut rng)?;
     }
     Ok(())
@@ -263,13 +273,16 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     if sanitize_field(password).is_empty() {
         return Err(VaultError::AutoType("nothing to type".into()));
     }
+    // C9: capture BEFORE the unguarded sleeps; Alt+Tab during settle aborts.
+    let target = foreground_token();
     // 1. DWM minimize-animation settle, then the original focus delay.
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
+    ensure_focus(target)?;
     let mut rng = OsRng;
-    let target = foreground_token();
     // 2. Username, char by char (verified UTF-16 units, no translation).
     for unit in field_units(username) {
+        ensure_focus(target)?;
         press_unicode(unit, &mut rng)?;
         sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
     }
@@ -279,11 +292,14 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(TAB_PRE_MS));
     press_vk(VK_TAB, &mut rng)?;
     std::thread::sleep(Duration::from_millis(TAB_POST_MS));
-    // 4. Password, char by char.
+    ensure_focus(target)?;
+    // 4. Password, char by char with per-char re-check.
     for unit in field_units(password) {
+        ensure_focus(target)?;
         press_unicode(unit, &mut rng)?;
         sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
     }
+    ensure_focus(target)?;
     press_vk(VK_RETURN, &mut rng)?;
     Ok(())
 }

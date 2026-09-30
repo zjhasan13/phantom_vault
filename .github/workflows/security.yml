@@ -10,7 +10,19 @@ jobs:
   audit:
     runs-on: windows-latest
     steps:
+      # TODO(SHA-pin): pin checkout to an immutable commit SHA (Dependabot
+      # can't open PRs against SHA pins without automation; tag + weekly
+      # audit is the interim posture).
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+
+  build-and-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test

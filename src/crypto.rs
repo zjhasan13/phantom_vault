@@ -187,6 +187,15 @@ pub fn decrypt_vault_hybrid_legacy(
 ///       + [kem_ct 1088B] + [payload_nonce 24B] + [ct+tag].
 /// Fresh ML-KEM keypair per save; the DK travels INSIDE the container,
 /// sealed by the Argon2id key — no machine-bound sidecar needed.
+///
+/// H5 NOTE (honest scope): the DK is wrapped under the Argon2id key, so the
+/// chain argon2_key ⇒ dk ⇒ pq_secret ⇒ hybrid means a guessed master
+/// password yields the full key without touching ML-KEM. The PQ layer is a
+/// key-rotation / harvest-now-decrypt-later hedge on the container key, NOT
+/// a second factor. A machine-bound DPAPI pepper was deliberately NOT mixed
+/// into this portable container (it would brick cross-device sync); Argon2id
+/// stays at 64 MiB/t=3/p=4 for unlock-latency + test-suite reasons — a param
+/// bump needs container versioning and is tracked separately.
 pub fn encrypt_vault_portable(
     master_password: &str,
     plaintext: &[u8],
@@ -266,11 +275,12 @@ pub fn decrypt_vault_portable(
 
     let mut argon2_key = derive_key(master_password, salt)?;
     let dk_bytes = unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk)?;
-    let pq_secret = PQ::decapsulate(&dk_bytes, pq_ct)
+    // H6: the 2400B decapsulation key must zeroize on EVERY path, including
+    // the decapsulate-failure early return (corrupt/tampered pq_ct).
+    let dk_guard = crate::core::pq_hybrid::PqDecapsulationBytes(dk_bytes);
+    let pq_secret = PQ::decapsulate(dk_guard.expose(), pq_ct)
         .map_err(|e| format!("PQ decapsulate: {e}"))?;
-    // Scrub the recovered DK the moment decapsulation is done.
-    let mut dk_bytes = dk_bytes;
-    dk_bytes.zeroize();
+    drop(dk_guard);
     let hybrid = PQ::combine(&argon2_key, &pq_secret)
         .map_err(|e| format!("Hybrid combine: {e}"))?;
     argon2_key.zeroize();

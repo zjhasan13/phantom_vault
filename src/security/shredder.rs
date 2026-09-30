@@ -34,8 +34,9 @@ fn overwrite_passes(path: &Path, len: u64) -> std::io::Result<u64> {
     file.seek(SeekFrom::Start(0))?;
     write_random(&mut file, len)?;
     file.flush()?;
-    // Drop pagecache intent: sync to platter before delete.
-    let _ = file.sync_all();
+    // H2: durability is the whole guarantee — a failed FlushFileBuffers
+    // must FAIL the shred, never proceed to delete and report Ok.
+    file.sync_all()?;
     Ok(len)
 }
 
@@ -78,24 +79,32 @@ pub fn shred_file(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// Overwrite-in-place write: if the file exists, its old bytes get the 3-pass
-/// treatment keyed to the OLD length before the new content lands. New files
-/// are written directly (nothing stale to kill).
-/// Crash-safe atomic replace: the payload lands in a sibling `.tmp` file
-/// (same volume → `rename` is atomic), then swaps over the target. A crash
-/// leaves either the complete old file or the complete new file — never a
-/// torn primary. (Prior generations already live in rotated `.bak` files, so
-/// dropping the in-place overwrite loses no recoverability: old ciphertext
-/// is encrypted under the same master either way.)
+/// Crash-safe atomic replace: the payload lands in a randomly-named sibling
+/// temp file (same volume → `rename` is atomic), then swaps over the target.
+/// A crash leaves either the complete old file or the complete new file —
+/// never a torn primary. NOTE (H3): this does NOT overwrite old blocks
+/// in place (SSD/journaling make that unreliable); recoverability comes
+/// from rotated `.bak` generations, all ciphertext under the same master.
 pub fn secure_write(path: &Path, data: &[u8]) -> Result<(), String> {
     let file_name = path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| "secure_write: bad file name".to_string())?;
-    let tmp = path.with_file_name(format!("{file_name}.tmp"));
+    // H3: unpredictable temp name + create_new (no symlink/plant collision).
+    use rand_core::RngCore;
+    let mut nonce = [0u8; 8];
+    rand_core::OsRng.fill_bytes(&mut nonce);
+    let tmp = path.with_file_name(format!(
+        "{file_name}.{:016x}.tmp",
+        u64::from_le_bytes(nonce)
+    ));
     {
         use std::io::Write;
-        let mut f = std::fs::File::create(&tmp).map_err(|e| format!("tmp create: {e}"))?;
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .map_err(|e| format!("tmp create: {e}"))?;
         f.write_all(data).map_err(|e| format!("tmp write: {e}"))?;
         f.flush().map_err(|e| format!("tmp flush: {e}"))?;
         f.sync_all().map_err(|e| format!("tmp sync: {e}"))?;
