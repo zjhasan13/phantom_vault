@@ -94,6 +94,12 @@
 - [ ] QuickBar ⏱️ copies a fresh live code (standalone + embedded); reprompt-gated logins detour to the modal.
 - [ ] Update available → `📋 What's New` shows release notes → Download & Stage → Restart swaps.
 
+## 13. Zero-Knowledge GitHub Sync (Private Repo)
+- [ ] Fresh repo first push: 404 takes the create path (no error); repo gains only `vault.enc` ciphertext + generic `chore: vault sync` message.
+- [ ] Conflict: remote changed elsewhere → push refuses with "pull first" (never blind-overwrites); pull → merge → push succeeds.
+- [ ] Token: DPAPI-sealed `github_token.dpapi`, never logged; proxy env routes both sync + HIBP (Tor-compatible).
+- [ ] Oversize/corrupt remote (>48MB, bad base64) fails loud with guidance, never half-merges.
+
 ---
 
 **Sign-off:** tester __________ date __________ commit __________ (all boxes checked)
