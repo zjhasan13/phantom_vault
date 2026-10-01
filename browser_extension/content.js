@@ -800,13 +800,63 @@
     }
   }
 
+  // Zero false-positive badges: email/username fields get a badge ONLY when
+  // (a) the vault actually holds credentials for this domain, OR (b) a
+  // password field is present (login/registration forms). Newsletter /
+  // contact / profile forms (no match + no password) stay badge-free.
+  // Probe runs once per page; while unknown (locked/bridge fail) we fall
+  // back to rule (b) so login pages never lose their badge.
+  // 0 = unknown, 1 = match, -1 = confirmed none.
+  let pageMatchState = 0;
+  let pageMatchProbed = false;
+  function probePageMatch() {
+    if (pageMatchProbed) return;
+    pageMatchProbed = true;
+    (async () => {
+      try {
+        if (isBlocked() || phishingRefuse() || !location.host) return;
+        const logins = await queryHost("PV_QUERY", pageBase());
+        pageMatchState = (logins && logins.length) ? 1 : -1;
+        if (pageMatchState === -1) removeUserBadges();
+        else scan(); // match confirmed ⇒ place user badges skipped earlier
+        console.log(`PV badge gate: ${pageMatchState === 1 ? "match" : "no match"} for ${pageBase()}`);
+      } catch (_) {}
+    })();
+  }
+  // Strip badges already placed on user/email fields (no-match pages).
+  // Uses the button->field map; clears the pvBadged flag so a later
+  // confirmed match can re-place them.
+  function removeUserBadges() {
+    try {
+      const f = findFields();
+      const pwSet = new Set([...f.pass, ...f.newPass]);
+      if (pwSet.size) return; // password present ⇒ rule (b) keeps them
+      const userSet = new Set(f.users);
+      for (const [b, field] of [...badges]) {
+        try {
+          if (userSet.has(field)) {
+            b.remove();
+            badges.delete(b);
+            delete field.dataset.pvBadged;
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
   function scan() {
     if (isBlocked()) return;
     // Badges ride every fillable field (the icon-click-only mode needs the
     // badge present as the SOLE trigger — it must exist even though passive
     // focus stays silent). Reposition pass keeps fixed overlays glued.
     const f = findFields();
-    [...f.pass, ...f.users, ...f.cards].forEach(placeBadge);
+    probePageMatch();
+    [...f.pass, ...f.cards].forEach(placeBadge);
+    // User/email badges need a reason: known match, or a password field
+    // beside them (unknown state falls back to the password rule).
+    const hasPass = f.pass.length > 0 || f.newPass.length > 0;
+    if (pageMatchState === 1 || hasPass) {
+      f.users.forEach(placeBadge);
+    }
     f.newPass.forEach(placeDice);
     repositionBadges();
   }

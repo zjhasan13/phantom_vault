@@ -60,7 +60,7 @@ async function sessionState() {
     if (!s.pv_last_active) return { ok: true, locked: false, reason: "fresh" };
     const idleMs = Date.now() - Number(s.pv_last_active);
     if (idleMs > mins * 60 * 1000) return { ok: true, locked: true, reason: "inactive", idleMs };
-    return { ok: true, locked: false, reason: "active" };
+    return { ok: true, locked: false, reason: "active", idleMs };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
