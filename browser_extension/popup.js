@@ -46,6 +46,10 @@
       retry_btn: "🔄 Retry",
       lock_timeout_h: "⏱️ Auto-Lock Timeout",
       lock_timeout_hint: "Lock after inactivity. A locked desktop app always locks instantly.",
+      quick_pin_h: "🔐 Quick Unlock",
+      quick_pin_sub: "Enter your extension PIN (set in the desktop app).",
+      quick_pin_go: "🔓 Unlock",
+      quick_pin_wrong: "❌ Invalid PIN. Please try again.",
       copy2fa: "📋 Copy 2FA", no_match: (h) => `No credentials match “${h}”.`,
       empty_title: "No credentials match this domain",
       empty_save: "➕ Save login for this site",
@@ -86,6 +90,10 @@
       retry_btn: "🔄 পুনরায়",
       lock_timeout_h: "⏱️ অটো-লক সময়",
       lock_timeout_hint: "নিষ্ক্রিয়তার পর লক হবে। ডেস্কটপ লক হলে সাথে সাথে লক হবে।",
+      quick_pin_h: "🔐 কুইক আনলক",
+      quick_pin_sub: "এক্সটেনশন PIN দাও (ডেস্কটপ অ্যাপে সেট করা)।",
+      quick_pin_go: "🔓 আনলক",
+      quick_pin_wrong: "❌ ভুল PIN। আবার চেষ্টা করো।",
       copy2fa: "📋 2FA কপি", no_match: (h) => `“${h}” এর কোনো তথ্য নেই।`,
       empty_title: "এই ডোমেইনের কোনো তথ্য নেই",
       empty_save: "➕ এই সাইটের লগইন সংরক্ষণ করো",
@@ -523,35 +531,111 @@
       return !!(pong && pong.ok && pong.unlocked !== false);
     } catch (_) { return false; }
   }
-  function showSyncLock(sub) {
+  // Single choke-point for the lock overlay (CSS-specificity lesson: always
+  // set BOTH the class and the inline style, and log every transition).
+  function setLockVisible(v, why) {
+    const ov = document.getElementById("extLock");
+    ov.classList.toggle("hidden", !v);
+    ov.style.display = v ? "flex" : "none";
+    console.log(`PV lock overlay ${v ? "SHOWN" : "HIDDEN"} (${why || "?"})`);
+  }
+  function showDesktopLock(sub) {
     document.getElementById("extLockTitle").textContent = t("sync_locked");
     document.getElementById("extLockSub").textContent = sub || t("sync_locked_sub");
-    document.getElementById("extRetryBtn").textContent = t("retry_btn");
+    document.getElementById("extPinInput").style.display = "none";
+    document.getElementById("extUnlockBtn").style.display = "none";
+    const rb = document.getElementById("extRetryBtn");
+    rb.style.display = "";
+    rb.textContent = t("retry_btn");
     document.getElementById("extLockMsg").textContent = "";
-    document.getElementById("extLock").classList.remove("hidden");
+    setLockVisible(true, "desktop-lock");
   }
-  function hideSyncLock() {
-    document.getElementById("extLock").classList.add("hidden");
+  async function extPinHash() {
+    // Verify-only: hash sealed in the desktop app, managed in its Settings.
+    // Empty when unset/unreachable/locked — no PIN enrolled, no PIN asked.
+    try {
+      const res = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_EXT_PIN" }), 5000, "ext pin");
+      return (res && res.ok && res.hash) || "";
+    } catch (_) { return ""; }
+  }
+  async function sha256hex(s) {
+    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
+    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+  }
+  function showPinLock() {
+    document.getElementById("extLockTitle").textContent = t("quick_pin_h");
+    document.getElementById("extLockSub").textContent = t("quick_pin_sub");
+    const input = document.getElementById("extPinInput");
+    input.style.display = "";
+    input.value = "";
+    const ub = document.getElementById("extUnlockBtn");
+    ub.style.display = "";
+    ub.textContent = t("quick_pin_go");
+    document.getElementById("extRetryBtn").style.display = "none";
+    const msg = document.getElementById("extLockMsg");
+    msg.style.color = "";
+    msg.textContent = "";
+    setLockVisible(true, "quick-pin");
+    input.focus();
+    // Re-armable verify loop (one-shot handlers brick the popup — never again).
+    const arm = () => {
+      ub.onclick = async () => {
+        try {
+          const entered = input.value.trim();
+          console.log("PV quick-PIN attempt");
+          const hash = await extPinHash();
+          const ok = !!hash && (await sha256hex(entered)) === hash;
+          if (!ok) console.log("PV quick-PIN mismatch");
+          finish(ok);
+        } catch (err) { console.log("PV quick-PIN error:", err); finish(false); }
+      };
+      input.onkeydown = (ev) => { if (ev.key === "Enter") ub.click(); };
+    };
+    const finish = async (ok) => {
+      ub.onclick = null;
+      input.onkeydown = null;
+      if (ok) {
+        try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
+        input.value = "";
+        setLockVisible(false, "quick-pin-ok");
+        refresh();
+        return;
+      }
+      msg.style.color = "#ff6b6b";
+      msg.textContent = t("quick_pin_wrong");
+      input.value = "";
+      input.focus();
+      arm(); // loop: next attempt works
+    };
+    arm();
   }
   async function ensureUnlocked() {
-    console.log("PV popup v4 (desktop-synced) boot");
+    console.log("PV popup v5 (quick-pin) boot");
+    let inactive = false;
     try {
       const st = await withTimeout(
         chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }), 3000, "session");
-      if (st && st.ok && st.locked) {
-        console.log("PV session inactive — lock shown");
-        showSyncLock(t("sync_inactive"));
+      inactive = !!(st && st.ok && st.locked);
+    } catch (e) { console.log("PV session check failed:", (e && e.message) || e); }
+    if (!(await desktopReachable())) {
+      console.log("PV desktop unreachable — lock shown");
+      showDesktopLock();
+      return false;
+    }
+    if (inactive) {
+      // Inactivity lock: quick-PIN when enrolled, else desktop presence
+      // alone re-opens (a lock without PIN would be pure theater).
+      if (await extPinHash()) {
+        console.log("PV session inactive — PIN shown");
+        showPinLock();
         return false;
       }
-    } catch (e) { console.log("PV session check failed:", (e && e.message) || e); }
-    if (await desktopReachable()) {
-      try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
-      hideSyncLock();
-      return true;
+      console.log("PV session inactive, no PIN enrolled — reopening on desktop presence");
     }
-    console.log("PV desktop unreachable — lock shown");
-    showSyncLock();
-    return false;
+    try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
+    setLockVisible(false, "open");
+    return true;
   }
   // Retry (wired once): re-probe desktop, restart idle clock, load vault.
   document.getElementById("extRetryBtn").addEventListener("click", async () => {
@@ -559,10 +643,11 @@
     msg.style.color = "";
     msg.textContent = "⏳ …";
     if (await desktopReachable()) {
-      try { await chrome.runtime.sendMessage({ type: "PV_UNLOCKED_TOUCH" }); } catch (_) {}
-      hideSyncLock();
+      // NOTE: no UNLOCKED_TOUCH here — it would clear the inactivity flag
+      // before ensureUnlocked reads it, silently skipping the quick-PIN.
       msg.textContent = "";
-      refresh();
+      const ok = await ensureUnlocked();
+      if (ok) refresh();
     } else {
       msg.style.color = "#ff6b6b";
       msg.textContent = t("sync_still_locked");
@@ -795,6 +880,60 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(render, 200);
   });
+  // ---------- standalone password generator ----------
+  // Same CSPRNG core as the page dice (no ambiguous 0O1lI). Output shown
+  // in-popup for registration flows; Copy uses the clipboard (auto-clear
+  // happens on the page side; here the panel re-masks on close/render).
+  const genToggle = document.getElementById("genToggle");
+  const genPanel = document.getElementById("genPanel");
+  const genOut = document.getElementById("genOut");
+  const genLen = document.getElementById("genLen");
+  const genSym = document.getElementById("genSym");
+  let genSymbols = true;
+  function genPassword(len, symbols) {
+    const base = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
+    const chars = symbols ? base + "!@#$%^&*-_+=" : base;
+    const buf = new Uint32Array(len);
+    crypto.getRandomValues(buf);
+    return [...buf].map((x) => chars[x % chars.length]).join("");
+  }
+  function genRefresh() {
+    const len = Math.min(64, Math.max(8, Number(genLen.value) || 20));
+    genOut.textContent = genPassword(len, genSymbols);
+    touchActivityPing();
+  }
+  chrome.storage.local.get({ gen_len: 20, gen_sym: true }).then((s) => {
+    genLen.value = String([12, 16, 20, 32].includes(Number(s.gen_len)) ? s.gen_len : 20);
+    genSymbols = s.gen_sym !== false;
+    genSym.textContent = genSymbols ? "!@# ✓" : "!@# ✕";
+  }).catch(() => {});
+  genToggle.addEventListener("click", () => {
+    const opening = genPanel.classList.contains("hidden");
+    genPanel.classList.toggle("hidden");
+    if (opening) genRefresh();
+    else genOut.textContent = "••••••••";
+  });
+  document.getElementById("genNew").addEventListener("click", (ev) => { ev.stopPropagation(); genRefresh(); });
+  genLen.addEventListener("change", () => {
+    chrome.storage.local.set({ gen_len: Number(genLen.value) || 20 }).catch(() => {});
+    genRefresh();
+  });
+  genSym.addEventListener("click", () => {
+    genSymbols = !genSymbols;
+    genSym.textContent = genSymbols ? "!@# ✓" : "!@# ✕";
+    chrome.storage.local.set({ gen_sym: genSymbols }).catch(() => {});
+    genRefresh();
+  });
+  document.getElementById("genCopy").addEventListener("click", async (ev) => {
+    ev.stopPropagation();
+    touchActivityPing();
+    const btn = ev.currentTarget;
+    try {
+      await navigator.clipboard.writeText(genOut.textContent || "");
+      btn.textContent = "✅";
+      setTimeout(() => { btn.textContent = "📋"; }, 1500);
+    } catch (_) { btn.textContent = "⚠️"; }
+  });
   // Per-site "never suggest": appends this host to blocked_domains (the
   // same list content.js enforces — badges, dropdowns, autofill all stop).
   if (neverBtn) {
@@ -926,8 +1065,10 @@
   function buildLoginRow(e, idx) {
     const uname = e.username || e.title || "(untitled)";
     // ✅ = user-confirmed working password (never the password itself —
-    // suggestions stay screen-share safe by design).
-    const sub = [e.reprompt ? "🔒" : "", e.title || "", e.verified ? "✅" : ""].filter(Boolean).join(" ");
+    // suggestions stay screen-share safe by design). Health icons mirror
+    // the desktop audit kinds (breach N/A here — needs the desktop audit).
+    const healthIcon = e.health === "reused" ? "♻️" : e.health === "weak" ? "🟡" : e.health === "stale" ? "🕰️" : "";
+    const sub = [e.reprompt ? "🔒" : "", e.title || "", e.verified ? "✅" : "", healthIcon].filter(Boolean).join(" ");
     const row = brandRow(brandIcon(e), uname, sub);
     if (e.totp) {
       const badge = document.createElement("div");
@@ -985,7 +1126,8 @@
   // auto-clear) so All-items rows show authenticator codes too.
   function buildLoginMetaRow(e) {
     const idx = rows.length;
-    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)") + (e.verified ? " ✅" : ""), e.username || "");
+    const healthIcon = e.health === "reused" ? " ♻️" : e.health === "weak" ? " 🟡" : e.health === "stale" ? " 🕰️" : "";
+    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)") + (e.verified ? " ✅" : "") + healthIcon, e.username || "");
     const fillOne = async () => {
       try {
         const full = await fetchEntry(1, e.id);

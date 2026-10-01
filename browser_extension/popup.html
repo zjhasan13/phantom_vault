@@ -65,6 +65,9 @@
               font-family: inherit; resize: vertical; }
     .hint { color: #5b6589; font-size: 11px; margin-top: 6px; }
     .hidden { display: none; }
+    /* Specificity guard: #extLock sets display:flex (1-0-0) which beats
+       .hidden (0-1-0) — without this the lock overlay can never hide. */
+    #extLock.hidden { display: none; }
     #extLock { position: fixed; inset: 0; z-index: 50; background: #0b1226;
       display: flex; align-items: center; justify-content: center; }
     #extLock .lockcard { width: 260px; text-align: center; background: #0d1430;
@@ -84,6 +87,8 @@
       <div class="lockart">🔐</div>
       <div class="t" id="extLockTitle">🔒 Vault is Locked</div>
       <div class="u" id="extLockSub" style="margin:4px 0 10px">Unlock PhantomVault desktop app.</div>
+      <input id="extPinInput" class="pvinput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="display:none" />
+      <button id="extUnlockBtn" class="wide" style="width:100%;display:none">🔓 Unlock</button>
       <button id="extRetryBtn" class="wide" style="width:100%">🔄 Retry</button>
       <div class="hint" id="extLockMsg"></div>
     </div>
@@ -111,6 +116,25 @@
     <div id="suggestList"></div>
     <div id="allHead" class="sechead"></div>
     <div id="allList"></div>
+    <div class="row" style="margin-top:8px">
+      <button id="genToggle" class="wide">🎲 Generator</button>
+      <div id="genPanel" class="hidden" style="margin-top:6px">
+        <div class="pwline" style="margin-left:0">
+          <code id="genOut" class="pwDots">••••••••</code>
+          <button id="genNew" class="eye" title="Generate new">🎲</button>
+          <button id="genCopy" class="eye" title="Copy">📋</button>
+        </div>
+        <div class="filterrow" style="margin-top:6px;margin-bottom:0">
+          <select id="genLen" title="Length">
+            <option value="12">12</option>
+            <option value="16">16</option>
+            <option value="20" selected>20</option>
+            <option value="32">32</option>
+          </select>
+          <button id="genSym" class="eye" title="Symbols on/off">!@# ✓</button>
+        </div>
+      </div>
+    </div>
     <div id="status">Loading…</div>
   </div>
   <div id="statsPane" class="hidden">
