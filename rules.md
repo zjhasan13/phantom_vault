@@ -301,9 +301,9 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 304 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 307 tests green)
 
-Scale: 60+ Rust modules (65 `.rs` files), 304 unit tests passing / 0 failing
+Scale: 60+ Rust modules (65 `.rs` files), 307 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
 (Counts verified 2026-10-01; update with `cargo test` output, not memory.)
 
@@ -393,6 +393,18 @@ Architecture (all shipped, all tested):
   the kind field; the detail pane shows the full badge string. Verified
   ✅ badge + "Mark as working" toggle in Column 3 (instant refresh, no
   restart); auto-verify flips it at 3 fills (see bridge bullet).
+- Janitor review queue (scoreboard 🧹 button): unverified + never-filled
+  logins only (`janitor_ids` pure + one sidecar read per build), pairs
+  with select-mode bulk trash. Read-only under decoy.
+- Live HIBP gate on login save: k-anonymity `check_password` AFTER the
+  save lands, warn-only notification; offline toggle + kill-switch skip
+  silently; decoy saves return before the gate.
+- One-click reused rotation (scoreboard button): every shared login
+  password becomes unique (history kept, one re-seal via `run_bulk_op`
+  + note suffix); vault-side only — UI states website updates explicitly.
+- Passkey discovery v1 (`passkey_lookup` host cmd + page-world WebAuthn
+  observer): metadata only (user, sign_count), ceremony untouched.
+  Full ceremony relay is a marked follow-up, not this.
 - Anti-photography Moiré lens guard + peep-hole hold-to-reveal; blackout
   guard default OFF (`blackout.pref`).
 - Native Messaging Host bridge (`windows_native/native_host.rs`): Hello-
