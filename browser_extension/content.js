@@ -521,42 +521,83 @@
     // not steal focus from the input (React/SPA pages re-render or dismiss on
     // blur, which otherwise cancels the row click before it fires).
     dropEl.addEventListener("mousedown", (e) => { e.preventDefault(); });
-    // Indexed binding: row N strictly fires matches[N].onPick (closure-per-row
-    // over a sliced copy once mis-fired when the list re-rendered mid-click).
-    const items = rows.slice(0, 6);
-    items.forEach((r, index) => {
-      const b = document.createElement("button");
-      b.type = "button";
-      b.dataset.pvIndex = String(index);
-      b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
-        "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;";
-      b.innerHTML = "";
-      // Service brand-icon circle (Bitwarden row layout).
-      const icon = document.createElement("div");
-      icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
-        "color:#080c14;font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:center;";
-      icon.textContent = brandLetter(r.entry || {});
-      const tx = document.createElement("div");
-      tx.style.cssText = "flex:1;min-width:0;";
-      const t = document.createElement("div");
-      t.style.fontWeight = "700";
-      t.textContent = r.title;
-      const s = document.createElement("div");
-      s.style.cssText = "color:#8e99c0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-      s.textContent = r.sub;
-      tx.append(t, s);
-      b.append(icon, tx);
-      b.addEventListener("mouseenter", () => { b.style.background = "#1a2333"; });
-      b.addEventListener("mouseleave", () => { b.style.background = "transparent"; });
-      b.addEventListener("mousedown", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pick = items[index] && items[index].onPick;
-        if (typeof pick === "function") pick();
-        closeDrop();
+    // Searchable dropdown: filter input on top (20+ same-domain accounts).
+    // Re-renders row buttons live; indexed binding rebuilt per render so a
+    // mid-click re-render can never mis-fire (same lesson as before).
+    const list = document.createElement("div");
+    const paint = (filter) => {
+      list.innerHTML = "";
+      const q = filter.trim().toLowerCase();
+      const items = rows
+        .filter((r) => !q || ((r.title || "") + " " + (r.sub || "")).toLowerCase().includes(q))
+        .slice(0, 8);
+      if (!items.length) {
+        const none = document.createElement("div");
+        none.style.cssText = "color:#8e99c0;font-size:12px;padding:8px 10px;";
+        none.textContent = "No match — refine the filter.";
+        list.append(none);
+        return;
+      }
+      items.forEach((r, index) => {
+        const b = document.createElement("button");
+        b.type = "button";
+        b.dataset.pvIndex = String(index);
+        b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
+          "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;";
+        // Service brand-icon circle (Bitwarden row layout).
+        const icon = document.createElement("div");
+        icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
+          "color:#080c14;font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:center;";
+        icon.textContent = brandLetter(r.entry || {});
+        const tx = document.createElement("div");
+        tx.style.cssText = "flex:1;min-width:0;";
+        const t = document.createElement("div");
+        t.style.fontWeight = "700";
+        t.textContent = r.title;
+        const s = document.createElement("div");
+        s.style.cssText = "color:#8e99c0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
+        s.textContent = r.sub;
+        tx.append(t, s);
+        b.append(icon, tx);
+        b.addEventListener("mouseenter", () => { b.style.background = "#1a2333"; });
+        b.addEventListener("mouseleave", () => { b.style.background = "transparent"; });
+        b.addEventListener("mousedown", (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const pick = items[index] && items[index].onPick;
+          if (typeof pick === "function") pick();
+          closeDrop();
+        });
+        list.append(b);
       });
-      dropEl.append(b);
-    });
+    };
+    if (rows.length > 1) {
+      const head = document.createElement("div");
+      head.style.cssText = "display:flex;align-items:center;gap:8px;padding:2px 4px 8px;";
+      const search = document.createElement("input");
+      search.type = "text";
+      search.placeholder = `🔍 Filter ${rows.length} accounts…`;
+      search.setAttribute("autocomplete", "off");
+      search.style.cssText = "flex:1;min-width:0;background:#0b1226;color:#eef1ff;" +
+        "border:1px solid #26315c;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;";
+      // Don't let page shortcuts swallow filter keystrokes (or vice versa).
+      // Enter picks the first visible row (keyboard-first flow).
+      search.addEventListener("keydown", (e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") {
+          e.preventDefault();
+          const first = list.querySelector("button");
+          if (first) first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+        }
+      });
+      search.addEventListener("keyup", (e) => { e.stopPropagation(); });
+      search.addEventListener("input", () => paint(search.value));
+      head.append(search);
+      dropEl.append(head);
+      setTimeout(() => { try { search.focus({ preventScroll: true }); } catch (_) {} }, 0);
+    }
+    paint("");
+    dropEl.append(list);
     document.documentElement.appendChild(dropEl);
     const rc = anchor.getBoundingClientRect();
     // Bitwarden parity: dropdown matches the input's EXACT bounding box.
@@ -862,6 +903,19 @@
   }
 
   // ---------- auto-save: offer to store freshly submitted credentials ----------
+  // Submitted-credential classifier (duplicate-guard pattern, bridge mirror):
+  // "known" (same user+password — silent), {update} (same user, NEW
+  // password — "Update existing?"), or "new" (unknown user — save prompt).
+  // Username match is case-insensitive; password compare is exact.
+  function classifySubmitted(existing, username, password) {
+    const u = (username || "").toLowerCase();
+    for (const e of existing || []) {
+      if (((e.username || "").toLowerCase()) !== u) continue;
+      if (e.password === password) return "known";
+      return { update: e };
+    }
+    return "new";
+  }
   function saverToast(username, password) {
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
@@ -909,6 +963,57 @@
       }
     });
   }
+  // Update prompt: same username, different password on a known site.
+  // "Update" reuses the bridge upsert (PV_SAVE_LOGIN matches username +
+  // domain → rotates into history, returns updated:true). Never auto-saves:
+  // explicit click only, Not Now + 30s auto-dismiss like the save prompt.
+  function updateToast(username, password) {
+    if (document.getElementById("__pv_saver")) return;
+    const box = document.createElement("div");
+    box.id = "__pv_saver";
+    box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
+      "background:#0d131f;border:1px solid #fbbf24;border-radius:12px;padding:12px 14px;" +
+      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:300px;";
+    const t = document.createElement("div");
+    t.style.cssText = "font-weight:700;margin-bottom:8px;";
+    t.textContent = "🔄 Update existing?";
+    const sub = document.createElement("div");
+    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.textContent = `New password submitted for ${username} on ${pageBase()} — replace the stored one? (old kept in history)`;
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;";
+    const save = document.createElement("button");
+    save.textContent = "🔄 Update";
+    save.style.cssText = "flex:1;background:#fbbf24;color:#080c14;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    const no = document.createElement("button");
+    no.textContent = "✕ Not Now";
+    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    row.append(save, no);
+    box.append(t, sub, row);
+    document.documentElement.append(box);
+    const dismiss = () => box.remove();
+    no.addEventListener("click", dismiss);
+    setTimeout(dismiss, 30000);
+    save.addEventListener("click", async () => {
+      save.textContent = "⏳ Updating…";
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: "PV_SAVE_LOGIN",
+          username, password,
+          url: location.href,
+          title: document.title ? document.title.split(/[-|–]/)[0].trim().slice(0, 60) : pageBase(),
+        });
+        if (res && res.ok) {
+          toast("✅ Login updated in PhantomVault (old kept in history).");
+          dismiss();
+        } else {
+          save.textContent = "⚠️ " + ((res && res.error) || "failed");
+        }
+      } catch (_) {
+        save.textContent = "⚠️ Bridge unreachable";
+      }
+    });
+  }
   async function watchSubmit(form) {
     if (!form || form.dataset.pvWatched) return;
     form.dataset.pvWatched = "1";
@@ -937,9 +1042,10 @@
         const password = (pw && pw.value || "");
         if (!username || !password) return;
         const existing = await queryHost("PV_QUERY", pageBase());
-        const known = existing.some((e) =>
-          (e.username || "").toLowerCase() === username.toLowerCase() && e.password === password);
-        if (!known) saverToast(username, password);
+        const verdict = classifySubmitted(existing, username, password);
+        if (verdict === "known") return;
+        if (verdict !== "new") updateToast(username, password);
+        else saverToast(username, password);
       } catch (_) {}
     });
   }
@@ -1030,9 +1136,10 @@
       if (spaSaveOfferedFor === fp) return; // one prompt per credential
       spaSaveOfferedFor = fp;
       const existing = await queryHost("PV_QUERY", pageBase());
-      const known = existing.some((e) =>
-        (e.username || "").toLowerCase() === username.toLowerCase() && e.password === password);
-      if (!known) saverToast(username, password);
+      const verdict = classifySubmitted(existing, username, password);
+      if (verdict === "known") return;
+      if (verdict !== "new") updateToast(username, password);
+      else saverToast(username, password);
     } catch (_) {}
   }
   window.addEventListener("message", (e) => {
