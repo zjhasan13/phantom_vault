@@ -88,6 +88,7 @@
 - [ ] Generator: 🎲 panel toggles, length/symbols persist, Copy works; panel close re-masks output.
 - [ ] Health icons: audited vault rows show ♻️/🕰️/🟡/🔴 matching the desktop audit kinds; no-login-fields page Fill says so instead of silently closing.
 - [ ] Verified badge: 3rd fill on one login flips ✅ (single re-seal); "Mark as working" toggles both ways instantly; decoy refuses the toggle.
+- [ ] Favicons: visit an uncached site → desktop list shows its icon on next rebuild (extension harvest → disk cache); offline shows letters; kill-switch stops all fetches.
 
 ## 12. Import Dry-Run, QuickBar TOTP & Changelog
 - [ ] Picking an export shows counts/dupes in Preview; Cancel merges nothing; Confirm merges + offers source shred.

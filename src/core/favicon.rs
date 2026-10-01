@@ -19,8 +19,68 @@ use std::sync::Mutex;
 
 const PREF_FILE: &str = "favicons.pref";
 const DDG_ICON: &str = "https://icons.duckduckgo.com/ip3/";
+const GOOGLE_S2: &str = "https://www.google.com/s2/favicons?domain=";
 const MAX_ICON_BYTES: u64 = 256 * 1024;
 const MAX_DOMAINS_PER_PASS: usize = 200;
+/// Extension-harvested icons: strict 64 KB cap (disk-bloat/DoS guard).
+pub const HARVEST_MAX_BYTES: usize = 64 * 1024;
+/// Harvested icons must be favicon-scale; absurd dimensions rejected.
+const HARVEST_MAX_DIM: u32 = 512;
+
+/// Strict harvest-domain sanitizer (bridge `cache_favicon` choke-point).
+/// Allows `[a-z0-9.-]` only, max 120 chars; rejects `..`, separators,
+/// control chars, and leading/trailing dots/hyphens. The sanitized name is
+/// joined as `{domain}.png` — separators can never reach the path, so
+/// traversal is structurally impossible (plus a starts_with containment
+/// assert at the write site).
+pub fn sanitize_harvest_domain(raw: &str) -> Result<String, String> {
+    let d = raw.trim().to_lowercase();
+    if d.is_empty() || d.len() > 120 {
+        return Err("bad domain (empty/too long)".to_string());
+    }
+    if d.contains("..") || d.contains('/') || d.contains('\\') {
+        return Err("bad domain (path characters)".to_string());
+    }
+    if !d.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-') {
+        return Err("bad domain (charset)".to_string());
+    }
+    if d.starts_with(['.', '-']) || d.ends_with(['.', '-']) {
+        return Err("bad domain (edge punctuation)".to_string());
+    }
+    if !d.contains('.') {
+        return Err("bad domain (no dot)".to_string());
+    }
+    Ok(d)
+}
+
+/// Store an extension-harvested icon: sanitize → 64KB cap → decode-validate
+/// → dimension cap → normalize to clean PNG → cache dir. Returns the
+/// normalized domain. Errors are fail-closed strings (no panics).
+pub fn save_harvested_icon(domain: &str, bytes: &[u8]) -> Result<String, String> {
+    let d = sanitize_harvest_domain(domain)?;
+    if bytes.is_empty() {
+        return Err("empty icon".to_string());
+    }
+    if bytes.len() > HARVEST_MAX_BYTES {
+        return Err("icon too large (64KB cap)".to_string());
+    }
+    let img = image::load_from_memory(bytes).map_err(|_| "not a decodable image".to_string())?;
+    if img.width() > HARVEST_MAX_DIM || img.height() > HARVEST_MAX_DIM {
+        return Err("icon dimensions too large".to_string());
+    }
+    let mut png = Vec::new();
+    img.write_to(
+        &mut std::io::Cursor::new(&mut png),
+        image::ImageFormat::Png,
+    )
+    .map_err(|e| format!("png encode: {e}"))?;
+    let dir = cache_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("cache dir: {e}"))?;
+    let path = dir.join(format!("{d}.png"));
+    debug_assert!(path.starts_with(&dir));
+    std::fs::write(&path, &png).map_err(|e| format!("write: {e}"))?;
+    Ok(d)
+}
 
 /// Persisted user choice (`favicons.pref` = "1"/"0"). Missing file = ON.
 pub fn show_favicons() -> bool {
@@ -263,8 +323,18 @@ fn hibp_style_client() -> Result<reqwest::Client, String> {
 
 async fn fetch_icon_bytes(domain: &str) -> Result<Vec<u8>, String> {
     let client = hibp_style_client()?;
+    // Layer 3a: DuckDuckGo first (no tracking, no cookies).
+    let ddg = fetch_one(&client, &format!("{DDG_ICON}{domain}.ico")).await;
+    if let Ok(b) = ddg {
+        return Ok(b);
+    }
+    // Layer 3b: Google S2 fallback (?sz=64 keeps it favicon-scale).
+    fetch_one(&client, &format!("{GOOGLE_S2}{domain}&sz=64")).await
+}
+
+async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
     let resp = client
-        .get(format!("{DDG_ICON}{domain}.ico"))
+        .get(url)
         .header("User-Agent", "PhantomVault-favicon/1.0")
         .send()
         .await
@@ -352,6 +422,13 @@ pub fn prefetch_blocking(domains: &[String], can_net: impl Fn() -> bool) -> Vec<
 mod tests {
     use super::*;
 
+    // LOCALAPPDATA jugglers must serialize: env vars are process-global,
+    // so parallel tests would otherwise read each other's temp dirs.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn domain_extraction_skips_junk() {
         assert_eq!(domain_of_url("https://github.com/login").as_deref(), Some("github.com"));
@@ -410,6 +487,7 @@ mod tests {
 
     #[test]
     fn custom_override_roundtrip() {
+        let _g = env_guard();
         let tmp = std::env::temp_dir().join(format!("pv-fav-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);
         let prev = std::env::var("LOCALAPPDATA").ok();
@@ -443,5 +521,61 @@ mod tests {
         // offline so this asserts nothing about the network, only dedup.
         let out2 = prefetch_blocking(&[d], || false);
         assert!(out2.is_empty());
+    }
+
+    #[test]
+    fn harvest_domain_sanitizer_rejects_traversal() {
+        assert_eq!(sanitize_harvest_domain("GitHub.COM").as_deref(), Ok("github.com"));
+        assert!(sanitize_harvest_domain("a-b.c_d").is_err());
+        let long250 = "a".repeat(250);
+        for evil in [
+            "",
+            "../../test.png",
+            "..\\windows\\x",
+            "a/b.com",
+            "a\\b.com",
+            "evil\u{0}.com",
+            "evil\n.com",
+            ".leading.com",
+            "trailing.com.",
+            "-lead.com",
+            "nolabel",
+            long250.as_str(),
+        ] {
+            assert!(sanitize_harvest_domain(evil).is_err(), "must reject: {evil:?}");
+        }
+        // 120 chars exactly (with a dot) passes.
+        let max_ok = format!("{}.com", "a".repeat(116));
+        assert_eq!(max_ok.len(), 120);
+        assert!(sanitize_harvest_domain(&max_ok).is_ok());
+    }
+
+    #[test]
+    fn harvest_save_roundtrip_and_caps() {
+        let _g = env_guard();
+        let tmp = std::env::temp_dir().join(format!("pv-fav-harvest-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let prev = std::env::var("LOCALAPPDATA").ok();
+        std::env::set_var("LOCALAPPDATA", &tmp);
+        // Valid 4x4 PNG via the image crate.
+        let img = image::DynamicImage::new_rgb8(4, 4);
+        let mut buf = Vec::new();
+        image::DynamicImage::write_to(&img, &mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        let d = save_harvested_icon("Harvest-Test.COM", &buf).unwrap();
+        assert_eq!(d, "harvest-test.com");
+        // Resolves from disk cache as normalized PNG.
+        let back = std::fs::read(cache_dir().join("harvest-test.com.png")).unwrap();
+        assert!(image::load_from_memory(&back).is_ok());
+        // Oversize / corrupt / empty rejected, nothing new on disk.
+        assert!(save_harvested_icon("x.com", &vec![0u8; HARVEST_MAX_BYTES + 1]).is_err());
+        assert!(save_harvested_icon("x.com", b"definitely not an image").is_err());
+        assert!(save_harvested_icon("x.com", b"").is_err());
+        assert!(save_harvested_icon("../../evil.png", &buf).is_err());
+        assert!(!cache_dir().join("x.com.png").exists());
+        match prev {
+            Some(v) => std::env::set_var("LOCALAPPDATA", v),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

@@ -556,6 +556,42 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: false,
             }
         }
+        // Extension-harvested favicon (hybrid engine layer 2): the browser
+        // already loaded this icon, so no new network happens here — just
+        // validate + file into the desktop disk cache. Unlocked-only,
+        // rate-limited, never persisted to the vault (metadata cache).
+        "cache_favicon" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            if !fill_rate_ok() {
+                return no("fill rate limited");
+            }
+            let domain = req
+                .get("domain")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let data_b64 = req.get("data").and_then(|v| v.as_str()).unwrap_or("");
+            if domain.is_empty() || data_b64.is_empty() {
+                return no("domain and data required");
+            }
+            use base64::Engine as _;
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(data_b64.trim())
+                .or_else(|_| {
+                    base64::engine::general_purpose::URL_SAFE.decode(data_b64.trim())
+                })
+                .unwrap_or_default();
+            match crate::core::favicon::save_harvested_icon(&domain, &bytes) {
+                Ok(saved) => Answer {
+                    reply: serde_json::json!({"ok": true, "domain": saved}),
+                    persist: false,
+                },
+                Err(e) => no(&e),
+            }
+        }
         "" => no("missing cmd"),
         // Popup "All items": metadata ONLY (no secrets) for browsing.
         // Secrets still travel exclusively via query/fill paths, so a
@@ -1695,8 +1731,40 @@ mod tests {
     }
 
     #[test]
-    fn passkey_lookup_returns_metadata_only() {
-        let mut v = vault_with_passkey();
+    fn cache_favicon_rejects_without_touching_disk() {
+        fn cmd(v: &mut Vault, unlocked: bool, domain: &str, data: &str) -> Answer {
+            answer(
+                &mut *v,
+                unlocked,
+                &serde_json::json!({"cmd": "cache_favicon", "domain": domain, "data": data}),
+            )
+        }
+        let mut v = Vault::new();
+        // Locked ⇒ deny before validation.
+        let r = cmd(&mut v, false, "x.com", "aGk=");
+        assert_eq!(r.reply["ok"], false);
+        // Missing fields.
+        assert_eq!(cmd(&mut v, true, "", "aGk=").reply["ok"], false);
+        // Traversal / bad domains rejected by the sanitizer (no disk).
+        let long = "a".repeat(200);
+        for evil in ["../../x", "..\\x", "a/b.com", "", long.as_str()] {
+            let r = cmd(&mut v, true, evil, "aGk=");
+            assert_eq!(r.reply["ok"], false, "must reject {evil:?}");
+        }
+        // Oversize payload (>64KB decoded) rejected.
+        let big = "A".repeat((64 * 1024 + 1) / 3 * 4 + 4);
+        let r = cmd(&mut v, true, "big.com", &big);
+        assert_eq!(r.reply["ok"], false);
+        // Corrupt bytes ("hello") fail decode validation.
+        use base64::Engine as _;
+        let hello = base64::engine::general_purpose::STANDARD.encode("hello");
+        let r = cmd(&mut v, true, "fine.com", &hello);
+        assert_eq!(r.reply["ok"], false);
+        assert!(!r.persist);
+    }
+
+    #[test]
+    fn passkey_lookup_returns_metadata_only() {        let mut v = vault_with_passkey();
         // Match (case-insensitive): user metadata, no secrets, no persist.
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "passkey_lookup", "rp": "GitHub.COM"}));
         assert_eq!(r.reply["ok"], true);
