@@ -618,6 +618,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "reprompt": c.reprompt,
                         "verified": vault.is_verified(&c.id),
                         "health": login_health_kind(&c.password, c.last_changed, now, pw_freq.get(c.password.as_str()).copied().unwrap_or(0)),
+                        "has_totp": !c.totp_secret.is_empty(),
                     })
                 })
                 .collect();
@@ -1924,6 +1925,8 @@ mod tests {
         let logins = r.reply["logins"].as_array().unwrap();
         let c1 = logins.iter().find(|e| e["id"] == "c1").unwrap();
         assert_eq!(c1["health"], "reused");
+        // No TOTP secret on either fixture login ⇒ no 2FA buttons.
+        assert_eq!(c1["has_totp"], false);
     }
 
     #[test]

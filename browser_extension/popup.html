@@ -3,33 +3,49 @@
 <head>
   <meta charset="utf-8" />
   <style>
-    body { width: 340px; margin: 0; padding: 14px; background: #0b1226; color: #eef1ff;
+    /* OS-theme support: dark default, light via prefers-color-scheme.
+       Accent violet stays identical; only surfaces/text adapt. */
+    :root {
+      --bg: #0b1226; --panel: #0d1430; --panel2: #1a2450;
+      --text: #eef1ff; --muted: #8e99c0; --faint: #5b6589;
+      --border: #26315c; --accent: #8b7cf6; --accent-fg: #fff;
+      --cyan: #38bdf8; --cyan-dim: #38e1ff;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #eef1f8; --panel: #ffffff; --panel2: #e2e8f2;
+        --text: #16213a; --muted: #51617d; --faint: #8a97ad;
+        --border: #cfd8e6;
+        --cyan: #0284c7; --cyan-dim: #0284c7;
+      }
+    }
+    body { width: 460px; margin: 0; padding: 14px; background: var(--bg); color: var(--text);
            font: 13px/1.4 system-ui, sans-serif; }
-    h1 { font-size: 15px; margin: 0 0 10px; color: #8b7cf6; }
+    h1 { font-size: 15px; margin: 0 0 10px; color: var(--accent); }
     .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-    .tabs button { flex: 1; border: 1px solid #26315c; border-radius: 8px; padding: 7px;
-                   background: #0d1430; color: #8e99c0; cursor: pointer; font-weight: 700; }
-    .tabs button.active { background: #8b7cf6; color: #fff; border-color: #8b7cf6; }
-    .row { background: #0d1430; border: 1px solid #26315c; border-radius: 10px;
+    .tabs button { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 7px;
+                   background: var(--panel); color: var(--muted); cursor: pointer; font-weight: 700; }
+    .tabs button.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    .row { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
            padding: 10px; margin-bottom: 8px; }
-    .t { font-weight: 700; } .u { color: #8e99c0; font-size: 12px; }
+    .t { font-weight: 700; } .u { color: var(--muted); font-size: 12px; }
     .btns { margin-top: 8px; display: flex; gap: 8px; }
-    .btns button, .wide { flex: 1; border: 1px solid #8b7cf6; border-radius: 8px; padding: 7px;
-             background: #1a2450; color: #fff; cursor: pointer; font-weight: 700; }
-    button.fill { background: #8b7cf6; }
-    #status { color: #5b6589; font-size: 12px; text-align: center; }
-    #vaultSearch { width: 100%; box-sizing: border-box; background: #0b1226; color: #eef1ff;
-      border: 1px solid #26315c; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    .btns button, .wide { flex: 1; border: 1px solid var(--accent); border-radius: 8px; padding: 7px;
+             background: var(--panel2); color: var(--text); cursor: pointer; font-weight: 700; }
+    button.fill { background: var(--accent); color: var(--accent-fg); }
+    #status { color: var(--faint); font-size: 12px; text-align: center; }
+    #vaultSearch { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
       margin-bottom: 8px; font-family: inherit; }
     .filterrow { display: flex; gap: 8px; margin-bottom: 8px; }
-    .filterrow select { flex: 1; background: #0b1226; color: #eef1ff; border: 1px solid #26315c;
+    .filterrow select { flex: 1; background: var(--bg); color: var(--text); border: 1px solid var(--border);
       border-radius: 8px; padding: 6px; font-size: 12px; min-width: 0; }
-    .sechead { color: #8e99c0; font-size: 11px; font-weight: 800; margin: 8px 2px 6px;
-      padding-top: 6px; border-top: 1px solid #1a2450; }
+    .sechead { color: var(--muted); font-size: 11px; font-weight: 800; margin: 8px 2px 6px;
+      padding-top: 6px; border-top: 1px solid var(--panel2); }
     .sechead:first-of-type { border-top: 0; padding-top: 0; margin-top: 0; }
     .brandrow { display: flex; gap: 10px; align-items: center; }
     .brandic { flex: 0 0 auto; width: 32px; height: 32px;
-      color: #eef1ff; font-weight: 900; font-size: 15px; display: flex;
+      color: var(--text); font-weight: 900; font-size: 15px; display: flex;
       align-items: center; justify-content: center; background: transparent; }
     .brandic img { width: 26px; height: 26px; border-radius: 50%; display: block; }
     .brandtx { flex: 1; min-width: 0; }
@@ -37,54 +53,57 @@
     .emptyart { font-size: 30px; margin: 2px 0 4px; }
     .emptycard .t { margin-bottom: 2px; }
     .emptycard .u { margin-bottom: 8px; }
-    .pvinput { width: 100%; box-sizing: border-box; background: #0b1226; color: #eef1ff;
-      border: 1px solid #26315c; border-radius: 8px; padding: 8px 10px; font-size: 12px;
+    .pvinput { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
+      border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
       margin-bottom: 6px; font-family: inherit; }
     .emptycard .wide { margin-top: 2px; }
-    .t2fa { display: inline-block; font-size: 10px; font-weight: 800; color: #38e1ff;
-      background: #0b1226; border: 1px solid #26315c; border-radius: 6px;
+    .t2fa { display: inline-block; font-size: 10px; font-weight: 800; color: var(--cyan-dim);
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       padding: 1px 6px; margin-top: 3px; }
     #langToggle { float: right; flex: 0 0 auto; width: 44px; font-size: 11px; }
-    .row.focused { outline: 2px solid #38bdf8; }
+    .row.focused { outline: 2px solid var(--cyan); }
     .totp { display: flex; align-items: center; gap: 8px; margin-top: 6px;
-      color: #38e1ff; font-size: 10px; font-weight: 800; }
-    .totp code { flex: 1; color: #38bdf8; font-weight: 800; font-size: 15px; letter-spacing: 2px; }
+      color: var(--cyan-dim); font-size: 10px; font-weight: 800; }
+    .totp code { flex: 1; color: var(--cyan); font-weight: 800; font-size: 15px; letter-spacing: 2px; }
     .totp button { flex: 0 0 auto; font-size: 11px; padding: 5px 8px; }
-    .totpTimer { color: #38e1ff; font-size: 11px; font-weight: 800; min-width: 30px; text-align: right; }
-    .totpBar { height: 3px; background: #1a2450; border-radius: 2px; margin-top: 4px; overflow: hidden; }
-    .totpBar > div { height: 100%; background: #38e1ff; border-radius: 2px; }
-    .audit { color: #5b6589; font-size: 11px; margin-top: 4px; }
-    .scorebar { height: 10px; border-radius: 6px; background: #1a2450; margin-top: 6px; overflow: hidden; }
+    .totpTimer { color: var(--cyan-dim); font-size: 11px; font-weight: 800; min-width: 30px; text-align: right; }
+    .totpBar { height: 3px; background: var(--panel2); border-radius: 2px; margin-top: 4px; overflow: hidden; }
+    .totpBar > div { height: 100%; background: var(--cyan-dim); border-radius: 2px; }
+    .audit { color: var(--faint); font-size: 11px; margin-top: 4px; }
+    .scorebar { height: 10px; border-radius: 6px; background: var(--panel2); margin-top: 6px; overflow: hidden; }
     .scorebar div { height: 100%; border-radius: 6px; }
     .statgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 10px; font-size: 12px; margin-top: 6px; }
-    .statgrid b { color: #38bdf8; }
+    .statgrid b { color: var(--cyan); }
     .setrow { display: flex; align-items: center; gap: 8px; padding: 7px 2px;
-              border-bottom: 1px solid #1a2450; font-size: 12px; }
+              border-bottom: 1px solid var(--panel2); font-size: 12px; }
     .setrow:last-child { border-bottom: 0; }
     .setrow label { flex: 1; }
-    .setrow input[type="checkbox"] { width: 16px; height: 16px; accent-color: #8b7cf6; }
-    .setrow select, #blocked { background: #0b1226; color: #eef1ff; border: 1px solid #26315c;
+    .setrow input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
+    .setrow select, #blocked { background: var(--bg); color: var(--text); border: 1px solid var(--border);
               border-radius: 8px; padding: 6px; font-size: 12px; }
     #blocked { width: 100%; box-sizing: border-box; margin-top: 6px; min-height: 52px;
               font-family: inherit; resize: vertical; }
-    .hint { color: #5b6589; font-size: 11px; margin-top: 6px; }
+    .hint { color: var(--faint); font-size: 11px; margin-top: 6px; }
     .hidden { display: none; }
     /* Specificity guard: #extLock sets display:flex (1-0-0) which beats
        .hidden (0-1-0) — without this the lock overlay can never hide. */
     #extLock.hidden { display: none; }
-    #extLock { position: fixed; inset: 0; z-index: 50; background: #0b1226;
+    #extLock { position: fixed; inset: 0; z-index: 50; background: var(--bg);
       display: flex; align-items: center; justify-content: center; }
-    #extLock .lockcard { width: 260px; text-align: center; background: #0d1430;
-      border: 1px solid #26315c; border-radius: 12px; padding: 18px 16px; }
+    #extLock .lockcard { width: 260px; text-align: center; background: var(--panel);
+      border: 1px solid var(--border); border-radius: 12px; padding: 18px 16px; }
     #extLock .lockart { font-size: 34px; margin-bottom: 6px; }
     .pwline { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px 44px; }
-    .pwDots { flex: 1; color: #8e99c0; font-size: 12px; letter-spacing: 1px;
-      background: #0b1226; border: 1px solid #26315c; border-radius: 6px;
+    .pwDots { flex: 1; color: var(--muted); font-size: 12px; letter-spacing: 1px;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .pwPrev { color: #5b6589; font-size: 10px; letter-spacing: 1px; padding: 0 2px;
+    .pwPrev { color: var(--faint); font-size: 10px; letter-spacing: 1px; padding: 0 2px;
       white-space: nowrap; user-select: none; }
-    .eye { background: #1a2450; color: #eef1ff; border: 1px solid #26315c;
+    .eye { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
       border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 13px; }
+    #lockTimeout, #genLen { width: 100%; box-sizing: border-box; background: var(--bg);
+      color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px; margin-top: 6px; font-size: 12px; }
   </style>
 </head>
 <body>
@@ -152,7 +171,7 @@
     <div class="row">
       <div class="t">⏱️ Auto-Lock Timeout</div>
       <div class="hint">No PIN — the extension follows the desktop app. After inactivity it re-asks desktop presence.</div>
-      <select id="lockTimeout" style="width:100%;box-sizing:border-box;background:#0b1226;color:#eef1ff;border:1px solid #26315c;border-radius:8px;padding:8px;margin-top:6px;">
+      <select id="lockTimeout">
         <option value="5">5 minutes</option>
         <option value="10" selected>10 minutes</option>
         <option value="15">15 minutes</option>
