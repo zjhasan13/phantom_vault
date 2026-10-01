@@ -27,9 +27,36 @@
   // NEVER in page-readable sessionStorage (any XSS/third-party script could
   // read password+TOTP from there for the whole login window).
   let pvPending = null;
+  // Cross-navigation bridge: full page loads (login POST → 2FA page) wipe
+  // JS memory, so the stash is mirrored to chrome.storage.session —
+  // extension-owned (page JS CANNOT read it, unlike window.sessionStorage),
+  // tab-lifetime, 5-minute expiry, consumed on fill. Never the raw DOM store.
+  const PV_PENDING_TTL_MS = 5 * 60 * 1000;
+  function pvPendingPersist() {
+    try {
+      if (pvPending && (pvPending.password || pvPending.totp)) {
+        chrome.storage.session.set({
+          pvPending: { password: pvPending.password || "", totp: pvPending.totp || "", at: Date.now() },
+        }).catch(() => {});
+      }
+    } catch (_) {}
+  }
+  function pvPendingRestore() {
+    try {
+      chrome.storage.session.get({ pvPending: null }).then((s) => {
+        const p = s && s.pvPending;
+        if (p && (p.password || p.totp) && Date.now() - (p.at || 0) < PV_PENDING_TTL_MS) {
+          pvPending = { password: p.password || "", totp: p.totp || "" };
+          console.log("PV pending restored across navigation");
+          try { sweepOtpOnce(); } catch (_) {}
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
   function pvPendingClear() {
     pvPending = null;
     try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
+    try { chrome.storage.session.remove("pvPending").catch(() => {}); } catch (_) {}
   }
   chrome.storage.local.get(DEFAULTS).then((s) => { settings = { ...DEFAULTS, ...s }; });
   chrome.storage.onChanged.addListener((ch, area) => {
@@ -313,7 +340,42 @@
     const hay = ((el.name || "") + " " + (el.id || "")).toLowerCase();
     if (/otp|2fa|two-factor|one-time|verif|token/.test(hay)) return true;
     // "code" as a standalone token only ("postcode"/"area-code" are addresses).
-    return hay.split(/[^a-z0-9]+/).includes("code");
+    if (hay.split(/[^a-z0-9]+/).includes("code")) return true;
+    // Context path (Instagram-style signal-less inputs: type=text,
+    // autocomplete=off, React-hash id): read the associated label +
+    // enclosing form text for code ceremonies. Tight keywords only —
+    // bare "verify" (captchas) must NOT match. Never password fields,
+    // never forms that also hold one (that's a login form, not OTP).
+    try {
+      const t = (el.type || "").toLowerCase();
+      if ((t === "text" || t === "number" || t === "tel") && otpContextHit(el)) return true;
+    } catch (_) {}
+    return false;
+  }
+  function otpContextHit(el) {
+    const texts = [];
+    try {
+      if (el.labels) {
+        for (const l of el.labels) texts.push(l.innerText || l.textContent || "");
+      }
+      const labelledby = (el.getAttribute && el.getAttribute("aria-labelledby")) || "";
+      for (const id of labelledby.split(/\s+/)) {
+        if (!id) continue;
+        const n = document.getElementById(id);
+        if (n) texts.push(n.innerText || n.textContent || "");
+      }
+      const form = (el.closest && el.closest("form")) || null;
+      if (form && form.querySelector('input[type="password"]')) return false;
+      const scope = form || (el.parentElement && el.parentElement.parentElement) || document.body;
+      const t = ((scope && scope.innerText) || "").slice(0, 800);
+      if (t) texts.push(t);
+    } catch (_) { return false; }
+    const hay = texts.join(" ").toLowerCase();
+    // Bare "Code" label (Instagram: lab=Code) counts like the name/id
+    // standalone-token rule — but address "code" (postal/zip/area) never does.
+    const tokens = hay.split(/[^a-z0-9]+/);
+    if (tokens.includes("code") && !/(postal|zip|area|address|city|state|country)/.test(hay)) return true;
+    return /6.?digit|one.?time|authenticator|2fa|two.?factor|security code|verification code|confirmation code|enter (the )?code|code (sent|via)|two.?step/.test(hay);
   }
   function queryHost(type, q, ms = 10000) {
     // Dead-bridge hang guard: every round-trip races a timeout (popup and
@@ -434,22 +496,51 @@
       setNativeValue(f.pass[0], entry.password);
       // Multi-step chaining: remember secrets for a later password/OTP step.
       pvPending = { password: entry.password, totp: entry.totp || "" };
+      pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     } else if (f.users[0] && entry.username && entry.password) {
       // Step 1 filled email only: stash the secrets so the password step
       // (rendered later) can chain via chainPendingStep/otpObserver.
       pvPending = { password: entry.password, totp: entry.totp || "" };
+      pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
-    if (entry.totp) fillTotp(entry.totp, f);
+    if (entry.totp) await fillTotp(entry.totp, f, entry.id);
     staleNudge(entry);
     pingFilled(entry.id);
+    notePicked();
     if (settings.auto_submit) {
       const form = (f.pass[0] || f.users[0] || document.activeElement || {}).form;
       if (form && form.requestSubmit) form.requestSubmit();
     }
   }
-  function fillTotp(code, fields) {
+  // Fresh-code guard (popup clipTotp mirror): codes injected with <5s
+  // left die on arrival. With an entry id we re-query past the rollover;
+  // without one (pending-only paths) we use the code as-is.
+  async function freshTotpFor(entryId, fallback) {
+    try {
+      const remain = 30 - (Math.floor(Date.now() / 1000) % 30);
+      if (remain >= 5 || !entryId) return fallback;
+      const target = (Math.floor(Date.now() / 30000) + 1) * 30000 + 400;
+      await new Promise((r) => setTimeout(r, Math.max(0, target - Date.now())));
+      const ls = await queryHost("PV_QUERY", pageBase());
+      const e = (ls || []).find((x) => x && x.id === entryId);
+      if (e && e.totp) return e.totp;
+    } catch (_) {}
+    return fallback;
+  }
+  function fillTotp(code, fields, entryId) {
+    if (!code) return;
+    (async () => {
+      try {
+        const live = await freshTotpFor(entryId || "", code);
+        fillTotpNow(live, fields);
+      } catch (_) {
+        fillTotpNow(code, fields);
+      }
+    })();
+  }
+  function fillTotpNow(code, fields) {
     if (!code) return;
     const f = fields || findFields();
     if (f.otp[0]) {
@@ -479,6 +570,7 @@
     }
     if (cvc && entry.cvv) setNativeValue(cvc, entry.cvv);
     pingFilled(entry.id);
+    notePicked();
   }
   function fillIdentity(entry) {
     const map = [
@@ -493,6 +585,7 @@
       if (el) setNativeValue(el, val);
     }
     pingFilled(entry.id);
+    notePicked();
   }
   function masked(num) {
     const d = String(num || "").replace(/\D/g, "");
@@ -502,16 +595,43 @@
   // ---------- inline suggestions dropdown ----------
   let dropEl = null;
   let dropAnchor = null;
-  function closeDrop() {
-    if (dropEl) { dropEl.remove(); dropEl = null; }
+  let dropOpenedAt = 0;
+  let dropSelfClosing = false;
+  function closeDrop(reason) {
+    if (!dropEl) return;
+    suggestGen++;
+    dropSelfClosing = true;
+    try {
+      console.log(`PV dropdown closed: ${reason || "?"}`);
+      dropEl.remove();
+    } finally {
+      dropEl = null;
+      dropSelfClosing = false;
+    }
     dropAnchor = null;
     document.removeEventListener("click", outsideDrop, true);
   }
+  // If the PAGE itself rips our node out (framework cleaner, overlay swap),
+  // say so loudly — otherwise it looks exactly like our own close.
+  new MutationObserver(() => {
+    if (dropEl && !dropEl.isConnected && !dropSelfClosing) {
+      console.log("PV dropdown REMOVED BY PAGE (not our close)");
+      dropEl = null;
+      dropAnchor = null;
+      document.removeEventListener("click", outsideDrop, true);
+    }
+  }).observe(document.documentElement, { childList: true, subtree: true });
   function outsideDrop(e) {
-    if (dropEl && !dropEl.contains(e.target)) closeDrop();
+    // Synthetic ghosts (site analytics, auto-dismiss timers, focus-trackers
+    // that replay clicks — Instagram does this ~1s after field focus) must
+    // never close the dropdown; only real user clicks outside do. Plus a
+    // short grace so the opening click's own echoes can't kill it.
+    if (!e.isTrusted) return;
+    if (Date.now() - dropOpenedAt < 800) return;
+    if (dropEl && !dropEl.contains(e.target)) closeDrop("outside-click");
   }
   function showDrop(anchor, rows) {
-    closeDrop();
+    closeDrop("replace");
     if (!rows.length || !isVisible(anchor)) return;
     dropEl = document.createElement("div");
     dropEl.style.cssText = "position:absolute;z-index:2147483647;" +
@@ -520,6 +640,9 @@
     // Container-level blur guard: mousedown ANYWHERE inside the dropdown must
     // not steal focus from the input (React/SPA pages re-render or dismiss on
     // blur, which otherwise cancels the row click before it fires).
+    // pointerdown capture: same modal-killer defense as the badge — overlay
+    // outside-click closers must not see dropdown interactions either.
+    dropEl.addEventListener("pointerdown", (e) => { e.stopPropagation(); }, true);
     dropEl.addEventListener("mousedown", (e) => { e.preventDefault(); });
     // Searchable dropdown: filter input on top (20+ same-domain accounts).
     // Re-renders row buttons live; indexed binding rebuilt per render so a
@@ -566,7 +689,7 @@
           e.stopPropagation();
           const pick = items[index] && items[index].onPick;
           if (typeof pick === "function") pick();
-          closeDrop();
+          closeDrop("pick");
         });
         list.append(b);
       });
@@ -606,9 +729,11 @@
     dropEl.style.top = (rc.bottom + window.scrollY + 4) + "px";
     dropEl.style.boxSizing = "border-box";
     dropAnchor = anchor;
+    dropOpenedAt = Date.now();
+    console.log(`PV dropdown open: ${rows.length} row(s) on`, location.host);
     document.addEventListener("click", outsideDrop, true);
   }
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrop(); }, true);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrop("escape"); }, true);
 
   // Shared row resolver: classifies the anchor, queries the vault ONCE, and
   // returns dropdown rows (or null when nothing applies). Used by both the
@@ -651,24 +776,51 @@
       onPick: () => fillLogin(e, f),
     }));
   }
+  // Post-pick cooldown: after a successful fill, passive focus-driven
+  // dropdowns stay suppressed briefly so they never cover the page's own
+  // Next/Submit buttons. Explicit badge clicks bypass it (user asked).
+  let suppressDropUntil = 0;
+  function notePicked() {
+    suppressDropUntil = Date.now() + 3000;
+  }
   async function suggestFor(anchor) {
     if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
     if (!location.host) return;
     if (isSearchField(anchor)) return; // search bars: never touch, never query
-    if (!(await requireExtPin())) return;
+    // Our own UI is not a page field: the dropdown filter input lives in
+    // the page DOM — focusing it must NEVER trigger a re-query, or the
+    // autofocus → focusin → replace → autofocus cycle flickers forever.
     try {
+      if (anchor instanceof HTMLInputElement && dropEl && dropEl.contains(anchor)) return;
+      if (anchor instanceof HTMLInputElement && anchor.closest("#__pv_saver")) return;
+    } catch (_) {}
+    // One query per anchor at a time + never rebuild an open dropdown on
+    // the same anchor (Instagram refocus-storms fields; each storm used to
+    // close+re-query with a ~1s empty gap).
+    if (suggestBusy === anchor) return;
+    if (dropEl && dropAnchor === anchor) return;
+    suggestBusy = anchor;
+    const gen = suggestGen;
+    try {
+      if (!(await requireExtPin())) return;
       const rows = await resolveRows(anchor, findFields());
+      if (gen !== suggestGen) return; // picked/closed meanwhile: stale
       if (rows) showDrop(anchor, rows);
     } catch (_) { /* bridge down: stay silent, popup explains */ }
+    finally {
+      if (suggestBusy === anchor) suggestBusy = null;
+    }
   }
   // Smart badge click: exactly 1 match fills IMMEDIATELY; several toggle the
   // dropdown (open ↔ close) with zero flicker; zero matches says so quietly.
   async function badgeFill(field) {
     if (isBlocked() || phishingRefuse() || !location.host) return;
-    if (dropEl && dropAnchor === field) { closeDrop(); return; }
+    if (dropEl && dropAnchor === field) { closeDrop("toggle"); return; }
     if (!(await requireExtPin())) return;
+    const gen = suggestGen;
     try {
       const rows = await resolveRows(field, findFields());
+      if (gen !== suggestGen) return; // closed meanwhile: stale
       if (!rows || !rows.length) { toast("🛡️ No matching credential for this site."); return; }
       if (rows.length === 1) { rows[0].onPick(); return; }
       showDrop(field, rows);
@@ -727,7 +879,12 @@
       "border:1px solid #8b7cf6;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
     // mousedown first: preventDefault keeps input focus (no blur flicker),
     // then click smart-fills (1 match) or toggles the dropdown (several).
-    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    // pointerdown CAPTURE is the real modal-killer fix: overlay "click
+    // outside to close" handlers (bubble or document-level) must never see
+    // our badge — it lives at document root, outside their modal container.
+    // preventDefault also blocks focus theft (no blur-close either).
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       await badgeFill(field);
@@ -768,7 +925,8 @@
     b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
       "display:flex;align-items:center;justify-content:center;" +
       "border:1px solid #10b981;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
-    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
+    b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();
       if (!(await requireExtPin())) return;
@@ -812,17 +970,48 @@
     }
   }
   // OTP fields that render late (SPA step 3): inject live TOTP on sight.
-  const otpObserver = new MutationObserver(() => {
-    if (!settings.auto_inject_totp || isBlocked()) return;
-    const f = findFields();
-    if (!f.otp.length || f.otp[0].dataset.pvOtpFilled) return;
-    const pending = pvPending;
-    if (pending && pending.totp) {
-      f.otp[0].dataset.pvOtpFilled = "1";
-      fillTotp(pending.totp, f);
-      pvPendingClear();
-    }
-  });
+  // Runs once at boot too — direct 2FA URLs render the field before any
+  // mutation fires, which used to leave the observer permanently silent.
+  let otpDiagAt = 0;
+  function sweepOtpOnce() {
+    try {
+      if (!settings.auto_inject_totp || isBlocked()) {
+        if (Date.now() - otpDiagAt > 5000) {
+          otpDiagAt = Date.now();
+          console.log(`PV OTP sweep skip: auto=${!!settings.auto_inject_totp} blocked=${isBlocked()}`);
+        }
+        return;
+      }
+      const f = findFields();
+      if (!f.otp.length || f.otp[0].dataset.pvOtpFilled) {
+        if (!f.otp.length && Date.now() - otpDiagAt > 5000) {
+          otpDiagAt = Date.now();
+          const all = [...document.querySelectorAll("input")].filter(isVisible);
+          const desc = all.map((el) => {
+            const lab = (el.labels && el.labels[0] && (el.labels[0].innerText || "").trim().slice(0, 40)) || "";
+            return `${el.type || "?"}#${el.id || "-"}[${el.name || "-"}|ac=${el.autocomplete || "-"}|lab=${lab || "-"}]`;
+          });
+          console.log(`PV OTP sweep: ${all.length} visible input(s), 0 OTP. Fields: ${desc.join(" ; ")}`);
+        }
+        return;
+      }
+      console.log(`PV OTP field sighted (${f.otp.length}), pending: ${pvPending ? (pvPending.totp ? "has-totp" : "no-totp") : "none"}`);
+      const pending = pvPending;
+      if (pending && pending.totp) {
+        f.otp[0].dataset.pvOtpFilled = "1";
+        fillTotp(pending.totp, f);
+        pvPendingClear();
+      }
+    } catch (_) {}
+  }
+  const otpObserver = new MutationObserver(() => sweepOtpOnce());
+  // NOTE: observe() is inherently duplicate-safe (same args re-target).
+  function armOtpObserver() {
+    try {
+      otpObserver.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (_) {}
+    sweepOtpOnce();
+  }
 
   async function hotkeyFill() {
     if (isBlocked() || phishingRefuse() || !location.host) return;
@@ -850,6 +1039,12 @@
   // 0 = unknown, 1 = match, -1 = confirmed none.
   let pageMatchState = 0;
   let pageMatchProbed = false;
+  // Anchor with an in-flight suggest query (storm guard, see suggestFor).
+  let suggestBusy = null;
+  // Generation counter: any close/pick invalidates in-flight queries, so a
+  // slow bridge response resolving AFTER a pick can never resurrect the
+  // dropdown over the page's Next/Submit buttons.
+  let suggestGen = 0;
   function probePageMatch() {
     if (pageMatchProbed) return;
     pageMatchProbed = true;
@@ -1160,11 +1355,78 @@
   });
   injectPageHook();
 
+  // OTP-page mode: a TOTP field is visible and no login/password fields
+  // are (step-2/3 ceremonies). The popup asks this to offer a prominent
+  // Fill-2FA button; page fills still flow through the normal gates.
+  function otpPageMode() {
+    try {
+      const f = findFields();
+      return f.otp.length > 0 && f.pass.length === 0 && f.newPass.length === 0;
+    } catch (_) {
+      return false;
+    }
+  }
   // ---------- messages from popup / menus / hotkey ----------
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     (async () => {
       if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
-      if (msg.type === "PV_MENU") {
+      if (msg.type === "PV_OTP_STATUS") {
+        return { ok: true, otpPage: otpPageMode() };
+      }
+      if (msg.type === "PV_FILL_OTP") {
+        if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
+        if (!(await requireExtPin())) return { ok: false };
+        // Prefer the step-1 identity; else the first entry with TOTP;
+        // else the standalone 2FA Hub (login entries often lack secrets
+        // while the hub holds them — the exact Instagram gap).
+        let code = "", entryId = "";
+        if (pvPending && pvPending.totp) {
+          code = pvPending.totp;
+        } else {
+          try {
+            const ls = await queryHost("PV_QUERY", pageBase());
+            const e = (ls || []).find((x) => x && x.totp);
+            if (e) { code = e.totp; entryId = e.id; }
+          } catch (_) {}
+          if (!code) {
+            try {
+              const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
+              const list = (res && res.ok && res.codes) || [];
+              if (list[0] && list[0].code) {
+                code = list[0].code;
+                console.log(`PV OTP from hub account: ${list[0].account || list[0].issuer || "?"}`);
+              }
+            } catch (_) {}
+          }
+        }
+        if (!code) {
+          toast("🛡️ No TOTP code available for this site.");
+          return { ok: false };
+        }
+        if (!code) {
+          toast("🛡️ No TOTP code available for this site.");
+          return { ok: false };
+        }
+        const f = findFields();
+        await fillTotp(code, f, entryId);
+        return { ok: true };
+      }
+      // Step-1 handoff from popup fills (direct inject bypassed us): look
+      // the entry up and stash pending for OTP chaining. Needs TOTP —
+      // otherwise there is nothing later steps could use.
+      if (msg.type === "PV_STASH_PENDING") {
+        try {
+          const logins = await queryHost("PV_QUERY", pageBase());
+          const e = (logins || []).find((x) => x && x.id === msg.id);
+          if (e && e.totp) {
+            pvPending = { password: e.password || "", totp: e.totp || "" };
+            pvPendingPersist();
+            console.log("PV pending stashed from popup fill");
+            try { sweepOtpOnce(); } catch (_) {}
+          }
+        } catch (_) {}
+        return { ok: true };
+      }      if (msg.type === "PV_MENU") {
         // Same guards as every other fill path: blocked domains, punycode /
         // spoofed hosts, and host-less pages (file://, about:blank) refuse.
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
@@ -1223,7 +1485,8 @@
   };
   window.addEventListener("scroll", queueRepos, { passive: true, capture: true });
   window.addEventListener("resize", queueRepos, { passive: true });
-  otpObserver.observe(document.documentElement, { childList: true, subtree: true });
+  armOtpObserver();
+  pvPendingRestore();
   if (document.readyState === "complete" || document.readyState === "interactive") {
     autofillOnLoad();
   } else {
