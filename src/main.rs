@@ -2067,7 +2067,10 @@ fn push_item(
         notes: notes.into(),
         folder: eff_folder(folder).into(),
         totp: totp.into(),
-        health: health_badge_for(id).into(),
+        // Row icons compare against KIND strings ("breached"/"weak"/
+        // "reused"/"stale") — the human-readable badge TEXT lives in the
+        // detail pane (d_health), never in this field.
+        health: health_kind_for(id).into(),
         fav,
         verified,
         sel: selection_contains(kind, id),

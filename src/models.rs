@@ -401,6 +401,18 @@ pub struct Vault {
     pub verified_ids: Vec<String>,
 }
 
+/// Successful fills that auto-mark a login as working. Equality-crossing
+/// only (see auto_verify_crossed): the 4th, 5th… fill must NOT re-seal,
+/// and a manual un-verify at count 5 followed by fill 6 must stay off.
+pub const AUTO_VERIFY_FILLS: u64 = 3;
+
+/// True exactly on the crossing fill: the count just hit the threshold AND
+/// the item is not already verified. Pure — both bridge and desktop fill
+/// paths share this so neither can double-fire or fight a manual un-verify.
+pub fn auto_verify_crossed(fill_count: u64, already_verified: bool) -> bool {
+    fill_count == AUTO_VERIFY_FILLS && !already_verified
+}
+
 impl Vault {
     pub fn new() -> Self {
         Self {
@@ -1355,6 +1367,18 @@ mod tests {
         assert!(v.set_verified("t1", true));
         assert!(!v.verified_ids.iter().any(|x| x == "deleted-id"));
         assert!(v.is_verified("t1"));
+    }
+
+    #[test]
+    fn auto_verify_crossing_semantics() {
+        // Fires ONLY on equality-crossing while unverified.
+        assert!(!auto_verify_crossed(0, false));
+        assert!(!auto_verify_crossed(AUTO_VERIFY_FILLS - 1, false));
+        assert!(auto_verify_crossed(AUTO_VERIFY_FILLS, false));
+        assert!(!auto_verify_crossed(AUTO_VERIFY_FILLS + 1, false));
+        // Already verified (manual or prior auto): never re-fires.
+        assert!(!auto_verify_crossed(AUTO_VERIFY_FILLS, true));
+        assert!(!auto_verify_crossed(0, true));
     }
 
     #[test]

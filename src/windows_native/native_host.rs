@@ -103,6 +103,13 @@ pub struct Answer {
     pub persist: bool,
 }
 
+/// Decoy-cover persistence gate (H9): a coerced session must never write
+/// into the decoy — every persisting answer is refused at the loop, not in
+/// each arm. Pure so the matrix is unit-testable.
+fn persist_refused(serving_decoy: bool, persist: bool) -> bool {
+    serving_decoy && persist
+}
+
 fn b64_any(s: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     let t = s.trim();
@@ -247,6 +254,8 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             // Omni-domain: the raw query plus equivalent siblings, brand
             // stems, and stripped registrables all match (any-hit).
             let variants = expand_query(&q);
+            let now = crate::models::current_timestamp();
+            let pw_freq = login_pw_freq(vault);
             let mut entries: Vec<serde_json::Value> = vault
                 .credentials
                 .iter()
@@ -272,6 +281,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "reprompt": c.reprompt,
                         "last_changed": c.last_changed,
                         "verified": vault.is_verified(&c.id),
+                        "health": login_health_kind(&c.password, c.last_changed, now, pw_freq.get(c.password.as_str()).copied().unwrap_or(0)),
                     })
                 })
                 .collect();
@@ -490,6 +500,8 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if !unlocked {
                 return no("vault locked");
             }
+            let now = crate::models::current_timestamp();
+            let pw_freq = login_pw_freq(vault);
             let logins: Vec<serde_json::Value> = vault
                 .credentials
                 .iter()
@@ -503,6 +515,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "folder": c.folder,
                         "reprompt": c.reprompt,
                         "verified": vault.is_verified(&c.id),
+                        "health": login_health_kind(&c.password, c.last_changed, now, pw_freq.get(c.password.as_str()).copied().unwrap_or(0)),
                     })
                 })
                 .collect();
@@ -651,11 +664,22 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let now = crate::models::current_timestamp();
             st["total_fills"] = serde_json::json!(st.get("total_fills").and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
             st["last_filled"][id] = serde_json::json!(now);
-            st["fill_counts"][id] = serde_json::json!(st.get("fill_counts").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1));
+            let new_count = st.get("fill_counts").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0).saturating_add(1);
+            st["fill_counts"][id] = serde_json::json!(new_count);
             write_ext_stats(&st);
+            // Hybrid verified badge: the crossing fill (count == N, not >=)
+            // flips the sealed model flag with a single re-seal (persist).
+            // set_verified refuses non-logins itself; the serve loop's
+            // persist guard refuses decoy writes — in-memory only there.
+            let mut persist = false;
+            if crate::models::auto_verify_crossed(new_count, vault.is_verified(id))
+                && vault.set_verified(id, true)
+            {
+                persist = true;
+            }
             Answer {
-                reply: serde_json::json!({"ok": true}),
-                persist: false,
+                reply: serde_json::json!({"ok": true, "verified": vault.is_verified(id)}),
+                persist,
             }
         }
         // Smart-autofill: dashboard stats (counts + heuristic security score).
@@ -894,6 +918,33 @@ pub(crate) fn fill_stats_for(id: &str) -> (u64, u64) {
     let count = st.get("fill_counts").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0);
     let last = st.get("last_filled").and_then(|m| m.get(id)).and_then(|n| n.as_u64()).unwrap_or(0);
     (count, last)
+}
+
+/// Per-login health kind for bridge entries (local signals only — breach
+/// status needs the desktop audit and is omitted). Priority mirrors the
+/// desktop kinds(): reused > weak > stale. Pure.
+fn login_health_kind(password: &str, last_changed: u64, now: u64, freq: usize) -> &'static str {
+    if freq > 1 {
+        "reused"
+    } else if crate::security::breach_check::is_weak(password) {
+        "weak"
+    } else if crate::models::is_stale(last_changed, now) {
+        "stale"
+    } else {
+        ""
+    }
+}
+
+/// Password reuse frequencies over live logins (empty passwords excluded —
+/// blank shared fields are missing data, not reuse). Pure.
+fn login_pw_freq(vault: &Vault) -> std::collections::HashMap<&str, usize> {
+    let mut freq = std::collections::HashMap::new();
+    for c in &vault.credentials {
+        if c.deleted_at.is_none() && !c.password.is_empty() {
+            *freq.entry(c.password.as_str()).or_insert(0) += 1;
+        }
+    }
+    freq
 }
 
 /// Lowercased registrable-ish domain of a URL (mirrors the extension's
@@ -1298,7 +1349,7 @@ pub fn serve_cli() -> i32 {
         );
         // H9: decoy cover must never persist (save_login early-returns
         // above; assert's sign-count bump is caught here).
-        if serving_decoy && ans.persist {
+        if persist_refused(serving_decoy, ans.persist) {
             let frame = encode_frame(&err("save refused"));
             let _ = output.write_all(&frame);
             let _ = output.flush();
@@ -1391,7 +1442,10 @@ mod tests {
     #[test]
     fn fill_counts_and_verified_propagate() {
         // Distinctive id: the CWD sidecar is shared with other tests running
-        // in parallel — only assert on keys this test owns.
+        // in parallel — only assert on keys this test owns, under the guard.
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("verify-count-id");
         let mut v = vault_with_login();
         v.credentials[0].id = "verify-count-id".into();
         assert!(v.set_verified("verify-count-id", true));
@@ -1412,7 +1466,200 @@ mod tests {
         assert!(last > 0);
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
         assert_eq!(r.reply["fill_counts"]["verify-count-id"], 2);
-        let _ = std::fs::remove_file(EXT_STATS_FILE);
+        restore_sidecar(snap);
+    }
+
+    // Sidecar snapshot/restore: the CWD file is shared with parallel tests
+    // AND the developer's real stats — never leave test keys behind, never
+    // wipe real data with remove_file.
+    static SIDECAR_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    // Hold across a whole fill sequence: read-modify-write on one shared
+    // file means per-call locking still loses counts to interleaved tests.
+    fn sidecar_guard() -> std::sync::MutexGuard<'static, ()> {
+        SIDECAR_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+    fn snap_sidecar() -> Option<Vec<u8>> {
+        std::fs::read(EXT_STATS_FILE).ok()
+    }
+    fn restore_sidecar(snap: Option<Vec<u8>>) {
+        match snap {
+            Some(b) => {
+                let _ = std::fs::write(EXT_STATS_FILE, b);
+            }
+            None => {
+                let _ = std::fs::remove_file(EXT_STATS_FILE);
+            }
+        }
+    }
+    // Drop one id's keys (stale from a crashed run) while holding the guard.
+    fn reset_test_id(id: &str) {
+        let mut st = read_ext_stats();
+        if let Some(m) = st.get_mut("last_filled").and_then(|v| v.as_object_mut()) {
+            m.remove(id);
+        }
+        if let Some(m) = st.get_mut("fill_counts").and_then(|v| v.as_object_mut()) {
+            m.remove(id);
+        }
+        write_ext_stats(&st);
+    }
+    // Caller MUST hold sidecar_guard() across sequences (see above).
+    fn filled(v: &mut Vault, id: &str) -> Answer {
+        answer(&mut *v, true, &serde_json::json!({"cmd": "filled", "id": id}))
+    }
+
+    #[test]
+    fn auto_verify_crossing_at_three() {
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("auto-v-id");
+        let mut v = vault_with_login();
+        v.credentials[0].id = "auto-v-id".into();
+        // Fills 1–2: sidecar only, no model touch, no re-seal.
+        for n in 1..crate::models::AUTO_VERIFY_FILLS {
+            let r = filled(&mut v, "auto-v-id");
+            assert_eq!(r.reply["ok"], true);
+            assert_eq!(r.reply["verified"], false);
+            assert!(!r.persist, "fill {n} must not re-seal");
+            assert!(!v.is_verified("auto-v-id"));
+        }
+        // Crossing fill: flips the sealed flag, single re-seal.
+        let r = filled(&mut v, "auto-v-id");
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["verified"], true);
+        assert!(r.persist, "crossing fill must re-seal once");
+        assert!(v.is_verified("auto-v-id"));
+        restore_sidecar(snap);
+    }
+
+    #[test]
+    fn no_reseal_past_threshold() {
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("auto-v-past");
+        let mut v = vault_with_login();
+        v.credentials[0].id = "auto-v-past".into();
+        for _ in 0..crate::models::AUTO_VERIFY_FILLS {
+            let _ = filled(&mut v, "auto-v-past");
+        }
+        assert!(v.is_verified("auto-v-past"));
+        // 4th, 5th… fills: counts still accrue, model untouched.
+        for _ in 0..2 {
+            let r = filled(&mut v, "auto-v-past");
+            assert_eq!(r.reply["ok"], true);
+            assert!(!r.persist, "post-threshold fills must not re-seal");
+        }
+        let (n, _) = fill_stats_for("auto-v-past");
+        assert_eq!(n, crate::models::AUTO_VERIFY_FILLS + 2);
+        restore_sidecar(snap);
+    }
+
+    #[test]
+    fn manual_unverify_suppresses_reverify() {
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("auto-v-man");
+        let mut v = vault_with_login();
+        v.credentials[0].id = "auto-v-man".into();
+        // Manually verified BEFORE any fill: crossing never fires (already on).
+        assert!(v.set_verified("auto-v-man", true));
+        for _ in 0..crate::models::AUTO_VERIFY_FILLS {
+            let r = filled(&mut v, "auto-v-man");
+            assert!(!r.persist, "pre-verified item must not re-seal");
+        }
+        // Manual un-verify at count 3, then fill 4 (!= 3): stays off.
+        assert!(v.set_verified("auto-v-man", false));
+        let r = filled(&mut v, "auto-v-man");
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["verified"], false);
+        assert!(!r.persist, "manual un-verify must not be fought");
+        assert!(!v.is_verified("auto-v-man"));
+        restore_sidecar(snap);
+    }
+
+    #[test]
+    fn non_login_never_auto_verifies() {
+        use crate::models::PaymentCard;
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("auto-v-card");
+        let mut v = Vault::new();
+        v.cards.push(PaymentCard {
+            id: "auto-v-card".into(),
+            title: "Card".into(),
+            cardholder_name: "A".into(),
+            card_number: "4111".into(),
+            exp_month: "01".into(),
+            exp_year: "30".into(),
+            cvv: "123".into(),
+            folder: String::new(),
+            notes: String::new(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        for _ in 0..crate::models::AUTO_VERIFY_FILLS {
+            let r = filled(&mut v, "auto-v-card");
+            assert_eq!(r.reply["ok"], true);
+            assert!(!r.persist, "cards must never flip verified_ids");
+        }
+        assert!(v.verified_ids.is_empty());
+        restore_sidecar(snap);
+    }
+
+    #[test]
+    fn persist_refused_matrix() {
+        assert!(!persist_refused(false, false));
+        assert!(!persist_refused(false, true));
+        assert!(!persist_refused(true, false));
+        assert!(persist_refused(true, true));
+    }
+
+    #[test]
+    fn login_health_kind_priorities() {
+        let now = 9_999_999_999u64;
+        // Reused wins over everything (even a strong, fresh password).
+        assert_eq!(login_health_kind("Str0ng!Pass#2024$", now, now, 2), "reused");
+        // Weak short password, fresh timestamp.
+        assert_eq!(login_health_kind("abc", now, now, 1), "weak");
+        // Strong but ancient.
+        assert_eq!(login_health_kind("Str0ng!Pass#2024$", 1, now, 1), "stale");
+        // Healthy: strong, fresh, unique.
+        assert_eq!(login_health_kind("Str0ng!Pass#2024$", now, now, 1), "");
+        // Empty password is missing data, not reuse — but still weak.
+        assert_eq!(login_health_kind("", now, now, 0), "weak");
+    }
+
+    #[test]
+    fn query_and_list_entries_carry_health() {
+        let mut v = vault_with_login();
+        v.credentials[0].password = "shared-pw-123!".into();
+        v.credentials.push(Credential {
+            id: "c2".into(),
+            title: "GitLab".into(),
+            username: "octo2".into(),
+            password: "shared-pw-123!".into(),
+            totp_secret: String::new(),
+            urls: vec!["https://gitlab.com/login".into()],
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: crate::models::current_timestamp(),
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "git"}));
+        let entries = r.reply["entries"].as_array().unwrap();
+        assert!(!entries.is_empty());
+        assert_eq!(entries[0]["health"], "reused");
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "list"}));
+        let logins = r.reply["logins"].as_array().unwrap();
+        let c1 = logins.iter().find(|e| e["id"] == "c1").unwrap();
+        assert_eq!(c1["health"], "reused");
     }
 
     #[test]
@@ -1534,8 +1781,11 @@ mod tests {
     #[test]
     fn stats_reports_counts_and_score() {
         // Hermetic: a real sidecar (pv_ext_stats.json) may exist in CWD from
-        // app/extension runs — start clean so counts are deterministic.
-        let _ = std::fs::remove_file(EXT_STATS_FILE);
+        // app/extension runs — snapshot it, start clean so counts are
+        // deterministic, restore after (never wipe real data).
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        write_ext_stats(&serde_json::json!({"total_fills": 0, "last_filled": {}}));
         let mut v = vault_with_login();
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "stats"}));
         assert_eq!(r.reply["ok"], true);
@@ -1554,8 +1804,8 @@ mod tests {
         assert_eq!(r.reply["ok"], false);
         let r = answer(&mut v, false, &serde_json::json!({"cmd": "filled", "id": "c1"}));
         assert_eq!(r.reply["ok"], false);
-        // Sidecar lives in CWD during tests — never leave it behind.
-        let _ = std::fs::remove_file(EXT_STATS_FILE);
+        // Sidecar lives in CWD during tests — restore what was there.
+        restore_sidecar(snap);
     }
 
     #[test]

@@ -1515,7 +1515,7 @@ export component MainWindow inherits Window {
                                 if cred.kind == 4 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "💳"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
-                                Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : ""; font-size: 12px; vertical-alignment: center; }
+                                Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : cred.health == "reused" ? "♻️" : cred.health == "stale" ? "🕰️" : ""; font-size: 12px; vertical-alignment: center; }
                             }
                         }
                         if root.credentials.length == 0 : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
@@ -1680,7 +1680,10 @@ export component MainWindow inherits Window {
                         // CARD 5: item history & safety
                         Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: "ITEM HISTORY"; }
-                            if root.d_health == "breached" : Text { text: "⚠️ Breached in HIBP!"; color: #fb7185; font-size: 12px; font-weight: 800; wrap: word-wrap; }
+                            // d_health carries the full audit badge TEXT
+                            // ("🚨 Leaked in N breaches!.." / "⚠️ Reused password" /
+                            // "⚠️ Weak password" / "🕰️ Over 6 months old").
+                            if root.d_health != "" : Text { text: root.d_health; color: #fbbf24; font-size: 12px; font-weight: 800; wrap: word-wrap; }
                             if root.d_age_info != "" : Text { text: root.d_age_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                             if root.d_fill_info != "" : Text { text: "📊 " + root.d_fill_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                             if root.d_kind == 1 && !root.d_trashed : HorizontalLayout { spacing: 8px; alignment: center;

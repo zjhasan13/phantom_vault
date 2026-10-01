@@ -107,6 +107,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       await touchActivity();
       return { ok: true };
     }
+    // Quick-unlock PIN hash — sealed in the desktop app (DPAPI), managed in
+    // its Settings. The extension NEVER sets/stores a PIN, only verifies.
+    if (msg.type === "PV_EXT_PIN") {
+      return await hostRequest({ cmd: "ext_pin_hash" });
+    }
     if (msg.type === "PV_SAVE_LOGIN") {
       // Sender check (MISSING-HIGH): a malicious page must not save under
       // another site's URL (github.com) to poison that credential via the
