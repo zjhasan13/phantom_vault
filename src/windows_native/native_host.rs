@@ -25,7 +25,42 @@ pub const MAX_MSG_BYTES: usize = 1024 * 1024;
 
 /// Hello-cached passphrase sidecar (canonical const lives in `main.rs`).
 const HELLO_TOKEN_FILE: &str = "vault_hello.dpapi";
+/// Bridge liveness beacon (NOT a secret — unix timestamp text). The desktop
+/// app rewrites it every 20s while unlocked. A stale/missing beacon means
+/// the app is closed, crashed, or locked: serve NOTHING (P1: closed-app
+/// serving via a leftover Hello token file).
+const HEARTBEAT_FILE: &str = "vault_heartbeat.json";
+/// Max beacon age: 20s beat + generous slack (sleep delays, clock skew).
+/// Kill -9 / crash safe — no cleanup path needed, staleness refuses.
+const HEARTBEAT_MAX_AGE_SECS: u64 = 75;
 
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Pure liveness decision (unit-testable): fresh beacon ⇒ live app.
+fn heartbeat_parts(beacon: Option<u64>, now: u64) -> bool {
+    match beacon {
+        Some(t) => now.saturating_sub(t) < HEARTBEAT_MAX_AGE_SECS,
+        None => false,
+    }
+}
+
+fn desktop_alive() -> bool {
+    let ts = std::fs::read_to_string(HEARTBEAT_FILE)
+        .ok()
+        .and_then(|s| s.trim().parse::<u64>().ok());
+    heartbeat_parts(ts, now_secs())
+}
+
+/// Full bridge-unlock predicate: sealed Hello credential AND a live app.
+/// Either half missing ⇒ locked (extension shows Vault Locked / App Closed).
+fn bridge_unlocked() -> bool {
+    std::path::Path::new(HELLO_TOKEN_FILE).exists() && desktop_alive()
+}
 /// Length-prefixed frame for one JSON value.
 pub fn encode_frame(msg: &serde_json::Value) -> Vec<u8> {
     let mut body = serde_json::to_vec(msg).unwrap_or_else(|_| b"{\"ok\":false}".to_vec());
@@ -1210,6 +1245,14 @@ pub fn serve_cli() -> i32 {
         let _ = std::io::stdout().write_all(&frame);
         let _ = std::io::stdout().flush();
     };
+    // P1 (closed-app serving): a leftover Hello token file is NOT enough —
+    // the desktop app must be alive (fresh heartbeat) or we serve nothing.
+    // Checked BEFORE the backoff sleep + vault decrypt (no wasted Argon2id).
+    if !desktop_alive() {
+        bridge_log("refused: stale/missing heartbeat (app closed or locked)");
+        emit_err("desktop app closed — open PhantomVault");
+        return 2;
+    }
     // H7: share the unlock throttle — an unthrottled second Argon2id path
     // defeats the UI backoff. Sleep the persisted delay before touching DPAPI.
     {
@@ -1337,7 +1380,13 @@ pub fn serve_cli() -> i32 {
             }
             continue;
         }
-        let unlocked = std::path::Path::new(HELLO_TOKEN_FILE).exists();
+        let unlocked = bridge_unlocked();
+        // P1: app closed/locked mid-session (heartbeat went stale while we
+        // idled) — kill the session instead of serving on a dead token.
+        if !desktop_alive() {
+            bridge_log("host session ended: heartbeat stale (app closed/locked)");
+            break;
+        }
         let ans = answer(&mut vault, unlocked, &req);
         last_active = std::time::Instant::now();
         watch_last.store(
@@ -1612,6 +1661,98 @@ mod tests {
         assert!(!persist_refused(false, true));
         assert!(!persist_refused(true, false));
         assert!(persist_refused(true, true));
+    }
+
+    #[test]
+    fn heartbeat_parts_matrix() {
+        let now = 9_999_999_999u64;
+        // Fresh beacon ⇒ live.
+        assert!(heartbeat_parts(Some(now), now));
+        assert!(heartbeat_parts(Some(now - 1), now));
+        assert!(heartbeat_parts(Some(now - (HEARTBEAT_MAX_AGE_SECS - 1)), now));
+        // Stale boundary (saturating, clock-skew safe).
+        assert!(!heartbeat_parts(Some(now - HEARTBEAT_MAX_AGE_SECS), now));
+        assert!(!heartbeat_parts(Some(1), now));
+        // Missing/unparsable beacon ⇒ dead.
+        assert!(!heartbeat_parts(None, now));
+        // Future beacon (clock moved) ⇒ tolerated, not a lockout.
+        assert!(heartbeat_parts(Some(now + 3600), now));
+    }
+
+    #[test]
+    fn desktop_alive_reads_beacon_file() {
+        let _g = sidecar_guard();
+        let snap: Option<Vec<u8>> = std::fs::read(HEARTBEAT_FILE).ok();
+        // Fresh beacon ⇒ alive even with no other state.
+        let now = now_secs();
+        std::fs::write(HEARTBEAT_FILE, now.to_string()).unwrap();
+        assert!(desktop_alive());
+        // Stale beacon ⇒ dead (app closed/crashed).
+        std::fs::write(HEARTBEAT_FILE, "1").unwrap();
+        assert!(!desktop_alive());
+        // Garbage ⇒ dead, never a pass-through.
+        std::fs::write(HEARTBEAT_FILE, "not-a-number").unwrap();
+        assert!(!desktop_alive());
+        // Missing ⇒ dead.
+        let _ = std::fs::remove_file(HEARTBEAT_FILE);
+        assert!(!desktop_alive());
+        match snap {
+            Some(b) => {
+                let _ = std::fs::write(HEARTBEAT_FILE, b);
+            }
+            None => {
+                let _ = std::fs::remove_file(HEARTBEAT_FILE);
+            }
+        }
+    }
+
+    #[test]
+    fn bridge_unlocked_needs_both_halves() {
+        // Full AND-matrix over fixture files. bridge_unlocked() only checks
+        // token EXISTENCE (content never read here), so a garbage token
+        // fixture is safe. Both files snapshot-restored, never wiped.
+        let _g = sidecar_guard();
+        let snap_hb: Option<Vec<u8>> = std::fs::read(HEARTBEAT_FILE).ok();
+        let snap_tok: Option<Vec<u8>> = std::fs::read(HELLO_TOKEN_FILE).ok();
+        let write_hb = |s: &str| std::fs::write(HEARTBEAT_FILE, s).unwrap();
+        let write_tok = || std::fs::write(HELLO_TOKEN_FILE, b"test-fixture").unwrap();
+        let wipe = || {
+            let _ = std::fs::remove_file(HEARTBEAT_FILE);
+            let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
+        };
+        // Neither ⇒ locked.
+        wipe();
+        assert!(!bridge_unlocked());
+        // Token only (P1: leftover token, closed app) ⇒ locked.
+        write_tok();
+        assert!(!bridge_unlocked());
+        // Heartbeat only (no credential) ⇒ locked.
+        wipe();
+        write_hb(&now_secs().to_string());
+        assert!(!bridge_unlocked());
+        // Both fresh ⇒ unlocked.
+        write_tok();
+        assert!(bridge_unlocked());
+        // Fresh token + stale heartbeat (app died) ⇒ locked.
+        write_hb("1");
+        assert!(!bridge_unlocked());
+        // Restore.
+        match snap_hb {
+            Some(b) => {
+                let _ = std::fs::write(HEARTBEAT_FILE, b);
+            }
+            None => {
+                let _ = std::fs::remove_file(HEARTBEAT_FILE);
+            }
+        }
+        match snap_tok {
+            Some(b) => {
+                let _ = std::fs::write(HELLO_TOKEN_FILE, b);
+            }
+            None => {
+                let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
+            }
+        }
     }
 
     #[test]

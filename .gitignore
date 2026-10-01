@@ -23,6 +23,9 @@ debug.log
 # Local scheduler/UI prefs (machine-specific state, recreated on boot).
 backup_schedule.json
 tray_minimize.pref
+# Bridge liveness beacon (timestamp, rewritten every 20s while unlocked).
+vault_heartbeat.json
+pv_ext_stats.json
 blackout.pref
 pv_ext_stats.json
 native_host.log

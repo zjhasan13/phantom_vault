@@ -35,6 +35,34 @@ slint::include_modules!();
 
 const VAULT_FILE: &str = "my_secure_vault.enc";
 const HELLO_TOKEN_FILE: &str = "vault_hello.dpapi";
+/// Bridge liveness beacon (NOT a secret — just a timestamp). Written every
+/// 20s while unlocked; the native host refuses to serve when stale (>75s).
+/// Closing/crashing the app stops the beats, so a leftover Hello token file
+/// alone can NEVER unlock the bridge (P1: closed-app serving).
+const HEARTBEAT_FILE: &str = "vault_heartbeat.json";
+
+/// Start the bridge heartbeat after an unlock (real or decoy cover — the
+/// decoy bridge is designed to serve, so it needs liveness too). Idempotent:
+/// re-unlocking while a beater lives just adds a redundant writer; every
+/// beater exits on its own once the master store is wiped (lock).
+fn start_bridge_heartbeat(master: &Arc<Mutex<Option<SecretString>>>) {
+    let _ = std::fs::write(HEARTBEAT_FILE, crate::models::current_timestamp().to_string());
+    let m = Arc::clone(master);
+    std::thread::spawn(move || loop {
+        std::thread::sleep(Duration::from_secs(20));
+        if lock_master_pw(&m).as_ref().is_none() {
+            break;
+        }
+        let _ = std::fs::write(HEARTBEAT_FILE, crate::models::current_timestamp().to_string());
+    });
+}
+
+/// Stop the beats (lock + exit paths). The Hello token is removed by the
+/// existing lock scrub; both files die here so neither survives app exit.
+fn stop_bridge_heartbeat() {
+    let _ = std::fs::remove_file(HEARTBEAT_FILE);
+    let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
+}
 
 /// Native-host launch detector: humans type `native-host`, but Chromium
 /// launches the bridge as `<exe> chrome-extension://<id>/ [...]` (origin URL
@@ -717,6 +745,8 @@ fn lock_vault_now(
     // C4: kill the Hello bridge credential FIRST — otherwise Win+L / idle /
     // proximity lock wipes RAM but leaves vault_hello.dpapi for any process.
     let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
+    // P1 fix: stop the bridge beats too — a stale heartbeat refuses serves.
+    stop_bridge_heartbeat();
     panic_wipe(vault_arc, master_arc);
     // Unsent form drafts (may hold Hidden custom-field secrets).
     if let Ok(mut p) = pending_cf.lock() {
@@ -1012,6 +1042,9 @@ fn publish_unlocked_vault(
     if let Some(pw) = master_store {
         *lock_master_pw(master_pw_arc) = Some(SecretString::new(pw));
     }
+    // Bridge liveness starts here (P1 fix): the heartbeat proves a live,
+    // unlocked app — the Hello token file alone no longer suffices.
+    start_bridge_heartbeat(master_pw_arc);
     *search_state.lock().unwrap() = FilterState::default();
     ui.set_search_query("".into());
     ui.set_health_filter("".into());
@@ -1460,6 +1493,9 @@ fn unlock_with_password(    pass: String,
                             let _ = std::fs::write(HELLO_TOKEN_FILE, blob);
                         }
                         *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
+                        // Decoy cover is a full publish for bridging purposes:
+                        // the host serves ONLY the decoy, so it needs liveness.
+                        start_bridge_heartbeat(&master_pw_arc);
                         *search_state.lock().unwrap() = FilterState::default();
                         ui.set_search_query("".into());
                         ui.set_showing_trash(false);
@@ -2705,6 +2741,9 @@ fn main() -> Result<(), slint::PlatformError> {
             } else {
                 windows_native::clipboard::flush_now();
                 security::access_log::log_event("lock", "window close exit");
+                // P1 fix: window-close exit must not leave bridge credentials.
+                // (Tray-minimize path above keeps running unlocked — beats on.)
+                stop_bridge_heartbeat();
                 std::process::exit(0);
             }
         });
