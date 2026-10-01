@@ -94,6 +94,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       touchActivity();
       return await hostRequest({ cmd: "passkey_lookup", rp: msg.rp || "" });
     }
+    // Standalone 2FA Hub codes (fallback when logins carry no secret).
+    if (msg.type === "PV_TOTP_LOOKUP") {
+      touchActivity();
+      return await hostRequest({ cmd: "totp_lookup", app: msg.app || msg.domain || "" });
+    }
     if (msg.type === "PV_CARDS") {
       return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "" });
     }

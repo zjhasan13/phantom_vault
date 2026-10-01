@@ -556,6 +556,52 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: false,
             }
         }
+        // Standalone 2FA Hub lookup (v1): live codes for hub accounts whose
+        // issuer/account matches the query — the fallback when login entries
+        // carry no totp_secret. Live codes only (never secrets), unlocked-
+        // only, no persist, no sign-count semantics here.
+        "totp_lookup" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let q = req
+                .get("app")
+                .or_else(|| req.get("url"))
+                .or_else(|| req.get("domain"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if q.is_empty() {
+                return no("domain required");
+            }
+            let found: Vec<serde_json::Value> = vault
+                .totp_accounts
+                .iter()
+                .filter(|t| {
+                    // Empty issuer/account match everything via contains("") —
+                    // require a non-empty haystack on both sides.
+                    let iss = t.issuer.to_lowercase();
+                    let acc = t.account_name.to_lowercase();
+                    (!iss.is_empty() && (iss.contains(&q) || q.contains(&iss)))
+                        || (!acc.is_empty() && acc.contains(&q))
+                })
+                .map(|t| {
+                    serde_json::json!({
+                        "account": t.account_name,
+                        "issuer": t.issuer,
+                        "code": crate::totp_engine::generate_live_code(&t.secret)
+                            .map(|(code, _)| code)
+                            .unwrap_or_default(),
+                    })
+                })
+                .collect();
+            crate::security::access_log::log_event("bridge-totp-lookup", &q);
+            Answer {
+                reply: serde_json::json!({"ok": true, "codes": found}),
+                persist: false,
+            }
+        }
         // Extension-harvested favicon (hybrid engine layer 2): the browser
         // already loaded this icon, so no new network happens here — just
         // validate + file into the desktop disk cache. Unlocked-only,
@@ -1762,6 +1808,43 @@ mod tests {
         let r = cmd(&mut v, true, "fine.com", &hello);
         assert_eq!(r.reply["ok"], false);
         assert!(!r.persist);
+    }
+
+        #[test]
+    fn totp_lookup_serves_hub_codes_not_secrets() {
+        use crate::models::TotpAccount;
+        let mut v = Vault::new();
+        v.totp_accounts.push(TotpAccount {
+            id: "t1".into(),
+            account_name: "user@example.com".into(),
+            issuer: "Instagram".into(),
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+            favorite: false,
+        });
+        // Issuer match (case-insensitive): live code, never the secret.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "totp_lookup", "app": "instagram.com"}));
+        assert_eq!(r.reply["ok"], true);
+        assert!(!r.persist);
+        let codes = r.reply["codes"].as_array().unwrap();
+        assert_eq!(codes.len(), 1);
+        assert_eq!(codes[0]["account"], "user@example.com");
+        let code = codes[0]["code"].as_str().unwrap();
+        assert_eq!(code.len(), 6);
+        assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        assert!(codes[0].get("secret").is_none());
+        // Unknown domain ⇒ ok with empty list; missing/locked ⇒ deny.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "totp_lookup", "app": "nope.invalid"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["codes"].as_array().unwrap().len(), 0);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "totp_lookup"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "totp_lookup", "app": "instagram.com"}));
+        assert_eq!(r.reply["ok"], false);
     }
 
     #[test]

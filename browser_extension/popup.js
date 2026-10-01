@@ -477,6 +477,13 @@
       status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
       return;
     }
+    // Step-1 handoff: the content script never saw this fill (direct
+    // inject), so hand it the entry id — it re-queries and stashes pending
+    // secrets itself for password/OTP step chaining. Best-effort.
+    try {
+      const p = chrome.tabs.sendMessage(tab.id, { type: "PV_STASH_PENDING", id: entry.id });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }
@@ -503,6 +510,10 @@
       return;
     }
     if (!submitted) status.textContent = "⚠️ Filled, but no submittable form found.";
+    try {
+      const p = chrome.tabs.sendMessage(tab.id, { type: "PV_STASH_PENDING", id: entry.id });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }
@@ -791,6 +802,7 @@
       render();
       console.log(`PV refresh done: sugg=${suggEntries.length} logins=${allData.logins.length}`);
       updateLockHint();
+      checkOtpBanner();
     } catch (e) { console.log("PV refresh: bridge unreachable:", (e && e.message) || e); showLocked("bridge unreachable"); }
   }
 
@@ -1013,6 +1025,33 @@
       setTimeout(() => { btn.textContent = "📋"; }, 1500);
     } catch (_) { btn.textContent = "⚠️"; }
   });
+  // OTP-page banner: when the active tab sits on a 2FA ceremony, offer a
+  // prominent one-click Fill-2FA (content resolves pending→first-with-totp).
+  const otpFillBtn = document.getElementById("otpFillBtn");
+  async function checkOtpBanner() {
+    try {
+      otpFillBtn.classList.add("hidden");
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || tab.id == null) return;
+      const res = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: "PV_OTP_STATUS" }), 3000, "otp status");
+      if (res && res.ok && res.otpPage) otpFillBtn.classList.remove("hidden");
+    } catch (_) {}
+  }
+  otpFillBtn.addEventListener("click", async () => {
+    otpFillBtn.textContent = "⏳…";
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || tab.id == null) return;
+      const res = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: "PV_FILL_OTP" }), QUERY_TIMEOUT_MS, "otp fill");
+      status.textContent = res && res.ok ? "✅ 2FA code filled." : "⚠️ " + ((res && res.error) || "OTP fill failed");
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || "OTP fill failed");
+    } finally {
+      otpFillBtn.textContent = "🔑 Fill 2FA code";
+    }
+  });
   // Per-site "never suggest": appends this host to blocked_domains (the
   // same list content.js enforces — badges, dropdowns, autofill all stop).
   if (neverBtn) {
@@ -1233,6 +1272,43 @@
     paintTotpTimers();
     totpTicker = setInterval(paintTotpTimers, 1000);
   }
+  // Fresh-code guard: TOTP copied/filled with <5s left dies on arrival.
+  // Waits out the rollover (+400ms) so callers read the NEW code after.
+  function totpRemain() {
+    return 30 - (Math.floor(Date.now() / 1000) % 30);
+  }
+  async function waitTotpFresh() {
+    if (totpRemain() >= 5) return;
+    const target = (Math.floor(Date.now() / 30000) + 1) * 30000 + 400;
+    await new Promise((r) => setTimeout(r, Math.max(0, target - Date.now())));
+  }
+  async function clipTotp(text, btn) {
+    const restore = btn ? btn.textContent : "";
+    try {
+      // Extra bridge re-query ONLY when we actually waited out a rollover.
+      const stale = totpRemain() < 5;
+      if (stale && btn) btn.textContent = "⏳…";
+      await waitTotpFresh();
+      if (stale) await refreshTotpCodes();
+      const live = await (typeof text === "function" ? text() : text) || "";
+      if (!live) {
+        if (btn) btn.textContent = restore;
+        return;
+      }
+      await navigator.clipboard.writeText(live);
+      if (btn) {
+        btn.textContent = t("copied");
+        setTimeout(() => { btn.textContent = restore; }, 1500);
+      } else {
+        // Click-to-copy on the code itself: status-line feedback instead.
+        const msg = t("copied");
+        status.textContent = msg;
+        setTimeout(() => { if (status.textContent === msg) status.textContent = ""; }, 1500);
+      }
+    } catch (_) {
+      if (btn) btn.textContent = t("blocked_cb");
+    }
+  }
   // Full login row (suggestion tier): USERNAME is the bold primary line,
   // domain/title secondary — 20+ same-domain accounts scan by email, not
   // by identical titles. TOTP badge, compact audit, Fill/Copy/Copy-user.
@@ -1255,6 +1331,13 @@
       const code = document.createElement("code");
       code.textContent = e.totp;
       code.setAttribute("data-totp-id", e.id);
+      code.title = "Click to copy";
+      code.style.cursor = "pointer";
+      code.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying the 2FA code. Copy now?`)) return;
+        clipTotp(() => code.textContent, null);
+      });
       const timer = document.createElement("span");
       timer.className = "totpTimer";
       const bar = document.createElement("div");
@@ -1268,8 +1351,7 @@
         // H14: TOTP copy on a reprompt row needs the same gate as Fill.
         if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying the 2FA code. Copy now?`)) return;
         // Copy the LIVE displayed code (auto-refresh may have replaced it).
-        try { await navigator.clipboard.writeText(code.textContent); cp.textContent = t("copied"); }
-        catch (_) { cp.textContent = t("blocked_cb"); }
+        clipTotp(() => code.textContent, cp);
       });
       tot.append(code, timer, cp);
       row.append(tot, bar);
@@ -1340,6 +1422,18 @@
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
     const totpOne = async (btn) => {
+      // Click on a displayed code copies it fresh (re-fetch, never the
+      // possibly-expired label); otherwise fetch + display.
+      if (btn.dataset.hasCode) {
+        clipTotp(async () => {
+          try {
+            const full = await fetchEntry(1, e.id);
+            if (full && full.totp) btn.textContent = full.totp;
+          } catch (_) {}
+          return btn.textContent;
+        }, btn);
+        return;
+      }
       if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying the 2FA code. Copy now?`)) return;
       btn.textContent = "…";
       try {
@@ -1348,9 +1442,11 @@
         try {
           await navigator.clipboard.writeText(full.totp);
           btn.textContent = full.totp;
+          btn.dataset.hasCode = "1";
           setTimeout(() => {
             navigator.clipboard.writeText("").catch(() => {});
             btn.textContent = "🔑 2FA";
+            delete btn.dataset.hasCode;
           }, 30000);
         } catch (_) { btn.textContent = t("blocked_cb"); }
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); btn.textContent = "🔑 2FA"; }
