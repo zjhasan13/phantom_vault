@@ -38,6 +38,7 @@
       match_label: "Default URI Match Detection", blocked_h: "🚫 Blocked Domains",
       blocked_hint: "One per line — no badges, no autofill here.",
       retry: "🔄 Retry", fill: "⚡ Fill", copy: "📋 Copy", copied: "✅ Copied", blocked_cb: "⚠️ Blocked",
+      submit_btn: "⚡↩", lock_in: (m) => `🔒 Auto-locks in ${m}m`, lock_soon: "🔒 Locking soon…",
       pass_btn: "📋 Pass", user_btn: "👤 User", eye_show: "👁️", eye_hide: "🙈",
       sync_locked: "🔒 Vault is Locked",
       sync_locked_sub: "Unlock PhantomVault desktop app.",
@@ -82,6 +83,7 @@
       match_label: "ডিফল্ট URI মিল", blocked_h: "🚫 ব্লকড ডোমেইন",
       blocked_hint: "প্রতি লাইনে একটি — এখানে ব্যাজ/অটোফিল বন্ধ।",
       retry: "🔄 পুনরায়", fill: "⚡ পূরণ", copy: "📋 কপি", copied: "✅ কপি হয়েছে", blocked_cb: "⚠️ ব্যর্থ",
+      submit_btn: "⚡↩", lock_in: (m) => `🔒 ${m} মি-এ অটো-লক`, lock_soon: "🔒 শীঘ্রই লক হচ্ছে…",
       pass_btn: "📋 পাস", user_btn: "👤 ইউজার", eye_show: "👁️", eye_hide: "🙈",
       sync_locked: "🔒 ভল্ট লকড",
       sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
@@ -406,37 +408,67 @@
       } catch (_) { return false; }
     });
   }
-  async function doFill(entry) {
+  // Shared injectors: fill returns which fields landed; submit clicks the
+  // form's own submit path (requestSubmit → submit → submit-button click).
+  async function injectFill(tabId, entry) {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: (e) => {
+        const set = (el, v) => {
+          if (!el) return false;
+          Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        };
+        return {
+          u: set(document.querySelector('input[type="text"], input[type="email"]'), e.username || ""),
+          p: set(document.querySelector('input[type="password"]'), e.password || ""),
+        };
+      },
+      args: [{ username: entry.username, password: entry.password }],
+    });
+    return (res && res.result) || { u: false, p: false };
+  }
+  async function injectSubmit(tabId) {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId },
+      func: () => {
+        const pw = document.querySelector('input[type="password"]');
+        const form = (pw && pw.form) || document.querySelector("form");
+        if (!form) return false;
+        try {
+          if (typeof form.requestSubmit === "function") form.requestSubmit();
+          else form.submit();
+          return true;
+        } catch (_) {
+          const btn = form.querySelector('button[type="submit"], input[type="submit"]');
+          if (btn) { btn.click(); return true; }
+          return false;
+        }
+      },
+      args: [],
+    });
+    return !!(res && res.result);
+  }
+  function fillGuards(entry) {
     // Popup-side guards (content.js can't interpose here): reprompt needs
     // explicit presence; mismatched domains refuse like the page path.
     if (entry.reprompt) {
-      if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return;
+      if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return false;
     }
     if (!entryAllowed(entry)) {
       status.textContent = "⚠️ Phishing Hazard: Domain mismatch, autofill refused!";
-      return;
+      return false;
     }
+    return true;
+  }
+  async function doFill(entry) {
+    if (!fillGuards(entry)) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
     let found = { u: false, p: false };
     try {
-      const [res] = await chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: (e) => {
-          const set = (el, v) => {
-            if (!el) return false;
-            Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value").set.call(el, v);
-            el.dispatchEvent(new Event("input", { bubbles: true }));
-            return true;
-          };
-          return {
-            u: set(document.querySelector('input[type="text"], input[type="email"]'), e.username || ""),
-            p: set(document.querySelector('input[type="password"]'), e.password || ""),
-          };
-        },
-        args: [{ username: entry.username, password: entry.password }],
-      });
-      if (res && res.result) found = res.result;
+      found = await injectFill(tab.id, entry);
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || "inject failed");
       return;
@@ -445,6 +477,32 @@
       status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
       return;
     }
+    try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
+    window.close();
+  }
+  async function doFillSubmit(entry) {
+    if (!fillGuards(entry)) return;
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (!tab || tab.id == null) return;
+    let found = { u: false, p: false };
+    try {
+      found = await injectFill(tab.id, entry);
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || "inject failed");
+      return;
+    }
+    if (!found.u && !found.p) {
+      status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
+      return;
+    }
+    let submitted = false;
+    try {
+      submitted = await injectSubmit(tab.id);
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || "submit failed");
+      return;
+    }
+    if (!submitted) status.textContent = "⚠️ Filled, but no submittable form found.";
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }
@@ -659,6 +717,26 @@
   for (const ev of ["click", "keydown"]) {
     document.addEventListener(ev, () => touchActivityPing(), { passive: true });
   }
+  // Auto-lock indicator (footer): live countdown from the background
+  // idle clock. Never = hidden; locked = hidden (the lock card covers it).
+  const lockHint = document.getElementById("lockHint");
+  async function updateLockHint() {
+    try {
+      const st = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }), 3000, "session");
+      const cfg = await chrome.storage.local.get({ lock_timeout_min: 10 }).catch(() => ({ lock_timeout_min: 10 }));
+      const mins = Number(cfg.lock_timeout_min) || 0;
+      if (!mins || !st || !st.ok || st.locked) { lockHint.textContent = ""; return; }
+      const idleMs = Number(st.idleMs) || 0;
+      const remainMs = mins * 60 * 1000 - idleMs;
+      if (remainMs <= 0) { lockHint.textContent = ""; return; }
+      const remainMin = Math.ceil(remainMs / 60000);
+      lockHint.textContent = remainMin <= 1 ? t("lock_soon") : t("lock_in", remainMin);
+    } catch (_) {
+      lockHint.textContent = "";
+    }
+  }
+  setInterval(updateLockHint, 15000);
   // Auto-lock timeout pref (minutes; 0 = Never). Read by background
   // session checks on every popup boot / autofill.
   const lockTimeoutSel = document.getElementById("lockTimeout");
@@ -712,6 +790,7 @@
       buildFolderOptions();
       render();
       console.log(`PV refresh done: sugg=${suggEntries.length} logins=${allData.logins.length}`);
+      updateLockHint();
     } catch (e) { console.log("PV refresh: bridge unreachable:", (e && e.message) || e); showLocked("bridge unreachable"); }
   }
 
@@ -960,17 +1039,13 @@
     return r.entry;
   }
 
-  function brandRow(icon, title, sub) {
+  function brandRow(icon, title, sub, pageUrl) {
     const row = document.createElement("div");
     row.className = "row";
     row.tabIndex = 0;
     const wrap = document.createElement("div");
     wrap.className = "brandrow";
-    const ic = document.createElement("div");
-    ic.className = "brandic";
-    ic.textContent = icon.letter;
-    ic.style.background = icon.bg;
-    ic.style.color = icon.fg;
+    const ic = buildBrandIcon(icon, pageUrl);
     const tx = document.createElement("div");
     tx.className = "brandtx";
     const hd = document.createElement("div");
@@ -983,6 +1058,37 @@
     wrap.append(ic, tx);
     row.append(wrap);
     return row;
+  }
+  // Brand icon: real favicon image only (transparent container, no
+  // background circle). Letter fallback keeps its brand color bg since a
+  // bare letter on transparent looks lost.
+  function buildBrandIcon(icon, pageUrl) {
+    const wrap = document.createElement("div");
+    wrap.className = "brandic";
+    const fallback = () => {
+      wrap.textContent = icon.letter;
+      wrap.style.background = icon.bg;
+      wrap.style.borderRadius = "16px";
+      wrap.style.color = icon.fg;
+    };
+    try {
+      const raw = String(pageUrl || "").trim();
+      if (!raw) { fallback(); return wrap; }
+      const page = raw.includes("://") ? raw : "https://" + raw;
+      new URL(page); // validate only
+      const img = document.createElement("img");
+      img.width = 26;
+      img.height = 26;
+      img.alt = "";
+      img.referrerPolicy = "no-referrer";
+      img.onerror = fallback;
+      img.src = chrome.runtime.getURL(
+        `/_favicon/?pageUrl=${encodeURIComponent(page)}&size=32`);
+      wrap.appendChild(img);
+    } catch (_) {
+      fallback();
+    }
+    return wrap;
   }
   function actionButtons(row, onFill, onCopy) {
     const btns = document.createElement("div");
@@ -1059,6 +1165,58 @@
     parent.append(line);
   }
 
+  // TOTP live countdown (desktop-hub-ring pattern, popup edition): one
+  // 1s ticker updates every visible code's remaining seconds + bar; on a
+  // 30s period rollover it silently re-queries fresh codes (no popup
+  // reopen, no list rebuild — DOM nodes update in place by entry id).
+  let totpTicker = 0;
+  let totpLastPeriod = Math.floor(Date.now() / 1000 / 30);
+  function totpRemaining() {
+    const epoch = Math.floor(Date.now() / 1000);
+    totpLastPeriodCheck(epoch);
+    return 30 - (epoch % 30);
+  }
+  function totpLastPeriodCheck(epoch) {
+    const p = Math.floor(epoch / 30);
+    if (p !== totpLastPeriod) {
+      totpLastPeriod = p;
+      refreshTotpCodes();
+    }
+  }
+  function paintTotpTimers() {
+    const remain = totpRemaining();
+    document.querySelectorAll("[data-totp-id]").forEach((code) => {
+      const timer = code.parentElement?.querySelector(".totpTimer");
+      if (timer) timer.textContent = `0:${String(remain).padStart(2, "0")}`;
+      const bar = code.parentElement?.parentElement?.querySelector(".totpBar > div");
+      if (bar) bar.style.width = `${(remain / 30) * 100}%`;
+    });
+  }
+  async function refreshTotpCodes() {
+    try {
+      if (!host) return;
+      const q = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "totp refresh");
+      if (!q || !q.ok || !q.entries) return;
+      const fresh = new Map(q.entries.map((e) => [e.id, e.totp]));
+      let changed = 0;
+      document.querySelectorAll("[data-totp-id]").forEach((code) => {
+        const id = code.getAttribute("data-totp-id");
+        if (fresh.has(id) && fresh.get(id) && fresh.get(id) !== code.textContent) {
+          code.textContent = fresh.get(id);
+          changed++;
+        }
+      });
+      if (changed) console.log(`PV TOTP auto-refresh: ${changed} code(s)`);
+      // Keep the in-memory entries fresh too (copy buttons read them).
+      suggEntries.forEach((e) => { if (fresh.has(e.id) && fresh.get(e.id)) e.totp = fresh.get(e.id); });
+    } catch (_) {}
+  }
+  function startTotpTicker() {
+    if (totpTicker) return;
+    paintTotpTimers();
+    totpTicker = setInterval(paintTotpTimers, 1000);
+  }
   // Full login row (suggestion tier): USERNAME is the bold primary line,
   // domain/title secondary — 20+ same-domain accounts scan by email, not
   // by identical titles. TOTP badge, compact audit, Fill/Copy/Copy-user.
@@ -1069,7 +1227,7 @@
     // the desktop audit kinds (breach N/A here — needs the desktop audit).
     const healthIcon = e.health === "reused" ? "♻️" : e.health === "weak" ? "🟡" : e.health === "stale" ? "🕰️" : "";
     const sub = [e.reprompt ? "🔒" : "", e.title || "", e.verified ? "✅" : "", healthIcon].filter(Boolean).join(" ");
-    const row = brandRow(brandIcon(e), uname, sub);
+    const row = brandRow(brandIcon(e), uname, sub, (e.urls && e.urls[0]) || "");
     if (e.totp) {
       const badge = document.createElement("div");
       badge.className = "t2fa";
@@ -1080,17 +1238,25 @@
       tot.className = "totp";
       const code = document.createElement("code");
       code.textContent = e.totp;
+      code.setAttribute("data-totp-id", e.id);
+      const timer = document.createElement("span");
+      timer.className = "totpTimer";
+      const bar = document.createElement("div");
+      bar.className = "totpBar";
+      const barFill = document.createElement("div");
+      bar.append(barFill);
       const cp = document.createElement("button");
       cp.textContent = t("copy2fa");
       cp.addEventListener("click", async (ev) => {
         ev.stopPropagation();
         // H14: TOTP copy on a reprompt row needs the same gate as Fill.
         if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying the 2FA code. Copy now?`)) return;
-        try { await navigator.clipboard.writeText(e.totp); cp.textContent = t("copied"); }
+        // Copy the LIVE displayed code (auto-refresh may have replaced it).
+        try { await navigator.clipboard.writeText(code.textContent); cp.textContent = t("copied"); }
         catch (_) { cp.textContent = t("blocked_cb"); }
       });
-      tot.append(code, cp);
-      row.append(tot);
+      tot.append(code, timer, cp);
+      row.append(tot, bar);
     }
     // Compact audit: rendered ONLY when ever filled (no dead "Never" line).
     if (lastFilledMap[e.id]) {
@@ -1117,6 +1283,14 @@
       cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
       btns.append(cu);
     }
+    // Per-row Fill+Submit: fill, then the form's own submit path.
+    if (btns) {
+      const sb = document.createElement("button");
+      sb.textContent = t("submit_btn");
+      sb.title = "Fill + submit";
+      sb.addEventListener("click", (ev) => { ev.stopPropagation(); doFillSubmit(e); });
+      btns.append(sb);
+    }
     wireKeys(row, idx, e, doFill);
     rows.push(row);
     return row;
@@ -1127,7 +1301,7 @@
   function buildLoginMetaRow(e) {
     const idx = rows.length;
     const healthIcon = e.health === "reused" ? " ♻️" : e.health === "weak" ? " 🟡" : e.health === "stale" ? " 🕰️" : "";
-    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)") + (e.verified ? " ✅" : "") + healthIcon, e.username || "");
+    const row = brandRow(brandIcon(e), (e.reprompt ? "🔒 " : "") + (e.title || "(untitled)") + (e.verified ? " ✅" : "") + healthIcon, e.username || "", (e.urls && e.urls[0]) || "");
     const fillOne = async () => {
       try {
         const full = await fetchEntry(1, e.id);
@@ -1176,6 +1350,18 @@
         cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
         btns.append(cu);
       }
+      const sb = document.createElement("button");
+      sb.textContent = t("submit_btn");
+      sb.title = "Fill + submit";
+      sb.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        (async () => {
+          try {
+            await doFillSubmit(await fetchEntry(1, e.id));
+          } catch (err) { status.textContent = "⚠️ " + ((err && err.message) || err); }
+        })();
+      });
+      btns.append(sb);
     }
     wireKeys(row, idx, e, fillOne);
     rows.push(row);
@@ -1283,5 +1469,6 @@
     rows[j].focus();
   }
   // Boot: desktop-synced gate first, then data.
+  startTotpTicker();
   ensureUnlocked().then((ok) => { if (ok) refresh(); });
 })();

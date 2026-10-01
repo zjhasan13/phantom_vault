@@ -3,7 +3,7 @@
   "name": "PhantomVault AutoFill",
   "version": "1.0.0",
   "description": "Zero-knowledge autofill via the PhantomVault native bridge (vault-gated, no cloud).",
-  "permissions": ["tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": ["favicon", "tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus"],
   "commands": {
     "autofill_active_tab": {
       "suggested_key": {
