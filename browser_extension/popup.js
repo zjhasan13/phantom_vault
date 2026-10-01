@@ -1140,6 +1140,7 @@
     const hint = maskedPreview(password);
     document.querySelectorAll(`[data-preview-for="${id}"]`).forEach((el) => {
       el.textContent = hint;
+      el.style.display = "";
     });
   }
   // In-popup password view: masked dots + 👁️ toggle. Plaintext lives only
@@ -1362,20 +1363,26 @@
     }, e.reprompt ? (e.title || "Sensitive credential") : null);
     const { copy: passBtn } = actionButtons(row, fillOne, copyOne);
     passBtn.textContent = t("pass_btn");
-    // Masked preview placeholder: painted on first fetch (copy/eye/fill).
+    // Masked preview placeholder: hidden until the first fetch paints it
+    // (copy/eye/fill) — no "..." clutter on untouched rows.
     const mprev = document.createElement("span");
     mprev.className = "pwPrev";
     mprev.title = "Password ends with…";
     mprev.setAttribute("data-preview-for", e.id);
+    mprev.style.display = "none";
     mprev.textContent = "•••";
     row.querySelector(".btns").append(mprev);
-    // Extra 2FA button beside Fill/Pass, plus username copy.
+    // Extra 2FA button beside Fill/Pass — ONLY when the entry has TOTP
+    // (list arm's has_totp; no fetch-guessing, no dead buttons).
+    // Username copy + submit likewise need their data to exist.
     const btns = row.querySelector(".btns");
     if (btns) {
-      const tb = document.createElement("button");
-      tb.textContent = "🔑 2FA";
-      tb.addEventListener("click", (ev) => { ev.stopPropagation(); totpOne(tb); });
-      btns.append(tb);
+      if (e.has_totp) {
+        const tb = document.createElement("button");
+        tb.textContent = "🔑 2FA";
+        tb.addEventListener("click", (ev) => { ev.stopPropagation(); totpOne(tb); });
+        btns.append(tb);
+      }
       if (e.username) {
         const cu = document.createElement("button");
         cu.textContent = t("user_btn");
@@ -1434,6 +1441,8 @@
         await clipText(full.number, btn);
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
+    // Quick-view: masked sub + eye reveal for the full number (15s remask).
+    passwordReveal(row, async () => (await fetchEntry(4, c.id)).number || "", null);
     actionButtons(row, fillOne, copyOne);
     wireKeys(row, idx, c, fillOne);
     rows.push(row);
@@ -1488,6 +1497,8 @@
         await clipText(full.content, btn);
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
+    // Quick-view: eye reveal for the note body (ellipsis + 15s remask).
+    passwordReveal(row, async () => (await fetchEntry(3, n.id)).content || "", null);
     actionButtons(row, copyOne, copyOne);
     wireKeys(row, idx, n, copyOne);
     rows.push(row);
