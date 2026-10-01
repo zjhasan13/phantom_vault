@@ -330,6 +330,11 @@ Architecture (all shipped, all tested):
   `%LOCALAPPDATA%` disk cache (disk-first, decode-validated), kill-switch +
   proxy honored, per-session attempt set; per-domain user override layer
   (`favicons/custom/`) with picker + clear. Toggle default ON.
+  Hybrid harvest: extension pushes page icons (`cache_favicon` host cmd —
+  unlocked-only, rate-limited, strict `[a-z0-9.-]` domain sanitize, 64KB
+  cap, decode + 512px validation, PNG-normalized into the cache dir);
+  desktop fallback DDG → Google S2 (`sz=64`); offline renders the brand
+  letter circle.
 - Universal TOTP compat (`totp_engine.rs`): `TOTP::new_unchecked` over EXACT
   raw bytes (80/128/160/256-bit all render — no padding, no 128-bit minimum);
   `extract_pure_base32` tolerates pasted otpauth URIs; unambiguous HEX rescue;

@@ -915,6 +915,40 @@
       (document.head || document.documentElement).appendChild(s);
     } catch (_) {}
   }
+  // ---------- hybrid favicon harvest (engine layer 2) ----------
+  // Once per page: read the page's own <link rel=icon> (or /favicon.ico
+  // fallback) and hand {domain, iconUrl} to the background, which fetches
+  // with extension host permissions (page-CORS-proof) and pushes bytes to
+  // the desktop disk cache. Page icon data is public chrome, never secrets.
+  let faviconHarvested = false;
+  function harvestFavicon() {
+    if (faviconHarvested) return;
+    faviconHarvested = true;
+    try {
+      if (!/^https?:$/i.test(location.protocol)) return;
+      const host = location.hostname.toLowerCase();
+      if (!host || host === "localhost" || /^\d+\.\d+\.\d+\.\d+$/.test(host)) return;
+      let href = "";
+      try {
+        const links = [...document.querySelectorAll('link[rel~="icon"]')];
+        // Largest declared icon wins (apple-touch > 32px > 16px).
+        let best = 0;
+        for (const l of links) {
+          const h = l.getAttribute("href") || "";
+          if (!h || h.startsWith("data:") || h.startsWith("blob:")) continue;
+          const sizes = l.getAttribute("sizes") || "";
+          const m = sizes.match(/(\d+)\s*x\s*\d+/i);
+          const px = m ? parseInt(m[1], 10) : 16;
+          if (px >= best) { best = px; href = h; }
+        }
+      } catch (_) {}
+      let iconUrl = "";
+      try {
+        iconUrl = href ? new URL(href, location.href).href : new URL("/favicon.ico", location.origin).href;
+      } catch (_) { return; }
+      chrome.runtime.sendMessage({ type: "PV_FAVICON_HARVEST", domain: host, iconUrl }).catch(() => {});
+    } catch (_) {}
+  }
   // Passkey discovery hint: on a page WebAuthn ceremony, check the vault
   // for this rpId and toast the match (one toast per rp per page). The
   // ceremony itself is never touched.
@@ -1019,6 +1053,7 @@
   scan();
   scanForms();
   console.log("PV content boot:", location.host || "(no host)");
+  try { harvestFavicon(); } catch (_) {}
   new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
   new MutationObserver(scanForms).observe(document.documentElement, { childList: true, subtree: true });
   // Fixed overlays must track the viewport (passive listeners, no jank).

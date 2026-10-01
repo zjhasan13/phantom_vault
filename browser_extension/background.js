@@ -5,6 +5,10 @@
 // decrypted per request, process exits after) — no long-lived bridge.
 const HOST_PORT = "com.phantomvault.host";
 
+// Base-domains already pushed to the desktop favicon cache this SW
+// lifetime (harvest is idempotent server-side; this just saves fetches).
+const faviconPushed = new Set();
+
 function hostRequest(payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let port;
@@ -116,6 +120,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // its Settings. The extension NEVER sets/stores a PIN, only verifies.
     if (msg.type === "PV_EXT_PIN") {
       return await hostRequest({ cmd: "ext_pin_hash" });
+    }
+    // Hybrid favicon harvest (engine layer 2): fetch the page's icon with
+    // extension host permissions (page-CORS-proof), cap 64KB, push bytes to
+    // the desktop disk cache. One push per base-domain per SW lifetime;
+    // the host re-validates everything (decode + traversal + size).
+    if (msg.type === "PV_FAVICON_HARVEST") {
+      try {
+        const rawHost = String(msg.domain || "").toLowerCase();
+        const base = rawHost ? pvRegistrable(rawHost) : "";
+        if (!base || faviconPushed.has(base)) return { ok: true, cached: true };
+        const url = String(msg.iconUrl || "");
+        if (!/^https?:\/\//i.test(url)) return { ok: false, error: "bad icon url" };
+        faviconPushed.add(base);
+        const ctl = new AbortController();
+        const timer = setTimeout(() => ctl.abort(), 10000);
+        let buf;
+        try {
+          const resp = await fetch(url, { signal: ctl.signal, credentials: "omit" });
+          if (!resp.ok) return { ok: false, error: "icon fetch " + resp.status };
+          buf = await resp.arrayBuffer();
+        } finally {
+          clearTimeout(timer);
+        }
+        if (!buf || buf.byteLength === 0 || buf.byteLength > 64 * 1024) {
+          return { ok: false, error: "icon size rejected" };
+        }
+        const bytes = new Uint8Array(buf);
+        let bin = "";
+        for (let i = 0; i < bytes.length; i += 8192) {
+          bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
+        }
+        return await hostRequest({
+          cmd: "cache_favicon",
+          domain: base,
+          data: btoa(bin),
+        });
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
     }
     if (msg.type === "PV_SAVE_LOGIN") {
       // Sender check (MISSING-HIGH): a malicious page must not save under
