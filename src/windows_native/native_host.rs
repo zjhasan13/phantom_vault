@@ -291,6 +291,15 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let variants = expand_query(&q);
             let now = crate::models::current_timestamp();
             let pw_freq = login_pw_freq(vault);
+            // One sidecar read per query: last-filled stamps for trust sort.
+            let ext_stats = read_ext_stats();
+            let last_filled_of = |id: &str| {
+                ext_stats
+                    .get("last_filled")
+                    .and_then(|m| m.get(id))
+                    .and_then(|n| n.as_u64())
+                    .unwrap_or(0)
+            };
             let mut entries: Vec<serde_json::Value> = vault
                 .credentials
                 .iter()
@@ -317,6 +326,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "last_changed": c.last_changed,
                         "verified": vault.is_verified(&c.id),
                         "health": login_health_kind(&c.password, c.last_changed, now, pw_freq.get(c.password.as_str()).copied().unwrap_or(0)),
+                        "last_filled": last_filled_of(&c.id),
                     })
                 })
                 .collect();
@@ -2004,6 +2014,8 @@ mod tests {
         let entries = r.reply["entries"].as_array().unwrap();
         assert!(!entries.is_empty());
         assert_eq!(entries[0]["health"], "reused");
+        // Trust-sort field present (0 = never filled).
+        assert!(entries[0]["last_filled"].as_u64().is_some());
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "list"}));
         let logins = r.reply["logins"].as_array().unwrap();
         let c1 = logins.iter().find(|e| e["id"] == "c1").unwrap();
