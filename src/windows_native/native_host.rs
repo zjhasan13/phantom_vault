@@ -525,6 +525,37 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 }
             }
         }
+        // Passkey discovery (v1): metadata for live passkeys under an rp_id.
+        // No secrets, no sign-count bump, no persist — the full `assert`
+        // ceremony (desktop UV + sign) stays explicit. Ceremony relay is a
+        // follow-up; this only tells the page-side which key matches.
+        "passkey_lookup" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let rp = req
+                .get("rp")
+                .or_else(|| req.get("rp_id"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if rp.is_empty() {
+                return no("rp required");
+            }
+            let found: Vec<serde_json::Value> = vault
+                .passkeys
+                .iter()
+                .filter(|p| p.deleted_at.is_none() && p.rp_id.to_lowercase() == rp)
+                .map(|p| {
+                    serde_json::json!({"user": p.user_name, "sign_count": p.sign_count})
+                })
+                .collect();
+            Answer {
+                reply: serde_json::json!({"ok": true, "passkeys": found}),
+                persist: false,
+            }
+        }
         "" => no("missing cmd"),
         // Popup "All items": metadata ONLY (no secrets) for browsing.
         // Secrets still travel exclusively via query/fill paths, so a
@@ -1661,6 +1692,30 @@ mod tests {
         assert!(!persist_refused(false, true));
         assert!(!persist_refused(true, false));
         assert!(persist_refused(true, true));
+    }
+
+    #[test]
+    fn passkey_lookup_returns_metadata_only() {
+        let mut v = vault_with_passkey();
+        // Match (case-insensitive): user metadata, no secrets, no persist.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "passkey_lookup", "rp": "GitHub.COM"}));
+        assert_eq!(r.reply["ok"], true);
+        assert!(!r.persist);
+        let keys = r.reply["passkeys"].as_array().unwrap();
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0]["user"], "octo");
+        assert!(keys[0].get("sign_count").is_some());
+        assert!(keys[0].get("credential_id").is_none());
+        assert!(keys[0].get("private_key_pkcs8").is_none());
+        // Unknown rp ⇒ ok with empty list (not an error — discovery).
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "passkey_lookup", "rp": "evil.com"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["passkeys"].as_array().unwrap().len(), 0);
+        // Missing rp / locked ⇒ deny.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "passkey_lookup"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "passkey_lookup", "rp": "github.com"}));
+        assert_eq!(r.reply["ok"], false);
     }
 
     #[test]

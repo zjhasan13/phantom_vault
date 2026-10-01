@@ -301,11 +301,11 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 279 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 304 tests green)
 
-Scale: 60+ Rust modules (63 `.rs` files), 279 unit tests passing / 0 failing
+Scale: 60+ Rust modules (65 `.rs` files), 304 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
-(Counts verified 2026-09-30; update with `cargo test` output, not memory.)
+(Counts verified 2026-10-01; update with `cargo test` output, not memory.)
 
 Architecture (all shipped, all tested):
 - NIST FIPS 203 ML-KEM-768 hybrid key layer (`PV2` portable container with
@@ -388,17 +388,50 @@ Architecture (all shipped, all tested):
 - Health scoreboard (`security/breach_check.rs` + Settings card): 0–100
   score (−25/−10/−5/−2, +10 2FA bonus), gauge, click-to-filter metric cards,
   2FA coverage bar, Re-Scan.
+  Row health icons + detail badge TEXT: list rows render the audit KIND
+  (🔴 breached / 🟡 weak / ♻️ reused / 🕰️ stale) — never badge prose in
+  the kind field; the detail pane shows the full badge string. Verified
+  ✅ badge + "Mark as working" toggle in Column 3 (instant refresh, no
+  restart); auto-verify flips it at 3 fills (see bridge bullet).
 - Anti-photography Moiré lens guard + peep-hole hold-to-reveal; blackout
   guard default OFF (`blackout.pref`).
 - Native Messaging Host bridge (`windows_native/native_host.rs`): Hello-
   cached unlock, CWD fix, decoy-cover serving, save/stats/filled/cards/
   identities commands; registry install locks `allowed_origins` to one ID.
+  Bridge liveness heartbeat (P1 invariant): the desktop app rewrites
+  `vault_heartbeat.json` every 20s while unlocked; the host refuses ALL
+  serves when the beacon is stale/missing (>75s) — a leftover Hello token
+  file alone NEVER unlocks the bridge (kill -9 / crash / close safe, no
+  cleanup path needed). `bridge_unlocked()` = token AND heartbeat.
+  Decoy-cover persistence gate (`persist_refused`): every persisting answer
+  is refused at the serve loop under decoy, never per-arm.
+  Hybrid verified badge: `PV_FILLED` bumps the sidecar only, but the
+  equality-crossing fill (`AUTO_VERIFY_FILLS = 3`, `models.rs`) flips
+  `Vault.verified_ids` with a single re-seal; 4th+ fills and post-manual-
+  unverify fills never re-fire. Manual `toggle_verified(kind, id)` with
+  save+rollback (logins only, decoy refused). Query/list entries carry
+  `verified` + local `health` kind (reused > weak > stale; breach needs
+  the desktop audit and is omitted).
+- Extension PIN (desktop-owned, `security/ext_pin.rs`): DPAPI-sealed
+  SHA-256, managed ONLY in desktop Settings; the extension NEVER sets or
+  stores a PIN (verify-only via `ext_pin_hash` host command). Factory
+  reset shreds `ext_pin.dpapi` alongside `pin.dpapi`.
 - Browser extension (`browser_extension/`): search-blind strict field
   classifier, full-width dropdown + right-side badge, page-world fetch/XHR
   hook for SPA save detection, OTP fill toasts, context-menu password
   generator, PV_PING fast lock gate, per-site never-suggest, username-first
   suggestion rows (recent-use sort, 2FA pills, inline save form on empty),
   reprompt/domain guards, fill audit, settings + i18n, debounced badge.
+  Desktop-synced lock (no standalone PIN wall): unlocked = desktop
+  reachable; locked/closed app = lock card + Retry. Inactivity auto-lock
+  (`lock_timeout_min`: 5/10/15/Never, `chrome.storage.session` clock).
+  Quick-unlock PIN overlay on inactivity lock when a desktop PIN is
+  enrolled (re-arming verify loop, trimmed compare, attempt logging).
+  In-popup password view (👁️ toggle, 15s auto-remask, reprompt-gated) and
+  standalone generator (CSPRNG, length/symbols prefs). Row health icons
+  mirror bridge `health` kinds. Fill reports "no login fields" instead of
+  silently closing. Overlay visibility rule (learned the hard way): ID
+  selectors beat `.hidden` — always guard with `#extLock.hidden`.
 - Resource diet: 2FA ticker + UIA probe deep-sleep when locked/hidden
   (`ui_visible` atomic); release `lto = "fat"`.
 - Packaging: `installer.iss` (Inno Setup 6, HKCU host keys, full uninstall);

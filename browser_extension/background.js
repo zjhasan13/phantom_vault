@@ -85,6 +85,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       touchActivity();
       return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });
     }
+    // Passkey discovery (v1, metadata only — no ceremony relay yet).
+    if (msg.type === "PV_PASSKEY_LOOKUP") {
+      touchActivity();
+      return await hostRequest({ cmd: "passkey_lookup", rp: msg.rp || "" });
+    }
     if (msg.type === "PV_CARDS") {
       return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "" });
     }

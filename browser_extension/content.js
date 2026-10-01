@@ -915,8 +915,25 @@
       (document.head || document.documentElement).appendChild(s);
     } catch (_) {}
   }
-  async function maybeOfferSpaSave() {
+  // Passkey discovery hint: on a page WebAuthn ceremony, check the vault
+  // for this rpId and toast the match (one toast per rp per page). The
+  // ceremony itself is never touched.
+  let webauthnHintedFor = "";
+  async function webauthnHint(rpId) {
     try {
+      const rp = (rpId || location.host || "").toLowerCase();
+      if (!rp || webauthnHintedFor === rp) return;
+      if (isBlocked() || phishingRefuse() || !location.host) return;
+      if (!(await requireExtPin())) return;
+      const res = await chrome.runtime.sendMessage({ type: "PV_PASSKEY_LOOKUP", rp });
+      const keys = (res && res.ok && res.passkeys) || [];
+      if (!keys.length) return;
+      webauthnHintedFor = rp;
+      const who = keys.slice(0, 2).map((k) => k.user || "?").join(", ");
+      toast(`🔑 Vault passkey${keys.length > 1 ? "s" : ""} for ${rp}: ${who} — approve on desktop when asked.`);
+    } catch (_) {}
+  }
+  async function maybeOfferSpaSave() {    try {
       if (isBlocked() || phishingRefuse() || !location.host) return;
       const f = findFields();
       const userEl = (f.users[0] && isVisible(f.users[0])) ? f.users[0] : null;
@@ -938,7 +955,14 @@
     try {
       if (e.source !== window) return;
       const d = e.data || {};
-      if (d.source !== "__pv_hook" || d.type !== "PV_SPA_LOGIN") return;
+      if (d.source !== "__pv_hook") return;
+      if (d.type === "PV_WEBAUTHN_GET") {
+        // Passkey discovery: does the vault hold this rpId? Toast only —
+        // the ceremony itself is untouched (relay is a follow-up).
+        webauthnHint(String(d.rpId || ""));
+        return;
+      }
+      if (d.type !== "PV_SPA_LOGIN") return;
     } catch (_) { return; }
     // Let the SPA finish its post-login render before reading the fields.
     setTimeout(maybeOfferSpaSave, 2500);
