@@ -1127,6 +1127,21 @@
       if (p && p.catch) p.catch(() => {});
     } catch (_) {}
   }
+  // Masked preview: last-3 hint beside Pass (•••x9z). Enough to tell
+  // sibling accounts apart, useless to a shoulder-surfer without the rest.
+  // Tier-1 rows render it immediately (secret in hand); metadata rows fill
+  // their spans the first time any action fetches the password.
+  function maskedPreview(secret) {
+    const s = String(secret || "");
+    if (s.length <= 3) return "•••";
+    return "•••" + s.slice(-3);
+  }
+  function paintPreviews(id, password) {
+    const hint = maskedPreview(password);
+    document.querySelectorAll(`[data-preview-for="${id}"]`).forEach((el) => {
+      el.textContent = hint;
+    });
+  }
   // In-popup password view: masked dots + 👁️ toggle. Plaintext lives only
   // in the row element; re-masks on second click or after 15 s (ephemeral).
   // getSecret resolves the plaintext (direct or via PV_FETCH); gateLabel
@@ -1274,6 +1289,12 @@
       clipText(e.password, btn);
     });
     passBtn.textContent = t("pass_btn");
+    // Masked preview beside Pass (Tier-1 secret in hand).
+    const prev = document.createElement("span");
+    prev.className = "pwPrev";
+    prev.title = "Password ends with…";
+    prev.textContent = maskedPreview(e.password);
+    row.querySelector(".btns").append(prev);
     // Quick username copy beside Fill/Pass.
     const btns = row.querySelector(".btns");
     if (btns && e.username) {
@@ -1313,6 +1334,7 @@
       if (e.reprompt && !window.confirm(`🔒 "${e.title || "Sensitive credential"}" needs verification before copying. Copy now?`)) return;
       try {
         const full = await fetchEntry(1, e.id);
+        paintPreviews(e.id, full.password);
         await clipText(full.password, btn);
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
@@ -1333,9 +1355,20 @@
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); btn.textContent = "🔑 2FA"; }
     };
     // In-popup password view (metadata tier: secret fetched on demand).
-    passwordReveal(row, async () => (await fetchEntry(1, e.id)).password || "", e.reprompt ? (e.title || "Sensitive credential") : null);
+    passwordReveal(row, async () => {
+      const pw = (await fetchEntry(1, e.id)).password || "";
+      paintPreviews(e.id, pw);
+      return pw;
+    }, e.reprompt ? (e.title || "Sensitive credential") : null);
     const { copy: passBtn } = actionButtons(row, fillOne, copyOne);
     passBtn.textContent = t("pass_btn");
+    // Masked preview placeholder: painted on first fetch (copy/eye/fill).
+    const mprev = document.createElement("span");
+    mprev.className = "pwPrev";
+    mprev.title = "Password ends with…";
+    mprev.setAttribute("data-preview-for", e.id);
+    mprev.textContent = "•••";
+    row.querySelector(".btns").append(mprev);
     // Extra 2FA button beside Fill/Pass, plus username copy.
     const btns = row.querySelector(".btns");
     if (btns) {
