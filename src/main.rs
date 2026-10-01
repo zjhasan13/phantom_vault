@@ -2055,6 +2055,28 @@ fn rotate_reused_passwords(vault: &mut Vault) -> usize {
     n
 }
 
+/// Live login id with the same title + username (case-insensitive,
+/// trimmed) — desktop manual-Add duplicate guard. Mirrors the bridge
+/// upsert and importer `dedup_key` (without the password leg: same
+/// account ⇒ update-in-place, never a second row). Trashed never blocks.
+/// Pure — unit tested.
+fn find_live_login_id(vault: &Vault, title: &str, username: &str) -> Option<String> {
+    let t = title.trim().to_lowercase();
+    let u = username.trim().to_lowercase();
+    if t.is_empty() || u.is_empty() {
+        return None;
+    }
+    vault
+        .credentials
+        .iter()
+        .find(|c| {
+            c.deleted_at.is_none()
+                && c.title.trim().to_lowercase() == t
+                && c.username.trim().to_lowercase() == u
+        })
+        .map(|c| c.id.clone())
+}
+
 fn eff_folder(folder: &str) -> &str {
     if folder.is_empty() {
         "General"
@@ -4656,6 +4678,7 @@ fn replace_item(
 
                 // Critical section + heavy crypto: push/replace + save_vault inside worker thread.
                 // Roll back the in-memory mutation if the disk write fails.
+                let mut updated_existing = false;
                 let save_result: Result<Vault, String> = {
                     let mut vault = lock_vault(&vault_clone);
                     // Snapshot for rollback (cheap, in-RAM vaults are small).
@@ -4685,12 +4708,62 @@ fn replace_item(
                         false
                     };
                     if !replaced {
-                        push_new_item(
-                            &mut vault, kind, new_id, &title_for_thread,
-                            &a, &b, &cc, &dd, &ee, &notes, &folder,
-                            urls, backup, custom, &totp_for_thread, reprompt_for_thread,
-                            fav_for_thread, travel_for_thread,
-                        );
+                        // Duplicate guard (logins only, bridge upsert
+                        // semantics): same title+username ⇒ identical ?
+                        // block : update in place with history. Editing
+                        // mode (replaced) skips this — it owns its id.
+                        if kind == 1 {
+                            if let Some(eid) = find_live_login_id(&vault, &title_for_thread, &a) {
+                                let same = vault
+                                    .credentials
+                                    .iter()
+                                    .find(|c| c.id == eid)
+                                    .map(|c| c.password == b)
+                                    .unwrap_or(false);
+                                if same {
+                                    // Identical entry live: notify + return
+                                    // (guard drops here, nothing saved).
+                                    let w2 = weak.clone();
+                                    let _ = slint::invoke_from_event_loop(move || {
+                                        if let Some(ui) = w2.upgrade() {
+                                            ui.set_notification_text(
+                                                "⚠️ Identical login already exists — no duplicate created.".into(),
+                                            );
+                                        }
+                                    });
+                                    return;
+                                }
+                                let now = crate::models::current_timestamp();
+                                if let Some(c) =
+                                    vault.credentials.iter_mut().find(|c| c.id == eid)
+                                {
+                                    let old = c.password.clone();
+                                    crate::models::push_history(&mut c.password_history, &old, now);
+                                    c.password = b.clone();
+                                    c.last_changed = now;
+                                    for u in &urls {
+                                        if !c.urls.iter().any(|x| x.to_lowercase() == u.to_lowercase()) {
+                                            c.urls.push(u.clone());
+                                        }
+                                    }
+                                    updated_existing = true;
+                                }
+                            } else {
+                                push_new_item(
+                                    &mut vault, kind, new_id, &title_for_thread,
+                                    &a, &b, &cc, &dd, &ee, &notes, &folder,
+                                    urls, backup, custom, &totp_for_thread, reprompt_for_thread,
+                                    fav_for_thread, travel_for_thread,
+                                );
+                            }
+                        } else {
+                            push_new_item(
+                                &mut vault, kind, new_id, &title_for_thread,
+                                &a, &b, &cc, &dd, &ee, &notes, &folder,
+                                urls, backup, custom, &totp_for_thread, reprompt_for_thread,
+                                fav_for_thread, travel_for_thread,
+                            );
+                        }
                     }
 
                     match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
@@ -4725,7 +4798,11 @@ fn replace_item(
                                 qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
                             }
                             ui.set_notification_text(
-                                "✅ Item encrypted to disk!".into(),
+                                if updated_existing {
+                                    "🔄 Updated the existing login (old password kept in history).".into()
+                                } else {
+                                    "✅ Item encrypted to disk!".into()
+                                },
                             );
                             // Fire-and-forget breach check: offline toggle or
                             // global kill-switch ⇒ silent skip (zero packets).
@@ -10518,8 +10595,44 @@ mod grid_tests {
     }
 
     #[test]
-    fn rotate_reused_makes_unique_with_history() {
-        fn login(id: &str, pw: &str) -> Credential {
+    fn find_live_login_id_matches_ci_and_skips_trash() {
+        fn login(id: &str, title: &str, user: &str, trashed: bool) -> Credential {
+            Credential {
+                id: id.into(),
+                title: title.into(),
+                username: user.into(),
+                password: "p".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 0,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: trashed.then_some(1),
+            }
+        }
+        let mut v = Vault::new();
+        v.credentials.push(login("a", "GitHub", "octo", false));
+        v.credentials.push(login("b", "GitHub", "octo", true));
+        // Case-insensitive + trimmed match on the LIVE row.
+        assert_eq!(find_live_login_id(&v, "  github ", "OCTO"), Some("a".to_string()));
+        assert_eq!(find_live_login_id(&v, "GitHub", "other"), None);
+        assert_eq!(find_live_login_id(&v, "", "octo"), None);
+        assert_eq!(find_live_login_id(&v, "GitHub", ""), None);
+        // Trash-only vault ⇒ no match (trashed never blocks).
+        let mut t = Vault::new();
+        t.credentials.push(login("b", "GitHub", "octo", true));
+        assert_eq!(find_live_login_id(&t, "GitHub", "octo"), None);
+    }
+
+    #[test]
+    fn rotate_reused_makes_unique_with_history() {        fn login(id: &str, pw: &str) -> Credential {
             Credential {
                 id: id.into(),
                 title: "t".into(),
