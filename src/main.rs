@@ -5195,6 +5195,19 @@ fn replace_item(
                     }
                 }
             }
+            // Metadata sidecars must die on reset EVEN when no backup dir was
+            // ever created (the block above gates on is_dir): trails,
+            // schedule, and fill-audit are local state, not backups.
+            for extra in [
+                std::path::PathBuf::from(storage::backup_scheduler::SCHEDULE_FILE),
+                std::path::PathBuf::from("access.log"),
+                std::path::PathBuf::from("access.log.head"),
+                std::path::PathBuf::from("pv_ext_stats.json"),
+            ] {
+                if extra.is_file() && !targets.contains(&extra) {
+                    targets.push(extra);
+                }
+            }
             let mut failed = Vec::new();
             for t in &targets {
                 if let Err(e) = security::shredder::shred_file(t) {
