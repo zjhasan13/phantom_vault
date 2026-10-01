@@ -666,7 +666,8 @@
         b.type = "button";
         b.dataset.pvIndex = String(index);
         b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
-          "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;";
+          "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;" +
+          (r.dim ? "opacity:.55;" : "");
         // Service brand-icon circle (Bitwarden row layout).
         const icon = document.createElement("div");
         icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
@@ -769,12 +770,37 @@
       }));
     }
     const logins = await queryHost("PV_QUERY", pageBase());
-    return logins.map((e) => ({
-      entry: e,
-      title: "🔑 " + (e.title || "(untitled)"),
-      sub: e.username || "",
-      onPick: () => fillLogin(e, f),
-    }));
+    // Trust rank: verified → recently filled → A→Z. Fakes (unverified,
+    // never filled) sink to the bottom automatically.
+    const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
+    const agoShort = (ts) => {
+      const s = Math.max(0, Math.floor(Date.now() / 1000) - (ts || 0));
+      if (s < 60) return "just now";
+      if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+      if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+      return `${Math.floor(s / 86400)}d ago`;
+    };
+    const ranked = [...logins].sort(
+      (a, b) =>
+        (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
+        (b.last_filled || 0) - (a.last_filled || 0) ||
+        String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
+    );
+    return ranked.map((e) => {
+      const badge = [e.verified ? "✅" : "", hIcon(e.health)].filter(Boolean).join(" ");
+      const sub = [e.username || "", badge, e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
+        .filter(Boolean)
+        .join(" · ");
+      // Likely-unused laboratory: dimmed, never hidden (user is the judge).
+      const dim = !e.verified && !e.last_filled;
+      return {
+        entry: e,
+        title: "🔑 " + (e.title || "(untitled)") + (dim ? " (unused?)" : ""),
+        sub,
+        dim,
+        onPick: () => fillLogin(e, f),
+      };
+    });
   }
   // Post-pick cooldown: after a successful fill, passive focus-driven
   // dropdowns stay suppressed briefly so they never cover the page's own
@@ -972,8 +998,25 @@
   // OTP fields that render late (SPA step 3): inject live TOTP on sight.
   // Runs once at boot too — direct 2FA URLs render the field before any
   // mutation fires, which used to leave the observer permanently silent.
+  // Code chain (PV_FILL_OTP mirror): pending totp → hub lookup, so direct-
+  // 2FA-URL visits auto-fill even with no step-1 fill behind them.
   let otpDiagAt = 0;
+  async function resolveOtpCode() {
+    if (pvPending && pvPending.totp) return { code: pvPending.totp };
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
+      const list = (res && res.ok && res.codes) || [];
+      if (list[0] && list[0].code) {
+        console.log(`PV OTP from hub account: ${list[0].account || list[0].issuer || "?"}`);
+        return { code: list[0].code };
+      }
+    } catch (_) {}
+    return { code: "" };
+  }
   function sweepOtpOnce() {
+    sweepOtpAsync().catch(() => {});
+  }
+  async function sweepOtpAsync() {
     try {
       if (!settings.auto_inject_totp || isBlocked()) {
         if (Date.now() - otpDiagAt > 5000) {
@@ -995,12 +1038,15 @@
         }
         return;
       }
-      console.log(`PV OTP field sighted (${f.otp.length}), pending: ${pvPending ? (pvPending.totp ? "has-totp" : "no-totp") : "none"}`);
-      const pending = pvPending;
-      if (pending && pending.totp) {
+      const pendingState = pvPending ? (pvPending.totp ? "has-totp" : "no-totp") : "none";
+      console.log(`PV OTP field sighted (${f.otp.length}), pending: ${pendingState}`);
+      const { code } = await resolveOtpCode();
+      if (code) {
         f.otp[0].dataset.pvOtpFilled = "1";
-        fillTotp(pending.totp, f);
+        await fillTotp(code, findFields(), "");
         pvPendingClear();
+      } else {
+        console.log("PV OTP: no code from pending or hub");
       }
     } catch (_) {}
   }
