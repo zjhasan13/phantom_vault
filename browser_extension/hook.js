@@ -70,4 +70,23 @@
       return origSend.apply(this, arguments);
     };
   } catch (_) {}
+
+  // WebAuthn observer (passkey discovery v1): notify-only, NEVER touches
+  // the ceremony — the page's promise chain runs byte-identical. The
+  // content script matches the rpId against the vault and toasts.
+  try {
+    if (window.PublicKeyCredential && navigator.credentials && navigator.credentials.get) {
+      const origGet = navigator.credentials.get.bind(navigator.credentials);
+      navigator.credentials.get = function (options) {
+        try {
+          const pk = options && options.publicKey;
+          if (pk) {
+            window.postMessage(
+              { source: "__pv_hook", type: "PV_WEBAUTHN_GET", rpId: String(pk.rpId || "") }, "*");
+          }
+        } catch (_) {}
+        return origGet(options);
+      };
+    }
+  } catch (_) {}
 })();

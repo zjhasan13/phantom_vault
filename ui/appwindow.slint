@@ -677,6 +677,8 @@ export component MainWindow inherits Window {
     in-out property <int> health_stale: 0;
     in-out property <int> health_coverage: 0;
     in-out property <string> health_filter: "";
+    // Janitor review queue (unverified + never-filled logins).
+    in-out property <bool> janitor_active: false;
     in-out property <int> clipboard_timeout: 15;
     in-out property <int> autolock_timeout: 0;
     in-out property <bool> show_autofill_pill: false;
@@ -734,11 +736,13 @@ export component MainWindow inherits Window {
     callback fav_filter_changed(bool);
     callback toggle_favorite(int, string);
     callback toggle_verified(int, string);
+    callback open_janitor();
     callback toggle_select(int, string);
     callback clear_selection();
     callback bulk_favorite();
     callback bulk_move(string);
     callback bulk_trash();
+    callback rotate_reused();
     callback show_trash_view();
     callback open_url(string);
     callback open_new_form(int);
@@ -1431,12 +1435,17 @@ export component MainWindow inherits Window {
                             Text { text: root.health_headline; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                         }
                         AuraButton { label: "🛡️ Re-Scan Vault"; primary: true; width: 170px; clicked => { root.audit_vault(); } }
+                        AuraButton { label: "🧹 Janitor"; primary: root.janitor_active; width: 130px; clicked => { root.open_janitor(); } }
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "🚨 " + root.health_breached; primary: root.health_filter == "breached"; width: 110px; clicked => { root.filter_health("breached"); } }
                         AuraButton { label: "🔁 " + root.health_reused; primary: root.health_filter == "reused"; width: 110px; clicked => { root.filter_health("reused"); } }
                         AuraButton { label: "⚠️ " + root.health_weak; primary: root.health_filter == "weak"; width: 110px; clicked => { root.filter_health("weak"); } }
                         AuraButton { label: "🕰️ " + root.health_stale; primary: root.health_filter == "stale"; width: 110px; clicked => { root.filter_health("stale"); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "🔁 Rotate all reused"; width: 200px; clicked => { root.rotate_reused(); } }
+                        Text { text: "Unique passwords vault-side. Still update each ON ITS WEBSITE."; color: #5b6589; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
                     }
                     HorizontalLayout { spacing: 8px;
                         Text { text: "🛡️ 2FA Coverage"; color: #eef1ff; font-size: 12px; vertical-alignment: center; width: 120px; }

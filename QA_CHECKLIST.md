@@ -56,7 +56,12 @@
 - [ ] Correct PIN unlocks (same pipeline: backoff, migration, gates apply).
 - [ ] 4 wrong PINs show countdown errors; the 5th wipes `pin.dpapi` (PIN button vanishes, master still opens).
 - [ ] Wrong PIN on a foreign machine fails (DPAPI machine-bound); AND-mode refuses PIN-first.
-- [ ] Factory reset shreds `pin.dpapi` + `pin_attempts.dpapi`.
+- [ ] Factory reset shreds `pin.dpapi` + `pin_attempts.dpapi` + `ext_pin.dpapi` (Extension PIN).
+
+## 8b. Extension PIN (Desktop-Owned, Verify-Only)
+- [ ] Settings → Extension PIN set/remove flips the status readout; extension never offers PIN setup.
+- [ ] Trimmed compare: leading/trailing spaces don't break unlock; re-armed retry after wrong PIN.
+- [ ] Decoy mode refuses set/remove; lock-screen PIN pad and extension PIN are independent systems.
 
 ## 9. Factory Reset (Triple-Gate) & Onboarding
 - [ ] Settings Danger Zone + lock-screen link both open the modal; decoy refuses everywhere.
@@ -76,6 +81,13 @@
 - [ ] Right-click → Generate fills + confirms; OTP inject shows the `✅ 2FA filled` toast.
 - [ ] Locked desktop → popup shows 🔒 instantly (no 10s hang); per-site never-suggest silences one domain only.
 - [ ] Popup: recent-use order, 2FA pills, `👤 User` copy, empty-state inline save form.
+- [ ] P1 REGRESSION (closed-app serving): quit the desktop app fully (no tray) → popup shows lock with "desktop app closed" (never suggestions); reopen + unlock → Retry reopens data.
+- [ ] Quick-unlock PIN: set 4–8 digit PIN in desktop Settings → wait out the inactivity timeout → popup shows PIN card (not desktop card); wrong PIN = red error + button stays alive; correct PIN opens + restarts the idle clock. Remove PIN in desktop → PIN card never appears.
+- [ ] Auto-lock timeout: Settings 5m/10m/15m/Never persists across popup reopens; `Never` never shows the inactivity card.
+- [ ] Eye reveal: 👁️ shows plaintext, second click re-masks, 15s auto-remask fires; reprompt rows confirm first.
+- [ ] Generator: 🎲 panel toggles, length/symbols persist, Copy works; panel close re-masks output.
+- [ ] Health icons: audited vault rows show ♻️/🕰️/🟡/🔴 matching the desktop audit kinds; no-login-fields page Fill says so instead of silently closing.
+- [ ] Verified badge: 3rd fill on one login flips ✅ (single re-seal); "Mark as working" toggles both ways instantly; decoy refuses the toggle.
 
 ## 12. Import Dry-Run, QuickBar TOTP & Changelog
 - [ ] Picking an export shows counts/dupes in Preview; Cancel merges nothing; Confirm merges + offers source shred.

@@ -497,6 +497,9 @@ fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> 
         security::app_pin::PIN_FILE,
         security::app_pin::PIN_ATTEMPTS_FILE,
         security::ext_pin::EXT_PIN_FILE,
+        // Bridge liveness beacon: stale alone can't serve (no token), but
+        // a reset must leave zero bridge state behind.
+        HEARTBEAT_FILE,
     ] {
         let p = dir.join(name);
         if p.is_file() && !out.contains(&p) {
@@ -1946,14 +1949,110 @@ struct FilterState {
     show_trash: bool,
     /// Health metric filter from the scoreboard ("", breached/reused/weak/stale).
     health: String,
+    /// Janitor review queue: unverified + never-filled logins only
+    /// (fake/stale cleanup candidates). Pairs with select-mode bulk trash.
+    janitor: bool,
     /// Paged window: first N matches render (Load More grows it).
     limit: usize,
 }
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false, health: String::new(), limit: LIST_CAP }
+        Self { query: String::new(), kind: 0, folder: "All".to_string(), travel_only: false, fav_only: false, show_trash: false, health: String::new(), janitor: false, limit: LIST_CAP }
     }
+}
+
+/// Janitor candidates over live logins: not verified AND never filled.
+/// Pure over an injected filled-set (one sidecar read per list build, not
+/// per row). Sorted weak/stale-flavored first? No — stable vault order;
+/// the list's own health icons carry severity.
+fn janitor_ids(vault: &Vault, filled: &std::collections::HashSet<String>) -> Vec<String> {
+    vault
+        .credentials
+        .iter()
+        .filter(|c| c.deleted_at.is_none() && !vault.is_verified(&c.id) && !filled.contains(&c.id))
+        .map(|c| c.id.clone())
+        .collect()
+}
+
+/// Ids ever filled (count>0 or stamped) — ONE sidecar read per call.
+/// Best-effort IO: missing/corrupt file ⇒ empty set ⇒ janitor over-includes
+/// (review queue fail-open; trash is soft + restorable, never data loss).
+fn read_fill_keys() -> std::collections::HashSet<String> {    let mut out = std::collections::HashSet::new();
+    let Ok(txt) = std::fs::read_to_string("pv_ext_stats.json") else {
+        return out;
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&txt) else {
+        return out;
+    };
+    if let Some(m) = v.get("fill_counts").and_then(|m| m.as_object()) {
+        for (id, n) in m {
+            if n.as_u64().unwrap_or(0) > 0 {
+                out.insert(id.clone());
+            }
+        }
+    }
+    if let Some(m) = v.get("last_filled").and_then(|m| m.as_object()) {
+        for (id, _) in m {
+            out.insert(id.clone());
+        }
+    }
+    out
+}
+
+/// Rotate every reused login password: each shared password is replaced by
+/// a UNIQUE fresh one (20-char full charset), old → history (keep 5),
+/// `last_changed` = now. One caller re-seal covers the batch. Pure shape
+/// over `&mut Vault` (CSPRNG inside) — tests assert uniqueness + history,
+/// never fixed values.
+///
+/// Honest scope: vault-side only. The operator must still update each
+/// password ON ITS WEBSITE — the UI says so next to the button.
+fn rotate_reused_passwords(vault: &mut Vault) -> usize {
+    use secrecy::ExposeSecret;
+    let mut freq: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    for c in &vault.credentials {
+        if c.deleted_at.is_none() && !c.password.is_empty() {
+            *freq.entry(c.password.clone()).or_insert(0) += 1;
+        }
+    }
+    if !freq.values().any(|&n| n > 1) {
+        return 0;
+    }
+    let now = crate::models::current_timestamp();
+    let mut used: std::collections::HashSet<String> =
+        vault.credentials.iter().map(|c| c.password.clone()).collect();
+    let policy = crate::core::generator::PasswordPolicy::default();
+    let mut n = 0;
+    for c in vault.credentials.iter_mut() {
+        if c.deleted_at.is_some() || c.password.is_empty() {
+            continue;
+        }
+        if freq.get(&c.password).copied().unwrap_or(0) < 2 {
+            continue;
+        }
+        let mut fresh = String::new();
+        for _ in 0..10 {
+            let cand = crate::core::generator::PasswordGenerator::generate_complex(&policy)
+                .map(|s| s.expose_secret().clone())
+                .unwrap_or_default();
+            if !cand.is_empty() && !used.contains(&cand) {
+                fresh = cand;
+                break;
+            }
+        }
+        if fresh.is_empty() {
+            continue;
+        }
+        crate::models::push_history(&mut c.password_history, &c.password, now);
+        // NOTE: old password stays in `used` — a fresh candidate must never
+        // re-issue a compromised shared password, even by chance.
+        c.password = fresh.clone();
+        used.insert(fresh);
+        c.last_changed = now;
+        n += 1;
+    }
+    n
 }
 
 fn eff_folder(folder: &str) -> &str {
@@ -2341,8 +2440,30 @@ const LIST_PAGE: usize = 50;
 fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
     let q = f.query.trim().to_lowercase();
     let mut items = Vec::new();
+    // Janitor fast path: ONE sidecar read per build (not per row), then
+    // only unverified + never-filled logins survive. Other kinds skip.
+    let filled_set: std::collections::HashSet<String> = if f.janitor {
+        read_fill_keys()
+    } else {
+        std::collections::HashSet::new()
+    };
     for c in &vault.credentials {
+        if f.janitor
+            && (c.deleted_at.is_some() || vault.is_verified(&c.id) || filled_set.contains(&c.id))
+        {
+            continue;
+        }
         push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id));
+    }
+    if f.janitor {
+        // Janitor reviews logins only — other vectors skip the walk.
+        // Same tail bookkeeping (truncate + total) so the footer works.
+        let total = items.len();
+        items.truncate(f.limit);
+        *total_matches_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner()) = total;
+        return ModelRc::new(slint::VecModel::from(items));
     }
     for l in &vault.licenses {
         push_item(&mut items, f, &q, &l.id, 2, &l.app_name, "Software license",
@@ -2422,7 +2543,7 @@ fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<Cred
     let prev = total_matches();
     let model = vault_to_items(
         vault,
-        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new(), limit: LIST_CAP },
+        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new(), janitor: false, limit: LIST_CAP },
     );
     restore_total(prev);
     // Standalone 2FA stays out of the QuickBar: its copy/type flows dispatch
@@ -4584,6 +4705,11 @@ fn replace_item(
                 let fav_vc = Arc::clone(&vault_clone);
                 let fav_sc = Arc::clone(&search_clone);
                 let fav_w = weak.clone();
+                // Live breach gate (logins only): k-anonymity check AFTER the
+                // save lands, warn-only (never blocks). Decoy saves return
+                // earlier, so this path is always the real vault.
+                let hibp_pw: Option<String> =
+                    if kind == 1 && !b.trim().is_empty() { Some(b.clone()) } else { None };
                 let _ = slint::invoke_from_event_loop(move || {
                     let Some(ui) = weak.upgrade() else {
                         return;
@@ -4601,6 +4727,30 @@ fn replace_item(
                             ui.set_notification_text(
                                 "✅ Item encrypted to disk!".into(),
                             );
+                            // Fire-and-forget breach check: offline toggle or
+                            // global kill-switch ⇒ silent skip (zero packets).
+                            if let Some(pw) = hibp_pw {
+                                let offline = ui.get_offline_audit() || !net_allowed();
+                                if !offline {
+                                    let w2 = weak.clone();
+                                    std::thread::spawn(move || {
+                                        let Some(rt) = tokio_rt() else {
+                                            return;
+                                        };
+                                        if let Ok(Some(n)) =
+                                            rt.block_on(security::breach_check::check_password(&pw))
+                                        {
+                                            let _ = slint::invoke_from_event_loop(move || {
+                                                if let Some(ui) = w2.upgrade() {
+                                                    ui.set_notification_text(
+                                                        format!("🚨 Saved, but this password appeared in {n} breaches — consider rotating it.").into(),
+                                                    );
+                                                }
+                                            });
+                                        }
+                                    });
+                                }
+                            }
                             // Clear form, exit edit mode, drop pending custom fields
                             ui.set_f_title("".into());
                             ui.set_f_a("".into());
@@ -5414,6 +5564,8 @@ fn replace_item(
         search_clone: Arc<Mutex<FilterState>>,
         qb_clone: slint::Weak<QuickBarWindow>,
         verb: &'static str,
+        // Optional success-note suffix (e.g. rotate's "update each site").
+        note: Option<&'static str>,
         op: impl FnOnce(&mut Vault) -> usize + Send + 'static,
     ) {
         std::thread::spawn(move || {
@@ -5459,7 +5611,17 @@ fn replace_item(
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_notification_text(
-                            format!("✅ Bulk {verb}: {n} item{}.", if n == 1 { "" } else { "s" }).into(),
+                            match note {
+                                Some(extra) => format!(
+                                    "✅ Bulk {verb}: {n} item{}. {extra}",
+                                    if n == 1 { "" } else { "s" }
+                                ),
+                                None => format!(
+                                    "✅ Bulk {verb}: {n} item{}.",
+                                    if n == 1 { "" } else { "s" }
+                                ),
+                            }
+                            .into(),
                         );
                         security::access_log::log_event("bulk", verb);
                         trigger_sync_push(ui.as_weak());
@@ -5501,7 +5663,7 @@ fn replace_item(
                 return;
             }
             let targets = parse_sel();
-            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "favorite", move |vault| {
+            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "favorite", None, move |vault| {
                 let mut n = 0;
                 for (kind, id) in &targets {
                     if let Some(f) = fav_flag_mut(vault, *kind, id) {
@@ -5536,7 +5698,7 @@ fn replace_item(
                 return;
             }
             let targets = parse_sel();
-            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "move", move |vault| {
+            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "move", None, move |vault| {
                 let mut n = 0;
                 for (kind, id) in &targets {
                     let slot: Option<&mut String> = match *kind {
@@ -5576,7 +5738,7 @@ fn replace_item(
                 return;
             }
             let targets = parse_sel();
-            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "trash", move |vault| {
+            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "trash", None, move |vault| {
                 let mut n = 0;
                 let now = crate::models::current_timestamp();
                 for (kind, id) in &targets {
@@ -5594,6 +5756,28 @@ fn replace_item(
                     }
                 }
                 n
+            });
+        }
+    });
+
+    // One-click reused rotation: every shared login password becomes unique
+    // (history kept, one re-seal). Vault-side only — the notification says
+    // the website updates out loud. Decoy refused up front like bulk trash.
+    main_window.on_rotate_reused({
+        let weak = bulk_weak.clone();
+        let vault_clone = Arc::clone(&bulk_vault);
+        let master_clone = Arc::clone(&bulk_master);
+        let search_clone = Arc::clone(&bulk_search);
+        let qb_clone = bulk_qb.clone();
+        move || {
+            if weak.upgrade().map(|ui| ui.get_is_decoy()).unwrap_or(false) {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                }
+                return;
+            }
+            run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "rotate", Some("History kept — now update each password ON ITS WEBSITE."), move |vault| {
+                rotate_reused_passwords(vault)
             });
         }
     });
@@ -10129,6 +10313,39 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         }
     });
 
+    // Janitor review queue: unverified + never-filled logins (fake/stale
+    // cleanup candidates). Toggles like the health filter; pairs with
+    // select-mode bulk trash for one-sweep cleanup. Read-only under decoy
+    // (trash itself refuses there) — no gate needed on the view.
+    let jan_weak = main_window.as_weak();
+    let jan_vault = Arc::clone(&active_vault);
+    let jan_search = Arc::clone(&search_state);
+    let jan_qb = quick_bar.as_weak();
+    main_window.on_open_janitor(move || {
+        let Some(ui) = jan_weak.upgrade() else {
+            return;
+        };
+        let mut f = jan_search.lock().map(|s| s.clone()).unwrap_or_default();
+        f.janitor = !f.janitor;
+        f.limit = LIST_CAP;
+        *jan_search.lock().unwrap() = f.clone();
+        ui.set_janitor_active(f.janitor);
+        ui.set_active_nav(0);
+        let v = lock_vault(&jan_vault);
+        set_paged_credentials(&ui, vault_to_items(&v, &f));
+        if let Some(qb) = jan_qb.upgrade() {
+            qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
+        }
+        if f.janitor {
+            let n = janitor_ids(&v, &read_fill_keys()).len();
+            ui.set_notification_text(
+                format!("🧹 {n} review candidates (unverified, never filled) — Select mode + 🗑️ Trash to sweep. Click Janitor again to close.").into(),
+            );
+        } else {
+            ui.set_notification_text("Janitor queue closed.".into());
+        }
+    });
+
     // Phase 25: BLE proximity auto-lock service. Passive scan + 4s heartbeat
     // on a worker thread; the fire path reuses the standard lock pipeline
     // (RAM wipe + clipboard flush + access log + lock screen).
@@ -10261,6 +10478,91 @@ mod grid_tests {
         // Non-login kinds never gate, even with a colliding id.
         assert_eq!(reprompt_gate(&v, 4, "r1"), None);
         assert_eq!(reprompt_gate(&v, 0, "r1"), None);
+    }
+
+    #[test]
+    fn janitor_lists_unverified_never_filled() {
+        fn login(id: &str) -> Credential {
+            Credential {
+                id: id.into(),
+                title: "t".into(),
+                username: "u".into(),
+                password: "p".into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 0,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            }
+        }
+        let mut v = Vault::new();
+        v.credentials.push(login("fake-never-used"));
+        v.credentials.push(login("daily-driver"));
+        v.credentials.push(login("trashed-fake"));
+        v.credentials[2].deleted_at = Some(1);
+        assert!(v.set_verified("daily-driver", true));
+        let filled: std::collections::HashSet<String> =
+            ["daily-driver".to_string()].into_iter().collect();
+        // Only the unverified, never-filled, live login survives.
+        assert_eq!(janitor_ids(&v, &filled), vec!["fake-never-used".to_string()]);
+        // Empty vault / all-clean ⇒ empty queue, never an error.
+        assert!(janitor_ids(&Vault::new(), &filled).is_empty());
+    }
+
+    #[test]
+    fn rotate_reused_makes_unique_with_history() {
+        fn login(id: &str, pw: &str) -> Credential {
+            Credential {
+                id: id.into(),
+                title: "t".into(),
+                username: "u".into(),
+                password: pw.into(),
+                totp_secret: String::new(),
+                urls: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::new(),
+                folder: "General".into(),
+                reprompt: false,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: 0,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            }
+        }
+        let mut v = Vault::new();
+        v.credentials.push(login("a", "shared123"));
+        v.credentials.push(login("b", "shared123"));
+        v.credentials.push(login("c", "unique-strong-1"));
+        assert_eq!(rotate_reused_passwords(&mut v), 2);
+        let pa = v.credentials.iter().find(|c| c.id == "a").unwrap().password.clone();
+        let pb = v.credentials.iter().find(|c| c.id == "b").unwrap().password.clone();
+        // Unique, no longer the shared password, history kept.
+        assert_ne!(pa, pb);
+        assert_ne!(pa, "shared123");
+        assert_ne!(pb, "shared123");
+        for id in ["a", "b"] {
+            let c = v.credentials.iter().find(|c| c.id == id).unwrap();
+            assert_eq!(c.password_history.len(), 1);
+            assert_eq!(c.password_history[0].password, "shared123");
+            assert!(c.last_changed > 0);
+        }
+        // Untouched: unique password, no history.
+        let c = v.credentials.iter().find(|c| c.id == "c").unwrap();
+        assert_eq!(c.password, "unique-strong-1");
+        assert!(c.password_history.is_empty());
+        // Second run: nothing shared ⇒ 0, no churn.
+        assert_eq!(rotate_reused_passwords(&mut v), 0);
     }
 
     #[test]
