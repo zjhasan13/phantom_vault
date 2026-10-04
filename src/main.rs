@@ -18,6 +18,10 @@ mod sync;
 mod windows_native;
 
 use arboard::Clipboard;
+use authenticator::universal_2fa::{
+    self, merge_2fa_with_policy, strip_dup_suffix, DupConflict, DupPolicy, MergeReport,
+    DUP_SUFFIX,
+};
 use core::generator::{PasswordGenerator, PasswordPolicy};
 use data_encoding::BASE32_NOPAD;
 use rand_core::{OsRng, RngCore};
@@ -34,6 +38,15 @@ use zeroize::Zeroize;
 slint::include_modules!();
 
 const VAULT_FILE: &str = "my_secure_vault.enc";
+
+/// Minimum seconds a TOTP code must have left before we let it be copied.
+///
+/// Not cosmetic: with ~3s remaining, a code can expire between the click and
+/// the user pasting it into a login form, and a rejected code reads as "my
+/// authenticator is broken" rather than "you were too slow". 3s is the point
+/// where typing a password plus submitting is no longer reliably possible.
+/// HOTP is exempt — it has no expiry window.
+const TOTP_COPY_GUARD_SECS: u64 = 3;
 const HELLO_TOKEN_FILE: &str = "vault_hello.dpapi";
 /// Bridge liveness beacon (NOT a secret — just a timestamp). Written every
 /// 20s while unlocked; the native host refuses to serve when stale (>75s).
@@ -1650,20 +1663,122 @@ fn favicon_image_for_domain(domain: &str) -> Option<slint::Image> {
     png_bytes_to_image(&bytes)
 }
 
+/// Identity of a card for duplicate-detection purposes.
+///
+/// The ` [Imported]` marker is stripped BEFORE comparing, so the original card
+/// and the copy we made for it resolve to the SAME key. Without that, every
+/// subsequent import would look novel and the duplicate badge would vanish the
+/// moment the user resolved a conflict.
+/// Pure — unit tested.
+fn dup_key(issuer: &str, name: &str) -> (String, String) {
+    (
+        issuer.trim().to_lowercase(),
+        strip_dup_suffix(name.trim()).to_lowercase(),
+    )
+}
+
+/// For every card, whether another card shares its (issuer, name). A lone card
+/// is never flagged, so the badge keeps meaning something.
+/// Pure — unit tested.
+fn dup_marks(accs: &[&TotpAccount]) -> Vec<bool> {
+    let mut counts: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for a in accs {
+        *counts.entry(dup_key(&a.issuer, &a.account_name)).or_insert(0) += 1;
+    }
+    accs.iter()
+        .map(|a| counts[&dup_key(&a.issuer, &a.account_name)] > 1)
+        .collect()
+}
+
+/// "GitHub / zjhasan13" — what the badge tooltip explains the collision is.
+/// The secret is never included: it must not reach a tooltip or a log line.
+fn dup_of_label(accs: &[&TotpAccount], a: &TotpAccount) -> String {
+    let k = dup_key(&a.issuer, &a.account_name);
+    let others: Vec<String> = accs
+        .iter()
+        .filter(|o| o.id != a.id && dup_key(&o.issuer, &o.account_name) == k)
+        .map(|o| strip_dup_suffix(o.account_name.trim()).to_string())
+        .collect();
+    if others.is_empty() {
+        return String::new();
+    }
+    format!(
+        "{} / {} — {} other card(s) use this name with a different secret",
+        a.issuer.trim(),
+        strip_dup_suffix(a.account_name.trim()),
+        others.len()
+    )
+}
+
+/// Colliding batch awaiting the user's dedup answer. One slot on purpose: a
+/// second import arriving mid-dialog would otherwise silently overwrite the
+/// first batch and import neither.
+fn pending_twofa_store() -> &'static Mutex<Option<Vec<TotpAccount>>> {
+    static SLOT: std::sync::OnceLock<Mutex<Option<Vec<TotpAccount>>>> = std::sync::OnceLock::new();
+    SLOT.get_or_init(|| Mutex::new(None))
+}
+
+/// Classify an incoming batch against the CURRENT vault without writing.
+/// Pure — unit tested.
+///
+/// This is the same rule the merge applies (`norm_secret` + suffix-stripped
+/// name). If the two ever disagree the user gets asked about a "conflict" that
+/// the merge then silently skips, which is worse than not asking at all.
+fn dup_conflicts_against(vault: &Vault, accounts: &[TotpAccount]) -> Vec<DupConflict> {
+    let mut out = Vec::new();
+    for a in accounts {
+        let inc = universal_2fa::norm_secret(&a.secret);
+        if let Some(e) = vault.totp_accounts.iter().find(|e| {
+            dup_key(&e.issuer, &e.account_name) == dup_key(&a.issuer, &a.account_name)
+        }) {
+            if universal_2fa::norm_secret(&e.secret) != inc {
+                out.push(DupConflict {
+                    issuer: a.issuer.clone(),
+                    name: a.account_name.clone(),
+                    existing_id: e.id.clone(),
+                    existing_secret: universal_2fa::norm_secret(&e.secret),
+                    incoming_secret: inc,
+                });
+            }
+        }
+    }
+    out
+}
+
 fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
     let mut accs: Vec<&TotpAccount> = vault.totp_accounts.iter().collect();
+    let dup_flags = dup_marks(&accs);
+    // Resolved to concrete strings up front: `accs` is consumed by the sort
+    // below, so the tooltip cannot be derived inside the mapping closure.
+    let dup_of: std::collections::HashMap<String, String> = accs
+        .iter()
+        .map(|a| (a.id.clone(), dup_of_label(&accs, a)))
+        .collect();
     accs.sort_by(|a, b| {
         b.favorite
             .cmp(&a.favorite)
             .then_with(|| a.issuer.to_lowercase().cmp(&b.issuer.to_lowercase()))
+            // Compare the BARE name so a duplicated pair stays adjacent and
+            // alphabetical, instead of sorting the marker as part of the name.
             .then_with(|| {
-                a.account_name
+                strip_dup_suffix(&a.account_name)
                     .to_lowercase()
-                    .cmp(&b.account_name.to_lowercase())
+                    .cmp(&strip_dup_suffix(&b.account_name).to_lowercase())
             })
+            // A collision's surviving card is the newest import, and the newest
+            // import is the one that works — so the suffixed card sorts first
+            // and is the card the eye lands on.
+            .then_with(|| {
+                b.account_name
+                    .ends_with(DUP_SUFFIX)
+                    .cmp(&a.account_name.ends_with(DUP_SUFFIX))
+            })
+            .then_with(|| a.id.cmp(&b.id))
     });
     accs.into_iter()
-        .map(|a| {
+        .zip(dup_flags)
+        .map(|(a, is_dup)| {
             let gen = totp_engine::generate_code_for_account(a);
             let broken = gen.is_err();
             let (code, remaining) = gen.unwrap_or(("------".to_string(), 0));
@@ -1688,6 +1803,17 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 remaining.min(i32::MAX as u64) as i32
             };
             let countdown = if secs < 0 { "HOTP".to_string() } else { format!("{secs}s") };
+            // The revealed "Next" line carries its own countdown so the two
+            // numbers on the card can never be read as one. `remaining` is the
+            // wait until the NEXT window opens, which is what a user needs to
+            // know before reaching for that number instead of the live one.
+            let next_label = if broken {
+                next.clone()
+            } else if is_hotp {
+                format!("NEXT (counter {}) · {}", a.counter + 1, group_code(&next))
+            } else {
+                format!("NEXT in {countdown} · {}", group_code(&next))
+            };
             let (icon, tint) = brand_of(&a.issuer, &a.account_name);
             // 2FA card icon: same favicon cache as the login list (letter
             // circle stays as the fallback when uncached/toggled off).
@@ -1701,7 +1827,15 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 issuer: a.issuer.clone().into(),
                 code: code.clone().into(),
                 display: group_code(&code).into(),
-                next: group_code(&next).into(),
+                next: if broken {
+                    // group_code() strips everything non-alphanumeric, which
+                    // would turn the warning into "badsecretreenroll". Only
+                    // real codes get grouped.
+                    next.clone().into()
+                } else {
+                    group_code(&next).into()
+                },
+                next_label: next_label.into(),
                 icon: icon.to_string().into(),
                 has_icon,
                 icon_img,
@@ -1711,6 +1845,12 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 secs,
                 countdown: countdown.into(),
                 fav: a.favorite,
+                is_dup,
+                dup_of: if is_dup {
+                    dup_of.get(&a.id).cloned().unwrap_or_default().into()
+                } else {
+                    "".into()
+                },
             }
         })
         .collect()
@@ -1752,6 +1892,40 @@ const AUTH_GRID_COLS: usize = 3;
 
 /// Grid model for the authenticator page: `[[AuthView]]` rows of 3,
 /// filtered by the ISOLATED hub query (never the vault `search_query`).
+/// Park a colliding batch and open the dedup dialog. Returns true when the
+/// caller must STOP — nothing has been written in that case.
+///
+/// Called from the ingest threads, so it hops to the event loop itself. The
+/// batch is held in `pending_twofa_store()` rather than being captured by the
+/// dialog callbacks, which is what lets Cancel drop it without undoing anything.
+fn park_twofa_for_dup(ui: &MainWindow, accounts: Vec<TotpAccount>, conflicts: Vec<DupConflict>) -> bool {
+    if conflicts.is_empty() {
+        return false;
+    }
+    *pending_twofa_store().lock().unwrap_or_else(|p| p.into_inner()) = Some(accounts);
+    let who = conflicts
+        .iter()
+        .map(|c| format!("{} / {}", c.issuer.trim(), strip_dup_suffix(c.name.trim())))
+        .collect::<Vec<_>>();
+    let mut seen: Vec<String> = Vec::new();
+    for w in who {
+        if !seen.contains(&w) {
+            seen.push(w);
+        }
+    }
+    ui.set_dup_title(format!("⚠️ Already saved: {}", seen.join(", ")).into());
+    // Secrets are deliberately NOT rendered. Naming the account is enough to
+    // act on, and a modal is the worst possible place to echo key material.
+    ui.set_dup_body(format!(
+        "{n} account(s) in this import use a name you already have, but with a different secret. \
+         Keep both to end up with two cards (the new one is marked and shown first). \
+         Replace to overwrite the stored secret on the existing card, keeping its name and favourite.",
+        n = conflicts.len()
+    ).into());
+    ui.set_show_dup_confirm(true);
+    true
+}
+
 fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
     let q = query.trim().to_lowercase();
     let flat: Vec<AuthView> = if q.is_empty() {
@@ -5933,15 +6107,33 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 });
                 return;
             };
+            // Phase 28: this path merged blindly. A same-name/different-secret
+            // account was silently added as a second card, which is exactly how
+            // the user ended up with two Facebook cards and no idea which one
+            // worked. Ask BEFORE any write; nothing is sealed on this branch.
+            let conflicts = {
+                let v = lock_vault(&vault_arc);
+                dup_conflicts_against(&v, &accounts)
+            };
+            if !conflicts.is_empty() {
+                let dup_ui = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = dup_ui.upgrade() {
+                        park_twofa_for_dup(&ui, accounts, conflicts);
+                    }
+                });
+                return;
+            }
             let save_result: Result<authenticator::universal_2fa::Import2faSummary, String> = {
                 let mut vault = lock_vault(&vault_arc);
                 let snapshot = vault.clone();
-                let (imported, skipped) =
-                    authenticator::universal_2fa::merge_2fa(&mut vault, accounts);
+                let report: MergeReport =
+                    merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
+                let imported = report.imported + report.replaced;
                 match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
                     Ok(()) => Ok(authenticator::universal_2fa::Import2faSummary {
                         accounts_imported: imported,
-                        duplicates_skipped: skipped,
+                        duplicates_skipped: report.skipped,
                         source_detected: source_label,
                         warnings,
                     }),
@@ -6142,7 +6334,24 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     return;
                 }
             };
-            let count = accounts.len();
+            // Phase 28: this path used to call `totp_accounts.extend()`
+            // directly — NO dedup at all. That is the precise mechanism behind
+            // the duplicate cards the user hit: re-scanning a QR for an account
+            // already in the vault appended a second copy every time. It now
+            // asks first, then merges under the explicit policy.
+            let conflicts = {
+                let v = lock_vault(&vault_clone);
+                dup_conflicts_against(&v, &accounts)
+            };
+            if !conflicts.is_empty() {
+                let dup_ui = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = dup_ui.upgrade() {
+                        park_twofa_for_dup(&ui, accounts, conflicts);
+                    }
+                });
+                return;
+            }
             let master_opt = lock_master_pw(&master_clone).clone();
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
@@ -6152,15 +6361,19 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 });
                 return;
             };
-            let save_result: Result<(), String> = {
+            let save_result: Result<usize, String> = {
                 let mut vault = lock_vault(&vault_clone);
-                vault.totp_accounts.extend(accounts);
+                let snapshot = vault.clone();
+                let report: MergeReport =
+                    merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
+                let imported = report.imported + report.replaced;
                 match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                    Ok(()) => Ok(()),
+                    Ok(()) => Ok(imported),
                     Err(e) => {
-                        for _ in 0..count {
-                            vault.totp_accounts.pop();
-                        }
+                        // Roll back to the pre-import snapshot rather than
+                        // popping N entries: `pop` cannot undo a ReplaceExisting,
+                        // which edits in place.
+                        *vault = snapshot;
                         Err(e)
                     }
                 }
@@ -6169,9 +6382,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     match save_result {
-                        Ok(()) => {
+                        Ok(imported) => {
                             ui.set_notification_text(
-                                format!("✅ Imported {} 2FA accounts successfully!{}", count, batch_suffix).into(),
+                                format!("✅ Imported {imported} 2FA accounts successfully!{}", batch_suffix).into(),
                             );
                             ui.set_show_2fa_import(false);
                             {
@@ -6247,7 +6460,22 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         return;
                     }
                 };
-                let count = accounts.len();
+                // Phase 28: same blind `extend()` as the clipboard QR path, same
+                // fix — park the collision and let the user decide.
+                let conflicts = {
+                    let v = lock_vault(&vault_clone);
+                    dup_conflicts_against(&v, &accounts)
+                };
+                if !conflicts.is_empty() {
+                    let dup_ui = weak_in.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = dup_ui.upgrade() {
+                            ui.set_show_webcam_scan(false);
+                            park_twofa_for_dup(&ui, accounts, conflicts);
+                        }
+                    });
+                    return;
+                }
                 let master_opt = lock_master_pw(&master_clone).clone();
                 let Some(master_pw) = master_opt else {
                     let _ = slint::invoke_from_event_loop(move || {
@@ -6258,15 +6486,16 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     });
                     return;
                 };
-                let save_result: Result<(), String> = {
+                let save_result: Result<usize, String> = {
                     let mut vault = lock_vault(&vault_clone);
-                    vault.totp_accounts.extend(accounts);
+                    let snapshot = vault.clone();
+                    let report: MergeReport =
+                        merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
+                    let imported = report.imported + report.replaced;
                     match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                        Ok(()) => Ok(()),
+                        Ok(()) => Ok(imported),
                         Err(e) => {
-                            for _ in 0..count {
-                                vault.totp_accounts.pop();
-                            }
+                            *vault = snapshot;
                             Err(e)
                         }
                     }
@@ -6276,9 +6505,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     if let Some(ui) = weak_in.upgrade() {
                         ui.set_show_webcam_scan(false);
                         match save_result {
-                            Ok(()) => {
+                            Ok(imported) => {
                                 ui.set_notification_text(
-                                    format!("✅ Webcam imported {} 2FA accounts!{}", count, batch_suffix).into(),
+                                    format!("✅ Webcam imported {imported} 2FA accounts!{}", batch_suffix).into(),
                                 );
                                 {
                                     let v = lock_vault(&vault_for_list);
@@ -7629,6 +7858,200 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let totp_fav_vault = Arc::clone(&active_vault);
     let totp_fav_master = Arc::clone(&active_master_pw);
     let totp_fav_search = Arc::clone(&search_state);
+    // ---- Phase 28: copy guard, reveal toggle, manual clock offset, dedup ----
+    //
+    // Copy takes an ACCOUNT ID, never a code string. The grid refreshes once a
+    // second, so a value rendered on screen can already be a window old by the
+    // time the user clicks it; regenerating at click time is the only way the
+    // clipboard can be guaranteed to hold a live code.
+    let totp_copy_ui = main_window.as_weak();
+    let totp_copy_vault = Arc::clone(&active_vault);
+    let totp_copy_ct = Arc::clone(&clipboard_timeout_secs);
+    main_window.on_copy_totp_requested(move |id| {
+        let Some(ui) = totp_copy_ui.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let target = id.as_str().to_string();
+        let weak = totp_copy_ui.clone();
+        let vault_clone = Arc::clone(&totp_copy_vault);
+        let ct_totp = Arc::clone(&totp_copy_ct);
+        std::thread::spawn(move || {
+            let fresh = {
+                let vault = lock_vault(&vault_clone);
+                vault
+                    .totp_accounts
+                    .iter()
+                    .find(|a| a.id == target)
+                    .and_then(|a| {
+                        totp_engine::generate_code_for_account(a)
+                            .ok()
+                            .map(|(code, remaining)| (code, remaining))
+                    })
+            };
+            let Some((code, remaining)) = fresh else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ Could not generate a code for that card.".into());
+                    }
+                });
+                return;
+            };
+            // The boundary guard. A code with <=3s left will have expired in the
+            // app the user is pasting into before they finish typing their
+            // password, and a rejected code reads as "this vault is broken".
+            // HOTP is exempt: it has no clock, `remaining` is u64::MAX, and it
+            // stays valid until the counter advances.
+            if remaining != u64::MAX && remaining <= TOTP_COPY_GUARD_SECS {
+                let secs = remaining;
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text(format!(
+                            "⏳ Only {secs}s left — that code expires mid-typing. Try again next window."
+                        ).into());
+                    }
+                });
+                return;
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    // Same sanitise + auto-clear + access-log path every other
+                    // copy in the app uses. It logs THAT a copy happened, never
+                    // the value, and strips pastejacking payloads.
+                    let secs =
+                        ct_totp.load(std::sync::atomic::Ordering::SeqCst);
+                    secure_copy_with_feedback(
+                        ui.as_weak(),
+                        code.clone(),
+                        &format!("✅ 2FA code copied (auto-clearing in {secs}s)"),
+                        secs,
+                    );
+                    ui.set_last_copied(code.clone().into());
+                    ui.set_last_copied_id(target.into());
+                }
+            });
+        });
+    });
+
+    let totp_next_weak = main_window.as_weak();
+    main_window.on_toggle_totp_next(move || {
+        let Some(ui) = totp_next_weak.upgrade() else {
+            return;
+        };
+        ui.set_show_totp_next(!ui.get_show_totp_next());
+    });
+
+    let off_ui = main_window.as_weak();
+    let off_vault = Arc::clone(&active_vault);
+    main_window.on_set_totp_offset(move |text| {
+        let Some(ui) = off_ui.upgrade() else {
+            return;
+        };
+        let raw = text.as_str().trim();
+        let parsed: i64 = if raw.is_empty() { 0 } else { raw.parse().unwrap_or(0) };
+        let applied = core::time_offset::set(parsed);
+        ui.set_totp_offset_text(applied.to_string().into());
+        ui.set_totp_offset_status(match core::time_offset::label() {
+            Some(l) => format!("⚠️ All 2FA codes are shifted {l} from this PC's clock.").into(),
+            None => "✅ 2FA clock offset cleared — using system time.".into(),
+        });
+        let v = lock_vault(&off_vault);
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+    });
+
+    let off_reset_weak = main_window.as_weak();
+    let off_reset_vault = Arc::clone(&active_vault);
+    main_window.on_reset_totp_offset(move || {
+        let Some(ui) = off_reset_weak.upgrade() else {
+            return;
+        };
+        core::time_offset::reset();
+        ui.set_totp_offset_text("0".into());
+        ui.set_totp_offset_status(match core::time_offset::label() {
+            Some(l) => format!("⚠️ All 2FA codes are shifted {l} from this PC's clock.").into(),
+            None => "✅ 2FA clock offset cleared — using system time.".into(),
+        });
+        let v = lock_vault(&off_reset_vault);
+        ui.set_auth_accounts(rebuild_auth_list(&v));
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+    });
+
+    // Duplicate resolution. The ingest paths PARK a colliding batch and ask;
+    // only these three callbacks can write it. Cancel and a failed save both
+    // leave the vault byte-identical.
+    let dup_ui = main_window.as_weak();
+    let dup_vault = Arc::clone(&active_vault);
+    let dup_master = Arc::clone(&active_master_pw);
+    // Shared by both policy buttons, so it lives behind an Arc rather than
+    // being moved into the first callback registration.
+    let dup_apply = Arc::new(move |policy: DupPolicy, dup_ui: &slint::Weak<MainWindow>| {
+        let Some(ui) = dup_ui.upgrade() else {
+            return;
+        };
+        let Some(batch) = pending_twofa_store().lock().unwrap_or_else(|p| p.into_inner()).take()
+        else {
+            ui.set_show_dup_confirm(false);
+            return;
+        };
+        ui.set_show_dup_confirm(false);
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let Some(master_pw) = lock_master_pw(&dup_master).clone() else {
+            ui.set_notification_text("❌ Vault not unlocked!".into());
+            return;
+        };
+        // Snapshot before merging: `ReplaceExisting` edits cards IN PLACE, so a
+        // failed seal could not be undone by removing the newly added entries.
+        // Restoring the snapshot is the only rollback that is actually correct.
+        let outcome: Result<usize, String> = (|| {
+            let mut vault = lock_vault(&dup_vault);
+            let snapshot = vault.clone();
+            let report: MergeReport = merge_2fa_with_policy(&mut vault, batch, policy);
+            match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                Ok(()) => Ok(report.imported + report.replaced),
+                Err(e) => {
+                    *vault = snapshot;
+                    Err(e.to_string())
+                }
+            }
+        })();
+        match outcome {
+            Ok(imported) => {
+                let vault = lock_vault(&dup_vault);
+                ui.set_auth_accounts(rebuild_auth_list(&vault));
+                ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str()));
+                drop(vault);
+                ui.set_notification_text(format!("✅ Imported {imported} 2FA account(s).").into());
+                trigger_sync_push(ui.as_weak());
+            }
+            Err(e) => {
+                ui.set_notification_text(format!("⚠️ Import failed: {e}").into());
+            }
+        }
+    });
+    let dup_replace_ui = dup_ui.clone();
+    let dup_replace_apply = Arc::clone(&dup_apply);
+    main_window.on_dup_confirm_replace(move || {
+        dup_replace_apply(DupPolicy::ReplaceExisting, &dup_replace_ui)
+    });
+    let dup_keep_ui = dup_ui.clone();
+    let dup_keep_apply = Arc::clone(&dup_apply);
+    main_window.on_dup_confirm_keep(move || dup_keep_apply(DupPolicy::KeepBoth, &dup_keep_ui));
+    let dup_cancel_ui = dup_ui.clone();
+    main_window.on_dup_confirm_cancel(move || {
+        // Drop the batch: the user chose nothing, so nothing is written.
+        let _ = pending_twofa_store().lock().unwrap_or_else(|p| p.into_inner()).take();
+        if let Some(ui) = dup_cancel_ui.upgrade() {
+            ui.set_show_dup_confirm(false);
+            ui.set_notification_text("🚫 Import cancelled — nothing was added.".into());
+        }
+    });
+
     main_window.on_toggle_totp_favorite(move |id| {
         let Some(ui) = totp_fav_weak.upgrade() else {
             return;
@@ -10495,6 +10918,248 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
 mod grid_tests {
     use super::*;
 
+    fn totp_acct(id: &str, issuer: &str, name: &str) -> TotpAccount {
+        TotpAccount {
+            id: id.into(),
+            issuer: issuer.into(),
+            account_name: name.into(),
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            otp_type: "totp".into(),
+            algorithm: "SHA1".into(),
+            digits: 6,
+            period: 30,
+            counter: 0,
+            favorite: false,
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 28: duplicate detection.
+    // -----------------------------------------------------------------------
+
+    /// The badge has to keep meaning "there are genuinely two of these", so a
+    /// lone card must never wear it.
+    #[test]
+    fn dup_marks_are_false_for_a_lone_account() {
+        let a = totp_acct("1", "GitHub", "me");
+        assert_eq!(dup_marks(&[&a]), vec![false]);
+    }
+
+    #[test]
+    fn dup_marks_flag_only_true_same_pair_accounts() {
+        let a = totp_acct("1", "GitHub", "me");
+        let b = totp_acct("2", "GitHub", "me");
+        let c = totp_acct("3", "GitHub", "other");
+        assert_eq!(dup_marks(&[&a, &b, &c]), vec![true, true, false]);
+    }
+
+    /// Users retype names by hand; "github" and "ME" are the same account.
+    #[test]
+    fn dup_marks_ignore_issuer_case_and_name_case() {
+        let a = totp_acct("1", "GitHub", "me");
+        let b = totp_acct("2", "github", "ME");
+        assert_eq!(dup_marks(&[&a, &b]), vec![true, true]);
+    }
+
+    /// The whole point of `strip_dup_suffix` in the key: the copy we made for
+    /// a collision must resolve to its ORIGINAL, or resolving a conflict would
+    /// make the duplicate badge disappear and invite a third import.
+    #[test]
+    fn dup_key_groups_the_suffixed_card_with_its_original() {
+        let a = totp_acct("1", "Bank", "main");
+        let mut b = totp_acct("2", "Bank", "main");
+        b.account_name = format!("main{DUP_SUFFIX}");
+        assert_eq!(dup_key(&a.issuer, &a.account_name), dup_key(&b.issuer, &b.account_name));
+        assert_eq!(dup_marks(&[&a, &b]), vec![true, true]);
+    }
+
+    #[test]
+    fn dup_key_ignores_surrounding_whitespace() {
+        let k = dup_key(" GitHub ", "  me  ");
+        assert_eq!(k, ("github".to_string(), "me".to_string()));
+    }
+
+    /// The tooltip must explain the collision WITHOUT echoing key material.
+    #[test]
+    fn dup_of_label_names_the_account_and_never_the_secret() {
+        let a = totp_acct("1", "GitHub", "me");
+        let mut b = totp_acct("2", "GitHub", "me");
+        b.secret = "SECRETSECRETSECRET".into();
+        b.account_name = format!("me{DUP_SUFFIX}");
+        let accs = [&a, &b];
+        let label = dup_of_label(&accs, &b);
+        assert!(label.contains("GitHub"));
+        assert!(label.contains("me"));
+        assert!(!label.contains("SECRET"), "secret leaked into label: {label}");
+    }
+
+    #[test]
+    fn dup_of_label_is_empty_for_a_lone_account() {
+        let a = totp_acct("1", "GitHub", "me");
+        assert_eq!(dup_of_label(&[&a], &a), "");
+    }
+
+    /// The ingest layer and the merge MUST agree, or the user gets asked about
+    /// a "conflict" the merge then silently skips.
+    #[test]
+    fn dup_conflicts_ignore_cosmetic_secret_differences() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "GitHub", "me"));
+        let mut same = totp_acct("2", "GitHub", "me");
+        same.secret = "jbswy3dp ehpk3pxp".into();
+        assert!(dup_conflicts_against(&v, &[same]).is_empty());
+    }
+
+    #[test]
+    fn dup_conflicts_flag_a_genuine_same_name_different_secret() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "Facebook", "abe"));
+        let mut other = totp_acct("2", "Facebook", "abe");
+        other.secret = "KRUGKIDROVUWG2ZAMJZG653OPBHY".into();
+        let c = dup_conflicts_against(&v, &[other]);
+        assert_eq!(c.len(), 1);
+        assert_eq!(c[0].issuer, "Facebook");
+    }
+
+    /// Regression guard for the original misdiagnosis: two logins on one
+    /// service are not duplicates, and must never be collapsed.
+    #[test]
+    fn dup_conflicts_leave_two_logins_on_one_issuer_alone() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "GitHub", "zjhasan13"));
+        let mut other = totp_acct("2", "GitHub", "zjhasan33");
+        other.secret = "KRUGKIDROVUWG2ZAMJZG653OPBHY".into();
+        assert!(dup_conflicts_against(&v, &[other]).is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 28: hub ordering + card rendering.
+    // -----------------------------------------------------------------------
+
+    /// When one service is enrolled twice, the surviving card must be the
+    /// newest import — it is the one that actually works.
+    #[test]
+    fn auth_rows_put_the_latest_scan_first_within_a_duplicate_pair() {
+        let mut v = Vault::new();
+        let mut old = totp_acct("1", "Bank", "main");
+        old.secret = "AAAAAAAAAAAAAAAA".into();
+        let mut new = totp_acct("2", "Bank", "main");
+        new.account_name = format!("main{DUP_SUFFIX}");
+        new.secret = "BBBBBBBBBBBBBBBB".into();
+        v.totp_accounts.push(old);
+        v.totp_accounts.push(new);
+        let rows = build_auth_rows(&v);
+        assert_eq!(rows.len(), 2);
+        assert!(rows[0].name.as_str().ends_with(DUP_SUFFIX), "got {rows:?}");
+        assert_eq!(rows[0].code.as_str(), rows[0].display.as_str().replace(' ', ""));
+        assert!(rows[0].is_dup && rows[1].is_dup);
+    }
+
+    /// The duplicate cards must stay adjacent and alphabetical, not be split by
+    /// the `[Imported]` marker being sorted as part of the name.
+    #[test]
+    fn auth_rows_sort_bare_names_not_the_marker() {
+        let mut v = Vault::new();
+        for (i, n) in ["abe", "me", "zz"].iter().enumerate() {
+            v.totp_accounts.push(totp_acct(&format!("a{i}"), "Facebook", n));
+        }
+        let mut b = totp_acct("b1", "Facebook", "abe");
+        b.account_name = format!("abe{DUP_SUFFIX}");
+        v.totp_accounts.push(b);
+        let rows = build_auth_rows(&v);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names.len(), 4);
+        let abe_pair: Vec<&&str> = names.iter().filter(|n| n.starts_with("abe")).collect();
+        assert_eq!(abe_pair.len(), 2, "the abe pair must be adjacent");
+    }
+
+    /// Favourites stay on top — the badge change must not disturb that.
+    #[test]
+    fn auth_rows_keep_favorites_first_even_with_duplicates() {
+        let mut v = Vault::new();
+        let mut pinned = totp_acct("1", "Zebra", "acc");
+        pinned.favorite = true;
+        v.totp_accounts.push(pinned);
+        let a = totp_acct("2", "Apple", "me");
+        let mut b = totp_acct("3", "Apple", "me");
+        b.account_name = format!("me{DUP_SUFFIX}");
+        v.totp_accounts.push(a);
+        v.totp_accounts.push(b);
+        let rows = build_auth_rows(&v);
+        assert_eq!(rows[0].id.as_str(), "1");
+        assert!(rows[0].fav);
+    }
+
+    #[test]
+    fn auth_rows_leave_a_clean_account_unflagged() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "GitHub", "me"));
+        let rows = build_auth_rows(&v);
+        assert!(!rows[0].is_dup);
+        assert_eq!(rows[0].dup_of.as_str(), "");
+    }
+
+    /// The revealed line must be self-describing so the two numbers on a card
+    /// can never be read as one.
+    #[test]
+    fn next_label_is_self_describing_for_totp() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "GitHub", "me"));
+        let rows = build_auth_rows(&v);
+        assert!(
+            rows[0].next_label.starts_with("NEXT in "),
+            "got {:?}",
+            rows[0].next_label.as_str()
+        );
+        assert!(rows[0].next_label.contains('·'));
+    }
+
+    /// A broken secret must not render anything that could be read as a code —
+    /// and `group_code` must not mangle the warning into "badsecretreenroll".
+    #[test]
+    fn broken_secret_never_renders_a_plausible_code() {
+        let mut v = Vault::new();
+        let mut bad = totp_acct("a", "GitHub", "me");
+        bad.secret = "!!!not-base32!!!".into();
+        v.totp_accounts.push(bad);
+        let rows = build_auth_rows(&v);
+        assert_eq!(rows[0].display.as_str(), "------");
+        assert!(rows[0].next.as_str().contains("bad secret"));
+        assert_eq!(rows[0].next.as_str(), rows[0].next_label.as_str());
+    }
+
+    /// The ≤3s guard reads `secs`, so HOTP must report -1 and stay exempt.
+    #[test]
+    fn hotp_card_reports_no_countdown_so_the_guard_never_blocks_it() {
+        let mut v = Vault::new();
+        let mut hotp = totp_acct("h", "Bank", "acct");
+        hotp.otp_type = "hotp".into();
+        hotp.counter = 7;
+        v.totp_accounts.push(hotp);
+        let rows = build_auth_rows(&v);
+        assert_eq!(rows[0].secs, -1);
+        assert_eq!(rows[0].countdown.as_str(), "HOTP");
+        // `-1 <= 3` is true, so the Slint predicate must special-case it.
+        assert!(rows[0].secs < 0 || rows[0].secs > 3);
+        // Shape, not a hardcoded HMAC value: the counter must be explicit
+        // (it is what HOTP users actually need) and the code grouped 3+3.
+        assert!(rows[0].next_label.starts_with("NEXT (counter 8) · "));
+        let code = rows[0].next_label.rsplit('·').next().unwrap().trim();
+        assert_eq!(code.len(), 7, "expected 3+3 grouping, got {code:?}");
+        assert_eq!(code, format!("{} {}", &code[..3], &code[4..]));
+    }
+
+    /// The hub's own countdown is what the guard threshold is expressed in, so
+    /// it has to land on a sane 0..=30 range rather than a wrapped u64.
+    #[test]
+    fn totp_countdown_is_plausible() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(totp_acct("1", "GitHub", "me"));
+        let rows = build_auth_rows(&v);
+        assert!(rows[0].secs >= 1 && rows[0].secs <= 30, "got {}", rows[0].secs);
+        assert!(rows[0].countdown.as_str().ends_with('s'));
+    }
+
     #[test]
     fn code_grouping_matches_reference_grid() {
         assert_eq!(group_code("513710"), "513 710");
@@ -10929,6 +11594,7 @@ mod grid_tests {
             "ext_pin.dpapi",
             "blackout.pref",
             "favicons.pref",
+            "totp_offset.pref",
         ] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }

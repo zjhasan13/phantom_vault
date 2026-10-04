@@ -23,11 +23,14 @@ debug.log
 # Local scheduler/UI prefs (machine-specific state, recreated on boot).
 backup_schedule.json
 tray_minimize.pref
+favicons.pref
+shards_nudged.pref
+# 2FA manual clock offset (signed seconds; a timing tell, not a secret).
+totp_offset.pref
 # Bridge liveness beacon (timestamp, rewritten every 20s while unlocked).
 vault_heartbeat.json
 pv_ext_stats.json
 blackout.pref
-pv_ext_stats.json
 native_host.log
 project_dir.txt
 # Generated native-messaging manifest (absolute local paths + extension ID).

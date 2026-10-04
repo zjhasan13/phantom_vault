@@ -53,7 +53,12 @@ fn new_id(idx: usize) -> String {
     format!("2fa-{ms}-{idx}")
 }
 
-fn norm_secret(s: &str) -> String {
+/// Secrets arrive from exports with inconsistent spacing, dashes and case
+/// ("jbsw y3dp-ehpk3pxp" == "JBSWY3DPEHPK3PXP"). Public so the ingest layer
+/// can run the SAME normalisation the merge does when it decides whether an
+/// incoming account really collides — a different rule here would show a
+/// dialog for a "conflict" that the merge would then silently skip.
+pub fn norm_secret(s: &str) -> String {
     s.replace([' ', '-'], "").to_uppercase()
 }
 
@@ -459,34 +464,127 @@ pub fn parse_file_bytes(bytes: &[u8], ext: &str) -> Result<(Source2fa, Vec<TotpA
 // Smart dedup merge
 // ---------------------------------------------------------------------------
 
-/// Merge into the vault: same (issuer, name) + same secret → skip; same
-/// pair + different secret → keep both (`name [Imported]`). Fresh ids always.
-pub fn merge_2fa(vault: &mut Vault, accounts: Vec<TotpAccount>) -> (usize, usize) {
-    let mut imported = 0usize;
-    let mut skipped = 0usize;
+/// Marker appended to the second card when one service is enrolled twice.
+/// It is a VISIBLE, human-readable disambiguator (not a hidden flag) so the
+/// user can tell at a glance which card came from which export.
+pub const DUP_SUFFIX: &str = " [Imported]";
+
+/// Inverse of `DUP_SUFFIX`. The leading space is what makes this safe: an
+/// account genuinely named "[Imported]" has no leading space and therefore
+/// round-trips unchanged instead of being silently renamed.
+pub fn strip_dup_suffix(name: &str) -> &str {
+    name.strip_suffix(DUP_SUFFIX).unwrap_or(name)
+}
+
+/// What to do when an incoming account collides on (issuer, name) with a
+/// different secret. Both are reachable only after the user has answered the
+/// dialog — importing silently would be the bug this whole path exists to fix.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DupPolicy {
+    /// Old behaviour: add a second card, tagged ` [Imported]`. Both secrets
+    /// survive, so neither site is locked out.
+    KeepBoth,
+    /// Overwrite the OTP fields of the existing card in place. Keeps the card's
+    /// id, favourite flag and name so the user's layout and any references to
+    /// that id stay valid. Destructive to the OLD secret — only ever chosen
+    /// deliberately, never as a default.
+    ReplaceExisting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DupConflict {
+    pub issuer: String,
+    /// Name of the incoming (incoming) account.
+    pub name: String,
+    pub existing_id: String,
+    /// Normalised secrets, surfaced for the dialog and for logs that must never
+    /// contain the raw value.
+    pub existing_secret: String,
+    pub incoming_secret: String,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+pub struct MergeReport {
+    pub imported: usize,
+    pub skipped: usize,
+    pub replaced: usize,
+    pub conflicts: Vec<DupConflict>,
+}
+
+/// Merge into the vault under an explicit collision policy.
+///
+/// Matching deliberately keys on the *suffix-stripped* name, so a third import
+/// of the same service still finds the pair it created earlier instead of
+/// stacking a third `[Imported]` card. Secrets are compared normalised, so
+/// cosmetic differences are skipped rather than flagged as conflicts.
+pub fn merge_2fa_with_policy(
+    vault: &mut Vault,
+    accounts: Vec<TotpAccount>,
+    policy: DupPolicy,
+) -> MergeReport {
+    let mut report = MergeReport::default();
     for mut a in accounts {
-        let same_pair = vault.totp_accounts.iter().find(|e| {
-            e.issuer.to_lowercase() == a.issuer.to_lowercase()
-                && e.account_name.to_lowercase() == a.account_name.to_lowercase()
+        let incoming_secret = norm_secret(&a.secret);
+        let hit = vault.totp_accounts.iter_mut().find(|e| {
+            e.issuer.trim().to_lowercase() == a.issuer.trim().to_lowercase()
+                && strip_dup_suffix(e.account_name.trim()).to_lowercase()
+                    == strip_dup_suffix(a.account_name.trim()).to_lowercase()
         });
-        match same_pair {
-            Some(e) if norm_secret(&e.secret) == norm_secret(&a.secret) => {
-                skipped += 1;
+        match hit {
+            // Same pair, same secret: an idempotent re-import. Nothing to do,
+            // and crucially NOT a conflict to ask the user about.
+            Some(e) if norm_secret(&e.secret) == incoming_secret => {
+                report.skipped += 1;
             }
-            Some(_) => {
-                a.id = new_id(vault.totp_accounts.len() + imported);
-                a.account_name = format!("{} [Imported]", a.account_name);
-                vault.totp_accounts.push(a);
-                imported += 1;
+            Some(e) => {
+                report.conflicts.push(DupConflict {
+                    issuer: a.issuer.clone(),
+                    name: a.account_name.clone(),
+                    existing_id: e.id.clone(),
+                    existing_secret: norm_secret(&e.secret),
+                    incoming_secret,
+                });
+                match policy {
+                    DupPolicy::KeepBoth => {
+                        a.id = new_id(vault.totp_accounts.len() + report.imported);
+                        if !a.account_name.ends_with(DUP_SUFFIX) {
+                            a.account_name = format!("{}{DUP_SUFFIX}", a.account_name);
+                        }
+                        vault.totp_accounts.push(a);
+                        report.imported += 1;
+                    }
+                    DupPolicy::ReplaceExisting => {
+                        // Per-field move out of the owned `a`: `TotpAccount` has
+                        // no `Default`, so `mem::take(&mut a)` cannot be used
+                        // here. `String: Default` makes the field-wise form
+                        // equivalent and keeps `a`'s remaining fields readable.
+                        e.secret = std::mem::take(&mut a.secret);
+                        e.algorithm = std::mem::take(&mut a.algorithm);
+                        e.otp_type = std::mem::take(&mut a.otp_type);
+                        e.digits = a.digits;
+                        e.period = a.period;
+                        e.counter = a.counter;
+                        report.replaced += 1;
+                    }
+                }
             }
             None => {
-                a.id = new_id(vault.totp_accounts.len() + imported);
+                a.id = new_id(vault.totp_accounts.len() + report.imported);
                 vault.totp_accounts.push(a);
-                imported += 1;
+                report.imported += 1;
             }
         }
     }
-    (imported, skipped)
+    report
+}
+
+/// Original import path, unchanged behaviour: keep both, skip exact dupes.
+/// Retained as a thin wrapper so existing callers keep their terse call site;
+/// it is exercised through `merge_2fa_with_policy` in the tests below.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn merge_2fa(vault: &mut Vault, accounts: Vec<TotpAccount>) -> (usize, usize) {
+    let r = merge_2fa_with_policy(vault, accounts, DupPolicy::KeepBoth);
+    (r.imported, r.skipped)
 }
 
 #[cfg(test)]
@@ -618,5 +716,179 @@ mod tests {
         assert_eq!((imp2, skip2), (1, 0));
         assert_eq!(v.totp_accounts.len(), 2);
         assert!(v.totp_accounts[1].account_name.contains("[Imported]"));
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 28: explicit collision policy.
+    // -----------------------------------------------------------------------
+
+    fn acct(issuer: &str, name: &str, secret: &str) -> TotpAccount {
+        TotpAccount {
+            id: String::new(),
+            issuer: issuer.into(),
+            account_name: name.into(),
+            secret: secret.into(),
+            otp_type: "totp".into(),
+            algorithm: "SHA1".into(),
+            digits: 6,
+            period: 30,
+            counter: 0,
+            favorite: false,
+        }
+    }
+
+    /// The safety promise behind `KeepBoth`: a second, different secret for the
+    /// same service must survive the import, or the user silently loses access
+    /// to whichever site used the secret that was NOT kept.
+    #[test]
+    fn keep_both_preserves_both_secrets_and_reports_the_conflict() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(acct("GitHub", "zjhasan13", "AAAAAAAAAAAAAAAA"));
+        let r = merge_2fa_with_policy(
+            &mut v,
+            vec![acct("GitHub", "zjhasan13", "BBBBBBBBBBBBBBBB")],
+            DupPolicy::KeepBoth,
+        );
+        assert_eq!((r.imported, r.replaced, r.skipped), (1, 0, 0));
+        assert_eq!(r.conflicts.len(), 1);
+        assert_eq!(r.conflicts[0].incoming_secret, "BBBBBBBBBBBBBBBB");
+        assert_eq!(v.totp_accounts.len(), 2);
+        let mut secrets: Vec<&str> = v.totp_accounts.iter().map(|a| a.secret.as_str()).collect();
+        secrets.sort_unstable();
+        assert_eq!(secrets, ["AAAAAAAAAAAAAAAA", "BBBBBBBBBBBBBBBB"]);
+        assert!(v.totp_accounts[1].account_name.ends_with(DUP_SUFFIX));
+    }
+
+    /// `ReplaceExisting` must edit in place, not append: the user's card order,
+    /// favourite flag and any stored reference to that id all survive, which is
+    /// the whole reason to prefer it over delete-then-add.
+    #[test]
+    fn replace_existing_updates_in_place_and_keeps_the_card() {
+        let mut v = Vault::new();
+        let mut original = acct("Bank", "main", "AAAAAAAAAAAAAAAA");
+        original.id = "keep-me".into();
+        v.totp_accounts.push(original);
+        let mut incoming = acct("Bank", "main", "CCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+        incoming.digits = 8;
+        incoming.period = 60;
+
+        let r = merge_2fa_with_policy(&mut v, vec![incoming], DupPolicy::ReplaceExisting);
+        assert_eq!((r.imported, r.replaced, r.skipped), (0, 1, 0));
+        assert_eq!(v.totp_accounts.len(), 1, "replace must not add a card");
+        assert_eq!(v.totp_accounts[0].id, "keep-me");
+        assert_eq!(v.totp_accounts[0].secret, "CCCCCCCCCCCCCCCCCCCCCCCCCCCC");
+        assert_eq!(v.totp_accounts[0].digits, 8);
+        assert_eq!(v.totp_accounts[0].period, 60);
+    }
+
+    /// A favourite the user pinned must not lose the star because a secret was
+    /// rotated underneath it.
+    #[test]
+    fn replace_existing_preserves_the_favourite_flag() {
+        let mut v = Vault::new();
+        let mut pinned = acct("Email", "me", "AAAAAAAAAAAAAAAA");
+        pinned.favorite = true;
+        v.totp_accounts.push(pinned);
+        merge_2fa_with_policy(
+            &mut v,
+            vec![acct("Email", "me", "DDDDDDDDDDDDDDDD")],
+            DupPolicy::ReplaceExisting,
+        );
+        assert!(v.totp_accounts[0].favorite);
+        assert_eq!(v.totp_accounts[0].secret, "DDDDDDDDDDDDDDDD");
+    }
+
+    /// Regression guard for the original misdiagnosis: two accounts on one
+    /// service are NOT duplicates. Collapsing them would have deleted a real,
+    /// working login — the single worst outcome this feature could produce.
+    #[test]
+    fn distinct_usernames_on_one_issuer_are_not_duplicates() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(acct("GitHub", "zjhasan13", "AAAAAAAAAAAAAAAA"));
+        let r = merge_2fa_with_policy(
+            &mut v,
+            vec![acct("GitHub", "zjhasan33", "BBBBBBBBBBBBBBBB")],
+            DupPolicy::KeepBoth,
+        );
+        assert!(r.conflicts.is_empty(), "different logins must not conflict");
+        assert_eq!((r.imported, r.skipped), (1, 0));
+        assert_eq!(v.totp_accounts.len(), 2);
+        assert!(!v.totp_accounts[1].account_name.ends_with(DUP_SUFFIX));
+    }
+
+    /// Re-importing the same export twice is not a conflict and must not raise
+    /// a dialog; cosmetics in the secret must not change that either.
+    #[test]
+    fn identical_secret_is_skipped_not_flagged() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(acct("GitHub", "me", "AAAAAAAAAAAAAAAA"));
+        // Same key material, cosmetically different: lower case plus the spacing and
+        // dashes that exports disagree about. Must skip, not conflict. (A
+        // different LENGTH of base32 is different key material and is a real
+        // conflict — `norm_secret` only strips spaces and dashes.)
+        let r = merge_2fa_with_policy(
+            &mut v,
+            vec![acct("GitHub", "me", "aaaa aaaa-aaaa-aaaa")],
+            DupPolicy::KeepBoth,
+        );
+        assert_eq!((r.imported, r.replaced, r.skipped), (0, 0, 1));
+        assert!(r.conflicts.is_empty());
+        assert_eq!(v.totp_accounts.len(), 1);
+    }
+
+    /// A third import of the same service must find the pair created by the
+    /// first collision rather than stacking a third `[Imported]` card.
+    #[test]
+    fn a_third_import_collides_with_the_existing_pair_not_a_new_one() {
+        let mut v = Vault::new();
+        v.totp_accounts.push(acct("Bank", "main", "AAAAAAAAAAAAAAAA"));
+        merge_2fa_with_policy(
+            &mut v,
+            vec![acct("Bank", "main", "BBBBBBBBBBBBBBBB")],
+            DupPolicy::KeepBoth,
+        );
+        assert_eq!(v.totp_accounts.len(), 2);
+        let r = merge_2fa_with_policy(
+            &mut v,
+            vec![acct("Bank", "main", "CCCCCCCCCCCCCCCC")],
+            DupPolicy::KeepBoth,
+        );
+        assert_eq!(r.conflicts.len(), 1);
+        assert_eq!(v.totp_accounts.len(), 3);
+        // No doubled-up marker.
+        assert!(!v.totp_accounts[2].account_name.contains("[Imported] [Imported]"));
+    }
+
+    /// A single batch can collide internally, so conflicts must be reported for
+    /// every pair, not just against what was already in the vault.
+    #[test]
+    fn a_batch_with_two_internal_collisions_reports_both() {
+        let mut v = Vault::new();
+        let r = merge_2fa_with_policy(
+            &mut v,
+            vec![
+                acct("Bank", "main", "AAAAAAAAAAAAAAAA"),
+                acct("GitHub", "me", "BBBBBBBBBBBBBBBB"),
+                acct("Bank", "main", "CCCCCCCCCCCCCCCC"),
+                acct("GitHub", "me", "DDDDDDDDDDDDDDDD"),
+            ],
+            DupPolicy::KeepBoth,
+        );
+        assert_eq!(r.conflicts.len(), 2);
+        assert_eq!(r.imported, 4);
+        assert_eq!(v.totp_accounts.len(), 4);
+    }
+
+    #[test]
+    fn strip_dup_suffix_is_exact_and_idempotent() {
+        assert_eq!(strip_dup_suffix("me [Imported]"), "me");
+        assert_eq!(strip_dup_suffix("me"), "me");
+        // A name that merely CONTAINS the word is not a duplicate marker.
+        assert_eq!(strip_dup_suffix("me [Imported] extra"), "me [Imported] extra");
+        // The marker needs its leading space, so an account literally named
+        // "[Imported]" is a real name and must survive untouched — otherwise
+        // dedup would silently rename somebody's account.
+        assert_eq!(strip_dup_suffix("[Imported]"), "[Imported]");
+        assert_eq!(strip_dup_suffix("me [Imported] [Imported]"), "me [Imported]");
     }
 }
