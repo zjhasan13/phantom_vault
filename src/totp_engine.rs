@@ -1,4 +1,3 @@
-use std::time::{SystemTime, UNIX_EPOCH};
 use totp_rs::{Algorithm, Secret, TOTP};
 
 use crate::error::{Result, VaultError};
@@ -16,16 +15,14 @@ pub fn generate_live_code(secret_base32: &str) -> std::result::Result<(String, u
     let totp = TOTP::new_unchecked(
         Algorithm::SHA1,
         6,  // ৬ ডিজিটের কোড
-        1,  // Skew tolerance
-        30, // ৩০ সেকেন্ডের পিরিয়ড
+        1,  // Skew tolerance — see `generate_code_for_account` for why this is inert
+        30, // ৩০ সেকেন্ডের পিরিয়ড
         secret_bytes,
     );
 
-    // বর্তমান ইউনিক্স টাইমস্ট্যাম্প
-    let current_time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(|e| format!("System time error: {}", e))?
-        .as_secs();
+    // Same clock as every other code path (shared `now_secs`), so the hero
+    // ticker can never disagree with the hub grid about which window is live.
+    let current_time = now_secs().map_err(|e| format!("System time error: {}", e))?;
 
     // কোড এবং এক্সপায়ারি কাউন্টডাউন
     let code = totp.generate(current_time);
@@ -121,11 +118,16 @@ fn secret_bytes(secret_base32: &str) -> Result<Vec<u8>> {
     decode_secret_bytes(secret_base32)
 }
 
+/// The single clock read behind every 2FA code in the app.
+///
+/// UTC epoch seconds — TOTP windows are absolute, so a local timezone offset
+/// would be wrong here, not merely unnecessary. The manual user correction
+/// (`core::time_offset`, ±300s) is applied inside this one function so the
+/// hub grid, the hero ticker, QuickBar, autotype, the native bridge and the
+/// browser extension all shift together and can never disagree about which
+/// window is live.
 fn now_secs() -> Result<u64> {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .map_err(|e| VaultError::Crypto(format!("System time error: {}", e)))
+    Ok(crate::core::time_offset::now_secs())
 }
 
 /// RFC 4226 dynamic truncation → full 31-bit code (pre digit-truncation).
@@ -179,6 +181,21 @@ fn steam_code(secret: &[u8], algorithm: &str, counter: u64) -> Result<String> {
 /// algorithm/digits/period/type/counter. Returns (code, seconds_remaining).
 /// HOTP remaining is u64::MAX (counter-based, no expiry); Steam uses 30s.
 pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
+    generate_code_for_account_at(acc, now_secs()?)
+}
+
+/// Same as `generate_code_for_account`, but at an explicit timestamp.
+///
+/// `now` is UTC epoch seconds with the manual clock offset ALREADY applied
+/// (see `core::time_offset`). Taking it as a parameter is what makes the
+/// window arithmetic deterministically testable: the real clock and the
+/// on-disk pref cannot be pinned from a unit test, but "what code does a
+/// +45s correction produce, and how much is left" can.
+///
+/// The clock is read ONCE per call. Previously each branch called `now_secs()`
+/// itself, which meant a single call could straddle a window boundary and mix
+/// a code from one window with a countdown from the next.
+fn generate_code_for_account_at(acc: &TotpAccount, now: u64) -> Result<(String, u64)> {
     let secret = secret_bytes(&acc.secret)?;
     let algo_name = acc.algorithm.trim().to_uppercase();
     let digits = acc.digits.clamp(1, 9) as usize;
@@ -190,7 +207,6 @@ pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
         }
         "steam" => {
             let period = if acc.period == 0 { 30 } else { acc.period };
-            let now = now_secs()?;
             let code = steam_code(&secret, &algo_name, now / period)?;
             Ok((code, period - (now % period)))
         }
@@ -202,8 +218,17 @@ pub fn generate_code_for_account(acc: &TotpAccount) -> Result<(String, u64)> {
             // zero-padding (padding changes the HMAC output = wrong codes),
             // no 128-bit minimum rejection. Digits stay in the RFC 6..=8
             // range totp-rs itself enforces (exotic values clamp, never panic).
+            //
+            // The `1` is the skew argument and it is INERT for generation.
+            // totp-rs 5.7.2 `generate()` calls only `sign(time)` and
+            // `sign()` is `HMAC(secret, (time / step).to_be_bytes())` — skew
+            // is read exclusively by `check()`. A GENERATOR cannot be made
+            // "tolerant" this way: it must pick exactly one window, and that
+            // window is decided by the clock, not by skew. Real clock skew is
+            // handled by `core::time_offset`; boundary races are handled by
+            // refusing to copy inside the last seconds. Kept at 1 (not 0) so
+            // any future verification path inherits the tolerant default.
             let totp = TOTP::new_unchecked(algo, digits.clamp(6, 8), 1, period, secret);
-            let now = now_secs()?;
             Ok((totp.generate(now), period - (now % period)))
         }
     }
@@ -510,5 +535,94 @@ mod tests {
     fn md5_refused_loudly() {
         let acc = account("12345678901234567890", "MD5", 6, "totp", 0);
         assert!(generate_code_for_account(&acc).is_err());
+    }
+
+    // ---- Phase 28: manual clock offset shifts the WINDOW, not just time ----
+
+    /// A nonzero manual offset must actually change which window is rendered.
+    /// This is the whole justification for `core::time_offset`: if it did not
+    /// move the code, a skewed PC would stay broken no matter what the user
+    /// entered in Settings.
+    #[test]
+    fn manual_offset_moves_the_generated_code() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        // Straddle a window edge: 9s before it, then +30s (one full period).
+        let before = generate_code_for_account_at(&acc, 59_991).unwrap();
+        let after = generate_code_for_account_at(&acc, 59_991 + 30).unwrap();
+        assert_ne!(
+            before.0, after.0,
+            "a one-period offset must land on a different TOTP code"
+        );
+    }
+
+    /// Sub-window offsets keep the same code but move the countdown — the
+    /// correct behaviour, and the reason `remaining` must be recomputed from
+    /// the corrected clock rather than from wall time.
+    #[test]
+    fn sub_window_offset_only_moves_the_countdown() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        // 59_980 sits mid-window (59980 % 30 == 10, so 20s left). +10s stays
+        // inside the same window; a base straddling the boundary would be
+        // testing the roll-over, not the sub-window case.
+        let (c1, r1) = generate_code_for_account_at(&acc, 59_980).unwrap();
+        let (c2, r2) = generate_code_for_account_at(&acc, 59_980 + 10).unwrap();
+        assert_eq!(c1, c2, "same window must render the same code");
+        assert_eq!(r1, 20);
+        assert_eq!(r2, 10);
+    }
+
+    /// Negative offsets (a PC running BEHIND) must work symmetrically.
+    #[test]
+    fn negative_offset_moves_the_generated_code() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        let before = generate_code_for_account_at(&acc, 60_021).unwrap();
+        let after = generate_code_for_account_at(&acc, 60_021 - 30).unwrap();
+        assert_ne!(before.0, after.0);
+    }
+
+    /// Corrected clock and the "Next" line must agree: the next-window code
+    /// offered in the hub has to be exactly one period ahead of the live one,
+    /// otherwise a corrected clock would produce an inconsistent pair.
+    #[test]
+    fn offset_keeps_current_and_next_consistent() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        for now in [59_991_u64, 60_000, 60_021] {
+            let (live, _) = generate_code_for_account_at(&acc, now).unwrap();
+            let nxt = next_code_for_account_at(&acc, now).unwrap();
+            assert_eq!(nxt, generate_code_for_account_at(&acc, now + 30).unwrap().0);
+            assert_ne!(live, nxt, "the next window must differ at t={now}");
+        }
+    }
+
+    /// Adding exactly one period walks forward a whole TOTP window: the code MUST
+    /// change (that is the whole point of a rolling window), while the countdown
+    /// is unchanged because `period - (t % period)` is periodic. Pinning both
+    /// halves stops a future refactor from "fixing" generation into something
+    /// that would break against real authenticator apps.
+    #[test]
+    fn offset_of_exactly_one_period_advances_the_window_only() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        let (c1, r1) = generate_code_for_account_at(&acc, 60_007).unwrap();
+        let (c2, r2) = generate_code_for_account_at(&acc, 60_007 + 30).unwrap();
+        assert_ne!(c1, c2, "one period ahead must be the next window's code");
+        assert_eq!(r1, r2, "the countdown is periodic with the period");
+        assert_eq!(r1, 23);
+    }
+
+    /// The copy guard's threshold is a TOTP-window concept, so pin the
+    /// boundary the UI relies on: exactly 3s left is refused, 4s is allowed.
+    #[test]
+    fn boundary_guard_threshold_is_reachable_and_meaningful() {
+        let acc = account("12345678901234567890", "SHA1", 6, "totp", 0);
+        let guard = 3_u64;
+        // remaining == guard  → refused by `copy_totp_requested`.
+        let (_, r_at_guard) = generate_code_for_account_at(&acc, 60_030 - guard).unwrap();
+        assert_eq!(r_at_guard, guard);
+        // remaining == guard+1 → allowed.
+        let (_, r_above) = generate_code_for_account_at(&acc, 60_030 - guard - 1).unwrap();
+        assert!(r_above > guard);
+        // HOTP has no window, so it can never trip the guard.
+        let hotp = account("12345678901234567890", "SHA1", 6, "hotp", 0);
+        assert_eq!(generate_code_for_account_at(&hotp, 60_030).unwrap().1, u64::MAX);
     }
 }

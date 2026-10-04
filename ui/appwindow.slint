@@ -79,6 +79,13 @@ struct AuthView {
     secs: int,
     countdown: string,
     fav: bool,
+    // Self-describing revealed-next label, e.g. "NEXT in 12s · 481 902".
+    // Kept as one string so Rust owns the wording and the two numbers on the
+    // card can never be re-paired by a layout change.
+    next_label: string,
+    // Another card in the vault shares this (issuer, name) — the secrets differ.
+    is_dup: bool,
+    dup_of: string,
 }
 
 // Resident passkey row. meta is preformatted ("3 signs").
@@ -119,17 +126,25 @@ component AuraButton inherits Rectangle {
     in-out property <string> label;
     in-out property <bool> primary: false;
     in-out property <bool> danger: false;
+    // Disabled state is VISIBLE, not just inert: a silently-ignored click on
+    // a control the user can still see reads as a broken app. Defaults to true
+    // so every existing call site is unchanged.
+    in-out property <bool> enabled: true;
     callback clicked();
     height: 38px;
     border-radius: 10px;
+    opacity: root.enabled ? 1.0 : 0.38;
     background: root.primary ? #8b7cf6 : (root.danger ? #3a1730 : #1a2450);
     border-width: 1px;
     border-color: root.primary ? #a99bff : (root.danger ? #fb7185 : #2c3a6e);
     drop-shadow-blur: root.primary ? 18px : 0px;
     drop-shadow-color: #8b7cf655;
     area := TouchArea {
-        mouse-cursor: pointer;
-        clicked => { root.clicked(); }
+        enabled: root.enabled;
+        mouse-cursor: root.enabled ? pointer : default;
+        // Belt and braces: even if a caller forgets the `enabled` guard in its
+        // own `clicked` body, the callback cannot fire while disabled.
+        clicked => { if root.enabled { root.clicked(); } }
     }
     Text {
         text: root.label;
@@ -729,6 +744,31 @@ export component MainWindow inherits Window {
     in-out property <string> last_copied: "";
     in-out property <string> last_copied_id: "";
     callback toggle_totp_favorite(string);
+
+    // ---- Phase 28: 2FA hub clarity, boundary guard, manual clock offset ----
+    // Reveal toggle for the "next" code. Off by default: two bare six-digit
+    // numbers on one card is how the wrong one gets copied.
+    in-out property <bool> show_totp_next: false;
+    callback toggle_totp_next();
+    // Copy by ACCOUNT ID, not by value. The handler regenerates at click time
+    // and enforces the remaining-seconds guard, so a code that was valid when
+    // the grid was drawn can never be copied after its window closed.
+    callback copy_totp_requested(string);
+    // Manual clock correction, in signed seconds. Deliberately NOT auto-probed:
+    // a wrong code is fixable in 5 seconds, an outbound request from a 2FA tool
+    // is a privacy decision the user should make, not us.
+    in-out property <string> totp_offset_text: "0";
+    in-out property <string> totp_offset_status: "";
+    callback set_totp_offset(string);
+    callback reset_totp_offset();
+    // Duplicate-secret resolution. The ingest paths PARK a colliding batch and
+    // ask; they never write it on their own.
+    in-out property <bool> show_dup_confirm: false;
+    in-out property <string> dup_title: "";
+    in-out property <string> dup_body: "";
+    callback dup_confirm_replace();
+    callback dup_confirm_keep();
+    callback dup_confirm_cancel();
     callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
     callback delete_item_requested(int, string);
     callback type_filter_changed(int);
@@ -1124,6 +1164,7 @@ export component MainWindow inherits Window {
                     LineEdit { placeholder-text: "🔍 Search 2FA accounts..."; text <=> root.totp_search_query; height: 38px; horizontal-stretch: 1; edited(text) => { root.totp_search_changed(text); } }
                     AuraButton { label: "📲 Import"; width: 110px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
                     AuraButton { label: "📲 Export"; width: 110px; clicked => { root.ga_export_start(); } }
+                    AuraButton { label: root.show_totp_next ? "🙈 Hide NEXT" : "👁 Show NEXT"; primary: root.show_totp_next; width: 130px; clicked => { root.toggle_totp_next(); } }
                     AuraButton { label: "⚙"; width: 46px; clicked => { root.active_nav = 3; } }
                 }
                 if root.show_2fa_import : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 14px; spacing: 8px;
@@ -1149,7 +1190,7 @@ export component MainWindow inherits Window {
                             clip: true;
                             // Click-anywhere copies the live code (buttons stay
                             // on top, so ⭐/Copy/🗑️ keep their own clicks).
-                            TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_password_requested(acc.code); } } }
+                            TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_totp_requested(acc.id); } } }
                             HorizontalLayout { padding: 12px; spacing: 10px;
                                 VerticalLayout { horizontal-stretch: 1; spacing: 4px;
                                     HorizontalLayout { spacing: 8px;
@@ -1157,12 +1198,18 @@ export component MainWindow inherits Window {
                                             if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; x: 6px; y: 6px; image-fit: contain; }
                                             if !acc.has_icon : Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                                         VerticalLayout { spacing: 0px; alignment: center;
-                                            Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
+                                            HorizontalLayout { spacing: 6px; alignment: center;
+                                                Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
+                                                if acc.is_dup : Rectangle { border-radius: 6px; background: #4a2c00; border-width: 1px; border-color: #fbbf24;
+                                                    Text { text: "⚠ DUP"; color: #fbbf24; font-size: 9px; font-weight: 800; padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px; } } }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                         AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 28px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
                                     Text { text: acc.display; color: #eef1ff; font-size: 24px; font-weight: 900; }
-                                    Text { text: "Next: " + acc.next; color: #5b6589; font-size: 10px; overflow: elide; }
+                                    // Hidden by default. A visible "next" code is a
+                                    // second plausible-looking number on the card and
+                                    // users copy whichever one they read second.
+                                    if root.show_totp_next : Text { text: acc.next_label; color: #5b6589; font-size: 10px; overflow: elide; }
                                 }
                                 VerticalLayout { spacing: 4px; alignment: center;
                                     Rectangle { width: 48px; height: 48px; border-radius: 24px; border-width: 2px;
@@ -1171,7 +1218,7 @@ export component MainWindow inherits Window {
                                     if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
                                     if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 26px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
-                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == acc.code && root.last_copied != ""; width: 72px; height: 28px; clicked => { root.copy_password_requested(acc.code); } }
+                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; width: 72px; height: 28px; clicked => { root.copy_totp_requested(acc.id); } }
                                         AuraButton { label: "🗑️"; width: 40px; height: 28px; danger: true; clicked => { root.delete_auth_account(acc.id); } } }
                                 }
                             }
@@ -1240,6 +1287,28 @@ export component MainWindow inherits Window {
                 }
             }
         }
+        if root.show_dup_confirm : Rectangle {
+            background: #000000aa;
+            TouchArea { clicked => { root.dup_confirm_cancel(); } }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+                width: 520px;
+                background: #0d131f;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: #fbbf24;
+                clip: true;
+                VerticalLayout { padding: 20px; spacing: 12px;
+                    Text { text: root.dup_title; color: #eef1ff; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
+                    Text { text: root.dup_body; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                    AuraButton { label: "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
+                    AuraButton { label: "♻️ Replace the existing card's secret"; height: 40px; clicked => { root.dup_confirm_replace(); } }
+                    Text { text: "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: #5b6589; font-size: 10px; wrap: word-wrap; }
+                    AuraButton { label: "Cancel — import nothing"; height: 34px; clicked => { root.dup_confirm_cancel(); } }
+                }
+            }
+        }
         if root.active_nav == 2 : Rectangle {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
@@ -1302,6 +1371,13 @@ export component MainWindow inherits Window {
                         }
                     }
                     if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Disarm Unlock 2FA"; danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
+                    FieldLabel { text: "2FA CLOCK OFFSET"; }
+                    Text { text: "If codes are rejected but look right, this PC's clock is off. Shift all codes by a few seconds — stored locally, never uploaded."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 6px;
+                        LineEdit { placeholder-text: "seconds (e.g. 45 or -30)"; text <=> root.totp_offset_text; width: 170px; height: 34px; accepted(text) => { root.set_totp_offset(text); } }
+                        AuraButton { label: "Apply"; primary: true; width: 78px; height: 34px; clicked => { root.set_totp_offset(root.totp_offset_text); } }
+                        AuraButton { label: "Reset"; width: 78px; height: 34px; clicked => { root.reset_totp_offset(); } } }
+                    if root.totp_offset_status != "" : Text { text: root.totp_offset_status; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     FieldLabel { text: "CLIPBOARD AUTO-CLEAR"; }
                     HorizontalLayout { spacing: 6px;
                         AuraButton { label: "10s"; primary: root.clipboard_timeout == 10; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(10); } }
