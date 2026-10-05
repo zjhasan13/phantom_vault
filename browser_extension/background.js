@@ -95,10 +95,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return await hostRequest({ cmd: "passkey_lookup", rp: msg.rp || "" });
     }
     // Standalone 2FA Hub codes (fallback when logins carry no secret).
-    if (msg.type === "PV_TOTP_LOOKUP") {
-      touchActivity();
-      return await hostRequest({ cmd: "totp_lookup", app: msg.app || msg.domain || "" });
-    }
+        if (msg.type === "PV_TOTP_LOOKUP") {
+          touchActivity();
+          return await hostRequest({
+            cmd: "totp_lookup",
+            app: msg.app || msg.domain || "",
+            // Optional exact-id scope. The native side widens MATCHING for the
+            // named row only (it still mints the code now and still applies the
+            // expiry guard), so a caller that already knows its entry id does
+            // not depend on the issuer/domain scorer guessing that row matches.
+            ...(msg.id ? { id: String(msg.id) } : {}),
+          });
+        }
     if (msg.type === "PV_CARDS") {
       return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "" });
     }
