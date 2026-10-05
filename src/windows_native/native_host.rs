@@ -622,32 +622,85 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     .unwrap_or(0);
                 ts > 0 && now.saturating_sub(ts) <= RECENT_FILL_SECS
             };
+            // Same stamp, as an absolute epoch, so the picker can render an
+            // honest "Last 3m ago" instead of making the user infer recency from
+            // an invisible +10 score bonus. One read, two derivations.
+            let last_filled_ts = |id: &str| -> u64 {
+                st.get("last_filled")
+                    .and_then(|m| m.get(id))
+                    .and_then(|n| n.as_u64())
+                    .unwrap_or(0)
+            };
 
-            // is_dup is vault-wide on purpose: a pair only collides if BOTH
-            // members share (issuer, account), which is exactly what
-            // `dup_marks` counts over the whole hub rather than this page's
-            // matches. The hub badge and this flag are now one definition.
-            let refs: Vec<&crate::models::TotpAccount> = vault.totp_accounts.iter().collect();
-            let dups = crate::models::dup_marks(&refs);
-
-            let mut ranked: Vec<TotpCandidate> = refs
+            // A lookup spans BOTH storage shapes for a live code:
+            //   - `totp_accounts`: standalone 2FA Hub cards;
+            //   - `credentials`: logins carrying an inline `totp_secret`
+            //     (how KeePass/Bitwarden imports usually store TOTP).
+            // Scoring them separately and merging afterwards used to leave the
+            // client choosing blindly with `.find(e => e.totp)` over a raw login
+            // query — which is the exact blind-guess the ambiguity picker
+            // exists to prevent. Both shapes are ranked in ONE list here so a
+            // site with a hub card AND two inline logins forces a picker
+            // instead of an arbitrary pick.
+            let hub: Vec<&crate::models::TotpAccount> = vault.totp_accounts.iter().collect();
+            let logins: Vec<&crate::models::Credential> = vault
+                .credentials
                 .iter()
-                .enumerate()
-                .filter_map(|(i, acc)| {
-                    score_totp_candidate(acc, &q, &q_domain, dups[i], recently_filled(&acc.id))
-                })
+                .filter(|c| c.deleted_at.is_none() && !c.totp_secret.trim().is_empty())
                 .collect();
 
-            // Tier, then score, then favorite. `sort_by` is STABLE and `refs`
-            // was built in vault order, so full ties fall through to vault
-            // index without an explicit index compare — same vault + same site
-            // always yields the same order, so a re-lookup can never silently
-            // change which account hands-free fill would have chosen.
+            // is_dup is computed over the UNION of both shapes on purpose: a
+            // collision only exists if two candidates share (issuer, account),
+            // and checking each collection alone would call a duplicated pair
+            // "unique" twice — so both would auto-fill and one of them would be
+            // wrong. Same `dup_key` the hub badge uses, so the two agree.
+            //
+            // Identity uses each item's OWN LABEL (hub `issuer` / login
+            // `title`), never the scoring haystack. The scorer folds a login's
+            // URL text in so "Work email" on github.com still matches, but a key
+            // built from that haystack would read "github https://github.com/login"
+            // and never collide with a hub card titled "GitHub" — so the very
+            // duplicate this exists to catch would slip through as two unique
+            // accounts.
+            let mut keys: Vec<(String, String)> = Vec::with_capacity(hub.len() + logins.len());
+            for a in &hub {
+                keys.push(crate::models::dup_key(&a.issuer, &a.account_name));
+            }
+            for c in &logins {
+                keys.push(crate::models::dup_key(&c.title, &c.username));
+            }
+            let dups = crate::models::dup_marks_keyed(&keys);
+
+            let mut ranked: Vec<TotpCandidate> = Vec::new();
+            for (i, acc) in hub.iter().enumerate() {
+                if let Some(c) =
+                    score_totp_candidate(acc, &q, &q_domain, dups[i], recently_filled(&acc.id))
+                {
+                    ranked.push(c);
+                }
+            }
+            for (i, cred) in logins.iter().enumerate() {
+                if let Some(c) = score_credential_totp_candidate(
+                    cred,
+                    &q,
+                    &q_domain,
+                    dups[hub.len() + i],
+                    recently_filled(&cred.id),
+                ) {
+                    ranked.push(c);
+                }
+            }
+
+            // Tier, then score, then favorite. `sort_by` is STABLE and `ranked`
+            // was built in vault order, so full ties fall through to vault index
+            // without an explicit index compare — same vault + same site always
+            // yields the same order, so a re-lookup can never silently change
+            // which account hands-free fill would have chosen.
             ranked.sort_by(|a, b| {
                 a.tier
                     .cmp(&b.tier)
                     .then_with(|| b.score.cmp(&a.score))
-                    .then_with(|| b.acc.favorite.cmp(&a.acc.favorite))
+                    .then_with(|| b.favorite.cmp(&a.favorite))
             });
 
             // Expiry guard. A code with under MIN_TOTP_FILL_REMAINING_SECS left
@@ -663,16 +716,18 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         .expires_in
                         .map_or(true, |s| s >= MIN_TOTP_FILL_REMAINING_SECS);
                     serde_json::json!({
-                        "id": c.acc.id,
-                        "issuer": c.acc.issuer,
-                        "account": c.acc.account_name,
+                        "id": c.id,
+                        "issuer": c.issuer,
+                        "account": c.account,
                         "code": if fresh { serde_json::json!(c.code) } else { serde_json::Value::Null },
                         "expires_in": c.expires_in,
                         "next_in": if fresh { serde_json::Value::Null } else { serde_json::json!(c.expires_in.unwrap_or(0)) },
                         "rank": c.tier,
                         "score": c.score,
                         "is_dup": c.is_dup,
-                        "verified": vault.is_verified(&c.acc.id),
+                        "verified": vault.is_verified(&c.id),
+                        "source": c.source,
+                        "last_filled": last_filled_ts(&c.id),
                     })
                 })
                 .collect();
@@ -912,6 +967,54 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             Answer {
                 reply: serde_json::json!({"ok": true, "verified": vault.is_verified(id)}),
                 persist,
+            }
+        }
+        // M14: explicit "is this the working one?" mark, the user's own
+        // verdict rather than an inference from fill counts. Backs the
+        // `✅ Working` badge for BOTH logins and standalone 2FA accounts, so
+        // the badge is never a one-way ratchet that only the 3rd fill can set.
+        //
+        // Gates mirror `filled` exactly: locked vault, live untrashed id
+        // only, rate-limited, and access-logged with a truncated hash (the id
+        // is caller-controlled text). `set_verified` re-checks membership and
+        // sweeps stale marks itself, so a bad id cannot pollute verified_ids.
+        // A no-op toggle (already in the requested state) returns WITHOUT
+        // `persist` — re-sealing is the expensive part, and a page that spams
+        // clicks must not be able to force a vault rewrite per call.
+        "verify" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if id.is_empty() {
+                return no("id required");
+            }
+            let on = req.get("on").and_then(|v| v.as_bool()).unwrap_or(true);
+            let live = vault
+                .credentials
+                .iter()
+                .any(|c| c.id == id && c.deleted_at.is_none())
+                || vault.totp_accounts.iter().any(|t| t.id == id);
+            if !live {
+                return no("unknown id");
+            }
+            if !fill_rate_ok() {
+                return no("verify rate limited");
+            }
+            crate::security::access_log::log_event("bridge-verify", &short_id(id));
+            if vault.is_verified(id) == on {
+                // Idempotent: report the truth, rewrite nothing.
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "verified": on, "changed": false}),
+                    persist: false,
+                };
+            }
+            if !vault.set_verified(id, on) {
+                return no("not a verifiable item");
+            }
+            Answer {
+                reply: serde_json::json!({"ok": true, "verified": on, "changed": true}),
+                persist: true,
             }
         }
         // Smart-autofill: dashboard stats (counts + heuristic security score).
@@ -1255,34 +1358,51 @@ fn token_overlap(a: &str, b: &str) -> f64 {
 /// Holds a *reference*, never the secret: the code is materialized here, in
 /// the trusted process, and the secret is not a field so it cannot leak into
 /// the JSON payload by accident.
-struct TotpCandidate<'a> {
-    acc: &'a crate::models::TotpAccount,
+/// One ranked TOTP answer, decoupled from which storage shape it came from.
+///
+/// Fields are owned rather than a `&TotpAccount` borrow because a lookup now
+/// spans two shapes (a hub card, or a login row with an inline secret) and only
+/// one of them is a real `TotpAccount`. Carrying just the identity + ranking
+/// fields lets both feed the same sort, the same payload shape, and the same
+/// picker.
+struct TotpCandidate {
+    id: String,
+    issuer: String,
+    account: String,
     /// 1 = issuer or registrable-domain exact, 2 = substring, 3 = tokens only.
     tier: u8,
     score: i64,
     is_dup: bool,
+    favorite: bool,
     code: String,
     /// `None` = counter-based (HOTP): never expires, so no expiry guard.
     expires_in: Option<u64>,
+    /// "hub" for a standalone 2FA card, "login" for an inline secret on a
+    /// credential. Surfaced so the picker can say where the answer came from.
+    source: &'static str,
 }
 
-/// Score one hub account against a site, or `None` when it isn't a match.
+/// Pure ranking: tier + score for one (issuer, account) pair against a site.
 ///
 /// The old filter was `iss.contains(&q) || q.contains(&iss) || acc.contains(&q)`,
 /// which is symmetric substring soup: querying `git` matched `GitHub`, and an
 /// empty issuer matched every site in the vault because `x.contains("")` is
 /// true. Both haystacks are now required non-empty and tiers are ordered
 /// exact -> substring -> tokens so an exact issuer can never be outranked by a
-/// lucky substring. Pure scoring; the code generation is the only impure part.
-fn score_totp_candidate<'a>(
-    acc: &'a crate::models::TotpAccount,
+/// lucky substring.
+///
+/// STRICTLY pure: no clock, no secret, no code. The three things that can
+/// legitimately fail (does it match, how well, is the secret valid) are kept
+/// apart on purpose — a code-generation failure must not change the ORDER of the
+/// candidates, or a broken account would silently promote the next one.
+fn score_totp_pair(
+    issuer_raw: &str,
+    account_raw: &str,
     q: &str,
     q_domain: &str,
-    is_dup: bool,
-    recently_filled: bool,
-) -> Option<TotpCandidate<'a>> {
-    let issuer = norm_lookup_key(&acc.issuer);
-    let account = norm_lookup_key(&acc.account_name);
+) -> Option<(u8, i64)> {
+    let issuer = norm_lookup_key(issuer_raw);
+    let account = norm_lookup_key(account_raw);
 
     let issuer_exact = !issuer.is_empty() && issuer == q;
     let domain_exact = !issuer.is_empty() && url_domain(&issuer) == q_domain;
@@ -1305,8 +1425,19 @@ fn score_totp_candidate<'a>(
 
     let score = 100 * i64::from(issuer_exact)
         + 60 * i64::from(domain_exact)
-        + 30 * i64::from(overlap >= 0.6)
-        + 10 * i64::from(recently_filled);
+        + 30 * i64::from(overlap >= 0.6);
+    Some((tier, score))
+}
+
+/// Score one hub account against a site, or `None` when it isn't a match.
+fn score_totp_candidate(
+    acc: &crate::models::TotpAccount,
+    q: &str,
+    q_domain: &str,
+    is_dup: bool,
+    recently_filled: bool,
+) -> Option<TotpCandidate> {
+    let (tier, score) = score_totp_pair(&acc.issuer, &acc.account_name, q, q_domain)?;
 
     // B2: the per-account dispatcher honours algorithm/digits/period/otp_type.
     // `generate_live_code` hardcodes SHA1/6/30 and computes remaining against a
@@ -1321,12 +1452,79 @@ fn score_totp_candidate<'a>(
     };
 
     Some(TotpCandidate {
-        acc,
+        id: acc.id.clone(),
+        issuer: acc.issuer.clone(),
+        account: acc.account_name.clone(),
         tier,
-        score,
+        score: score + 10 * i64::from(recently_filled),
         is_dup,
+        favorite: acc.favorite,
         code,
         expires_in,
+        source: "hub",
+    })
+}
+
+/// Score a login row that carries an inline TOTP secret.
+///
+/// A credential's `totp_secret` is a bare base32 string with no per-account
+/// algorithm/digits/period to honour, so it is projected onto a canonical
+/// SHA1/6/30 TOTP account and pushed through `generate_code_for_account` — the
+/// SAME dispatcher the hub uses. Deliberately not a second code path: that is
+/// exactly how the pre-B2 bug (hardcoded window) survived in two places at
+/// once. `title` plays the issuer role and `username` the account role, which is
+/// the same signal the login dropdown ranks on.
+///
+/// Credential shape, not the site's login page, decides `issuer`: a row titled
+/// "GitHub" is a far better brand token than its URL, and both are considered by
+/// `score_totp_pair` anyway (url text is folded into the issuer string below).
+fn score_credential_totp_candidate(
+    cred: &crate::models::Credential,
+    q: &str,
+    q_domain: &str,
+    is_dup: bool,
+    recently_filled: bool,
+) -> Option<TotpCandidate> {
+    let secret = cred.totp_secret.trim();
+    if secret.is_empty() || cred.deleted_at.is_some() {
+        return None;
+    }
+    // Issuer = the user's own label for the site, plus its URL text as a second
+    // haystack (a row titled "Work email" on github.com still resolves).
+    let url_text = cred.urls.first().map(|u| u.as_str()).unwrap_or("");
+    let issuer_raw = format!("{} {}", cred.title, url_text);
+    let (tier, score) = score_totp_pair(&issuer_raw, &cred.username, q, q_domain)?;
+
+    let acc = crate::models::TotpAccount {
+        id: cred.id.clone(),
+        account_name: cred.username.clone(),
+        issuer: cred.title.clone(),
+        secret: secret.to_string(),
+        digits: 6,
+        period: 30,
+        algorithm: "SHA1".into(),
+        otp_type: "totp".into(),
+        counter: 0,
+        favorite: cred.favorite,
+    };
+    let (code, remaining) = crate::totp_engine::generate_code_for_account(&acc).ok()?;
+    let expires_in = if remaining == u64::MAX {
+        None
+    } else {
+        Some(remaining)
+    };
+
+    Some(TotpCandidate {
+        id: cred.id.clone(),
+        issuer: cred.title.clone(),
+        account: cred.username.clone(),
+        tier,
+        score: score + 10 * i64::from(recently_filled),
+        is_dup,
+        favorite: cred.favorite,
+        code,
+        expires_in,
+        source: "login",
     })
 }
 
@@ -2031,6 +2229,228 @@ mod tests {
     }
 
     #[test]
+    fn totp_lookup_ranks_login_inline_secrets_alongside_hub_cards() {
+        let mut v = vault_with_login();
+        // The case the blind `PV_QUERY.find(x => x.totp)` fallback used to cover:
+        // TOTP living on the LOGIN row, with no standalone hub card anywhere.
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com"}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        let cands = r.reply["candidates"].as_array().unwrap();
+        assert_eq!(cands.len(), 1, "the inline secret must be served");
+        assert_eq!(cands[0]["id"], "c1");
+        assert_eq!(cands[0]["source"], "login");
+        assert_eq!(cands[0]["issuer"], "GitHub");
+        assert_eq!(cands[0]["account"], "octo");
+        assert_eq!(cands[0]["is_dup"], false);
+        // A live 6-digit SHA1/30 code — or, in the last seconds of the window,
+        // correctly withheld. Asserting the shape rather than unwrapping keeps
+        // this test off the wall clock (see the hub-lookup test above).
+        if let Some(code) = cands[0]["code"].as_str() {
+            assert_eq!(code.len(), 6, "inline secret must produce a 6-digit code");
+            assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        } else {
+            assert!(cands[0]["next_in"].as_u64().unwrap() < 30);
+        }
+        // Never a secret.
+        assert!(!r.reply.to_string().to_lowercase().contains("secret"));
+    }
+
+    #[test]
+    fn totp_lookup_flags_a_collision_that_spans_storage_shapes() {
+        use crate::models::TotpAccount;
+        let mut v = vault_with_login();
+        // Same real account, stored twice: once inline on the login row, once as
+        // a hub card, with the same issuer and the same account name.
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        v.totp_accounts.push(TotpAccount {
+            id: "t-dup".into(),
+            account_name: "octo".into(),
+            issuer: "GitHub".into(),
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+            favorite: false,
+        });
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com"}),
+        );
+        let cands = r.reply["candidates"].as_array().unwrap();
+        assert_eq!(cands.len(), 2, "both shapes must be offered");
+        // THE point of this test: dup detection runs over the union, so neither
+        // half looks unique on its own. Checking per-collection would flag
+        // neither and auto-fill an arbitrary one of the pair.
+        for c in cands {
+            assert_eq!(c["is_dup"], true, "cross-shape collision must be flagged");
+        }
+        let mut sources: Vec<&str> = cands
+            .iter()
+            .map(|c| c["source"].as_str().unwrap())
+            .collect();
+        sources.sort_unstable();
+        assert_eq!(sources, vec!["hub", "login"]);
+    }
+
+    #[test]
+    fn totp_lookup_skips_trashed_and_secretless_logins() {
+        let mut v = vault_with_login();
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        // An unparseable secret must not sink the whole lookup, and must not
+        // appear as a candidate with a null code pretending to be a withheld
+        // fresh one (indistinguishable from the real expiry guard).
+        v.credentials
+            .push(test_cred("c2", "other", "not-base32!!", false));
+        // A trashed row must never be offered a live code.
+        v.credentials
+            .push(test_cred("c3", "gone", "JBSWY3DPEHPK3PXP", true));
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com"}),
+        );
+        let cands = r.reply["candidates"].as_array().unwrap();
+        let ids: Vec<&str> = cands.iter().map(|c| c["id"].as_str().unwrap()).collect();
+        assert!(
+            ids.contains(&"c1"),
+            "the good row must still serve: {ids:?}"
+        );
+        assert!(!ids.contains(&"c3"), "a trashed row must never be offered");
+        assert!(
+            !ids.contains(&"c2"),
+            "an unusable secret must not be offered: {ids:?}"
+        );
+    }
+
+    /// A GitHub-shaped login row. `Credential` implements `Drop`, so struct
+    /// update syntax (`..base`) cannot be used to build these; a helper is the
+    /// only way to keep the literals from drifting apart.
+    fn test_cred(id: &str, user: &str, secret: &str, trashed: bool) -> Credential {
+        Credential {
+            id: id.into(),
+            title: "GitHub".into(),
+            username: user.into(),
+            password: "pw".into(),
+            totp_secret: secret.into(),
+            urls: vec!["https://github.com/login".into()],
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: trashed.then(crate::models::current_timestamp),
+        }
+    }
+
+    #[test]
+    fn verify_cmd_toggles_login_and_totp_and_gates_bad_ids() {
+        use crate::models::TotpAccount;
+        let _g = sidecar_guard();
+        let snap = snap_sidecar();
+        reset_test_id("pv-totp-v");
+        let mut v = vault_with_login();
+        v.credentials[0].id = "pv-login-v".into();
+        v.totp_accounts.push(TotpAccount {
+            id: "pv-totp-v".into(),
+            account_name: "u".into(),
+            issuer: "example.com".into(),
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+            favorite: false,
+        });
+        let call = |v: &mut Vault, id: &str, on: bool| {
+            answer(
+                v,
+                true,
+                &serde_json::json!({"cmd": "verify", "id": id, "on": on}),
+            )
+        };
+
+        // Login: user marks working, badge becomes computable.
+        let r = call(&mut v, "pv-login-v", true);
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["verified"], true);
+        assert_eq!(r.reply["changed"], true);
+        assert!(r.persist, "a real state change must re-seal");
+        assert!(v.is_verified("pv-login-v"));
+        // Login: un-marking is equally first-class.
+        let r = call(&mut v, "pv-login-v", false);
+        assert_eq!(r.reply["verified"], false);
+        assert!(r.persist);
+        assert!(!v.is_verified("pv-login-v"));
+
+        // Standalone 2FA account: same door, same gates.
+        let r = call(&mut v, "pv-totp-v", true);
+        assert_eq!(r.reply["verified"], true);
+        assert!(r.persist);
+        assert!(v.is_verified("pv-totp-v"));
+        // The badge rides the ranked lookup payload, computed not hardcoded.
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "example.com"}),
+        );
+        assert_eq!(r.reply["candidates"][0]["verified"], true);
+        // Un-mark, and confirm the payload follows it back down.
+        call(&mut v, "pv-totp-v", false);
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "example.com"}),
+        );
+        assert_eq!(r.reply["candidates"][0]["verified"], false);
+
+        // No-op toggles must not rewrite the vault (spam brake).
+        call(&mut v, "pv-totp-v", false);
+        let r = call(&mut v, "pv-totp-v", false);
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["changed"], false);
+        assert!(!r.persist, "idempotent verify must not re-seal");
+
+        // Locked vault refuses outright.
+        let r = answer(
+            &mut v,
+            false,
+            &serde_json::json!({"cmd": "verify", "id": "pv-totp-v", "on": true}),
+        );
+        assert_eq!(r.reply["ok"], false);
+        assert!(!v.is_verified("pv-totp-v"));
+        // Unknown and empty ids cannot pollute verified_ids.
+        let r = call(&mut v, "ghost", true);
+        assert_eq!(r.reply["ok"], false);
+        assert!(v.verified_ids.is_empty());
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "verify", "id": "  ", "on": true}),
+        );
+        assert_eq!(r.reply["ok"], false);
+        // Trashed logins are not verifiable through the bridge.
+        v.credentials[0].deleted_at = Some(crate::models::current_timestamp());
+        let r = call(&mut v, "pv-login-v", true);
+        assert_eq!(r.reply["ok"], false);
+        assert!(v.verified_ids.is_empty());
+        restore_sidecar(snap);
+    }
+
+    #[test]
     fn persist_refused_matrix() {
         assert!(!persist_refused(false, false));
         assert!(!persist_refused(false, true));
@@ -2096,9 +2516,24 @@ mod tests {
         assert_eq!(cand.len(), 1);
         assert_eq!(cand[0]["account"], "user@example.com");
         assert_eq!(cand[0]["id"], "t1");
-        let code = cand[0]["code"].as_str().unwrap();
-        assert_eq!(code.len(), 6);
-        assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        // Contract, not a snapshot of the wall clock: a lookup landing in the
+        // last MIN_TOTP_FILL_REMAINING_SECS of the window MUST withhold the code,
+        // so unwrapping `code` here made this test fail ~10% of all runs (3s of
+        // every 30s) depending on nothing but the phase it started in.
+        // Deterministic expiry coverage lives in the guard test below; here we
+        // only assert the payload never lies about a code it withheld.
+        match cand[0]["code"].as_str() {
+            Some(code) => {
+                assert_eq!(code.len(), 6);
+                assert!(code.bytes().all(|b| b.is_ascii_digit()));
+                assert!(cand[0]["expires_in"].as_u64().unwrap() >= MIN_TOTP_FILL_REMAINING_SECS);
+                assert_eq!(cand[0]["next_in"], serde_json::Value::Null);
+            }
+            None => {
+                let wait = cand[0]["next_in"].as_u64().unwrap();
+                assert!(wait < 30, "next_in must be a short wait, got {wait}");
+            }
+        }
         // Invariant, now on the ranked shape: no secret may ride along.
         assert!(cand[0].get("secret").is_none());
         // "Instagram" vs site "instagram.com" is a brand-inside-domain
@@ -2116,7 +2551,27 @@ mod tests {
         // and an absolute epoch would desync its countdown.
         let exp = cand[0]["expires_in"].as_u64().unwrap();
         assert!((1..=30).contains(&exp), "expires_in in 1..=30, got {exp}");
-        assert!(cand[0]["next_in"].is_null());
+        // `next_in` is the mirror of the guard, not a constant: it is non-null
+        // exactly when the code was withheld. Asserting it null unconditionally
+        // contradicted `expires_in in 1..=30` for the 1..=2 case, so this test
+        // failed whenever it started in the last 2s of a 30s window.
+        if exp >= MIN_TOTP_FILL_REMAINING_SECS {
+            assert!(
+                cand[0]["code"].is_string(),
+                "a fresh window must serve a code"
+            );
+            assert!(cand[0]["next_in"].is_null(), "a served code needs no wait");
+        } else {
+            assert!(
+                cand[0]["code"].is_null(),
+                "a dying window must withhold the code"
+            );
+            assert_eq!(
+                cand[0]["next_in"],
+                serde_json::json!(exp),
+                "wait == what is left"
+            );
+        }
 
         // Duplicate (issuer, account) pair ⇒ BOTH members flagged, so the
         // extension refuses to auto-pick between them.

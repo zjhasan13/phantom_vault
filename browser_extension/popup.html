@@ -33,6 +33,14 @@
     .btns button, .wide { flex: 1; border: 1px solid var(--accent); border-radius: 8px; padding: 7px;
              background: var(--panel2); color: var(--text); cursor: pointer; font-weight: 700; }
     button.fill { background: var(--accent); color: var(--accent-fg); }
+    /* Working-mark toggle: neutral until the user asserts it, green once the
+       bridge confirms it. Deliberately not accent-coloured — it must not read
+       as the primary Fill action. */
+    .btns button.markBtn { flex: 0 0 auto; font-size: 11px; padding: 7px 9px;
+             border-color: var(--muted); color: var(--muted); }
+    .btns button.markBtn:hover { border-color: var(--accent); color: var(--text); }
+    .btns button.markBtn.on { border-color: #2f8f4e; color: #86efac; background: #14532d; }
+    .btns button.markBtn[disabled] { opacity: .5; cursor: default; }
     #status { color: var(--faint); font-size: 12px; text-align: center; }
     #vaultSearch { width: 100%; box-sizing: border-box; background: var(--bg); color: var(--text);
       border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: 12px;
