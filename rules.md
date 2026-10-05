@@ -301,9 +301,9 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 351 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 355 tests green)
 
-Scale: 60+ Rust modules (65 `.rs` files), 351 unit tests passing / 0 failing
+Scale: 60+ Rust modules (65 `.rs` files), 355 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
 (Counts verified 2026-10-04; update with `cargo test` output, not memory.)
 

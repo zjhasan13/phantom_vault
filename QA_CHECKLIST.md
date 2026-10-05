@@ -2,7 +2,7 @@
 
 > All 12 tests must pass on a clean Windows 10/11 64-bit machine before any
 > release is tagged. Check each box only after PHYSICAL verification.
-> Baseline: `cargo check` zero-warning + `cargo test` 279 passed / 0 failed.
+> Baseline: `cargo check` zero-warning + `cargo test` 355 passed / 0 failing.
 
 ## 1. Master Password & Memory Hygiene
 - [ ] Fresh unlock with master password opens the vault.
@@ -89,6 +89,32 @@
 - [ ] Health icons: audited vault rows show ♻️/🕰️/🟡/🔴 matching the desktop audit kinds; no-login-fields page Fill says so instead of silently closing.
 - [ ] Verified badge: 3rd fill on one login flips ✅ (single re-seal); "Mark as working" toggles both ways instantly; decoy refuses the toggle.
 - [ ] Favicons: visit an uncached site → desktop list shows its icon on next rebuild (extension harvest → disk cache); offline shows letters; kill-switch stops all fetches.
+
+## 11b. 2FA Auto-Fill: Multi-Box, Ranking & Ambiguity Picker
+> Invariants under test: never auto-submit (user clicks submit), never auto-pick
+> when ambiguous, never ship a code with <3s left, never send raw secrets to the
+> page.
+
+- [ ] Multi-box (6 digit, Google/Stripe shape): visit a 6×`maxlength=1` ceremony → all six boxes fill hands-free with `⚡ 2FA code auto-filled`; the page accepts the code WITHOUT any manual paste.
+- [ ] Multi-box order is correct (not rotated/reversed): compare box 1-6 against the desktop hub code for the same account.
+- [ ] Multi-box is detected BEFORE single-box: a group whose box 0 carries `autocomplete="one-time-code"` still distributes per-digit (never the whole string in box 0).
+- [ ] 4-digit and 8-digit split groups fill correctly; a single `maxlength="6"` / `autocomplete="one-time-code"` box still receives the whole code.
+- [ ] False-positive guard: a page with 1-3 one-char inputs (quantity stepper, expiry year) is NOT treated as a split OTP group.
+- [ ] Hands-free single match: one 2FA account for the site → fills immediately with NO popup interaction and NO picker.
+- [ ] AUTO-SUBMIT REFUSED: after auto-fill the page is still waiting — no `requestSubmit`, no Enter is synthesised; the user must click the site's own Verify button.
+- [ ] AMBIGUITY GUARD: two 2FA accounts for the same site → NO auto-fill; only the hint toast, and the page's boxes stay empty.
+- [ ] Popup fallback: `🔑 Fill 2FA code` with multiple matches lists the candidates in the popup; clicking one fills that account and closes the popup.
+- [ ] Inline picker (explicit `PV_FILL_OTP`): renders below the OTP box, dark theme, Esc and outside-click both dismiss it.
+- [ ] Picker badges: `✅ Working` on a verified account, `⚠️ DUP` on a colliding (issuer+account) pair, `Primary` on a clean rank-1 row.
+- [ ] DUP forces a choice: two accounts sharing issuer+account ⇒ both flagged, picker shown, nothing auto-filled.
+- [ ] Ranking: an exact-issuer account outranks a substring account for the same site even when the substring one is stored FIRST in the vault.
+- [ ] Empty issuer on an account never makes it match every site.
+- [ ] Freshness guard: fill within the last 3s of the window ⇒ nothing is injected, toast says when to retry (no dead/rejected code sent).
+- [ ] HOTP card in the hub shows no countdown and fills (no expiry guard applied to counter-based codes).
+- [ ] Non-default accounts: an 8-digit TOTP and a 60s-period TOTP both produce a code their own site accepts (per-account digits/period/algorithm honoured).
+- [ ] Verified badge on a 2FA account: 3rd fill seals it (single re-seal), `✅ Working` appears in the picker, manual un-verify sticks.
+- [ ] No secret leakage: page/extension devtools + `pv_ext_stats.json` contain codes/counts but no `secret` field anywhere.
+- [ ] Regression: login autofill + card + identity + generator + QuickBar all behave exactly as before this change.
 
 ## 12. Import Dry-Run, QuickBar TOTP & Changelog
 - [ ] Picking an export shows counts/dupes in Preview; Cancel merges nothing; Confirm merges + offers source shred.

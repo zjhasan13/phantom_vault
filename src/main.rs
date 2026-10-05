@@ -26,7 +26,7 @@ use core::generator::{PasswordGenerator, PasswordPolicy};
 use data_encoding::BASE32_NOPAD;
 use rand_core::{OsRng, RngCore};
 use secrecy::{ExposeSecret, SecretString};
-use models::{Credential, TotpAccount, Vault};
+use models::{dup_key, dup_marks, Credential, TotpAccount, Vault};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -1663,33 +1663,9 @@ fn favicon_image_for_domain(domain: &str) -> Option<slint::Image> {
     png_bytes_to_image(&bytes)
 }
 
-/// Identity of a card for duplicate-detection purposes.
-///
-/// The ` [Imported]` marker is stripped BEFORE comparing, so the original card
-/// and the copy we made for it resolve to the SAME key. Without that, every
-/// subsequent import would look novel and the duplicate badge would vanish the
-/// moment the user resolved a conflict.
-/// Pure — unit tested.
-fn dup_key(issuer: &str, name: &str) -> (String, String) {
-    (
-        issuer.trim().to_lowercase(),
-        strip_dup_suffix(name.trim()).to_lowercase(),
-    )
-}
-
-/// For every card, whether another card shares its (issuer, name). A lone card
-/// is never flagged, so the badge keeps meaning something.
-/// Pure — unit tested.
-fn dup_marks(accs: &[&TotpAccount]) -> Vec<bool> {
-    let mut counts: std::collections::HashMap<(String, String), usize> =
-        std::collections::HashMap::new();
-    for a in accs {
-        *counts.entry(dup_key(&a.issuer, &a.account_name)).or_insert(0) += 1;
-    }
-    accs.iter()
-        .map(|a| counts[&dup_key(&a.issuer, &a.account_name)] > 1)
-        .collect()
-}
+/// Identity of a card for duplicate-detection purposes lives in `models`
+/// (`dup_key` / `dup_marks`), shared with the native bridge so its ranked
+/// lookup candidates use exactly one definition of "duplicate".
 
 /// "GitHub / zjhasan13" — what the badge tooltip explains the collision is.
 /// The secret is never included: it must not reach a tooltip or a log line.
