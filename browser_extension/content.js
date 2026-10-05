@@ -844,7 +844,11 @@
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
-    if (entry.totp) await fillLoginOtp(entry);
+    // Unconditional, and no longer gated on `entry.totp`: that field was only a
+    // hint that the row carries a secret, but trusting the same payload that
+    // also carries a stale code invites its reuse. The id-scoped lookup is the
+    // single source of truth and returns nothing for a row without TOTP.
+    await fillLoginOtp(entry);
     staleNudge(entry);
     pingFilled(entry.id);
     notePicked();
@@ -908,24 +912,32 @@
     }
   }
 
-  // The login-fill OTP half. `entry` came from `PV_QUERY`, whose `totp` code was
-  // minted when that query ran — which can be much earlier than the fill, because
-  // a reprompt confirm() or an extension-PIN prompt sits between them. So the
-  // ranked lookup is asked first and its code (guarded, freshly stamped) is
-  // preferred; the query code is only a fallback for a row the ranked lookup
-  // cannot see, so a domain whose issuer text the stricter scorer misses still
-  // gets its one-tap fill instead of silently losing the OTP half.
+  // The login-fill OTP half. `entry.totp` (as shipped by `PV_QUERY`) is
+  // deliberately NOT used: it was minted when that query ran, which can be many
+  // seconds before the fill because a reprompt confirm() or an extension-PIN
+  // prompt sits between them. Replaying it injected a code that was already
+  // dying — past the native 3s guard, past its window, with no way to notice.
+  //
+  // One id-scoped lookup replaces it: native mints the code on the spot for this
+  // exact row and applies the expiry guard, so the two properties we need are no
+  // longer in tension. The scope also keeps coverage this path used to get from
+  // the fallback, because a row the issuer/domain scorer cannot match is still
+  // served when the caller states which row it means.
   async function fillLoginOtp(entry) {
-    if (!entry || !entry.totp) return;
-    if (entry.id) {
-      const list = await totpCandidates();
-      const c = list.find((x) => x.id === entry.id);
-      if (c && c.code) {
-        fillFromCandidate(c);
-        return;
-      }
+    if (!entry || !entry.id) return;
+    const list = await totpCandidates(undefined, entry.id);
+    const c = list.find((x) => x.id === entry.id);
+    if (!c) {
+      toast("🛡️ এই entry-র জন্য 2FA code পাওয়া গেল না।");
+      return;
     }
-    fillTotpNow(entry.totp, findFields());
+    if (!c.code) {
+      // Withheld by the native expiry guard. Say when to come back rather than
+      // substituting a stale code, which is exactly what this path used to do.
+      toast(`⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
+      return;
+    }
+    fillFromCandidate(c);
   }
 
   function fillTotpNow(code, fields) {
@@ -971,12 +983,19 @@
   // One ranked lookup, gated, with the payload normalised. Returns `[]` on any
   // failure (locked vault, blocklist, offline host) so callers can treat "no
   // candidates" uniformly instead of each re-implementing its own try/catch.
-  async function totpCandidates(app) {
+  //
+  // `id` narrows the answer to one known row: native then serves that row even
+  // if its issuer/domain text would not have scored as a match, so a caller that
+  // already knows its entry id never loses coverage to a text-matching gap. It
+  // widens matching only — the code is still minted on the spot and still passes
+  // the expiry guard.
+  async function totpCandidates(app, id) {
     if (isBlocked() || phishingRefuse() || !location.host) return [];
     try {
       const res = await chrome.runtime.sendMessage({
         type: "PV_TOTP_LOOKUP",
         app: app || pageBase(),
+        ...(id ? { id: String(id) } : {}),
       });
       if (!res || res.ok !== true) return [];
       return Array.isArray(res.candidates) ? res.candidates.filter(Boolean) : [];
@@ -1964,7 +1983,7 @@
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
         if (!(await requireExtPin())) return { ok: false };
         if (!msg.id) return { ok: false, error: "id required" };
-        const list = await totpCandidates();
+        const list = await totpCandidates(undefined, msg.id);
         const c = list.find((x) => x.id === msg.id);
         if (!c) return { ok: false, error: "account no longer offered" };
         if (!c.code) {

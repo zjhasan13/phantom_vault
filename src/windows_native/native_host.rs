@@ -609,6 +609,27 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 return no("domain required");
             }
             let q_domain = url_domain(&q);
+
+            // Optional exact-id scope. The caller already knows WHICH row it
+            // wants (a login fill knows its own entry id), so the answer must not
+            // depend on the issuer/domain scorer guessing that row is a match.
+            // Used by the login-fill OTP half, which used to fall back to the
+            // code `PV_QUERY` had minted earlier — possibly many seconds before
+            // the fill, after a reprompt or an extension PIN — injecting a code
+            // that was already dying and bypassing this guard entirely.
+            //
+            // It widens MATCHING only. The row must still be live and carry a
+            // usable secret, the code is still minted here and now, and the
+            // expiry guard below still withholds a dying one. The id comes from
+            // the vault (never from the page), so trusting it cannot steer a
+            // wrong account into a field.
+            let want_id = req
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let scoped = !want_id.is_empty();
+
             // One sidecar read per lookup. Recency is the +10 bonus, so it
             // needs no vault field (no schema change). Best-effort: a missing
             // or corrupt sidecar only drops the bonus, it never breaks a fill.
@@ -673,9 +694,14 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
 
             let mut ranked: Vec<TotpCandidate> = Vec::new();
             for (i, acc) in hub.iter().enumerate() {
-                if let Some(c) =
-                    score_totp_candidate(acc, &q, &q_domain, dups[i], recently_filled(&acc.id))
-                {
+                if let Some(c) = score_totp_candidate(
+                    acc,
+                    &q,
+                    &q_domain,
+                    dups[i],
+                    recently_filled(&acc.id),
+                    false,
+                ) {
                     ranked.push(c);
                 }
             }
@@ -686,8 +712,43 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     &q_domain,
                     dups[hub.len() + i],
                     recently_filled(&cred.id),
+                    false,
                 ) {
                     ranked.push(c);
+                }
+            }
+
+            // Scoped lookup that the scorer rejected: serve the named row
+            // anyway. Only the id can have missed (both shapes above already
+            // proved the row is live and TOTP-bearing, and `trusted` re-proves it
+            // below), so this cannot introduce a row the normal path would have
+            // refused on grounds other than text similarity. `is_dup` still rides
+            // along: a pinned id is a known identity, not a licence to auto-fill
+            // a collision.
+            if scoped && !ranked.iter().any(|c| c.id == want_id) {
+                for (i, acc) in hub.iter().enumerate().filter(|(_, a)| a.id == want_id) {
+                    if let Some(c) = score_totp_candidate(
+                        acc,
+                        &q,
+                        &q_domain,
+                        dups[i],
+                        recently_filled(&acc.id),
+                        true,
+                    ) {
+                        ranked.push(c);
+                    }
+                }
+                for (i, cred) in logins.iter().enumerate().filter(|(_, c)| c.id == want_id) {
+                    if let Some(c) = score_credential_totp_candidate(
+                        cred,
+                        &q,
+                        &q_domain,
+                        dups[hub.len() + i],
+                        recently_filled(&cred.id),
+                        true,
+                    ) {
+                        ranked.push(c);
+                    }
                 }
             }
 
@@ -702,6 +763,13 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     .then_with(|| b.score.cmp(&a.score))
                     .then_with(|| b.favorite.cmp(&a.favorite))
             });
+
+            // An id scope is a question about ONE row, so other rows are not
+            // part of the answer and must not ride along: a fill that asked for
+            // account A should never receive account B's code as a consolation.
+            if scoped {
+                ranked.retain(|c| c.id == want_id);
+            }
 
             // Expiry guard. A code with under MIN_TOTP_FILL_REMAINING_SECS left
             // dies on arrival at the site, and a rejected code reads as "my
@@ -1436,8 +1504,17 @@ fn score_totp_candidate(
     q_domain: &str,
     is_dup: bool,
     recently_filled: bool,
+    trusted: bool,
 ) -> Option<TotpCandidate> {
-    let (tier, score) = score_totp_pair(&acc.issuer, &acc.account_name, q, q_domain)?;
+    // `trusted` means the caller named this exact row, so text similarity is no
+    // longer evidence of anything and must not be able to veto it. Only the
+    // MATCH is waived - the code below is minted and guarded identically, so a
+    // trusted row is not a second, looser code path. Tier 0 marks it unranked.
+    let (tier, score) = match score_totp_pair(&acc.issuer, &acc.account_name, q, q_domain) {
+        Some(ts) => ts,
+        None if trusted => (0u8, 0i64),
+        None => return None,
+    };
 
     // B2: the per-account dispatcher honours algorithm/digits/period/otp_type.
     // `generate_live_code` hardcodes SHA1/6/30 and computes remaining against a
@@ -1484,6 +1561,7 @@ fn score_credential_totp_candidate(
     q_domain: &str,
     is_dup: bool,
     recently_filled: bool,
+    trusted: bool,
 ) -> Option<TotpCandidate> {
     let secret = cred.totp_secret.trim();
     if secret.is_empty() || cred.deleted_at.is_some() {
@@ -1493,7 +1571,14 @@ fn score_credential_totp_candidate(
     // haystack (a row titled "Work email" on github.com still resolves).
     let url_text = cred.urls.first().map(|u| u.as_str()).unwrap_or("");
     let issuer_raw = format!("{} {}", cred.title, url_text);
-    let (tier, score) = score_totp_pair(&issuer_raw, &cred.username, q, q_domain)?;
+    // Same `trusted` waiver as the hub scorer, and for the same reason: it drops
+    // the MATCH requirement only. The live/secret checks above and the minting
+    // below still run, so a trashed or secretless row stays unservable.
+    let (tier, score) = match score_totp_pair(&issuer_raw, &cred.username, q, q_domain) {
+        Some(ts) => ts,
+        None if trusted => (0u8, 0i64),
+        None => return None,
+    };
 
     let acc = crate::models::TotpAccount {
         id: cred.id.clone(),
@@ -2298,6 +2383,141 @@ mod tests {
             .collect();
         sources.sort_unstable();
         assert_eq!(sources, vec!["hub", "login"]);
+    }
+
+    /// The one invariant every `totp_lookup` shape must keep: a payload carries a
+    /// rendered code and metadata, never the secret it came from.
+    fn cands_never_carry_secrets(cands: &serde_json::Value) -> bool {
+        let arr = cands.as_array().unwrap();
+        arr.iter().all(|c| c.get("secret").is_none()) && {
+            let body = cands.to_string();
+            !body.contains("JBSWY3DPEHPK3PXP") && !body.contains("GEZDGNBVGY3TQOJQ")
+        }
+    }
+
+    #[test]
+    fn totp_lookup_id_scope_trusts_a_row_the_scorer_cannot_match() {
+        let mut v = vault_with_login();
+        // The exact coverage case the old fallback used to cover: a login whose
+        // title says nothing about the site and which carries NO url, so the
+        // issuer/domain scorer returns None for it. The fill path still knows
+        // which row it means, so it must be served.
+        v.credentials[0].title = "Personal".into();
+        v.credentials[0].urls = Vec::new();
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        let open = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "example.com"}),
+        );
+        assert!(
+            open.reply["candidates"].as_array().unwrap().is_empty(),
+            "precondition: the scorer cannot see this row"
+        );
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "example.com", "id": "c1"}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        let cands = r.reply["candidates"].as_array().unwrap();
+        assert_eq!(cands.len(), 1, "the named row must be served");
+        assert_eq!(cands[0]["id"], "c1");
+        // Still a live, guarded code minted here — not a replay, not a secret.
+        if let Some(code) = cands[0]["code"].as_str() {
+            assert_eq!(code.len(), 6);
+            assert!(code.bytes().all(|b| b.is_ascii_digit()));
+        } else {
+            assert!(cands[0]["next_in"].as_u64().unwrap() < 30);
+        }
+        assert!(!r.reply.to_string().contains("JBSWY3DPEHPK3PXP"));
+    }
+
+    #[test]
+    fn totp_lookup_id_scope_returns_that_row_only() {
+        use crate::models::TotpAccount;
+        let mut v = vault_with_login();
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        v.credentials.push(test_cred("c2", "second", "GEZDGNBVGY3TQOJQ", false));
+        v.totp_accounts.push(TotpAccount {
+            id: "t1".into(),
+            account_name: "octo".into(),
+            issuer: "GitHub".into(),
+            secret: "JBSWY3DPEHPK3PXP".into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+            favorite: false,
+        });
+        // Unscoped, this site offers three rows. Scoped to one, the answer is
+        // about that row alone: an id is a question about a single account, so
+        // its neighbours must never ride along as a consolation — that is how a
+        // wrong account's code would reach a field that asked for a specific one.
+        for (id, expected) in [("t1", 1), ("c2", 1)] {
+            let r = answer(
+                &mut v,
+                true,
+                &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": id}),
+            );
+            let cands = r.reply["candidates"].as_array().unwrap();
+            assert_eq!(cands.len(), expected, "scope to {id} must return only it");
+            assert_eq!(cands[0]["id"], id);
+        }
+        // An id that exists but carries no TOTP must not be served, and must not
+        // drag a different row in to fill the gap.
+        v.credentials.push(test_cred("c3", "nosecret", "", false));
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": "c3"}),
+        );
+        assert!(
+            r.reply["candidates"].as_array().unwrap().is_empty(),
+            "a row without a secret must never serve a code"
+        );
+        // A trashed row is not a match either.
+        v.credentials.push(test_cred("c4", "gone", "GEZDGNBVGY3TQOJQ", true));
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": "c4"}),
+        );
+        assert!(
+            r.reply["candidates"].as_array().unwrap().is_empty(),
+            "a trashed row must never serve a code"
+        );
+        // Unknown id: empty, and still `ok` so the caller can tell "not here"
+        // from "vault locked".
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": "nope"}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        assert!(r.reply["candidates"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn totp_lookup_id_scope_still_honours_lock_and_never_leaks_a_secret() {
+        let mut v = vault_with_login();
+        v.credentials[0].totp_secret = "JBSWY3DPEHPK3PXP".into();
+        // The id scope must not become a way around the unlocked gate.
+        let locked = answer(
+            &mut v,
+            false,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": "c1"}),
+        );
+        assert_eq!(locked.reply["ok"], false);
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "totp_lookup", "app": "github.com", "id": "c1"}),
+        );
+        let body = r.reply.to_string();
+        assert!(!body.contains("JBSWY3DPEHPK3PXP"), "no secret may ride along");
+        assert!(cands_never_carry_secrets(&r.reply["candidates"]));
     }
 
     #[test]
