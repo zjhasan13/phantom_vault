@@ -40,6 +40,7 @@
       retry: "🔄 Retry", fill: "⚡ Fill", copy: "📋 Copy", copied: "✅ Copied", blocked_cb: "⚠️ Blocked",
       submit_btn: "⚡↩", lock_in: (m) => `🔒 Auto-locks in ${m}m`, lock_soon: "🔒 Locking soon…",
       pass_btn: "📋 Pass", user_btn: "👤 User", eye_show: "👁️", eye_hide: "🙈",
+      mark_working: "✅ Working", unmark_working: "Mark working",
       sync_locked: "🔒 Vault is Locked",
       sync_locked_sub: "Unlock PhantomVault desktop app.",
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
@@ -85,6 +86,7 @@
       retry: "🔄 পুনরায়", fill: "⚡ পূরণ", copy: "📋 কপি", copied: "✅ কপি হয়েছে", blocked_cb: "⚠️ ব্যর্থ",
       submit_btn: "⚡↩", lock_in: (m) => `🔒 ${m} মি-এ অটো-লক`, lock_soon: "🔒 শীঘ্রই লক হচ্ছে…",
       pass_btn: "📋 পাস", user_btn: "👤 ইউজার", eye_show: "👁️", eye_hide: "🙈",
+      mark_working: "✅ Working", unmark_working: "Working মার্ক",
       sync_locked: "🔒 ভল্ট লকড",
       sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
@@ -461,6 +463,50 @@
       return false;
     }
     return true;
+  }
+  // The user's own "this is the working one" verdict (logins AND 2FA hub
+  // accounts). Returns the stored state, or null when the bridge refused —
+  // locked vault, decoy cover, unknown/stale id. Callers must treat null as
+  // "nothing changed": the badge must never flip optimistically, or a locked
+  // vault would look like a successful mark until the next repaint.
+  async function pvVerify(id, on) {
+    if (!id) return null;
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "PV_VERIFY", id, on: !!on });
+      if (!res || res.ok !== true) return null;
+      return !!res.verified;
+    } catch (_) {
+      return null;
+    }
+  }
+  // Attaches a working-mark toggle to a row. `row` is a brandRow; `entry` is
+  // the object carrying `id` / `verified`; `paint` re-renders the row's own
+  // sub-line so the ✅ in the text and the button label agree afterwards.
+  function markWorkingButton(row, entry, paint) {
+    const btn = document.createElement("button");
+    btn.className = "markBtn";
+    const paintBtn = () => {
+      btn.textContent = entry.verified ? t("mark_working") : t("unmark_working");
+      btn.title = entry.verified
+        ? "Working mark সরান (এইটা কাজ করে না)"
+        : "এই credential-টা কাজ করেছে — চিহ্নিত করুন";
+      btn.classList.toggle("on", !!entry.verified);
+    };
+    paintBtn();
+    btn.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      btn.disabled = true;
+      const now = await pvVerify(entry.id, !entry.verified);
+      btn.disabled = false;
+      if (now === null) {
+        status.textContent = "🛡️ Working mark বাতিল — vault locked বা decoy।";
+        return;
+      }
+      entry.verified = now;
+      paintBtn();
+      if (paint) paint();
+    });
+    row.querySelector(".btns").append(btn);
   }
   async function doFill(entry) {
     if (!fillGuards(entry)) return;
@@ -1040,6 +1086,11 @@
   }
   otpFillBtn.addEventListener("click", async () => {
     otpFillBtn.textContent = "…";
+    // A previous ambiguous list must never survive into a later unambiguous
+    // lookup: the stale rows would sit under the button offering accounts that
+    // no longer rank for this site.
+    const candBox = document.getElementById("otpCandList");
+    if (candBox) candBox.textContent = "";
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || tab.id == null) return;
@@ -1059,6 +1110,10 @@
       if (list.length === 1 && list[0] && !list[0].code) {
         const w = list[0].next_in != null ? ` ${list[0].next_in}s পরে` : "";
         status.textContent = `⏳ code মেয়াদ শেষ হয়ে যাচ্ছে —${w} আবার চাপুন।`;
+        return;
+      }
+      if (!list.length) {
+        status.textContent = "🛡️ এই সাইটের জন্য কোনো 2FA code নেই।";
         return;
       }
       const out = await withTimeout(
@@ -1085,6 +1140,10 @@
       if (c.verified) tags.push("✅ Working");
       if (c.is_dup) tags.push("⚠️ DUP");
       if (!c.verified && !c.is_dup && c.rank === 1) tags.push("Primary");
+      if (c.source === "login") tags.push("from login");
+      // Same stamp the picker shows, and the same invisible +10 ranking bonus:
+      // "why is this one first" should be answerable from the row itself.
+      if (c.last_filled) tags.push(`last ${ago(c.last_filled)}`);
       const title = c.account || c.issuer || "(unnamed)";
       const sub = [c.issuer && c.issuer !== title ? c.issuer : "", tags.join(" · ")]
         .filter(Boolean).join(" · ");
@@ -1440,6 +1499,13 @@
     row.querySelector(".btns").append(prev);
     // Quick username copy beside Fill/Pass.
     const btns = row.querySelector(".btns");
+    // User's own verdict, not an inference from fill counts. Repaint callback
+    // keeps the ✅ in the sub-line in sync with the button.
+    markWorkingButton(row, e, () => {
+      const s = [e.reprompt ? "🔒" : "", e.title || "", e.verified ? "✅" : "", healthIcon]
+        .filter(Boolean).join(" ");
+      row.querySelector(".u").textContent = s;
+    });
     if (btns && e.username) {
       const cu = document.createElement("button");
       cu.textContent = t("user_btn");

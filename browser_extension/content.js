@@ -28,15 +28,25 @@
   // read password+TOTP from there for the whole login window).
   let pvPending = null;
   // Cross-navigation bridge: full page loads (login POST → 2FA page) wipe
-  // JS memory, so the stash is mirrored to chrome.storage.session —
+  // JS memory, so the ACCOUNT ID is mirrored to chrome.storage.session —
   // extension-owned (page JS CANNOT read it, unlike window.sessionStorage),
   // tab-lifetime, 5-minute expiry, consumed on fill. Never the raw DOM store.
+  //
+  // P1-b: no secret material is written here any more. The old stash held the
+  // raw password AND a pre-generated TOTP code, so the one thing an extension
+  // compromise (or another extension with storage access) wanted was sitting in
+  // a store for the whole ceremony. What actually crosses the navigation is the
+  // question "which account is step 2 for" — an id, which is already in the
+  // popup's own replies and is useless without the vault. The password stays in
+  // JS memory (lost on a full page load, which is the honest trade: the user
+  // re-fills one field instead of us parking their password on disk), and the
+  // code is minted natively at the moment of fill, so it is never stored stale.
   const PV_PENDING_TTL_MS = 5 * 60 * 1000;
   function pvPendingPersist() {
     try {
-      if (pvPending && (pvPending.password || pvPending.totp)) {
+      if (pvPending && pvPending.totpId) {
         chrome.storage.session.set({
-          pvPending: { password: pvPending.password || "", totp: pvPending.totp || "", at: Date.now() },
+          pvPending: { totpId: pvPending.totpId, at: Date.now() },
         }).catch(() => {});
       }
     } catch (_) {}
@@ -45,10 +55,17 @@
     try {
       chrome.storage.session.get({ pvPending: null }).then((s) => {
         const p = s && s.pvPending;
-        if (p && (p.password || p.totp) && Date.now() - (p.at || 0) < PV_PENDING_TTL_MS) {
-          pvPending = { password: p.password || "", totp: p.totp || "" };
+        // `totpId` only — a legacy stash carrying `password`/`totp` is dropped
+        // on sight rather than migrated, so a pre-upgrade copy can never be
+        // read back into memory.
+        if (p && p.totpId && !(p.password || p.totp) &&
+            Date.now() - (p.at || 0) < PV_PENDING_TTL_MS) {
+          pvPending = { password: "", totpId: p.totpId };
           console.log("PV pending restored across navigation");
           try { sweepOtpOnce(); } catch (_) {}
+        } else if (p && (p.password || p.totp)) {
+          chrome.storage.session.remove("pvPending").catch(() => {});
+          console.log("PV dropped a legacy secret-bearing pending stash");
         }
       }).catch(() => {});
     } catch (_) {}
@@ -267,6 +284,21 @@
     });
   }
 
+  // "3m ago" from an absolute epoch second (the shape the sidecar stores).
+  // Display only — nothing here feeds a freshness decision, which is entirely
+  // the bridge's job; a skewed client clock can make a label wrong but must
+  // never make it fill a code that is about to die.
+  function ago(epochSec) {
+    const s = Math.max(0, Math.floor(Date.now() / 1000) - Number(epochSec || 0));
+    if (s < 60) return `${s}s`;
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h`;
+    const d = Math.floor(h / 24);
+    return d < 30 ? `${d}d` : `${Math.floor(d / 30)}mo`;
+  }
+
   // ---------- 2FA ambiguity picker ----------
   // Rendered inside a Shadow DOM so the host page's CSS (and ours) cannot reach
   // into each other: a 2FA ceremony is a hostile page to style a widget on, and
@@ -275,6 +307,10 @@
   let pvPicker = null;
   function closeOtpPicker() {
     if (pvPicker) {
+      // Stop the countdown BEFORE detaching the node: an interval that outlives
+      // its host keeps calling the bridge once a second for as long as the tab
+      // lives, and nothing about the picker looks alive any more.
+      try { if (pvPicker.timer) clearInterval(pvPicker.timer); } catch (_) {}
       try { pvPicker.host.remove(); } catch (_) {}
       pvPicker = null;
     }
@@ -308,50 +344,202 @@
         border-bottom:1px solid #2a2033}
       .row:last-child{border-bottom:0}
       .row:hover{background:#241b30}
+      .brand{flex:none;width:22px;height:22px;border-radius:6px;object-fit:cover;
+        background:#2a2033;font:700 11px system-ui;color:#c9c0d8;display:flex;
+        align-items:center;justify-content:center;overflow:hidden;text-transform:uppercase}
       .meta{flex:1;min-width:0}
       .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
       .sub{font-size:11px;color:#9b93ab;margin-top:2px;white-space:nowrap;overflow:hidden;
         text-overflow:ellipsis}
+      .codebox{flex:none;text-align:right}
       .code{font:800 15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;
         color:#f5f3ff}
+      .ttl{font:700 9px ui-monospace,monospace;color:#86efac}
+      .ttl.warn{color:#fcd34d}
+      .ttl.die{color:#fca5a5}
       .tag{font:700 9px system-ui;letter-spacing:.3px;padding:2px 5px;border-radius:5px;
         text-transform:uppercase;white-space:nowrap}
       .ok{background:#14532d;color:#86efac}
       .pri{background:#1e3a5f;color:#93c5fd}
       .dup{background:#4a2c0a;color:#fcd34d}
       .wait{font-size:11px;color:#9b93ab;padding:8px 11px;border-top:1px solid #3a2c46}
+      .mark{flex:none;font:700 9px system-ui;letter-spacing:.3px;padding:4px 7px;border-radius:6px;
+        cursor:pointer;white-space:nowrap;text-transform:uppercase;
+        background:#2a2033;color:#9b93ab;border:1px solid #3a2c46}
+      .mark:hover{background:#3a2c46;color:#e9e5f0}
+      .mark[disabled]{opacity:.45;cursor:default}
     `;
     root.appendChild(style);
     const wrap = document.createElement("div");
     wrap.className = "wrap";
     wrap.innerHTML = '<div class="hd">যে 2FA account?</div>';
+    const tagEl = (cls, text) => {
+      const s = document.createElement("span");
+      s.className = "tag " + cls;
+      s.textContent = text;
+      return s;
+    };
+    // Brand mark: the page's own favicon (harvested once per page, and it IS
+    // the site these candidates were ranked for), falling back to the issuer's
+    // first letter. A per-account icon would mean resolving an issuer STRING to
+    // a domain inside the vault, which is a lookup the bridge does not do and
+    // which would hand a hostile page a free image-timing oracle for no gain.
+    const brandSrc = typeof iconUrl === "string" ? iconUrl : "";
+    const makeBrand = (label) => {
+      const b = document.createElement("div");
+      b.className = "brand";
+      const initial = (label || "?").trim().charAt(0) || "?";
+      b.textContent = initial;
+      if (brandSrc) {
+        const img = document.createElement("img");
+        img.src = brandSrc;
+        img.alt = "";
+        // A blocked or missing icon must not leave a blank box: fall back to
+        // the letter that is already underneath.
+        img.addEventListener("error", () => { img.remove(); b.textContent = initial; }, { once: true });
+        b.textContent = "";
+        b.appendChild(img);
+      }
+      return b;
+    };
+    // One interval for the whole picker, cleared by closeOtpPicker. Per-row
+    // timers would multiply on a busy page and keep ticking after the host node
+    // was detached from the document.
+    const ticker = [];
     for (const c of candidates) {
       const row = document.createElement("div");
       row.className = "row";
       const name = c.account || c.issuer || "(unnamed)";
-      const bits = [];
-      if (c.verified) bits.push('<span class="tag ok">✅ Working</span>');
-      if (c.is_dup) bits.push('<span class="tag dup">⚠️ DUP</span>');
-      if (!c.verified && !c.is_dup && c.rank === 1) bits.push('<span class="tag pri">Primary</span>');
       row.innerHTML =
         `<div class="meta"><div class="name"></div>` +
-        `<div class="sub"></div></div>` +
-        `<div class="code"></div>`;
+        `<div class="sub"><span class="iss"></span><span class="used"></span><span class="tags"></span></div></div>` +
+        `<div class="codebox"><div class="code"></div><div class="ttl"></div></div>` +
+        `<button class="mark"></button>`;
+      row.insertBefore(makeBrand(c.issuer || name), row.firstChild);
       // textContent, never innerHTML, for anything vault-derived.
       row.querySelector(".name").textContent = name;
-      const sub = row.querySelector(".sub");
-      sub.textContent = c.issuer && c.issuer !== name ? c.issuer : "";
-      for (const b of bits) sub.insertAdjacentHTML("beforeend", " " + b);
-      row.querySelector(".code").textContent = c.code || "······";
+      const iss = row.querySelector(".iss");
+      iss.textContent = c.issuer && c.issuer !== name ? c.issuer : "";
+      if (!iss.textContent) iss.remove();
+      // G7: the same stamp that drives the invisible +10 recency bonus, shown
+      // so the ordering the user is looking at is explicable rather than magic.
+      const used = row.querySelector(".used");
+      used.textContent = c.last_filled ? ` · last ${ago(c.last_filled)}` : "";
+      if (!used.textContent) used.remove();
+      const tags = row.querySelector(".tags");
+      const mark = row.querySelector(".mark");
+      const codeEl = row.querySelector(".code");
+      const ttlEl = row.querySelector(".ttl");
+      // Mutable view state, kept off the payload object so a repaint never
+      // mutates what the bridge sent.
+      let code = c.code || "";
+      // `expires_in` is a RELATIVE second count. The client only counts it down
+      // and never derives a window from a raw clock; `null` means counter-based
+      // HOTP, which has no window and therefore no countdown at all.
+      let remaining = typeof c.expires_in === "number" ? c.expires_in : null;
+      let waiting = c.next_in != null ? Math.max(0, Number(c.next_in) || 0) : null;
+      // Rebuilt in place on toggle, so the badge reflects what the bridge
+      // actually stored rather than what we optimistically assumed.
+      const paint = () => {
+        tags.textContent = "";
+        if (c.verified) tags.appendChild(tagEl("ok", "✅ Working"));
+        if (c.is_dup) tags.appendChild(tagEl("dup", "⚠️ DUP"));
+        if (!c.verified && !c.is_dup && c.rank === 1) tags.appendChild(tagEl("pri", "Primary"));
+        if (c.source === "login") tags.appendChild(tagEl("pri", "from login"));
+        mark.textContent = c.verified ? "✓ Working" : "Mark working";
+        mark.title = c.verified
+          ? "Working mark সরান (এটা working নয়)"
+          : "এই account-টি কাজ করেছে — চিহ্নিত করুন";
+      };
+      const paintCode = () => {
+        if (code) {
+          codeEl.textContent = code;
+          if (remaining == null) {
+            ttlEl.textContent = "";
+            ttlEl.className = "ttl";
+          } else {
+            ttlEl.textContent = `${remaining}s`;
+            ttlEl.className = "ttl" + (remaining <= 5 ? " die" : remaining <= 10 ? " warn" : "");
+          }
+        } else {
+          // Withheld by the native guard, or our own countdown reached zero and
+          // the refresh has not landed yet. Never display a code we know is dead.
+          codeEl.textContent = "······";
+          ttlEl.textContent = waiting != null ? `⏳ ${waiting}s` : "";
+          ttlEl.className = "ttl warn";
+        }
+      };
+      // One native re-query when this row's window closes, so a picker left open
+      // across a rollover fills the NEXT code instead of the dead one. `busy`
+      // keeps a slow bridge from stacking refreshes up behind one interval.
+      let busy = false;
+      const refresh = async () => {
+        if (busy) return;
+        busy = true;
+        try {
+          const list = await totpCandidates();
+          const fresh = list.find((x) => x.id === c.id);
+          if (!fresh) {
+            // The account stopped being offered (deleted, or the site changed).
+            code = "";
+            waiting = null;
+          } else {
+            c.verified = fresh.verified;
+            code = fresh.code || "";
+            remaining = typeof fresh.expires_in === "number" ? fresh.expires_in : null;
+            waiting = fresh.next_in != null ? Math.max(0, Number(fresh.next_in) || 0) : null;
+          }
+          paint();
+          paintCode();
+        } catch (_) {
+          // Keep the last known state rather than blanking a working row.
+        } finally {
+          busy = false;
+        }
+      };
+      paint();
+      paintCode();
+      ticker.push(() => {
+        if (remaining != null) {
+          if (remaining > 0) {
+            remaining -= 1;
+            if (remaining === 0) {
+              // Window closed: withdraw the dead code BEFORE asking for a new
+              // one, so a slow bridge can never leave a stale code clickable.
+              code = "";
+              paintCode();
+              refresh();
+            }
+          }
+        } else if (code && waiting != null && waiting > 0) {
+          waiting -= 1;
+          if (waiting === 0) refresh();
+        }
+        if (code || waiting != null) paintCode();
+      });
+      mark.addEventListener("click", async (e) => {
+        // The row click means "fill this code"; the button must not also do it.
+        e.stopPropagation();
+        e.preventDefault();
+        mark.disabled = true;
+        const now = await pvVerify(c.id, !c.verified);
+        mark.disabled = false;
+        if (now === null) {
+          toast("🛡️ Working mark বাতিল — vault locked, ব্লকড সাইট, বা decoy।");
+          return;
+        }
+        c.verified = now;
+        paint();
+        toast(now ? `✅ ${name} — working মার্ক হলো` : `⚠️ ${name} — working mark সরানো হলো`);
+      });
       row.addEventListener("click", () => {
-        if (!c.code) {
-          toast(`⏳ নতুন code আসতে বাকি — ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
+        if (!code) {
+          const w = remaining != null ? remaining : waiting;
+          toast(w != null ? `⏳ নতুন code আসতে বাকি ${w}s` : "⏳ একটু পরে আবার চেপুন।");
           return;
         }
         closeOtpPicker();
-        fillTotpNow(c.code, findFields());
-        if (c.id) pingFilled(c.id);
-        toast("⚡ 2FA code filled");
+        fillFromCandidate({ id: c.id, code });
       });
       wrap.appendChild(row);
     }
@@ -370,7 +558,7 @@
     const r = anchor ? anchor.getBoundingClientRect() : null;
     host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
     host.style.top = r ? `${Math.min(r.bottom + 6, window.innerHeight - 220)}px` : "80px";
-    pvPicker = { host };
+    pvPicker = { host, timer: setInterval(() => { for (const t of ticker) { try { t(); } catch (_) {} } }, 1000) };
     document.addEventListener("keydown", pvPickerEsc, true);
     document.addEventListener("mousedown", pvPickerOutside, true);
   }
@@ -606,6 +794,25 @@
     if (!id) return;
     chrome.runtime.sendMessage({ type: "PV_FILLED", id }).catch(() => {});
   }
+  // The user's own "this is the working one" verdict, for logins and 2FA hub
+  // accounts alike. Returns the resulting `verified` state, or null when the
+  // bridge refused (locked vault, decoy cover, unknown/stale id) — callers must
+  // treat null as "nothing changed" and say so, never optimistically re-badge.
+  // Shared by every surface that draws the ✅ Working badge so the gates below
+  // (blocklist, phishing, extension PIN) can never be bypassed by a UI that
+  // forgot to re-check them.
+  async function pvVerify(id, on) {
+    if (!id) return null;
+    if (isBlocked() || !location.host) return null;
+    if (!(await requireExtPin())) return null;
+    try {
+      const res = await chrome.runtime.sendMessage({ type: "PV_VERIFY", id, on: !!on });
+      if (!res || res.ok !== true) return null;
+      return !!res.verified;
+    } catch (_) {
+      return null;
+    }
+  }
   function staleNudge(entry) {
     if (!entry || !entry.last_changed) return;
     const ageDays = (Date.now() / 1000 - entry.last_changed) / 86400;
@@ -625,18 +832,19 @@
     if (f.users[0] && entry.username) setNativeValue(f.users[0], entry.username);
     if (f.pass[0] && entry.password) {
       setNativeValue(f.pass[0], entry.password);
-      // Multi-step chaining: remember secrets for a later password/OTP step.
-      pvPending = { password: entry.password, totp: entry.totp || "" };
+      // Multi-step chaining: remember the step-2 password in JS memory and
+      // remember only WHICH account the OTP step belongs to.
+      pvPending = { password: entry.password, totpId: entry.id || "" };
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     } else if (f.users[0] && entry.username && entry.password) {
-      // Step 1 filled email only: stash the secrets so the password step
-      // (rendered later) can chain via chainPendingStep/otpObserver.
-      pvPending = { password: entry.password, totp: entry.totp || "" };
+      // Step 1 filled email only: stash so the password step (rendered later)
+      // can chain via chainPendingStep/otpObserver.
+      pvPending = { password: entry.password, totpId: entry.id || "" };
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
-    if (entry.totp) await fillTotp(entry.totp, f, entry.id);
+    if (entry.totp) await fillLoginOtp(entry);
     staleNudge(entry);
     pingFilled(entry.id);
     notePicked();
@@ -700,13 +908,24 @@
     }
   }
 
-  // `entryId` is accepted and ignored: it used to drive the 30s re-query wait,
-  // which is gone now that the code arrives with a truthful `expires_in` from
-  // the native side. Kept in the signature so the login/pending fill paths
-  // don't all need rewriting.
-  function fillTotp(code, fields, entryId) {
-    void entryId;
-    fillTotpNow(code, fields);
+  // The login-fill OTP half. `entry` came from `PV_QUERY`, whose `totp` code was
+  // minted when that query ran — which can be much earlier than the fill, because
+  // a reprompt confirm() or an extension-PIN prompt sits between them. So the
+  // ranked lookup is asked first and its code (guarded, freshly stamped) is
+  // preferred; the query code is only a fallback for a row the ranked lookup
+  // cannot see, so a domain whose issuer text the stricter scorer misses still
+  // gets its one-tap fill instead of silently losing the OTP half.
+  async function fillLoginOtp(entry) {
+    if (!entry || !entry.totp) return;
+    if (entry.id) {
+      const list = await totpCandidates();
+      const c = list.find((x) => x.id === entry.id);
+      if (c && c.code) {
+        fillFromCandidate(c);
+        return;
+      }
+    }
+    fillTotpNow(entry.totp, findFields());
   }
 
   function fillTotpNow(code, fields) {
@@ -720,18 +939,49 @@
     if (boxes && boxes.length === digits.length) {
       boxes.forEach((box, i) => setBoxDigit(box, digits[i]));
       if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
-      toast("⚡ 2FA code filled");
-      return;
+      return true;
     }
     if (f.otp[0]) {
       setNativeValue(f.otp[0], digits);
       // Paste-ready fallback, auto-cleared in 30s — only when the
       // "Copy TOTP automatically" setting is on.
       if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
-      toast("⚡ 2FA code filled");
-    } else if (settings.copy_totp_auto !== false) {
+      return true;
+    }
+    if (settings.copy_totp_auto !== false) {
       copyWithAutoclear(digits);
       toast("✅ 2FA code copied (no OTP field found)");
+    }
+    return false;
+  }
+
+  // Fill from a ranked candidate and stamp it. The single place a code reaches
+  // the DOM from `PV_FILL_OTP`/`PV_FILL_OTP_ID`, so the native expiry guard can
+  // never be skipped by a caller that forgot to check `code !== null`, and the
+  // sidecar stamp (which drives recency ranking + 3rd-fill auto-verify) can
+  // never be skipped by a caller that forgot to ping.
+  function fillFromCandidate(c) {
+    if (!c || !c.code) return false;
+    if (!fillTotpNow(c.code, findFields())) return false;
+    if (c.id) pingFilled(c.id);
+    toast("⚡ 2FA code filled");
+    return true;
+  }
+
+  // One ranked lookup, gated, with the payload normalised. Returns `[]` on any
+  // failure (locked vault, blocklist, offline host) so callers can treat "no
+  // candidates" uniformly instead of each re-implementing its own try/catch.
+  async function totpCandidates(app) {
+    if (isBlocked() || phishingRefuse() || !location.host) return [];
+    try {
+      const res = await chrome.runtime.sendMessage({
+        type: "PV_TOTP_LOOKUP",
+        app: app || pageBase(),
+      });
+      if (!res || res.ok !== true) return [];
+      return Array.isArray(res.candidates) ? res.candidates.filter(Boolean) : [];
+    } catch (_) {
+      return [];
     }
   }
 
@@ -1168,37 +1418,57 @@
     const f = findFields();
     if (f.pass[0] && pending.password) {
       setNativeValue(f.pass[0], pending.password);
-      if (settings.auto_inject_totp && pending.totp) fillTotp(pending.totp, f);
+      // The OTP half of the chain no longer replays a stored code. Resolve the
+      // pinned account through the ranked lookup instead, so this path gets the
+      // native freshness guard and the sidecar stamp like every other fill.
+      if (settings.auto_inject_totp && pending.totpId) {
+        const r = await resolveOtpCode();
+        if (r.code) {
+          fillTotpNow(r.code, findFields());
+          if (r.id) pingFilled(r.id);
+        } else if (r.expired && r.wait != null) {
+          toast(`⏳ নতুন code আসতে বাকি ${r.wait}s`);
+        }
+      }
       pvPendingClear();
     }
   }
   // OTP fields that render late (SPA step 3): inject live TOTP on sight.
   // Runs once at boot too — direct 2FA URLs render the field before any
   // mutation fires, which used to leave the observer permanently silent.
-  // Code chain (PV_FILL_OTP mirror): pending totp → hub lookup, so direct-
-  // 2FA-URL visits auto-fill even with no step-1 fill behind them.
   let otpDiagAt = 0;
+  // Decide what (if anything) may be auto-filled on this page.
+  //
+  // A step-1 fill pins WHICH account the ceremony belongs to (`pvPending.totpId`),
+  // but that pin resolves to a candidate, never to a stored code. The stash used
+  // to hand back its own cached `totp` string, which meant a code minted at step
+  // 1 could still be injected minutes later on step 3 — past the 3s guard, past
+  // its window, and with no way to notice. Re-querying by id keeps the native
+  // freshness guard and the sidecar stamp on this path too.
   async function resolveOtpCode() {
-    if (pvPending && pvPending.totp) return { code: pvPending.totp, source: "pending" };
-    try {
-      const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
-      const list = (res && res.ok && res.candidates) || [];
-      if (!list.length) return { code: "" };
-      const top = list[0];
-      // Invariant: no blind guessing. More than one candidate, or any of them
-      // colliding on (issuer, account), means the user picks — a wrong code
-      // reads as "my authenticator is broken" and can lock the account out.
-      const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
-      if (ambiguous) return { code: "", candidates: list, ambiguous: true };
-      if (!top || !top.code) {
-        // Withheld by the native expiry guard: say when to retry rather than
-        // filling null and reporting a bridge failure.
-        return { code: "", candidates: list, expired: true, wait: top ? top.next_in : null };
+    const list = await totpCandidates();
+    if (!list.length) return { code: "" };
+    // Pinned identity wins the ambiguity check (a known id is not a guess), but
+    // only while it is still among this site's ranked candidates.
+    const pinnedId = pvPending && pvPending.totpId;
+    const top = (pinnedId && list.find((c) => c.id === pinnedId)) || null;
+    if (top) {
+      if (!top.code) {
+        return { code: "", candidates: [top], expired: true, wait: top.next_in };
       }
-      return { code: top.code, source: "hub", id: top.id, expiresIn: top.expires_in };
-    } catch (_) {
-      return { code: "" };
+      return { code: top.code, source: "pinned", id: top.id, expiresIn: top.expires_in };
     }
+    // Invariant: no blind guessing. More than one candidate, or any of them
+    // colliding on (issuer, account), means the user picks — a wrong code
+    // reads as "my authenticator is broken" and can lock the account out.
+    const ambiguous = list.length > 1 || list.some((c) => c.is_dup);
+    if (ambiguous) return { code: "", candidates: list, ambiguous: true };
+    if (!list[0].code) {
+      // Withheld by the native expiry guard: say when to retry rather than
+      // filling null and reporting a bridge failure.
+      return { code: "", candidates: list, expired: true, wait: list[0].next_in };
+    }
+    return { code: list[0].code, source: "ranked", id: list[0].id, expiresIn: list[0].expires_in };
   }
   function sweepOtpOnce() {
     sweepOtpAsync().catch(() => {});
@@ -1224,8 +1494,8 @@
         }
         return;
       }
-      const pendingState = pvPending ? (pvPending.totp ? "has-totp" : "no-totp") : "none";
-      console.log(`PV OTP field sighted (${f.otp.length}), pending: ${pendingState}`);
+      const pinnedId = (pvPending && pvPending.totpId) || "";
+      console.log(`PV OTP field sighted (${f.otp.length}), pinned: ${pinnedId || "none"}`);
       const r = await resolveOtpCode();
       if (r.ambiguous) {
         // Hands-free means hands-free: a sweep must NOT pop UI the user never
@@ -1246,7 +1516,7 @@
         pvPendingClear();
         toast("⚡ 2FA code auto-filled");
       } else {
-        console.log("PV OTP: no code from pending or hub");
+        console.log("PV OTP: no ranked candidate for this page");
       }
     } catch (_) {}
   }
@@ -1622,47 +1892,51 @@
       if (msg.type === "PV_FILL_OTP") {
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
         if (!(await requireExtPin())) return { ok: false };
-        // Prefer the step-1 identity; else the ranked 2FA Hub lookup (login
-        // entries often carry no secret while the hub holds them — the exact
-        // Instagram gap).
-        let code = "", entryId = "";
-        if (pvPending && pvPending.totp) {
-          code = pvPending.totp;
-        } else {
-          try {
-            const ls = await queryHost("PV_QUERY", pageBase());
-            const e = (ls || []).find((x) => x && x.totp);
-            if (e) { code = e.totp; entryId = e.id; }
-          } catch (_) {}
-          if (!code) {
-            try {
-              const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
-              const list = (res && res.ok && res.candidates) || [];
-              const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
-              if (ambiguous) {
-                // Explicit user gesture (popup button) — so opening UI here is
-                // expected, unlike the passive sweep.
-                openOtpPicker(list, findFields());
-                return { ok: true, picker: true, candidates: list.length };
-              }
-              if (list[0] && list[0].code) {
-                code = list[0].code;
-                entryId = list[0].id || "";
-              } else if (list[0] && list[0].next_in != null) {
-                toast(`⏳ নতুন code আসতে বাকি ${list[0].next_in}s`);
-                return { ok: false, error: "code expiring" };
-              }
-            } catch (_) {}
+        // ONE ranked source for the code, and no cached code either.
+        //
+        // The old flow was `pvPending.totp` else `PV_QUERY` +
+        // `.find(x => x.totp)` else ranked lookup. Both shortcuts were wrong:
+        // the stash replayed a code that could have died in flight (bypassing
+        // the native 3s guard entirely), and the `.find()` took the FIRST login
+        // row carrying a secret, with no issuer/domain ranking and no duplicate
+        // check — so any site with two TOTP logins got an arbitrary account's
+        // code injected with no picker. The bridge now ranks BOTH storage
+        // shapes (hub cards AND logins with inline secrets) into one
+        // `candidates[]`, so removing those branches costs no coverage.
+        const list = await totpCandidates();
+        // A step-1 fill already established WHICH account this ceremony belongs
+        // to. That is a known identity, not a guess, so it may resolve without a
+        // picker — but the code is still minted natively right now, never
+        // replayed from the stash. If the pinned id no longer matches this site
+        // (deleted account, a second tab on a different site) it is simply not
+        // found, and the normal ambiguity rules apply again.
+        const pinned = pvPending && pvPending.totpId
+          ? list.find((c) => c.id === pvPending.totpId)
+          : null;
+        if (pinned) {
+          if (!pinned.code) {
+            toast(`⏳ নতুন code আসতে বাকি ${pinned.next_in != null ? pinned.next_in + "s" : "কিছুক্ষণ"}`);
+            return { ok: false, error: "code expiring" };
+          }
+          return { ok: fillFromCandidate(pinned) };
+        }
+        const ambiguous = list.length > 1 || list.some((c) => c.is_dup);
+        if (ambiguous) {
+          // Explicit user gesture (popup button) — so opening UI here is
+          // expected, unlike the passive sweep.
+          openOtpPicker(list, findFields());
+          return { ok: true, picker: true, candidates: list.length };
+        }
+        const only = list[0];
+        if (only) {
+          if (only.code) return { ok: fillFromCandidate(only) };
+          if (only.next_in != null) {
+            toast(`⏳ নতুন code আসতে বাকি ${only.next_in}s`);
+            return { ok: false, error: "code expiring" };
           }
         }
-        if (!code) {
-          toast("🛡️ এই সাইটের জন্য কোনো 2FA code নেই।");
-          return { ok: false };
-        }
-        const f = findFields();
-        fillTotp(code, f, entryId);
-        if (entryId) pingFilled(entryId);
-        return { ok: true };
+        toast("🛡️ এই সাইটের জন্য কোনো 2FA code নেই।");
+        return { ok: false };
       }
       // Step-1 handoff from popup fills (direct inject bypassed us): look
       // the entry up and stash pending for OTP chaining. Needs TOTP —
@@ -1672,7 +1946,9 @@
           const logins = await queryHost("PV_QUERY", pageBase());
           const e = (logins || []).find((x) => x && x.id === msg.id);
           if (e && e.totp) {
-            pvPending = { password: e.password || "", totp: e.totp || "" };
+            // The id is all we keep: it says which account the next OTP step
+            // belongs to, and the code for it is minted fresh on arrival.
+            pvPending = { password: e.password || "", totpId: e.id };
             pvPendingPersist();
             console.log("PV pending stashed from popup fill");
             try { sweepOtpOnce(); } catch (_) {}
@@ -1688,22 +1964,15 @@
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
         if (!(await requireExtPin())) return { ok: false };
         if (!msg.id) return { ok: false, error: "id required" };
-        let res = null;
-        try {
-          res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
-        } catch (_) {}
-        const list = (res && res.ok && res.candidates) || [];
-        const c = list.find((x) => x && x.id === msg.id);
+        const list = await totpCandidates();
+        const c = list.find((x) => x.id === msg.id);
         if (!c) return { ok: false, error: "account no longer offered" };
         if (!c.code) {
           toast(`⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
           return { ok: false, error: "code expiring" };
         }
         closeOtpPicker();
-        fillTotpNow(c.code, findFields());
-        pingFilled(c.id);
-        toast("⚡ 2FA code filled");
-        return { ok: true };
+        return { ok: fillFromCandidate(c) };
       }
       if (msg.type === "PV_MENU") {
         // Same guards as every other fill path: blocked domains, punycode /

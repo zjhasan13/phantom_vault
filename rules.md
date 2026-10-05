@@ -301,11 +301,11 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 355 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 359 tests green)
 
-Scale: 60+ Rust modules (65 `.rs` files), 355 unit tests passing / 0 failing
+Scale: 60+ Rust modules (65 `.rs` files), 359 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
-(Counts verified 2026-10-04; update with `cargo test` output, not memory.)
+(Counts verified 2026-10-05; update with `cargo test` output, not memory.)
 
 Architecture (all shipped, all tested):
 - NIST FIPS 203 ML-KEM-768 hybrid key layer (`PV2` portable container with

@@ -683,14 +683,32 @@ pub fn dup_key(issuer: &str, name: &str) -> (String, String) {
 /// For every card, whether another card shares its (issuer, name). A lone card
 /// is never flagged, so the badge keeps meaning something. Pure — unit tested.
 pub fn dup_marks(accs: &[&TotpAccount]) -> Vec<bool> {
-    let mut counts: std::collections::HashMap<(String, String), usize> =
+    let keys: Vec<(String, String)> = accs
+        .iter()
+        .map(|a| dup_key(&a.issuer, &a.account_name))
+        .collect();
+    dup_marks_keyed(&keys)
+}
+
+/// Duplicate flags for an arbitrary set of already-computed keys.
+///
+/// `dup_marks` is only the hub-account specialisation of this; the bridge needs
+/// the general form because one ranked lookup spans BOTH storage shapes — a
+/// standalone 2FA card AND a login row carrying an inline `totp_secret`. When a
+/// user has both for the same real account they collide on (issuer, account),
+/// and that collision is exactly the case the ambiguity picker exists for, so it
+/// must be flagged across the union rather than inside each collection alone
+/// (where each would look unique and both would auto-fill).
+///
+/// Already-keyed input keeps the one definition of "duplicate" in one place: the
+/// hub badge and the bridge agree by construction. Pure — unit tested.
+pub fn dup_marks_keyed(keys: &[(String, String)]) -> Vec<bool> {
+    let mut counts: std::collections::HashMap<&(String, String), usize> =
         std::collections::HashMap::new();
-    for a in accs {
-        *counts.entry(dup_key(&a.issuer, &a.account_name)).or_insert(0) += 1;
+    for k in keys {
+        *counts.entry(k).or_insert(0) += 1;
     }
-    accs.iter()
-        .map(|a| counts[&dup_key(&a.issuer, &a.account_name)] > 1)
-        .collect()
+    keys.iter().map(|k| counts[k] > 1).collect()
 }
 
 /// Trash retention: trashed items are shredded after 30 days.

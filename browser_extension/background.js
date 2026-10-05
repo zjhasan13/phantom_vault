@@ -192,6 +192,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_STATS") {
       return await hostRequest({ cmd: "stats" });
     }
+    // The user's own "this is the working one" verdict, for logins and
+    // standalone 2FA accounts alike. `on` is coerced so a sloppy caller can
+    // never send an undefined into the native bool and have it default to
+    // "mark it" — un-marking is the rarer, deliberate action.
+    if (msg.type === "PV_VERIFY") {
+      touchActivity();
+      const r = await hostRequest({
+        cmd: "verify",
+        id: String(msg.id || ""),
+        on: msg.on === undefined ? true : !!msg.on,
+      });
+      retouchBadge();
+      return r;
+    }
     return { ok: false, error: "unknown message type" };
   })()
     .then(sendResponse)
