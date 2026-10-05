@@ -267,6 +267,114 @@
     });
   }
 
+  // ---------- 2FA ambiguity picker ----------
+  // Rendered inside a Shadow DOM so the host page's CSS (and ours) cannot reach
+  // into each other: a 2FA ceremony is a hostile page to style a widget on, and
+  // `all: initial` on the host keeps inherited `font-size`/`line-height` from
+  // shredding the layout.
+  let pvPicker = null;
+  function closeOtpPicker() {
+    if (pvPicker) {
+      try { pvPicker.host.remove(); } catch (_) {}
+      pvPicker = null;
+    }
+    document.removeEventListener("keydown", pvPickerEsc, true);
+    document.removeEventListener("mousedown", pvPickerOutside, true);
+  }
+  function pvPickerEsc(e) { if (e.key === "Escape") closeOtpPicker(); }
+  function pvPickerOutside(e) {
+    if (pvPicker && pvPicker.host && !pvPicker.host.contains(e.target)) closeOtpPicker();
+  }
+
+  // `candidates` come straight from the native ranked payload. We never sort
+  // here — the bridge already ordered them, and re-sorting in the client would
+  // hide the tie it wants the user to resolve.
+  function openOtpPicker(candidates, fields) {
+    closeOtpPicker();
+    if (!Array.isArray(candidates) || !candidates.length) return;
+    const anchor = (fields && fields.otp && fields.otp[0]) || findFields().otp[0];
+    const host = document.createElement("div");
+    host.id = "__pv_otp_picker";
+    host.style.cssText = "position:absolute;z-index:2147483647;all:initial;";
+    const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
+    const style = document.createElement("style");
+    style.textContent = `
+      .wrap{position:fixed;min-width:250px;max-width:330px;background:#17111f;color:#e9e5f0;
+        border:1px solid #3a2c46;border-radius:12px;box-shadow:0 12px 40px #000d;
+        font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
+      .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
+        color:#a99fb8;background:#1f1828;border-bottom:1px solid #3a2c46}
+      .row{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;
+        border-bottom:1px solid #2a2033}
+      .row:last-child{border-bottom:0}
+      .row:hover{background:#241b30}
+      .meta{flex:1;min-width:0}
+      .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .sub{font-size:11px;color:#9b93ab;margin-top:2px;white-space:nowrap;overflow:hidden;
+        text-overflow:ellipsis}
+      .code{font:800 15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;
+        color:#f5f3ff}
+      .tag{font:700 9px system-ui;letter-spacing:.3px;padding:2px 5px;border-radius:5px;
+        text-transform:uppercase;white-space:nowrap}
+      .ok{background:#14532d;color:#86efac}
+      .pri{background:#1e3a5f;color:#93c5fd}
+      .dup{background:#4a2c0a;color:#fcd34d}
+      .wait{font-size:11px;color:#9b93ab;padding:8px 11px;border-top:1px solid #3a2c46}
+    `;
+    root.appendChild(style);
+    const wrap = document.createElement("div");
+    wrap.className = "wrap";
+    wrap.innerHTML = '<div class="hd">যে 2FA account?</div>';
+    for (const c of candidates) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const name = c.account || c.issuer || "(unnamed)";
+      const bits = [];
+      if (c.verified) bits.push('<span class="tag ok">✅ Working</span>');
+      if (c.is_dup) bits.push('<span class="tag dup">⚠️ DUP</span>');
+      if (!c.verified && !c.is_dup && c.rank === 1) bits.push('<span class="tag pri">Primary</span>');
+      row.innerHTML =
+        `<div class="meta"><div class="name"></div>` +
+        `<div class="sub"></div></div>` +
+        `<div class="code"></div>`;
+      // textContent, never innerHTML, for anything vault-derived.
+      row.querySelector(".name").textContent = name;
+      const sub = row.querySelector(".sub");
+      sub.textContent = c.issuer && c.issuer !== name ? c.issuer : "";
+      for (const b of bits) sub.insertAdjacentHTML("beforeend", " " + b);
+      row.querySelector(".code").textContent = c.code || "······";
+      row.addEventListener("click", () => {
+        if (!c.code) {
+          toast(`⏳ নতুন code আসতে বাকি — ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
+          return;
+        }
+        closeOtpPicker();
+        fillTotpNow(c.code, findFields());
+        if (c.id) pingFilled(c.id);
+        toast("⚡ 2FA code filled");
+      });
+      wrap.appendChild(row);
+    }
+    // A row with no code is a withheld (expiring) one; clicking it says when
+    // to come back instead of doing nothing.
+    if (!candidates.some((c) => c && c.code)) {
+      const wait = candidates[0] ? candidates[0].next_in : null;
+      const w = document.createElement("div");
+      w.className = "wait";
+      w.textContent = `সব code-ই মেয়াদ শেষ — ${wait != null ? wait + "s পরে" : "কিছুক্ষণ পরে"} আবার চেপুন।`;
+      wrap.appendChild(w);
+    }
+    root.appendChild(wrap);
+    document.documentElement.appendChild(host);
+    // Anchor under the OTP box; fall back to top-right when it has no box.
+    const r = anchor ? anchor.getBoundingClientRect() : null;
+    host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
+    host.style.top = r ? `${Math.min(r.bottom + 6, window.innerHeight - 220)}px` : "80px";
+    pvPicker = { host };
+    document.addEventListener("keydown", pvPickerEsc, true);
+    document.addEventListener("mousedown", pvPickerOutside, true);
+  }
+
   function findFields() {
     // Strict classifier: search bars NEVER classify (YouTube/Google/Amazon
     // search boxes must not get badges, listeners, or dropdowns). Login =
@@ -334,9 +442,32 @@
     const scope = el.form || document;
     return [...scope.querySelectorAll('input[type="password"]')].some(isVisible);
   }
+  // Split-input OTP groups (Google/Stripe/banks) give their boxes names like
+  // "digit-0" or no name at all, so every keyword path below misses them and
+  // the whole ceremony went unrecognised. A tight sibling shape fixes it: 4-12
+  // children where EVERY child is a one-digit input. Requiring all children to
+  // be narrow boxes is what keeps this from firing on a quantity stepper or an
+  // expiry-year pair.
+  function inSplitOtpGroup(el) {
+    const p = el.parentElement;
+    if (!p) return false;
+    const sibs = [...p.children];
+    if (sibs.length < 4 || sibs.length > 12) return false;
+    let narrow = 0;
+    for (const c of sibs) {
+      if (c.tagName !== "INPUT") return false;
+      const t = (c.type || "").toLowerCase();
+      if (t === "password" || t === "hidden") return false;
+      if (String(c.getAttribute("maxlength") || "") !== "1") return false;
+      narrow++;
+    }
+    return narrow >= 4;
+  }
+
   function isOtpField(el) {
     if (isSearchField(el)) return false;
     if ((el.autocomplete || "").toLowerCase() === "one-time-code") return true;
+    if (inSplitOtpGroup(el)) return true;
     const hay = ((el.name || "") + " " + (el.id || "")).toLowerCase();
     if (/otp|2fa|two-factor|one-time|verif|token/.test(hay)) return true;
     // "code" as a standalone token only ("postcode"/"area-code" are addresses).
@@ -514,50 +645,96 @@
       if (form && form.requestSubmit) form.requestSubmit();
     }
   }
-  // Fresh-code guard (popup clipTotp mirror): codes injected with <5s
-  // left die on arrival. With an entry id we re-query past the rollover;
-  // without one (pending-only paths) we use the code as-is.
-  async function freshTotpFor(entryId, fallback) {
+  // ---------- OTP field writing ----------
+  // Split-input ("one box per digit") OTP groups are the norm on Google,
+  // Stripe and most bank 2FA screens, and they are what broke hands-free fill:
+  // stuffing the whole code into box 0 left boxes 1..n empty, so the page's
+  // validator rejected a code that was perfectly valid.
+  //
+  // `maxlength="1"` is the reliable signal. Grouping is scoped to a common
+  // ancestor so two unrelated one-char inputs elsewhere on the page (an expiry
+  // year, a quantity stepper) never get concatenated into one fake "code".
+  // Returns null when this is not a group that matches the code length.
+  function otpBoxGroup(codeLen) {
+    if (!codeLen) return null;
+    const narrow = [...document.querySelectorAll("input")].filter((el) => {
+      if (!isVisible(el)) return false;
+      const t = (el.type || "").toLowerCase();
+      if (t === "password" || t === "hidden") return false;
+      const ml = String(el.getAttribute("maxlength") || "");
+      if (ml === "1") return true;
+      // `size=1` is the older spelling of the same one-digit intent, but only
+      // trust it when maxlength was left unset rather than set to "-1".
+      return el.size === 1 && ml === "";
+    });
+    if (narrow.length < codeLen) return null;
+    // Group by parent element; take the tightest run that covers the code.
+    const byParent = new Map();
+    for (const el of narrow) {
+      const p = el.parentElement;
+      if (!p) continue;
+      if (!byParent.has(p)) byParent.set(p, []);
+      byParent.get(p).push(el);
+    }
+    let best = null;
+    for (const [, group] of byParent) {
+      if (group.length < codeLen) continue;
+      if (!best || group.length < best.length) best = group;
+    }
+    return best && best.length >= codeLen ? best.slice(0, codeLen) : null;
+  }
+
+  // Write one digit into one box WITHOUT blurring it: `setNativeValue` fires a
+  // blur per call, and blurring every box as we go makes most OTP components
+  // reset or re-render the group mid-distribution.
+  function setBoxDigit(el, digit) {
+    const proto = window.HTMLInputElement.prototype;
+    try { el.focus({ preventScroll: true }); } catch (_) {}
     try {
-      const remain = 30 - (Math.floor(Date.now() / 1000) % 30);
-      if (remain >= 5 || !entryId) return fallback;
-      const target = (Math.floor(Date.now() / 30000) + 1) * 30000 + 400;
-      await new Promise((r) => setTimeout(r, Math.max(0, target - Date.now())));
-      const ls = await queryHost("PV_QUERY", pageBase());
-      const e = (ls || []).find((x) => x && x.id === entryId);
-      if (e && e.totp) return e.totp;
-    } catch (_) {}
-    return fallback;
+      Object.getOwnPropertyDescriptor(proto, "value").set.call(el, digit);
+    } catch (_) { el.value = digit; }
+    // keyup matters as much as input here: several OTP libraries advance focus
+    // and recompute the joined value on keyup, not input.
+    for (const t of ["input", "change", "keyup"]) {
+      try { el.dispatchEvent(new Event(t, { bubbles: true })); } catch (_) {}
+    }
   }
+
+  // `entryId` is accepted and ignored: it used to drive the 30s re-query wait,
+  // which is gone now that the code arrives with a truthful `expires_in` from
+  // the native side. Kept in the signature so the login/pending fill paths
+  // don't all need rewriting.
   function fillTotp(code, fields, entryId) {
-    if (!code) return;
-    (async () => {
-      try {
-        const live = await freshTotpFor(entryId || "", code);
-        fillTotpNow(live, fields);
-      } catch (_) {
-        fillTotpNow(code, fields);
-      }
-    })();
+    void entryId;
+    fillTotpNow(code, fields);
   }
+
   function fillTotpNow(code, fields) {
     if (!code) return;
+    const digits = String(code).replace(/\s/g, "");
     const f = fields || findFields();
+    // Multi-box is checked FIRST, on purpose: `autocomplete="one-time-code"`
+    // routinely sits on box 0 of a split group, so a single-box-first order
+    // would funnel the entire code into the first digit box.
+    const boxes = otpBoxGroup(digits.length);
+    if (boxes && boxes.length === digits.length) {
+      boxes.forEach((box, i) => setBoxDigit(box, digits[i]));
+      if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
+      toast("⚡ 2FA code filled");
+      return;
+    }
     if (f.otp[0]) {
-      setNativeValue(f.otp[0], code.replace(/\s/g, ""));
+      setNativeValue(f.otp[0], digits);
       // Paste-ready fallback, auto-cleared in 30s — only when the
       // "Copy TOTP automatically" setting is on.
-      if (settings.copy_totp_auto !== false) copyWithAutoclear(code);
-      toast("✅ 2FA code filled");
-      if (settings.auto_submit) {
-        const form = f.otp[0].form;
-        if (form && form.requestSubmit) form.requestSubmit();
-      }
+      if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
+      toast("⚡ 2FA code filled");
     } else if (settings.copy_totp_auto !== false) {
-      copyWithAutoclear(code);
+      copyWithAutoclear(digits);
       toast("✅ 2FA code copied (no OTP field found)");
     }
   }
+
   function fillCard(entry) {
     const num = document.querySelector('input[autocomplete="cc-number"], input[name*="cardnumber" i]');
     const exp = document.querySelector('input[autocomplete="cc-exp"], input[name*="expir" i]');
@@ -1002,21 +1179,30 @@
   // 2FA-URL visits auto-fill even with no step-1 fill behind them.
   let otpDiagAt = 0;
   async function resolveOtpCode() {
-    if (pvPending && pvPending.totp) return { code: pvPending.totp };
+    if (pvPending && pvPending.totp) return { code: pvPending.totp, source: "pending" };
     try {
       const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
-      const list = (res && res.ok && res.codes) || [];
-      if (list[0] && list[0].code) {
-        console.log(`PV OTP from hub account: ${list[0].account || list[0].issuer || "?"}`);
-        return { code: list[0].code };
+      const list = (res && res.ok && res.candidates) || [];
+      if (!list.length) return { code: "" };
+      const top = list[0];
+      // Invariant: no blind guessing. More than one candidate, or any of them
+      // colliding on (issuer, account), means the user picks — a wrong code
+      // reads as "my authenticator is broken" and can lock the account out.
+      const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
+      if (ambiguous) return { code: "", candidates: list, ambiguous: true };
+      if (!top || !top.code) {
+        // Withheld by the native expiry guard: say when to retry rather than
+        // filling null and reporting a bridge failure.
+        return { code: "", candidates: list, expired: true, wait: top ? top.next_in : null };
       }
-    } catch (_) {}
-    return { code: "" };
+      return { code: top.code, source: "hub", id: top.id, expiresIn: top.expires_in };
+    } catch (_) {
+      return { code: "" };
+    }
   }
   function sweepOtpOnce() {
     sweepOtpAsync().catch(() => {});
-  }
-  async function sweepOtpAsync() {
+  }  async function sweepOtpAsync() {
     try {
       if (!settings.auto_inject_totp || isBlocked()) {
         if (Date.now() - otpDiagAt > 5000) {
@@ -1040,11 +1226,25 @@
       }
       const pendingState = pvPending ? (pvPending.totp ? "has-totp" : "no-totp") : "none";
       console.log(`PV OTP field sighted (${f.otp.length}), pending: ${pendingState}`);
-      const { code } = await resolveOtpCode();
-      if (code) {
+      const r = await resolveOtpCode();
+      if (r.ambiguous) {
+        // Hands-free means hands-free: a sweep must NOT pop UI the user never
+        // asked for. One hint, then the popup button is the way in.
+        toast("🔐 একাধিক 2FA account — popup থেকে বেছে নিন।");
+        console.log(`PV OTP: ${r.candidates.length} candidates, no blind auto-fill`);
+        return;
+      }
+      if (r.expired) {
+        const w = r.wait != null ? ` (${r.wait}s)` : "";
+        toast(`⏳ নতুন code আসতে বাকি${w} — একটু পরে আবার চাপুন।`);
+        return;
+      }
+      if (r.code) {
         f.otp[0].dataset.pvOtpFilled = "1";
-        await fillTotp(code, findFields(), "");
+        fillTotpNow(r.code, findFields());
+        if (r.id) pingFilled(r.id);
         pvPendingClear();
+        toast("⚡ 2FA code auto-filled");
       } else {
         console.log("PV OTP: no code from pending or hub");
       }
@@ -1422,9 +1622,9 @@
       if (msg.type === "PV_FILL_OTP") {
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
         if (!(await requireExtPin())) return { ok: false };
-        // Prefer the step-1 identity; else the first entry with TOTP;
-        // else the standalone 2FA Hub (login entries often lack secrets
-        // while the hub holds them — the exact Instagram gap).
+        // Prefer the step-1 identity; else the ranked 2FA Hub lookup (login
+        // entries often carry no secret while the hub holds them — the exact
+        // Instagram gap).
         let code = "", entryId = "";
         if (pvPending && pvPending.totp) {
           code = pvPending.totp;
@@ -1437,24 +1637,31 @@
           if (!code) {
             try {
               const res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
-              const list = (res && res.ok && res.codes) || [];
+              const list = (res && res.ok && res.candidates) || [];
+              const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
+              if (ambiguous) {
+                // Explicit user gesture (popup button) — so opening UI here is
+                // expected, unlike the passive sweep.
+                openOtpPicker(list, findFields());
+                return { ok: true, picker: true, candidates: list.length };
+              }
               if (list[0] && list[0].code) {
                 code = list[0].code;
-                console.log(`PV OTP from hub account: ${list[0].account || list[0].issuer || "?"}`);
+                entryId = list[0].id || "";
+              } else if (list[0] && list[0].next_in != null) {
+                toast(`⏳ নতুন code আসতে বাকি ${list[0].next_in}s`);
+                return { ok: false, error: "code expiring" };
               }
             } catch (_) {}
           }
         }
         if (!code) {
-          toast("🛡️ No TOTP code available for this site.");
-          return { ok: false };
-        }
-        if (!code) {
-          toast("🛡️ No TOTP code available for this site.");
+          toast("🛡️ এই সাইটের জন্য কোনো 2FA code নেই।");
           return { ok: false };
         }
         const f = findFields();
-        await fillTotp(code, f, entryId);
+        fillTotp(code, f, entryId);
+        if (entryId) pingFilled(entryId);
         return { ok: true };
       }
       // Step-1 handoff from popup fills (direct inject bypassed us): look
@@ -1472,7 +1679,33 @@
           }
         } catch (_) {}
         return { ok: true };
-      }      if (msg.type === "PV_MENU") {
+      }
+      // Fill by hub-account id. The popup shows the account + badge but NOT the
+      // secret-bearing code as its source of truth: it asks us to name an id,
+      // and the code is minted fresh inside the trusted host at this moment.
+      // A code cached in the popup would be the one thing able to go stale.
+      if (msg.type === "PV_FILL_OTP_ID") {
+        if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
+        if (!(await requireExtPin())) return { ok: false };
+        if (!msg.id) return { ok: false, error: "id required" };
+        let res = null;
+        try {
+          res = await chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: pageBase() });
+        } catch (_) {}
+        const list = (res && res.ok && res.candidates) || [];
+        const c = list.find((x) => x && x.id === msg.id);
+        if (!c) return { ok: false, error: "account no longer offered" };
+        if (!c.code) {
+          toast(`⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
+          return { ok: false, error: "code expiring" };
+        }
+        closeOtpPicker();
+        fillTotpNow(c.code, findFields());
+        pingFilled(c.id);
+        toast("⚡ 2FA code filled");
+        return { ok: true };
+      }
+      if (msg.type === "PV_MENU") {
         // Same guards as every other fill path: blocked domains, punycode /
         // spoofed hosts, and host-less pages (file://, about:blank) refuse.
         if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };

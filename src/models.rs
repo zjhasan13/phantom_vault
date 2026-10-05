@@ -432,18 +432,30 @@ impl Vault {
         }
     }
 
-    /// True when `id` is both marked AND a live login (stale marks from
-    /// deleted items never render). Pure.
+    /// True when `id` is both marked AND still a live, verifiable item
+    /// (stale marks from deleted items never render). Pure.
     pub fn is_verified(&self, id: &str) -> bool {
-        self.verified_ids.iter().any(|v| v == id)
-            && self.credentials.iter().any(|c| c.id == id)
+        self.verified_ids.iter().any(|v| v == id) && self.verifiable_id(id)
     }
 
-    /// Mark/unmark a login as working. Unknown ids are refused (typos can't
+    /// True when `id` names something whose "is this the working one?" flag
+    /// the user may set: a login OR a standalone 2FA hub account.
+    ///
+    /// 2FA cards joined this set because the bridge serves ranked TOTP
+    /// candidates (native_host `totp_lookup`) and the picker badges the real
+    /// account with a check mark. Without it every hub account would read as
+    /// "unverified" forever and the badge would be meaningless. Ids are UUIDs
+    /// across both collections, so the two id spaces cannot collide.
+    fn verifiable_id(&self, id: &str) -> bool {
+        self.credentials.iter().any(|c| c.id == id)
+            || self.totp_accounts.iter().any(|t| t.id == id)
+    }
+
+    /// Mark/unmark an item as working. Unknown ids are refused (typos can't
     /// pollute the list); stale ids are swept opportunistically. Pure.
-    /// Returns false when `id` is not a login in this vault.
+    /// Returns false when `id` is not a verifiable item in this vault.
     pub fn set_verified(&mut self, id: &str, on: bool) -> bool {
-        if !self.credentials.iter().any(|c| c.id == id) {
+        if !self.verifiable_id(id) {
             return false;
         }
         if on {
@@ -453,7 +465,12 @@ impl Vault {
         } else {
             self.verified_ids.retain(|v| v != id);
         }
-        let live: Vec<String> = self.credentials.iter().map(|c| c.id.clone()).collect();
+        let live: Vec<String> = self
+            .credentials
+            .iter()
+            .map(|c| c.id.clone())
+            .chain(self.totp_accounts.iter().map(|t| t.id.clone()))
+            .collect();
         self.verified_ids.retain(|v| live.iter().any(|id| id == v));
         true
     }
@@ -643,6 +660,37 @@ impl Vault {
         self.passkeys.retain(|p| fresh(p.deleted_at));
         before - self.trash_count()
     }
+}
+
+/// Identity of a 2FA card for duplicate-detection purposes.
+///
+/// The ` [Imported]` marker is stripped BEFORE comparing, so the original card
+/// and the copy we made for it resolve to the SAME key. Without that, every
+/// subsequent import would look novel and the duplicate badge would vanish the
+/// moment the user resolved a conflict.
+///
+/// Lives here, not in the UI module, because the native bridge needs the same
+/// definition to flag `is_dup` on ranked lookup candidates. A hub badge that
+/// disagreed with the bridge's ambiguity check would be a lie in both
+/// directions. Pure — unit tested.
+pub fn dup_key(issuer: &str, name: &str) -> (String, String) {
+    (
+        issuer.trim().to_lowercase(),
+        crate::authenticator::universal_2fa::strip_dup_suffix(name.trim()).to_lowercase(),
+    )
+}
+
+/// For every card, whether another card shares its (issuer, name). A lone card
+/// is never flagged, so the badge keeps meaning something. Pure — unit tested.
+pub fn dup_marks(accs: &[&TotpAccount]) -> Vec<bool> {
+    let mut counts: std::collections::HashMap<(String, String), usize> =
+        std::collections::HashMap::new();
+    for a in accs {
+        *counts.entry(dup_key(&a.issuer, &a.account_name)).or_insert(0) += 1;
+    }
+    accs.iter()
+        .map(|a| counts[&dup_key(&a.issuer, &a.account_name)] > 1)
+        .collect()
 }
 
 /// Trash retention: trashed items are shredded after 30 days.

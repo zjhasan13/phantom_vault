@@ -1039,19 +1039,79 @@
     } catch (_) {}
   }
   otpFillBtn.addEventListener("click", async () => {
-    otpFillBtn.textContent = "⏳…";
+    otpFillBtn.textContent = "…";
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || tab.id == null) return;
+      // Look up FIRST so the popup can disambiguate itself. The content
+      // script opens an anchored picker too, but the popup is the reliable
+      // surface when the OTP field sits in a modal that clips it.
       const res = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_TOTP_LOOKUP", app: tab.url || hostBase || "" }),
+        QUERY_TIMEOUT_MS, "2fa lookup");
+      const list = (res && res.ok && res.candidates) || [];
+      const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
+      if (ambiguous) {
+        renderOtpCandidates(list, tab.id);
+        status.textContent = `${list.length} টি 2FA account — যেটা কাজ করে সেটি বেছে নিন।`;
+        return;
+      }
+      if (list.length === 1 && list[0] && !list[0].code) {
+        const w = list[0].next_in != null ? ` ${list[0].next_in}s পরে` : "";
+        status.textContent = `⏳ code মেয়াদ শেষ হয়ে যাচ্ছে —${w} আবার চাপুন।`;
+        return;
+      }
+      const out = await withTimeout(
         chrome.tabs.sendMessage(tab.id, { type: "PV_FILL_OTP" }), QUERY_TIMEOUT_MS, "otp fill");
-      status.textContent = res && res.ok ? "✅ 2FA code filled." : "⚠️ " + ((res && res.error) || "OTP fill failed");
+      status.textContent = out && out.ok ? "⚡ 2FA code filled." : "⚠️ " + ((out && out.error) || "OTP fill failed");
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || "OTP fill failed");
     } finally {
       otpFillBtn.textContent = "🔑 Fill 2FA code";
     }
   });
+
+  // Popup-side candidate list for the ambiguous case. Ranking is NOT re-sorted
+  // here: the native bridge ordered these, and second-guessing its tie would
+  // hide the very ambiguity the user opened the popup to resolve.
+  function renderOtpCandidates(list, tabId) {
+    const box = document.getElementById("otpCandList");
+    if (!box) return;
+    box.textContent = "";
+    for (const c of list) {
+      const row = document.createElement("div");
+      row.className = "row";
+      const tags = [];
+      if (c.verified) tags.push("✅ Working");
+      if (c.is_dup) tags.push("⚠️ DUP");
+      if (!c.verified && !c.is_dup && c.rank === 1) tags.push("Primary");
+      const title = c.account || c.issuer || "(unnamed)";
+      const sub = [c.issuer && c.issuer !== title ? c.issuer : "", tags.join(" · ")]
+        .filter(Boolean).join(" · ");
+      row.innerHTML =
+        `<div style="flex:1;min-width:0"><div class="nm"></div><div class="u"></div></div>` +
+        `<code class="pwDots" style="letter-spacing:2px"></code>`;
+      row.querySelector(".nm").textContent = title;
+      row.querySelector(".u").textContent = sub;
+      row.querySelector("code").textContent = c.code || "······";
+      row.addEventListener("click", async () => {
+        if (!c.code) {
+          status.textContent = `⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`;
+          return;
+        }
+        // The code lives in the trusted host, not here: ask the page to fill
+        // by ACCOUNT, so a code typed into the DOM is never our copy.
+        const out = await withTimeout(
+          chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }),
+          QUERY_TIMEOUT_MS, "otp fill by id");
+        status.textContent = out && out.ok
+          ? "⚡ 2FA code filled."
+          : "⚠️ " + ((out && out.error) || "OTP fill failed");
+        if (out && out.ok) window.close();
+      });
+      box.appendChild(row);
+    }
+  }
   // Per-site "never suggest": appends this host to blocked_domains (the
   // same list content.js enforces — badges, dropdowns, autofill all stop).
   if (neverBtn) {
