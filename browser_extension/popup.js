@@ -174,7 +174,12 @@
   };
   langBtn.addEventListener("click", async () => {
     lang = lang === "en" ? "bn" : "en";
-    await chrome.storage.local.set({ lang });
+    try {
+      await chrome.storage.local.set({ lang });
+    } catch (_) {
+      lang = lang === "en" ? "bn" : "en";
+      return;
+    }
     applyLang();
   });
 
@@ -219,8 +224,12 @@
       if (lab) lab.textContent = t(i18nKey) || fallback;
     }
     document.getElementById("matchLab").textContent = t("match_label");
-    document.querySelector("#settingsPane .row .t").textContent = t("blocked_h");
-    document.querySelector("#settingsPane .hint").textContent = t("blocked_hint");
+    // M20: target rows by ID, never document-order (the Auto-Lock row
+    // sits above Blocked Domains and used to eat its translations).
+    document.getElementById("lockTimeoutH").textContent = t("lock_timeout_h");
+    document.getElementById("lockTimeoutHint").textContent = t("lock_timeout_hint");
+    document.getElementById("blockedH").textContent = t("blocked_h");
+    document.getElementById("blockedHint").textContent = t("blocked_hint");
     for (const [key] of TOGGLES) inputs[key].checked = cur[key] !== false;
     modeSel.value = cur.match_mode || "base";
     blockedEl.value = (cur.blocked_domains || []).join("\n");
@@ -230,8 +239,13 @@
     for (const [key] of TOGGLES) out[key] = inputs[key].checked;
     out.match_mode = modeSel.value;
     out.blocked_domains = blockedEl.value.split("\n").map((d) => d.trim().toLowerCase()).filter(Boolean);
-    await chrome.storage.local.set(out);
     const hint = document.getElementById("saveHint");
+    try {
+      await chrome.storage.local.set(out);
+    } catch (_) {
+      hint.textContent = "⚠️ Could not save settings";
+      return;
+    }
     hint.textContent = t("saved");
     setTimeout(() => { hint.textContent = ""; }, 2500);
   });
@@ -248,8 +262,11 @@
       box.textContent = "🔒 Vault is locked. Please unlock PhantomVault desktop app.";
       return;
     }
-    const total = s.logins + s.cards + s.notes + s.identities + s.ssh_keys + s.licenses + s.passkeys;
-    const color = s.score >= 80 ? "#10b981" : s.score >= 50 ? "#fbbf24" : "#fb7185";
+    // Field guards: older host builds omit keys (NaN score/width otherwise).
+    const num = (v) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    const total = num(s.logins) + num(s.cards) + num(s.notes) + num(s.identities) + num(s.ssh_keys) + num(s.licenses) + num(s.passkeys);
+    const score = Math.min(100, Math.max(0, num(s.score)));
+    const color = score >= 80 ? "#10b981" : score >= 50 ? "#fbbf24" : "#fb7185";
     box.innerHTML = "";
     const mk = (label, val) => {
       const d = document.createElement("div");
@@ -262,17 +279,17 @@
     const grid = document.createElement("div");
     grid.className = "statgrid";
     grid.append(
-      mk("Items", total), mk("2FA", s.totp_accounts),
-      mk(t("fills"), s.total_fills), mk(t("stale_n"), s.stale),
-      mk(t("reused_n"), s.reused_groups), mk("Logins", s.logins),
+      mk("Items", total), mk("2FA", num(s.totp_accounts)),
+      mk(t("fills"), num(s.total_fills)), mk(t("stale_n"), num(s.stale)),
+      mk(t("reused_n"), num(s.reused_groups)), mk("Logins", num(s.logins)),
     );
     const lab = document.createElement("div");
     lab.className = "t";
-    lab.textContent = `${t("score")}: ${s.score}/100`;
+    lab.textContent = `${t("score")}: ${score}/100`;
     const bar = document.createElement("div");
     bar.className = "scorebar";
     const fill = document.createElement("div");
-    fill.style.width = `${s.score}%`;
+    fill.style.width = `${score}%`;
     fill.style.background = color;
     bar.append(fill);
     box.append(lab, bar, grid);
@@ -332,6 +349,22 @@
   // vault browser below remains usable.
   const noHost = !host;
   console.log("PV tab host:", host ? `${host} (base: ${hostBase})` : "(none — suggestions off)");
+  // H4: fill-time gates mirror content.js — match_mode (exact/host/base)
+  // and blocked_domains are enforced HERE, not just in settings plumbing.
+  // Loaded once at boot (popup lifetime is seconds; a mid-open settings
+  // change applies on next open — same as every other popup pref).
+  let matchMode = "base";
+  let blockedList = [];
+  try {
+    chrome.storage.local.get({ match_mode: "base", blocked_domains: [] }).then((s) => {
+      matchMode = s.match_mode || "base";
+      blockedList = (s.blocked_domains || []).map((d) => String(d || "").trim().toLowerCase()).filter(Boolean);
+    }).catch(() => {});
+  } catch (_) {}
+  function pageBlocked() {
+    if (!hostBase) return false;
+    return blockedList.some((t) => t && (hostBase === t || hostBase.endsWith("." + t)));
+  }
 
   function pageBase(h) {
     const parts = String(h || "").toLowerCase().split(".").filter(Boolean);
@@ -399,15 +432,25 @@
     });
   }
   function entryAllowed(e) {
-    // Fill gate mirrors the suggestion gate (strict domains + clusters).
-    // Url-less legacy entries pass through (nothing to verify against).
+    // Fill gate mirrors the suggestion gate AND the match_mode:
+    // exact = full URL equality, host = hostname equality, base = strict
+    // domains + equivalent clusters. Url-less legacy entries pass through
+    // (nothing to verify against).
     const urls = e.urls || [];
     if (!urls.length) return true;
+    const pageHref = (tabUrl || "").split("#")[0].replace(/\/$/, "");
     return urls.some((raw) => {
+      let u;
       try {
-        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
-        return domainMatchesPage(u.hostname);
+        u = new URL(raw.includes("://") ? raw : "https://" + raw);
       } catch (_) { return false; }
+      if (matchMode === "exact") {
+        return !!pageHref && u.href.split("#")[0].replace(/\/$/, "") === pageHref;
+      }
+      if (matchMode === "host") {
+        return !!host && u.hostname.toLowerCase() === host.toLowerCase();
+      }
+      return domainMatchesPage(u.hostname);
     });
   }
   // Shared injectors: fill returns which fields landed; submit clicks the
@@ -453,8 +496,13 @@
     return !!(res && res.result);
   }
   function fillGuards(entry) {
-    // Popup-side guards (content.js can't interpose here): reprompt needs
-    // explicit presence; mismatched domains refuse like the page path.
+    // Popup-side guards (content.js can't interpose here): blocked-domain
+    // list FIRST (never-suggest means never-fill), reprompt needs explicit
+    // presence, mismatched domains refuse like the page path.
+    if (pageBlocked()) {
+      status.textContent = "🚫 Blocked domain — autofill refused. Remove it from Blocked Domains to fill here.";
+      return false;
+    }
     if (entry.reprompt) {
       if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return false;
     }
@@ -753,10 +801,19 @@
     return true;
   }
   // Retry (wired once): re-probe desktop, restart idle clock, load vault.
+  // Whole body guarded: an unhandled rejection here leaves a stuck "…" msg.
   document.getElementById("extRetryBtn").addEventListener("click", async () => {
     const msg = document.getElementById("extLockMsg");
-    msg.style.color = "";
-    msg.textContent = "⏳ …";
+    try {
+      msg.style.color = "";
+      msg.textContent = "⏳ …";
+      await retryUnlock(msg);
+    } catch (err) {
+      msg.style.color = "#ff6b6b";
+      msg.textContent = "⚠️ " + ((err && err.message) || err);
+    }
+  });
+  async function retryUnlock(msg) {
     if (await desktopReachable()) {
       // NOTE: no UNLOCKED_TOUCH here — it would clear the inactivity flag
       // before ensureUnlocked reads it, silently skipping the quick-PIN.
@@ -767,7 +824,7 @@
       msg.style.color = "#ff6b6b";
       msg.textContent = t("sync_still_locked");
     }
-  });
+  }
   // Popup interaction counts as activity (throttled 30s): keeps the idle
   // clock fresh while the user browses/copies inside the popup.
   // (lastActPing/touchActivityPing are declared near clipText above.)
@@ -946,7 +1003,11 @@
       if (!f.q) renderEmptyCard();
       else status.textContent = t("no_match", f.q || host);
     }
-    focusRow(0);
+    // M17: never rip focus out of the search box mid-query — a render
+    // triggered by the 200ms debounce used to move focus to row 0, so the
+    // rest of the keystrokes landed in the row keydown handler (Enter then
+    // filled the WRONG first entry).
+    if (document.activeElement !== searchBox) focusRow(0);
   }
 
   // Empty state: illustration + headline + inline save form with the
@@ -1153,20 +1214,35 @@
       row.querySelector(".nm").textContent = title;
       row.querySelector(".u").textContent = sub;
       row.querySelector("code").textContent = c.code || "······";
+      // M19: candidate codes are readable as long as the popup lives — mask
+      // after 30s like every other ephemeral secret surface (the fill still
+      // works by id; only the DISPLAY is withdrawn).
+      if (c.code) {
+        const codeEl = row.querySelector("code");
+        setTimeout(() => {
+          if (codeEl.isConnected) codeEl.textContent = "······";
+        }, 30000);
+      }
       row.addEventListener("click", async () => {
-        if (!c.code) {
-          status.textContent = `⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`;
-          return;
+        // M18: every await here used to reject unhandled (stuck button,
+        // silent status) when the tab vanished mid-click.
+        try {
+          if (!c.code) {
+            status.textContent = `⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`;
+            return;
+          }
+          // The code lives in the trusted host, not here: ask the page to fill
+          // by ACCOUNT, so a code typed into the DOM is never our copy.
+          const out = await withTimeout(
+            chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }),
+            QUERY_TIMEOUT_MS, "otp fill by id");
+          status.textContent = out && out.ok
+            ? "⚡ 2FA code filled."
+            : "⚠️ " + ((out && out.error) || "OTP fill failed");
+          if (out && out.ok) window.close();
+        } catch (err) {
+          status.textContent = "⚠️ " + ((err && err.message) || "OTP fill failed");
         }
-        // The code lives in the trusted host, not here: ask the page to fill
-        // by ACCOUNT, so a code typed into the DOM is never our copy.
-        const out = await withTimeout(
-          chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }),
-          QUERY_TIMEOUT_MS, "otp fill by id");
-        status.textContent = out && out.ok
-          ? "⚡ 2FA code filled."
-          : "⚠️ " + ((out && out.error) || "OTP fill failed");
-        if (out && out.ok) window.close();
       });
       box.appendChild(row);
     }
@@ -1368,6 +1444,9 @@
   }
   async function refreshTotpCodes() {
     try {
+      // M21: no TOTP rows on screen ⇒ no bridge spawn at all (zero-TOTP
+      // vaults used to cost 2 host processes a minute doing nothing).
+      if (!document.querySelector("[data-totp-id]")) return;
       if (!host) return;
       const q = await withTimeout(
         chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "totp refresh");

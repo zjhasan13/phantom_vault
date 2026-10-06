@@ -308,11 +308,11 @@ Keep comments concise and maintain maximum code clarity.
 
 ---
 
-## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 362 tests green)
+## 5. PRODUCTION BASELINE — MASTER CONSTITUTION (v0.1.0, 367 tests green)
 
-Scale: 60+ Rust modules (65 `.rs` files), 362 unit tests passing / 0 failing
+Scale: 60+ Rust modules (66 `.rs` files), 367 unit tests passing / 0 failing
 (1 ignored: live HIBP network test), `cargo check` zero-warning.
-(Counts verified 2026-10-05; update with `cargo test` output, not memory.)
+(Counts verified 2026-10-06; update with `cargo test` output, not memory.)
 
 Architecture (all shipped, all tested):
 - NIST FIPS 203 ML-KEM-768 hybrid key layer (`PV2` portable container with
@@ -367,6 +367,11 @@ Architecture (all shipped, all tested):
   minimal HTTP (pull/push), ciphertext-only, SHA+mtime conflict guard,
   server-side freshness gate (stale pushes → 409), DPAPI-sealed 6-digit
   pairing PIN gating BOTH endpoints (Settings shows PIN + regenerate).
+  BREAKING: plaintext-PIN auth retired — challenge-response HMAC-SHA256
+  (PIN key, single-use 60s nonces, constant-time compare, throttle-shared
+  failures, legacy `pin` field refused). Old builds cannot sync with new
+  ones (same-app LAN: upgrade both). Pairing never configured ⇒ listener
+  never serves (fail-closed); corrupt PIN ⇒ fail-closed, never open.
 - 1-Click GitHub Releases Auto-Updater (`sync/updater.rs`): semver compare,
   staged download, post-exit swap script, MANDATORY SHA-256 sidecar verify
   (fail-closed, staged file shredded on mismatch). Trust root: TLS + pinned

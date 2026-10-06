@@ -54,18 +54,17 @@ pub fn plant_canary(vault: &mut Vault) -> String {
 }
 
 /// Record a trip. Timestamped, single-line, append-only.
+/// M14: append-mode write (never read-modify-write — `fs::write` truncates
+/// first, so a crash or concurrent tripper could wipe the whole history).
 pub fn record_trip(title: &str, via: &str) {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let line = format!("{now} CANARY-TRIPPED title={title:?} via={via}\n");
-    if let Ok(existing) = std::fs::read(ALERT_FILE) {
-        let mut buf = existing;
-        buf.extend_from_slice(line.as_bytes());
-        let _ = std::fs::write(ALERT_FILE, buf);
-    } else {
-        let _ = std::fs::write(ALERT_FILE, line.as_bytes());
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(ALERT_FILE) {
+        use std::io::Write;
+        let _ = f.write_all(line.as_bytes());
     }
 }
 

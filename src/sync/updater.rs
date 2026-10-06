@@ -410,12 +410,14 @@ pub fn download_asset(info: &ReleaseInfo) -> Result<std::path::PathBuf> {
 pub fn stage_swap_script(staged_exe: &std::path::Path, tag: &str) -> Result<std::path::PathBuf> {
     let live = std::env::current_exe().map_err(|e| VaultError::Sync(format!("current exe: {e}")))?;
     // Batch injection guard: a `"` or line-break in either path would break
-    // out of the quoted `move`/`start` lines. TEMP/exe paths with quotes are
-    // pathological — fail LOUD instead of writing a weaponizable script.
+    // out of the quoted `move`/`start` lines, and `%..%` would expand as an
+    // environment variable at swap time (self-inflicted plant via a crafted
+    // TEMP path). TEMP/exe paths with any of these are pathological — fail
+    // LOUD instead of writing a weaponizable script.
     for p in [staged_exe, live.as_path()] {
         let s = p.to_string_lossy();
-        if s.contains(['"', '\n', '\r']) {
-            return Err(VaultError::Sync("refusing to stage: path contains quote/newline".into()));
+        if s.contains(['"', '\n', '\r', '%']) {
+            return Err(VaultError::Sync("refusing to stage: path contains quote/newline/percent".into()));
         }
     }
     let pid = std::process::id();

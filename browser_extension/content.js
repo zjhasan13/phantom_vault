@@ -73,11 +73,30 @@
   // re-fills one field instead of us parking their password on disk), and the
   // code is minted natively at the moment of fill, so it is never stored stale.
   const PV_PENDING_TTL_MS = 5 * 60 * 1000;
+  // Site-scoped pin: the id is only usable on the registrable base where
+  // the step-1 fill happened. A stale pin restored after navigating to a
+  // DIFFERENT site must never ride into that site's lookup (the native
+  // trusted path would serve it without text similarity) — wrong account's
+  // code, possible lockout. `pinSite()` centralises the comparison.
+  function pinSite() {
+    try {
+      return pageBase().toLowerCase();
+    } catch (_) {
+      return "";
+    }
+  }
+  function pinnedTotpId() {
+    try {
+      if (pvPending && pvPending.totpId && (pvPending.site || "") === pinSite() && pinSite()) return pvPending.totpId;
+    } catch (_) {}
+    return "";
+  }
   function pvPendingPersist() {
     try {
       if (pvPending && pvPending.totpId) {
+        pvPending.site = pinSite();
         chrome.storage.session.set({
-          pvPending: { totpId: pvPending.totpId, at: Date.now() },
+          pvPending: { totpId: pvPending.totpId, site: pvPending.site, at: Date.now() },
         }).catch(() => {});
       }
     } catch (_) {}
@@ -91,9 +110,16 @@
         // read back into memory.
         if (p && p.totpId && !(p.password || p.totp) &&
             Date.now() - (p.at || 0) < PV_PENDING_TTL_MS) {
-          pvPending = { password: "", totpId: p.totpId };
-          console.log("PV pending restored across navigation");
-          try { sweepOtpOnce(); } catch (_) {}
+          // Site-scoped restore: a pin from another site is dropped even
+          // though it is fresh (see pinSite()).
+          if ((p.site || "") && (p.site || "") !== pinSite()) {
+            console.log("PV dropped a cross-site pending pin");
+            chrome.storage.session.remove("pvPending").catch(() => {});
+          } else {
+            pvPending = { password: "", totpId: p.totpId, site: p.site || pinSite() };
+            console.log("PV pending restored across navigation");
+            try { sweepOtpOnce(); } catch (_) {}
+          }
         } else if (p && (p.password || p.totp)) {
           chrome.storage.session.remove("pvPending").catch(() => {});
           console.log("PV dropped a legacy secret-bearing pending stash");
@@ -746,7 +772,7 @@
   // popup Retry — the bridge itself still gates every secret below.
   let extDeskOkPage = false;
   let extDeskPending = null;
-  async function requireExtPin() {
+  async function requireExtPin(quiet) {
     if (extDeskOkPage) return true;
     if (extDeskPending) return extDeskPending;
     extDeskPending = (async () => {
@@ -755,7 +781,7 @@
         try { sess = await chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }); } catch (_) {}
         if (sess && sess.ok && sess.locked) {
           console.log("PV gate: session inactive — refusing page action");
-          toast("🔒 Session auto-locked — open the PhantomVault popup and press Retry.");
+          if (!quiet) toast("🔒 Session auto-locked — open the PhantomVault popup and press Retry.");
           return false;
         }
         let pong = null;
@@ -766,7 +792,7 @@
           return true;
         }
         console.log("PV gate: desktop unreachable — refusing page action");
-        toast("🔒 Vault is locked. Unlock PhantomVault desktop app.");
+        if (!quiet) toast("🔒 Vault is locked. Unlock PhantomVault desktop app.");
         return false;
       } finally {
         extDeskPending = null;
@@ -819,9 +845,21 @@
       ok.focus();
     });
   }
+  // H3: the `filled` reply carries the post-fill `verified` state — consume
+  // it. `verifiedSeen` mirrors rows already badged (seeded per query), so a
+  // crossing fill toasts exactly once instead of disagreeing silently.
+  const verifiedSeen = new Set();
   function pingFilled(id) {
-    if (!id) return;
-    chrome.runtime.sendMessage({ type: "PV_FILLED", id }).catch(() => {});
+    if (!id) return Promise.resolve(null);
+    return chrome.runtime.sendMessage({ type: "PV_FILLED", id }).catch(() => null);
+  }
+  function noteVerifiedCrossing(id, reply) {
+    try {
+      if (reply && reply.ok && reply.verified && id && !verifiedSeen.has(id)) {
+        verifiedSeen.add(id);
+        toast("✅ Marked as verified working.");
+      }
+    } catch (_) {}
   }
   // The user's own "this is the working one" verdict, for logins and 2FA hub
   // accounts alike. Returns the resulting `verified` state, or null when the
@@ -863,13 +901,13 @@
       setNativeValue(f.pass[0], entry.password);
       // Multi-step chaining: remember the step-2 password in JS memory and
       // remember only WHICH account the OTP step belongs to.
-      pvPending = { password: entry.password, totpId: entry.id || "" };
+      pvPending = { password: entry.password, totpId: entry.id || "", site: pinSite() };
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     } else if (f.users[0] && entry.username && entry.password) {
       // Step 1 filled email only: stash so the password step (rendered later)
       // can chain via chainPendingStep/otpObserver.
-      pvPending = { password: entry.password, totpId: entry.id || "" };
+      pvPending = { password: entry.password, totpId: entry.id || "", site: pinSite() };
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
@@ -884,7 +922,10 @@
     staleNudge(entry);
     // Exactly one `filled` stamp per user gesture: `fillFromCandidate` pings the
     // candidate it filled, so ping here only when no OTP candidate claimed it.
-    if (!otpFilled) pingFilled(entry.id);
+    // H3: consume the reply — a crossing fill toasts once (verifiedSeen).
+    if (!otpFilled) {
+      pingFilled(entry.id).then((r) => noteVerifiedCrossing(entry.id, r)).catch(() => {});
+    }
     notePicked();
     if (settings.auto_submit) {
       const form = (f.pass[0] || f.users[0] || document.activeElement || {}).form;
@@ -1013,7 +1054,7 @@
   function fillFromCandidate(c) {
     if (!c || !c.code) return false;
     if (!fillTotpNow(c.code, findFields())) return false;
-    if (c.id) pingFilled(c.id);
+    if (c.id) pingFilled(c.id).then((r) => noteVerifiedCrossing(c.id, r)).catch(() => {});
     toast("⚡ 2FA code filled");
     return true;
   }
@@ -1027,17 +1068,30 @@
   // already knows its entry id never loses coverage to a text-matching gap. It
   // widens matching only — the code is still minted on the spot and still passes
   // the expiry guard.
+  //
+  // M2: the failure REASON is sticky in `lastTotpError` (reset per call) so
+  // toasts can tell "vault locked" apart from "no code for this site"
+  // instead of downgrading every native error to an empty list silently.
+  let lastTotpError = "";
   async function totpCandidates(app, id) {
-    if (isBlocked() || phishingRefuse() || !location.host) return [];
+    lastTotpError = "";
+    if (isBlocked() || phishingRefuse() || !location.host) {
+      lastTotpError = "blocked";
+      return [];
+    }
     try {
       const res = await chrome.runtime.sendMessage({
         type: "PV_TOTP_LOOKUP",
         app: app || pageBase(),
         ...(id ? { id: String(id) } : {}),
       });
-      if (!res || res.ok !== true) return [];
+      if (!res || res.ok !== true) {
+        lastTotpError = (res && res.error) || "bridge failed";
+        return [];
+      }
       return Array.isArray(res.candidates) ? res.candidates.filter(Boolean) : [];
-    } catch (_) {
+    } catch (e) {
+      lastTotpError = (e && e.message) || "bridge failed";
       return [];
     }
   }
@@ -1049,8 +1103,10 @@
     const holder = document.querySelector('input[autocomplete="cc-name"], input[name*="cardholder" i]');
     if (holder && entry.cardholder) setNativeValue(holder, entry.cardholder);
     if (num && entry.number) setNativeValue(num, entry.number);
-    if (exp && (entry.exp_month || entry.exp_year)) {
-      setNativeValue(exp, `${entry.exp_month || ""}/${entry.exp_year || ""}`);
+    // Both halves or nothing: a lone year used to write literal "/2027"
+    // (the popup path already refuses that — same rule here).
+    if (exp && entry.exp_month && entry.exp_year) {
+      setNativeValue(exp, `${entry.exp_month}/${entry.exp_year}`);
     }
     if (cvc && entry.cvv) setNativeValue(cvc, entry.cvv);
     pingFilled(entry.id);
@@ -1270,6 +1326,7 @@
         (b.last_filled || 0) - (a.last_filled || 0) ||
         String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
     );
+    for (const e of ranked) if (e && e.verified && e.id) verifiedSeen.add(e.id);
     return ranked.map((e) => {
       const badge = [e.verified ? "✅" : "", hIcon(e.health)].filter(Boolean).join(" ");
       const sub = [e.username || "", badge, e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
@@ -1503,11 +1560,15 @@
   // its window, and with no way to notice. Re-querying by id keeps the native
   // freshness guard and the sidecar stamp on this path too.
   async function resolveOtpCode() {
-    const list = await totpCandidates();
+    // M1: the pinned step-1 id rides INTO the lookup (native serves a known
+    // id even when its issuer/domain text would not score as a match), not
+    // just into the post-hoc ambiguity check below.
+    // Site-scoped via pinnedTotpId(): a pin from another site never leaves.
+    const pinnedId = pinnedTotpId();
+    const list = await totpCandidates(undefined, pinnedId || undefined);
     if (!list.length) return { code: "" };
     // Pinned identity wins the ambiguity check (a known id is not a guess), but
     // only while it is still among this site's ranked candidates.
-    const pinnedId = pvPending && pvPending.totpId;
     const top = (pinnedId && list.find((c) => c.id === pinnedId)) || null;
     if (top) {
       if (!top.code) {
@@ -1529,8 +1590,16 @@
   }
   function sweepOtpOnce() {
     sweepOtpAsync().catch(() => {});
-  }  async function sweepOtpAsync() {
+  }
+  // H5: mutation storms (React 2FA screens emit thousands) must not spawn a
+  // native host process per mutation. At most one sweep per 1.5s; the OTP
+  // flag + filled marker make repeats cheap no-ops in between.
+  let otpSweepAt = 0;
+  async function sweepOtpAsync() {
     try {
+      const nowMs = Date.now();
+      if (nowMs - otpSweepAt < 1500) return;
+      otpSweepAt = nowMs;
       if (!settings.auto_inject_totp || isBlocked()) {
         if (Date.now() - otpDiagAt > 5000) {
           otpDiagAt = Date.now();
@@ -1549,6 +1618,12 @@
           });
           console.log(`PV OTP sweep: ${all.length} visible input(s), 0 OTP. Fields: ${desc.join(" ; ")}`);
         }
+        return;
+      }
+      // M5: passive sweep needs the same presence gate as every other fill —
+      // quiet (no toast spam on a timer-driven path), console only.
+      if (!(await requireExtPin(true))) {
+        console.log("PV OTP sweep: gate closed (locked/inactive)");
         return;
       }
       const pinnedId = (pvPending && pvPending.totpId) || "";
@@ -1573,7 +1648,8 @@
         pvPendingClear();
         toast("⚡ 2FA code auto-filled");
       } else {
-        console.log("PV OTP: no ranked candidate for this page");
+        // M2: say WHY — vault locked/bridge down is not "no code here".
+        console.log(`PV OTP: no ranked candidate for this page (${lastTotpError || "empty"})`);
       }
     } catch (_) {}
   }
@@ -1712,6 +1788,10 @@
     no.addEventListener("click", dismiss);
     setTimeout(dismiss, 30000);
     save.addEventListener("click", async () => {
+      // Double-click guard: two rapid clicks used to fire two upserts (and a
+      // double history rotation). First click wins; failures re-arm.
+      if (save.disabled) return;
+      save.disabled = true;
       save.textContent = "⏳ Saving…";
       try {
         const res = await chrome.runtime.sendMessage({
@@ -1725,9 +1805,11 @@
           dismiss();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
+          save.disabled = false;
         }
       } catch (_) {
         save.textContent = "⚠️ Bridge unreachable";
+        save.disabled = false;
       }
     });
   }
@@ -1763,6 +1845,10 @@
     no.addEventListener("click", dismiss);
     setTimeout(dismiss, 30000);
     save.addEventListener("click", async () => {
+      // Double-click guard: two rapid clicks used to fire two upserts (and a
+      // double history rotation). First click wins; failures re-arm.
+      if (save.disabled) return;
+      save.disabled = true;
       save.textContent = "⏳ Updating…";
       try {
         const res = await chrome.runtime.sendMessage({
@@ -1776,9 +1862,11 @@
           dismiss();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
+          save.disabled = false;
         }
       } catch (_) {
         save.textContent = "⚠️ Bridge unreachable";
+        save.disabled = false;
       }
     });
   }
@@ -1964,11 +2052,13 @@
         // A step-1 fill already established WHICH account this ceremony belongs
         // to. That is a known identity, not a guess, so it may resolve without a
         // picker — but the code is still minted natively right now, never
-        // replayed from the stash. If the pinned id no longer matches this site
-        // (deleted account, a second tab on a different site) it is simply not
-        // found, and the normal ambiguity rules apply again.
-        const pinned = pvPending && pvPending.totpId
-          ? list.find((c) => c.id === pvPending.totpId)
+        // replayed from the stash. Site-scoped (pinnedTotpId): a stale pin
+        // from another site never leaves, so the native trusted path cannot
+        // be steered cross-site. If the pinned id no longer matches this
+        // site (deleted account) it is simply not found, and the normal
+        // ambiguity rules apply again.
+        const pinned = pinnedTotpId()
+          ? list.find((c) => c.id === pinnedTotpId())
           : null;
         if (pinned) {
           if (!pinned.code) {
@@ -1992,7 +2082,8 @@
             return { ok: false, error: "code expiring" };
           }
         }
-        toast(ct("no_site_code"));
+        // M2: locked/bridge-down is not "no code here" — say so truthfully.
+        toast(/lock|closed|unreach|bridge|denied|blocked/i.test(lastTotpError) ? `🔒 ${lastTotpError}` : ct("no_site_code"));
         return { ok: false };
       }
       // Step-1 handoff from popup fills (direct inject bypassed us): look
@@ -2005,7 +2096,8 @@
           if (e && e.totp) {
             // The id is all we keep: it says which account the next OTP step
             // belongs to, and the code for it is minted fresh on arrival.
-            pvPending = { password: e.password || "", totpId: e.id };
+            // Site-tagged (see pinSite): the pin never applies cross-site.
+            pvPending = { password: e.password || "", totpId: e.id, site: pinSite() };
             pvPendingPersist();
             console.log("PV pending stashed from popup fill");
             try { sweepOtpOnce(); } catch (_) {}
@@ -2053,11 +2145,26 @@
             copyWithAutoclear(l[0].password);
           }
         } else if (msg.menu === "pv_copy_totp") {
-          const l = await queryHost("PV_QUERY", pageBase());
-          if (l[0] && l[0].totp) {
-            if (l[0].reprompt && !(await confirmSensitive(l[0]))) return { ok: true };
-            copyWithAutoclear(l[0].totp);
+          // M6: ranked candidates, never the raw-vault-order first row (that
+          // was the blind pick removed everywhere else). Reprompt resolved
+          // against the login with the same id when the vault knows it.
+          const cands = await totpCandidates();
+          const c = cands[0];
+          if (!c) {
+            toast(/lock|closed|unreach|bridge|denied/i.test(lastTotpError) ? `🔒 ${lastTotpError}` : ct("no_site_code"));
+            return { ok: true };
           }
+          try {
+            const ls = await queryHost("PV_QUERY", pageBase());
+            const login = (ls || []).find((x) => x && x.id === c.id);
+            if (login && login.reprompt && !(await confirmSensitive(login))) return { ok: true };
+          } catch (_) {}
+          if (!c.code) {
+            toast(ct("wait_secs", c.next_in != null ? c.next_in : null));
+            return { ok: true };
+          }
+          copyWithAutoclear(c.code);
+          return { ok: true };
         } else if (msg.menu === "pv_generate_password") {
           // Registration pages: focused password field wins, else the first
           // visible new-password field, else the first password field.

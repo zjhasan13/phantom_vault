@@ -14,6 +14,10 @@
     } catch (_) {}
   }
 
+  // LOW: match KEYS, not values — `{"step":"password_reset"}` or `q=pwd`
+  // used to ping from a substring inside a value. JSON keys first, then
+  // query-string keys; unparseable bodies keep the old substring rule
+  // (a missed ping only loses a save prompt, never a secret).
   function bodyLooksLikeLogin(body) {
     if (!body) return false;
     let s = "";
@@ -32,7 +36,21 @@
     } catch (_) {
       return false;
     }
-    const t = String(s).toLowerCase();
+    const keysOf = (text) => {
+      try {
+        const obj = JSON.parse(text);
+        if (obj && typeof obj === "object" && !Array.isArray(obj)) return Object.keys(obj).join(" ");
+      } catch (_) {}
+      try {
+        if (typeof URLSearchParams !== "undefined" && /[=;&]/.test(text)) {
+          const keys = [];
+          new URLSearchParams(text).forEach((_, k) => keys.push(k));
+          if (keys.length) return keys.join(" ");
+        }
+      } catch (_) {}
+      return text;
+    };
+    const t = String(keysOf(s)).toLowerCase();
     return t.includes("password") || t.includes("passwd") || t.includes("pwd");
   }
 

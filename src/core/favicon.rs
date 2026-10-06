@@ -232,6 +232,14 @@ pub fn package_domain(title: &str) -> Option<String> {
     if mid.is_empty() || mid.parse::<std::net::IpAddr>().is_ok() {
         return None;
     }
+    // Charset gate: a malicious import title (°e.g. `com.evil&x=y.android`)
+    // must not smuggle query separators into the icon request URL. Same
+    // `[a-z0-9-]` discipline as sanitize_harvest_domain.
+    if !mid.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+        || !first.bytes().all(|b| b.is_ascii_alphanumeric())
+    {
+        return None;
+    }
     Some(format!("{mid}.{first}"))
 }
 

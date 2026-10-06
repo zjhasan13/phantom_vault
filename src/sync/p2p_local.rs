@@ -164,6 +164,10 @@ pub fn regenerate_pin() -> Result<String, String> {
 }
 
 /// Length-first + full compare (interactive-attempt-rate path).
+/// Test-only PIN oracle: production auth is challenge-response MAC (the
+/// plaintext PIN never crosses the wire anymore), so nothing outside tests
+/// compares raw PINs. Kept for the pairing unit tests below.
+#[cfg(test)]
 pub fn verify_pin(candidate: &str) -> bool {
     let expected = match read_pin() {
         // Never configured → pairing check disabled (open LAN).
@@ -193,6 +197,87 @@ pub fn verify_pin(candidate: &str) -> bool {
 pub const PIN_MAX_FAILS: u32 = 5;
 /// Lockout window per offending IP.
 pub const PIN_LOCKOUT_SECS: u64 = 30;
+/// Challenge lifetime: pooler than any legit round-trip, shorter than any
+/// replay window worth worrying about.
+pub const CHALLENGE_TTL_SECS: u64 = 60;
+/// Cap on outstanding challenges (memory bound; oldest-expired pruned first).
+const MAX_CHALLENGES: usize = 256;
+
+fn challenge_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, u64>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, u64>>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Issue a single-use auth challenge (public — knowledge of a nonce alone
+/// grants nothing; only HMAC(PIN, …) over it authenticates).
+pub fn issue_challenge() -> (String, u64) {
+    use rand_core::RngCore as _;
+    let mut buf = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut buf);
+    let nonce: String = buf.iter().map(|b| format!("{b:02x}")).collect();
+    let exp = now_unix().saturating_add(CHALLENGE_TTL_SECS);
+    if let Ok(mut m) = challenge_map().lock() {
+        if m.len() >= MAX_CHALLENGES {
+            let now = now_unix();
+            m.retain(|_, e| *e > now);
+        }
+        m.insert(nonce.clone(), exp);
+    }
+    (nonce, exp)
+}
+
+/// Consume a challenge: exactly-once (replay ⇒ None) and unexpired.
+fn take_challenge(nonce: &str) -> bool {
+    let Ok(mut m) = challenge_map().lock() else {
+        return false;
+    };
+    match m.remove(nonce) {
+        Some(exp) => exp > now_unix(),
+        None => false,
+    }
+}
+
+/// HMAC-SHA256 hex over NUL-separated parts, keyed by the pairing PIN.
+/// NUL separators make field-splitting ambiguity structurally impossible.
+pub fn mac_pin(pin: &str, parts: &[&str]) -> String {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
+    let mut mac = Hmac::<Sha256>::new_from_slice(pin.as_bytes()).expect("hmac key");
+    for p in parts {
+        mac.update(p.as_bytes());
+        mac.update(b"\0");
+    }
+    mac.finalize()
+        .into_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+/// Constant-time hex compare (same discipline as verify_pin).
+fn mac_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len()
+        && a.as_bytes()
+            .iter()
+            .zip(b.as_bytes())
+            .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+            == 0
+}
+
+#[cfg(test)]
+pub(crate) fn clear_challenges() {
+    if let Ok(mut m) = challenge_map().lock() {
+        m.clear();
+    }
+}
 
 struct PinThrottle {
     fails: u32,
@@ -407,27 +492,80 @@ pub fn route(
     local_mtime: u64,
     peer_ip: &str,
 ) -> (u16, String, Option<(String, Vec<u8>)>) {
-    // Split query string (?pin=…) — minimal HTTP only.
-    let (clean_path, query_pin) = match path.split_once('?') {
+    // Split query string — minimal HTTP only. mac-auth params (nonce/mac)
+    // ride alongside the legacy pin param (rejected below when paired).
+    let (clean_path, query_pin, query_nonce, query_mac) = match path.split_once('?') {
         Some((p, q)) => {
-            let pin = q.split('&').find_map(|kv| {
-                let (k, v) = kv.split_once('=')?;
-                (k == "pin").then(|| v.to_string())
-            });
-            (p, pin)
+            let get = |k: &str| {
+                q.split('&').find_map(|kv| {
+                    let (kk, v) = kv.split_once('=')?;
+                    (kk == k).then(|| v.to_string())
+                })
+            };
+            (p, get("pin"), get("nonce"), get("mac"))
         }
-        None => (path, None),
+        None => (path, None, None, None),
+    };
+    if method == "GET" && clean_path == "/p2p/challenge" {
+        // Public: a nonce alone authenticates nothing.
+        let (nonce, exp) = issue_challenge();
+        let body = serde_json::json!({"ok": true, "nonce": nonce, "exp": exp}).to_string();
+        return (200, body, None);
+    }
+    // MAC verifier shared by pull + sync. Returns Ok(()) when no PIN is
+    // configured (documented open LAN) or the MAC checks out; records the
+    // throttle verdict and refuses otherwise. Legacy plaintext `pin` is
+    // DEAD when paired — sending it proves nothing a sniffer lacks, so it
+    // is refused outright instead of verified.
+    let check_mac = |peer_ip: &str, nonce: Option<String>, mac: Option<String>, parts: &[&str], legacy_pin: Option<String>| -> Result<(), String> {
+        if !pin_required() {
+            return Ok(());
+        }
+        if legacy_pin.map(|p| !p.is_empty()).unwrap_or(false) {
+            pin_record(peer_ip, false);
+            crate::security::access_log::log_event("p2p", &format!("legacy plaintext PIN rejected from {peer_ip}"));
+            return Err("challenge required (plaintext PIN retired)".to_string());
+        }
+        let pin = match read_pin() {
+            PinState::Loaded(pin) => pin,
+            // Absent is handled above (open); Unusable must refuse loudly.
+            _ => {
+                pin_record(peer_ip, false);
+                return Err("pairing PIN required".to_string());
+            }
+        };
+        let (nonce, mac) = match (nonce, mac) {
+            (Some(n), Some(m)) if !n.is_empty() && !m.is_empty() => (n, m),
+            _ => {
+                pin_record(peer_ip, false);
+                return Err("pairing PIN required".to_string());
+            }
+        };
+        if !take_challenge(&nonce) {
+            pin_record(peer_ip, false);
+            crate::security::access_log::log_event("p2p", &format!("stale/replayed challenge from {peer_ip}"));
+            return Err("stale challenge — fetch a fresh one".to_string());
+        }
+        if !mac_eq(&mac_pin(&pin, parts), &mac) {
+            pin_record(peer_ip, false);
+            crate::security::access_log::log_event("p2p", &format!("bad MAC from {peer_ip}"));
+            return Err("pairing PIN required".to_string());
+        }
+        pin_record(peer_ip, true);
+        Ok(())
     };
     if method == "GET" && clean_path == "/p2p/pull" {
         if pin_required() {
             if pin_locked_out(peer_ip) {
                 return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
             }
-            let ok = verify_pin(query_pin.as_deref().unwrap_or(""));
-            pin_record(peer_ip, ok);
-            if !ok {
-                crate::security::access_log::log_event("p2p", &format!("bad PIN from {peer_ip}"));
-                return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+            // The nonce MUST be part of the MAC'd message — otherwise the
+            // MAC doesn't bind the challenge and any observed (nonce, mac)
+            // pair replays anywhere.
+            let n = query_nonce.clone().unwrap_or_default();
+            if let Err(e) = check_mac(peer_ip, query_nonce, query_mac, &[&n, "pull"], query_pin) {
+                crate::security::access_log::log_event("p2p", &format!("bad pull auth from {peer_ip}"));
+                return (403, serde_json::json!({"ok": false, "error": e}).to_string(), None);
             }
         }
         let body = serde_json::json!({
@@ -447,11 +585,21 @@ pub fn route(
             if pin_locked_out(peer_ip) {
                 return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
             }
-            let ok = verify_pin(v.get("pin").and_then(|p| p.as_str()).unwrap_or(""));
-            pin_record(peer_ip, ok);
-            if !ok {
-                crate::security::access_log::log_event("p2p", &format!("bad PIN from {peer_ip}"));
-                return (403, r#"{"ok":false,"error":"pairing PIN required"}"#.into(), None);
+            // MAC over the exact bytes being adopted: a sniffer who saw a
+            // plaintext PIN (pre-MAC era) or any single request learns
+            // nothing replayable — the nonce burns on first use.
+            let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
+            let mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0).to_string();
+            let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("").to_string();
+            let nonce = v.get("nonce").and_then(|s| s.as_str()).map(str::to_string);
+            let mac = v.get("mac").and_then(|s| s.as_str()).map(str::to_string);
+            let legacy = v.get("pin").and_then(|s| s.as_str()).map(str::to_string);
+            // Owned parts first (nonce is also moved into check_mac below).
+            let owned = [nonce.clone().unwrap_or_default(), sha.clone(), mtime.clone(), blob_b64.clone()];
+            let parts: Vec<&str> = owned.iter().map(|s| s.as_str()).collect();
+            if let Err(e) = check_mac(peer_ip, nonce, mac, &parts, legacy) {
+                crate::security::access_log::log_event("p2p", &format!("bad push auth from {peer_ip}"));
+                return (403, serde_json::json!({"ok": false, "error": e}).to_string(), None);
             }
         }
         let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
@@ -564,6 +712,8 @@ fn serve_conn(mut stream: TcpStream) {
 }
 
 /// Blocking listener loop on `bind` (LAN or loopback). Exits on `stop`.
+/// M13: one thread per connection — a stalled peer (10s read timeout) must
+/// never wedge the accept loop for everyone else.
 pub fn run_listener_on(stop: Arc<AtomicBool>, bind: SocketAddr) {
     let listener = match TcpListener::bind(bind) {
         Ok(l) => l,
@@ -572,7 +722,9 @@ pub fn run_listener_on(stop: Arc<AtomicBool>, bind: SocketAddr) {
     let _ = listener.set_nonblocking(true);
     while !stop.load(Ordering::Relaxed) {
         match listener.accept() {
-            Ok((stream, _)) => serve_conn(stream),
+            Ok((stream, _)) => {
+                std::thread::spawn(move || serve_conn(stream));
+            }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 std::thread::sleep(Duration::from_millis(200));
             }
@@ -650,16 +802,45 @@ pub fn scan_peers(wait: Duration) -> Vec<Peer> {
     peers
 }
 
-/// Pull a peer's ciphertext head + blob (PIN sent as query when set).
-pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), String> {
+/// Fetch a server challenge over a raw TCP minimal-HTTP round-trip.
+/// Shared by pull/push clients so the pairing PIN never crosses the LAN
+/// in plaintext anymore (challenge-response MAC instead).
+fn fetch_challenge(addr: SocketAddr) -> Result<String, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
-    let target = if pin.trim().is_empty() {
+    let req = "GET /p2p/challenge HTTP/1.1\r\nHost: pv\r\nConnection: close\r\n\r\n";
+    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let mut raw = Vec::new();
+    stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+    let body_start = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .unwrap_or(0);
+    let v: serde_json::Value =
+        serde_json::from_slice(&raw[body_start..]).map_err(|e| format!("bad challenge body: {e}"))?;
+    v.get("nonce")
+        .and_then(|n| n.as_str())
+        .filter(|n| !n.is_empty())
+        .map(str::to_string)
+        .ok_or_else(|| "challenge refused".to_string())
+}
+
+/// Pull a peer's ciphertext head + blob. With a PIN, challenge-response MAC
+/// (never the plaintext PIN); without one, the legacy open path.
+pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), String> {
+    let pin = pin.trim();
+    let target = if pin.is_empty() {
         "/p2p/pull".to_string()
     } else {
-        format!("/p2p/pull?pin={}", pin.trim())
+        let nonce = fetch_challenge(addr)?;
+        let mac = mac_pin(pin, &[&nonce, "pull"]);
+        format!("/p2p/pull?nonce={nonce}&mac={mac}")
     };
+    let mut stream =
+        TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
     let req = format!("GET {target} HTTP/1.1\r\nHost: pv\r\nConnection: close\r\n\r\n");
     stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
@@ -682,11 +863,22 @@ pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), 
 }
 
 /// Push our ciphertext blob to a peer (it SHA-verifies + freshness-gates).
+/// With a PIN, challenge-response MAC over the exact adopted bytes; the
+/// plaintext PIN never crosses the wire. Without one, the legacy open path.
 pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], pin: &str) -> Result<bool, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob), "pin": pin.trim()}).to_string();
+    let pin = pin.trim();
+    let body = if pin.is_empty() {
+        serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string()
+    } else {
+        // Canonical forms MUST match the server's recomputation exactly:
+        // decimal mtime, base64 blob, verbatim sha/nonce.
+        let nonce = fetch_challenge(addr)?;
+        let mac = mac_pin(pin, &[&nonce, sha, &mtime.to_string(), &base64_encode(blob)]);
+        serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob), "nonce": nonce, "mac": mac}).to_string()
+    };
     let req = format!(
         "POST /p2p/sync HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
@@ -963,8 +1155,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 
-    /// `regenerate_pin` used to `remove_file` then create. Any failure in that
-    /// gap left NO pin file, which reads as "pairing never configured" and makes
+    /// `regenerate_pin` used to `remove_file` then create. Any failure in that    /// gap left NO pin file, which reads as "pairing never configured" and makes
     /// `verify_pin` accept everything. The atomic rename means the old PIN stays
     /// valid right up to the swap, and no failure path can produce a missing
     /// file. This test pins the success path; the guarantee is structural (no
@@ -1015,22 +1206,81 @@ mod tests {
         let pinfile = sandbox.join("p2p_pin.dpapi");
         let _ = std::fs::remove_file(&pinfile);
         let _guard = with_pin_file(pinfile.to_str().unwrap());
+        clear_challenges();
         let pin = get_or_create_pin().unwrap();
         let blob = b"gate-ct";
         let sha = sha_hex(blob);
-        // GET without pin → 403; with pin → 200.
-        assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1, "192.0.2.20").0, 403);
-        let (st, _, _) = route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1, "192.0.2.20");
+        // Challenge round-trip works.
+        let (st, body, _) = route("GET", "/p2p/challenge", b"", blob, &sha, 1, "192.0.2.20");
         assert_eq!(st, 200);
-        // POST without pin → 403; wrong pin → 403; right pin → proceeds.
-        let mk = |pin_val: &str| {
-            serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x"), "pin": pin_val}).to_string()
+        let nonce: String = serde_json::from_str::<serde_json::Value>(&body).unwrap()["nonce"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        // GET pull without MAC → 403; legacy plaintext pin → 403 (retired);
+        // MAC → 200.
+        assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1, "192.0.2.20").0, 403);
+        assert_eq!(
+            route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1, "192.0.2.20").0,
+            403
+        );
+        let mac = mac_pin(&pin, &[&nonce, "pull"]);
+        let (st, _, _) = route(
+            "GET",
+            &format!("/p2p/pull?nonce={nonce}&mac={mac}"),
+            b"",
+            blob,
+            &sha,
+            1,
+            "192.0.2.20",
+        );
+        assert_eq!(st, 200);
+        // POST without MAC → 403; wrong MAC → 403; legacy pin → 403; MAC → adopt.
+        let mk = |nonce: Option<&str>, mac: Option<&str>, pin_val: Option<&str>| {
+            let mut m = serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x")});
+            if let Some(n) = nonce {
+                m["nonce"] = serde_json::json!(n);
+            }
+            if let Some(x) = mac {
+                m["mac"] = serde_json::json!(x);
+            }
+            if let Some(p) = pin_val {
+                m["pin"] = serde_json::json!(p);
+            }
+            m.to_string()
         };
-        assert_eq!(route("POST", "/p2p/sync", mk("").as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
-        assert_eq!(route("POST", "/p2p/sync", mk("000000").as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
-        let (st, _, adopt) = route("POST", "/p2p/sync", mk(&pin).as_bytes(), blob, &sha, 1, "192.0.2.20");
+        assert_eq!(route("POST", "/p2p/sync", mk(None, None, None).as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
+        assert_eq!(route("POST", "/p2p/sync", mk(None, None, Some("000000")).as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
+        assert_eq!(route("POST", "/p2p/sync", mk(None, None, Some(&pin)).as_bytes(), blob, &sha, 1, "192.0.2.20").0, 403);
+        let (nonce2, _) = issue_challenge();
+        let blob_b64 = base64_encode(b"x");
+        let mac2 = mac_pin(&pin, &[&nonce2, &sha_hex(b"x"), "9", &blob_b64]);
+        let (st, _, adopt) = route(
+            "POST",
+            "/p2p/sync",
+            serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": blob_b64, "nonce": nonce2, "mac": mac2})
+                .to_string()
+                .as_bytes(),
+            blob,
+            &sha,
+            1,
+            "192.0.2.20",
+        );
         assert_eq!(st, 200);
         assert!(adopt.is_some());
+        // Replay of the same nonce burns: second use → 403.
+        let (st, _, _) = route(
+            "POST",
+            "/p2p/sync",
+            serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x"), "nonce": nonce2, "mac": mac2})
+                .to_string()
+                .as_bytes(),
+            blob,
+            &sha,
+            1,
+            "192.0.2.20",
+        );
+        assert_eq!(st, 403, "replayed nonce must burn");
         clear_pin_file();
         let _ = std::fs::remove_dir_all(&sandbox);
     }

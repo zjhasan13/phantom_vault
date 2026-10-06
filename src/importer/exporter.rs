@@ -214,7 +214,7 @@ pub fn export_csv_gated(vault: &Vault, is_decoy: bool) -> Result<String, String>
     if is_decoy {
         return Err("decoy mode is read-only".to_string());
     }
-    Ok(export_csv(vault))
+    export_csv(vault)
 }
 
 pub fn export_bitwarden_json_gated(
@@ -228,9 +228,11 @@ pub fn export_bitwarden_json_gated(
 }
 
 /// Standard CSV (Bitwarden-style columns): logins + cards, active only.
-/// NOTE (M5): pure serializer — callers MUST enforce master-reprompt +
-/// decoy refusal (use `export_csv_gated` from UI paths).
-pub fn export_csv(vault: &Vault) -> String {
+/// NOTE (M5/M9): pure serializer — callers MUST enforce master-reprompt +
+/// decoy refusal (use `export_csv_gated` from UI paths). Returns Err (never
+/// a silent empty string) when the writer or UTF-8 conversion fails, so a
+/// 0-byte file can never be reported as a successful export.
+pub fn export_csv(vault: &Vault) -> Result<String, String> {
     let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
     let _ = w.write_record([
         "folder", "favorite", "type", "name", "notes", "fields", "login_uri",
@@ -274,11 +276,11 @@ pub fn export_csv(vault: &Vault) -> String {
             String::new(),
         ]);
     }
-    // M4: never return a silent empty string as success — propagate the error.
+    // M9 (was M4): never return a silent empty string as success —
+    // propagate the error so callers cannot report "exported N items".
     w.into_inner()
-        .ok()
-        .and_then(|v| String::from_utf8(v).ok())
-        .unwrap_or_default()
+        .map_err(|e| format!("csv write failed: {e}"))
+        .and_then(|v| String::from_utf8(v).map_err(|e| format!("csv utf8 failed: {e}")))
 }
 
 #[cfg(test)]
@@ -359,7 +361,7 @@ mod tests {
     #[test]
     fn csv_roundtrips_login_with_backup() {
         let v = vault_one();
-        let csv = export_csv(&v);
+        let csv = export_csv(&v).expect("export must succeed");
         assert!(csv.contains("backupcodes"));
         // Back through OUR csv path: login, totp, customs, backup all survive.
         let bytes = csv.into_bytes();
@@ -393,7 +395,7 @@ mod tests {
             favorite: false,
             deleted_at: None,
         });
-        let csv = export_csv(&v);
+        let csv = export_csv(&v).expect("export must succeed");
         assert!(csv.contains("login_username"));
         assert!(csv.contains("GitHub"));
         assert!(csv.contains(",card,Visa"));
@@ -408,7 +410,7 @@ mod tests {
         assert_eq!(csv_safe("normal"), "normal");
         let mut v = vault_one();
         v.credentials[0].password = "=cmd|'/c calc'!A1".into();
-        let csv = export_csv(&v);
+        let csv = export_csv(&v).expect("export must succeed");
         assert!(csv.contains("'=cmd"), "formula password must be quoted");
     }
 }

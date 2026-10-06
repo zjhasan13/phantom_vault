@@ -179,8 +179,8 @@
   <div id="settingsPane" class="hidden">
     <div class="row" id="settingsForm"></div>
     <div class="row">
-      <div class="t">⏱️ Auto-Lock Timeout</div>
-      <div class="hint">No PIN — the extension follows the desktop app. After inactivity it re-asks desktop presence.</div>
+      <div class="t" id="lockTimeoutH">⏱️ Auto-Lock Timeout</div>
+      <div class="hint" id="lockTimeoutHint">No PIN — the extension follows the desktop app. After inactivity it re-asks desktop presence.</div>
       <select id="lockTimeout">
         <option value="5">5 minutes</option>
         <option value="10" selected>10 minutes</option>
@@ -189,8 +189,8 @@
       </select>
     </div>
     <div class="row">
-      <div class="t">🚫 Blocked Domains</div>
-      <div class="hint">One per line — no badges, no autofill here.</div>
+      <div class="t" id="blockedH">🚫 Blocked Domains</div>
+      <div class="hint" id="blockedHint">One per line — no badges, no autofill here.</div>
       <textarea id="blocked" placeholder="example.com&#10;internal.corp"></textarea>
     </div>
     <button class="wide" id="saveSettings" style="width:100%">💾 Save Settings</button>

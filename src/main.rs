@@ -942,10 +942,20 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
             if let Some(ui) = main_weak.upgrade() {
                 match res {
                     Ok(new_sha) => {
-                        sync::github_sync::store_head_sha(&new_sha);
-                        ui.set_sync_status("☁️ Synced — ciphertext pushed.".into());
-                        ui.set_notification_text("☁️ Vault synced.".into());
-                        security::access_log::log_event("sync", "push ok");
+                        // M16: a failed head-sha write must NOT report a clean
+                        // sync — without it the next push wedges on
+                        // "remote vault exists — pull first".
+                        match sync::github_sync::store_head_sha(&new_sha) {
+                            Ok(()) => {
+                                ui.set_sync_status("☁️ Synced — ciphertext pushed.".into());
+                                ui.set_notification_text("☁️ Vault synced.".into());
+                                security::access_log::log_event("sync", "push ok");
+                            }
+                            Err(e) => {
+                                ui.set_sync_status(format!("⚠️ Pushed, but head record failed: {e}").into());
+                                security::access_log::log_event("sync", "push ok, head-sha store failed");
+                            }
+                        }
                     }
                     Err(e) => {
                         ui.set_sync_status(format!("⚠️ Sync: {e}").into());
@@ -1009,10 +1019,14 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         if local.is_empty() {
             // Fresh device: adopt the remote ciphertext as-is (shred-guarded).
             if security::shredder::secure_write(std::path::Path::new(VAULT_FILE), &bytes).is_ok() {
-                sync::github_sync::store_head_sha(&sha);
+                // Head record is best-effort here (pull path re-reads remote
+                // head anyway); a failure only costs one extra pull cycle.
+                if sync::github_sync::store_head_sha(&sha).is_err() {
+                    security::access_log::log_event("sync", "restore ok, head-sha store failed");
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = main_weak.upgrade() {
-                        ui.set_sync_status("⬇️ Vault restored from private repo.".into());
+                        ui.set_sync_status("☁️ Vault restored from private repo.".into());
                     }
                 });
             }
@@ -1026,7 +1040,8 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
                 }
             });
         } else {
-            sync::github_sync::store_head_sha(&sha);
+            // Same bytes: refresh the head record (best-effort, see above).
+            let _ = sync::github_sync::store_head_sha(&sha);
         }
     });
 }

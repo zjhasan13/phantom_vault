@@ -44,17 +44,26 @@ pub fn detect_version(payload: &[u8]) -> VaultVersion {
 
 /// মাস্টার পাসওয়ার্ড এবং Salt থেকে Argon2id ব্যবহার করে ৩২ বাইটের কি (Key) ডেরাইভ করা
 pub fn derive_key(master_password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    use zeroize::Zeroize;
     let mut derived_key = [0u8; 32];
 
-    // মেমোরি-হার্ড প্যারামিটার (OWASP স্ট্যান্ডার্ড: 64MB RAM, 3 Iterations, 4 Parallel threads)
-    let params = Params::new(64 * 1024, 3, 4, Some(32))
-        .map_err(|e| format!("Argon2 params error: {}", e))?;
+    // M8: a failed KDF must not leave a partial key on the stack.
+    let res: Result<(), String> = (|| {
+        // OWASP parameters (OWASP recommended: 64MB RAM, 3 Iterations, 4 Parallel threads)
+        let params = Params::new(64 * 1024, 3, 4, Some(32))
+            .map_err(|e| format!("Argon2 params error: {}", e))?;
 
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+        let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
-    argon2
-        .hash_password_into(master_password.as_bytes(), salt, &mut derived_key)
-        .map_err(|e| format!("Key derivation error: {}", e))?;
+        argon2
+            .hash_password_into(master_password.as_bytes(), salt, &mut derived_key)
+            .map_err(|e| format!("Key derivation error: {}", e))?;
+        Ok(())
+    })();
+    if let Err(e) = res {
+        derived_key.zeroize();
+        return Err(e);
+    }
 
     Ok(derived_key)
 }
@@ -107,10 +116,15 @@ pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<
     let key = Key::from_slice(&key_bytes);
     let cipher = XChaCha20Poly1305::new(key);
 
-    // ৩. ডিক্রিপ্ট করা
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())?;
+    // M8: the most common failure (wrong password) must zeroize the
+    // Argon2id key instead of skipping past it via `?`.
+    let plaintext = match cipher.decrypt(nonce, ciphertext) {
+        Ok(p) => p,
+        Err(_) => {
+            key_bytes.zeroize();
+            return Err("Decryption failed! Wrong password or corrupted file.".to_string());
+        }
+    };
 
     // মেমোরি সিকিউরিটি: মেমোরি থেকে কি মুছে ফেলা
     key_bytes.zeroize();
@@ -167,18 +181,36 @@ pub fn decrypt_vault_hybrid_legacy(
     let ciphertext = &payload[3 + SALT_LEN + CT_LEN + NONCE_LEN..];
 
     let mut argon2_key = derive_key(master_password, salt)?;
-    let pq_secret = PqHybridEngine::decapsulate(decapsulation_key, pq_ct)
-        .map_err(|e| format!("PQ decapsulate: {e}"))?;
-    let hybrid = PqHybridEngine::combine(&argon2_key, &pq_secret)
-        .map_err(|e| format!("Hybrid combine: {e}"))?;
+    // M8: every early return below must zeroize the Argon2id key (the
+    // legacy path otherwise leaks it on exactly the corrupt-file inputs
+    // an attacker feeds it).
+    let pq_secret = match PqHybridEngine::decapsulate(decapsulation_key, pq_ct) {
+        Ok(s) => s,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
+    let hybrid = match PqHybridEngine::combine(&argon2_key, &pq_secret) {
+        Ok(h) => h,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
     argon2_key.zeroize();
     drop(pq_secret);
 
     let key = Key::from_slice(hybrid.expose());
     let cipher = XChaCha20Poly1305::new(key);
-    let plaintext = cipher
-        .decrypt(nonce, ciphertext)
-        .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())?;
+    let plaintext = match cipher.decrypt(nonce, ciphertext) {
+        Ok(p) => p,
+        Err(_) => {
+            // hybrid holds key material via SecretString (drop-zeroizes);
+            // nothing raw left to scrub here.
+            return Err("Decryption failed! Wrong password or corrupted file.".to_string());
+        }
+    };
     Ok(plaintext)
 }
 
@@ -274,15 +306,34 @@ pub fn decrypt_vault_portable(
     let ciphertext = &payload[off..];
 
     let mut argon2_key = derive_key(master_password, salt)?;
-    let dk_bytes = unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk)?;
+    // M8: unwrap_with_key borrows the key (cannot scrub it) — every `?`
+    // below must zeroize argon2_key first. Same for decapsulate/combine.
+    let dk_bytes = match unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk) {
+        Ok(b) => b,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
     // H6: the 2400B decapsulation key must zeroize on EVERY path, including
     // the decapsulate-failure early return (corrupt/tampered pq_ct).
     let dk_guard = crate::core::pq_hybrid::PqDecapsulationBytes(dk_bytes);
-    let pq_secret = PQ::decapsulate(dk_guard.expose(), pq_ct)
-        .map_err(|e| format!("PQ decapsulate: {e}"))?;
+    let pq_secret = match PQ::decapsulate(dk_guard.expose(), pq_ct) {
+        Ok(s) => s,
+        Err(e) => {
+            drop(dk_guard);
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
     drop(dk_guard);
-    let hybrid = PQ::combine(&argon2_key, &pq_secret)
-        .map_err(|e| format!("Hybrid combine: {e}"))?;
+    let hybrid = match PQ::combine(&argon2_key, &pq_secret) {
+        Ok(h) => h,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
     argon2_key.zeroize();
     drop(pq_secret);
 

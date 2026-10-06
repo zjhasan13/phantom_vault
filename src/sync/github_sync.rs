@@ -249,8 +249,9 @@ pub fn load_head_sha() -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
-pub fn store_head_sha(sha: &str) {
-    let _ = std::fs::write(SHA_FILE, sha);
+pub fn store_head_sha(sha: &str) -> Result<()> {
+    std::fs::write(SHA_FILE, sha).map_err(|e| VaultError::Sync(format!("head-sha store failed: {e}")))?;
+    Ok(())
 }
 
 #[cfg(test)]

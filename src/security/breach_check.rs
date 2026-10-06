@@ -108,6 +108,9 @@ pub struct HealthReport {
     pub reused: usize,
     pub weak: usize,
     pub stale: usize,
+    /// M15: passwords whose breach check ERRORED (network/timeout) — NOT
+    /// clean. Without this bucket a failed check reads as "not breached".
+    pub indeterminate: usize,
     /// Distinct non-empty passwords shared by 2+ accounts.
     pub reused_groups: usize,
     /// Audited logins carrying an embedded TOTP secret.
@@ -215,7 +218,8 @@ fn fmt_count(n: u64) -> String {
 
 /// Batch scan: dedups identical passwords (one API call each), flags reuse
 /// (2+ accounts sharing a password) and weakness locally (no network).
-/// Network failures fail OPEN per-password (marked clean, never abort batch).
+/// Network failures are counted per-password as `indeterminate` (unknown,
+/// never clean) without aborting the batch.
 pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
     // Frequency map for reuse detection (no network needed).
     let mut freq: HashMap<String, usize> = HashMap::new();
@@ -232,14 +236,25 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
     let mut set = tokio::task::JoinSet::new();
     for pw in unique {
         set.spawn(async move {
-            let r = check_password(&pw).await.unwrap_or(None);
+            // Borrow-then-move: the check borrows the captured password;
+            // only afterwards does the tuple take ownership for the return.
+            let r = check_password(&pw).await;
             (pw, r)
         });
     }
     let mut breached: HashMap<String, Option<u64>> = HashMap::new();
+    let mut failed: HashSet<String> = HashSet::new();
     while let Some(done) = set.join_next().await {
-        if let Ok((pw, r)) = done {
-            breached.insert(pw, r);
+        match done {
+            Ok((pw, Ok(r))) => {
+                breached.insert(pw, r);
+            }
+            // Check error (not "clean"): counted as indeterminate below.
+            // JoinError carries no password — uncountable, logged by caller.
+            Ok((pw, Err(_))) => {
+                failed.insert(pw);
+            }
+            Err(_) => {}
         }
     }
     let mut report = HealthReport::default();
@@ -254,6 +269,9 @@ pub async fn scan_vault_health(credentials: &[Credential]) -> HealthReport {
         let stale = crate::models::is_stale(c.last_changed, crate::models::current_timestamp());
         if b.is_some() {
             report.breached += 1;
+        } else if failed.contains(&c.password) {
+            // Checked but errored: unknown, never "clean".
+            report.indeterminate += 1;
         }
         if reused {
             report.reused += 1;
@@ -443,6 +461,7 @@ mod tests {
             reused: 1,
             weak: 1,
             stale: 1,
+            indeterminate: 0,
             reused_groups: 1,
             with_totp: 0,
         };
@@ -467,6 +486,7 @@ mod tests {
             reused: 0,
             weak: 0,
             stale: 1,
+            indeterminate: 0,
             reused_groups: 0,
             with_totp: 0,
         };

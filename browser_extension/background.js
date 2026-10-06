@@ -138,6 +138,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // extension host permissions (page-CORS-proof), cap 64KB, push bytes to
     // the desktop disk cache. One push per base-domain per SW lifetime;
     // the host re-validates everything (decode + traversal + size).
+    // Rollback rule: the pushed-marker is set ONLY after a successful host
+    // store — a transient fetch/bridge failure retries next page load
+    // instead of blackholing the domain for the whole SW lifetime.
     if (msg.type === "PV_FAVICON_HARVEST") {
       try {
         const rawHost = String(msg.domain || "").toLowerCase();
@@ -145,7 +148,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!base || faviconPushed.has(base)) return { ok: true, cached: true };
         const url = String(msg.iconUrl || "");
         if (!/^https?:\/\//i.test(url)) return { ok: false, error: "bad icon url" };
-        faviconPushed.add(base);
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), 10000);
         let buf;
@@ -164,11 +166,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         for (let i = 0; i < bytes.length; i += 8192) {
           bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
         }
-        return await hostRequest({
+        const stored = await hostRequest({
           cmd: "cache_favicon",
           domain: base,
           data: btoa(bin),
         });
+        // Mark pushed ONLY on host-confirmed store (rollback on any failure).
+        if (stored && stored.ok) faviconPushed.add(base);
+        return stored;
       } catch (e) {
         return { ok: false, error: String((e && e.message) || e) };
       }
