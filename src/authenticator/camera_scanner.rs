@@ -8,10 +8,14 @@
 
 use crate::error::{Result, VaultError};
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(feature = "camera")]
 use std::time::{Duration, Instant};
 
 /// Scan budget per session; the modal Cancel path sets the flag below.
+/// Camera-gated: slim builds neither link nor keep this timer code.
+#[cfg(feature = "camera")]
 const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
+#[cfg(feature = "camera")]
 const FRAME_PERIOD: Duration = Duration::from_millis(100);
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
@@ -22,6 +26,8 @@ pub fn cancel_webcam_scan() {
 }
 
 /// Pure helper: QR-detect over a raw luma8 buffer. No camera, fully tested.
+/// Kept for the camera path and the test suite; slim non-test builds drop it.
+#[cfg(any(feature = "camera", test))]
 pub fn scan_luma_buffer(width: u32, height: u32, pixels: &[u8]) -> Option<String> {
     if width == 0 || height == 0 {
         return None;
@@ -41,6 +47,12 @@ pub fn scan_luma_buffer(width: u32, height: u32, pixels: &[u8]) -> Option<String
 /// `on_frame` receives every decoded frame as RGBA bytes (w, h) for live
 /// preview rendering; it runs on this worker thread (hop to the UI loop).
 /// Blocking — call from a worker thread.
+///
+/// Lightweight-release: the live-camera half lives behind the `camera`
+/// Cargo feature (default ON — normal builds are byte-identical). Slim
+/// builds (`--no-default-features`) get the stub below: same signature,
+/// loud error, no nokhwa linkage.
+#[cfg(feature = "camera")]
 pub fn capture_and_scan_frame(
     on_frame: impl Fn(Vec<u8>, u32, u32) + Send + Sync + 'static,
     on_qr_found: impl FnOnce(String) + Send + 'static,
@@ -109,6 +121,18 @@ pub fn capture_and_scan_frame(
         }
         std::thread::sleep(FRAME_PERIOD);
     }
+}
+
+/// Slim-build stub: same signature as the `camera`-feature function above,
+/// so call sites compile unchanged. Loud error, never silent.
+#[cfg(not(feature = "camera"))]
+pub fn capture_and_scan_frame(
+    _on_frame: impl Fn(Vec<u8>, u32, u32) + Send + Sync + 'static,
+    _on_qr_found: impl FnOnce(String) + Send + 'static,
+) -> Result<()> {
+    Err(VaultError::Security(
+        "webcam unavailable in this build (compiled without the `camera` feature)".into(),
+    ))
 }
 
 #[cfg(test)]

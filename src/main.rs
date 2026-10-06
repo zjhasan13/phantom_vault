@@ -808,6 +808,10 @@ fn lock_vault_now(
     // P1 fix: stop the bridge beats too — a stale heartbeat refuses serves.
     stop_bridge_heartbeat();
     panic_wipe(vault_arc, master_arc);
+    // Lightweight release: trim the working set AFTER the wipe (never before —
+    // trimming first would page wiped secrets back in on next touch). Locked
+    // CPU stays 0% (all loops deep-sleep) and RAM drops to OS-kept pages.
+    windows_native::tray::trim_working_set();
     // Unsent form drafts (may hold Hidden custom-field secrets).
     if let Ok(mut p) = pending_cf.lock() {
         p.clear();

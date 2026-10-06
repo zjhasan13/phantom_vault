@@ -1842,9 +1842,9 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
 /// Hello token + idle/max lifetimes (lock deletes the token → host exits).
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
-    // Phase C: 60s idle TTL — one decrypted session serves the burst, then
-    // exits. Bounds the plaintext window; next query pays one fresh KDF.
-    const IDLE_SECS: u64 = HOST_IDLE_TTL_SECS;
+    // Phase C: 60s idle TTL (HOST_IDLE_TTL_SECS) — one decrypted session
+    // serves the burst, then exits. Bounds the plaintext window; next
+    // query pays one fresh KDF.
     const MAX_SECS: u64 = 8 * 3600;
     let origin = std::env::args().nth(1).unwrap_or_default();
     if origin != "native-host" && !origin_allowed(&origin) {
@@ -1961,7 +1961,7 @@ pub fn serve_cli() -> i32 {
         let idle = now.saturating_sub(watch_last2.load(std::sync::atomic::Ordering::SeqCst));
         let total = watch_start.elapsed().as_secs();
         if !std::path::Path::new(HELLO_TOKEN_FILE).exists()
-            || idle > IDLE_SECS
+            || session_idle_expired(idle)
             || total > MAX_SECS
         {
             bridge_log("host watchdog expired/locked — exiting");
@@ -1973,7 +1973,7 @@ pub fn serve_cli() -> i32 {
         // → zeroize + exit instead of serving secrets indefinitely.
         let token_alive = std::path::Path::new(HELLO_TOKEN_FILE).exists();
         if !token_alive
-            || last_active.elapsed().as_secs() > IDLE_SECS
+            || session_idle_expired(last_active.elapsed().as_secs())
             || start.elapsed().as_secs() > MAX_SECS
         {
             use zeroize::Zeroize;

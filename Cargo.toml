@@ -38,8 +38,10 @@ image = "0.25"
 qrcode = { version = "0.14", default-features = false }
 percent-encoding = "2.3"
 
-# Batch-4: live webcam QR capture (Windows Media Foundation backend)
-nokhwa = { version = "0.10", features = ["input-native"] }
+# Batch-4: live webcam QR capture (Windows Media Foundation backend).
+# Optional: default builds include it (existing behavior); slim lightweight
+# releases pass `--no-default-features` to drop the whole camera stack.
+nokhwa = { version = "0.10", features = ["input-native"], optional = true }
 
 # Phase 10: Secure Generator
 rand = "0.8"
@@ -104,6 +106,13 @@ raw-window-handle = "0.6"
 
 # Diet: mi-malloc reclaims freed pages to the OS instead of hoarding heap.
 mimalloc = { version = "0.1", default-features = false }
+
+# Lightweight releases: default builds include the camera stack (existing
+# behavior); `--no-default-features` drops nokhwa entirely via the stub in
+# authenticator::camera_scanner.
+[features]
+default = ["camera"]
+camera = ["dep:nokhwa"]
 
 [build-dependencies]
 slint-build = "1.8"

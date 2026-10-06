@@ -45,6 +45,10 @@ release. State the minimum peer version in the notes.
 - [ ] `cargo test` green + count → rules.md baseline sync
 - [ ] `cargo clippy --all-targets -- -D warnings` green
 - [ ] `node --check` ×4 + `node --test tests/js/` green
+- [ ] Idle footprint gate (lightweight release): locked + minimized to tray,
+  Task Manager working set ≤40MB sustained 1 min; CPU 0.00% sustained 5 min
+  (locked AND unlocked-hidden). Bridge warm-frame p50 ~5ms (10× `PV_QUERY`,
+  1 KDF in host log). Record all three numbers in the release notes
 - [ ] `cargo build --release` + UPX → record size (target: sub-8MB)
 - [ ] `exe_integrity.dpapi` reset (fresh seal on first launch)
 - [ ] Native-host pipe smoke test on the PACKED binary (ping/query/assert)

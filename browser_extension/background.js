@@ -1,15 +1,123 @@
 // PhantomVault native bridge client (MV3 service worker).
 // Host name MUST match the registry manifest installed by the desktop app:
 //   HKCU\...\NativeMessagingHosts\com.phantomvault.host
-// Each query opens its own host process (fresh Hello-cached unlock, vault
-// decrypted per request, process exits after) — no long-lived bridge.
+// Persistent port: one host process serves the whole burst (one Argon2id,
+// then ~5ms frames) until the 60s host TTL, browser disconnect, or SW
+// suspend. Falls back to one-shot connectNative per request if the shared
+// port dies. NOTE: the host serves its spawn-time vault snapshot — desktop
+// mutations land on the bridge after the TTL window (documented, not a bug).
 const HOST_PORT = "com.phantomvault.host";
 
 // Base-domains already pushed to the desktop favicon cache this SW
 // lifetime (harvest is idempotent server-side; this just saves fetches).
 const faviconPushed = new Set();
 
+// ---- Persistent-port session (FIFO, one in-flight frame) ----
+// The host does NOT echo request ids, so multiplexing is by strict
+// request→reply ordering: exactly one frame in flight per port.
+let sharedPort = null;
+let portAlive = false;
+const requestQueue = [];
+let inflight = null;
+
+function dropSharedPort() {
+  const p = sharedPort;
+  sharedPort = null;
+  portAlive = false;
+  try { if (p) p.disconnect(); } catch (_) { /* already gone */ }
+}
+
+function ensurePort() {
+  if (sharedPort && portAlive) return sharedPort;
+  dropSharedPort();
+  const port = chrome.runtime.connectNative(HOST_PORT);
+  sharedPort = port;
+  portAlive = true;
+  port.onMessage.addListener((msg) => {
+    const cur = inflight;
+    inflight = null;
+    if (cur) {
+      clearTimeout(cur.timer);
+      cur.resolve(msg);
+    }
+    pumpQueue();
+  });
+  port.onDisconnect.addListener(() => {
+    const errMsg = chrome.runtime.lastError
+      ? chrome.runtime.lastError.message
+      : "native host disconnected (is PhantomVault installed?)";
+    portAlive = false;
+    sharedPort = null;
+    // Fail the in-flight frame and every queued frame; callers retry
+    // via the one-shot fallback path below.
+    const cur = inflight;
+    inflight = null;
+    if (cur) {
+      clearTimeout(cur.timer);
+      cur.reject(new Error(errMsg));
+    }
+    while (requestQueue.length) {
+      const q = requestQueue.shift();
+      clearTimeout(q.timer);
+      q.reject(new Error(errMsg));
+    }
+  });
+  return port;
+}
+
+function pumpQueue() {
+  if (inflight || !requestQueue.length) return;
+  let port;
+  try {
+    port = ensurePort();
+  } catch (e) {
+    const q = requestQueue.shift();
+    clearTimeout(q.timer);
+    q.reject(e instanceof Error ? e : new Error(String(e)));
+    return;
+  }
+  // Dequeue the head into inflight BEFORE posting: exactly one frame is
+  // ever on the wire, so replies always belong to `inflight`.
+  const head = requestQueue.shift();
+  inflight = head;
+  try {
+    port.postMessage(head.payload);
+  } catch (e) {
+    inflight = null;
+    clearTimeout(head.timer);
+    dropSharedPort();
+    head.reject(e instanceof Error ? e : new Error(String(e)));
+    pumpQueue();
+  }
+}
+
 function hostRequest(payload, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const entry = { payload, resolve, reject, timer: 0 };
+    entry.timer = setTimeout(() => {
+      // Remove from wherever it sits (queued or in-flight on a dead port).
+      const qi = requestQueue.indexOf(entry);
+      if (qi >= 0) requestQueue.splice(qi, 1);
+      if (inflight === entry) {
+        inflight = null;
+        dropSharedPort();
+        pumpQueue();
+      }
+      reject(new Error("native host timeout"));
+    }, timeoutMs);
+    requestQueue.push(entry);
+    try {
+      pumpQueue();
+    } catch (e) {
+      // ensurePort threw synchronously (host missing) — one-shot fallback.
+      oneShotRequest(payload, timeoutMs).then(resolve, reject);
+    }
+  });
+}
+
+// One-shot fallback: fresh host process per request (legacy behavior).
+// Used only when the shared port cannot be established.
+function oneShotRequest(payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let port;
     try {
