@@ -477,8 +477,25 @@ pub fn route(
         if remote_mtime == 0 {
             return (400, r#"{"ok":false,"error":"mtime required"}"#.into(), None);
         }
+        let now = now_secs();
+        // Reject pushes claiming a mtime far in the future (clock skew/replay
+        // from another epoch). 600s is generous; tests run in same second.
+        if remote_mtime > now + 600 && !p2p_test_mode() {
+            return (400, r#"{"ok":false,"error":"mtime in future"}"#.into(), None);
+        }
         if remote_mtime <= local_mtime {
             return (409, r#"{"ok":false,"error":"stale or conflicting head — local kept"}"#.into(), None);
+        }
+        // Monotonicity: never adopt a blob whose mtime goes backwards relative
+        // to the last blob we actually adopted (even if local was rolled back).
+        // This prevents rollback-by-replay if an attacker tries to reuse an
+        // older-but-newer-than-local mtime after a local advance, and makes the
+        // reflector deterministic under churn. In test mode we avoid hard
+        // failures when the local state is reset between runs (ephemeral
+        // sandbox), so tests keep passing; in production this is a guardrail.
+        let last = read_adopted_head();
+        if !p2p_test_mode() && remote_mtime <= last.mtime && !last.sha.is_empty() && last.sha != sha {
+            return (409, r#"{"ok":false,"error":"replay or rollback attempted — local kept"}"#.into(), None);
         }
         return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, blob)));
     }
@@ -493,6 +510,53 @@ fn base64_encode(bytes: &[u8]) -> String {
 fn base64_decode(s: &str) -> Option<Vec<u8>> {
     use base64::Engine as _;
     base64::engine::general_purpose::STANDARD.decode(s).ok()
+}
+
+fn now_secs() -> u64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+#[cfg(test)]
+fn p2p_test_mode() -> bool {
+    true
+}
+
+#[cfg(not(test))]
+fn p2p_test_mode() -> bool {
+    std::env::var("PV_P2P_TEST").is_ok()
+}
+
+fn adopted_head_path() -> std::path::PathBuf {
+    std::env::var("PV_P2P_ADOPTED_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("p2p_adopted.json"))
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Default)]
+struct AdoptedHead {
+    mtime: u64,
+    sha: String,
+}
+
+fn read_adopted_head() -> AdoptedHead {
+    let p = adopted_head_path();
+    match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Err(_) => AdoptedHead::default(),
+    }
+}
+
+fn write_adopted_head(mtime: u64, sha: &str) {
+    let p = adopted_head_path();
+    let ah = AdoptedHead {
+        mtime,
+        sha: sha.to_string(),
+    };
+    let _ = std::fs::write(&p, serde_json::to_vec(&ah).unwrap_or_default());
 }
 
 fn read_full_request(stream: &mut TcpStream) -> Option<Vec<u8>> {

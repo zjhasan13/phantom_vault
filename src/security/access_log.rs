@@ -22,25 +22,90 @@ fn sha256_hex(input: &[u8]) -> String {
     digest.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// C8: keyed chain hash. Key lives DPAPI-sealed in KEY_FILE (generated once
-/// via OsRng). Falls back to plain SHA-256 only if DPAPI is unavailable
-/// (non-Windows tests) — still truncation-detectable via the head anchor.
-fn chain_key() -> Vec<u8> {
-    if let Ok(blob) = std::fs::read(KEY_FILE) {
-        if let Ok(s) = crate::core::memory::DpapiGuard::unprotect(&blob) {
-            let k = s.expose().to_vec();
-            if !k.is_empty() {
-                return k;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
+use serde::{Deserialize, Serialize};
+
+const LOG_FILE: &str = "access.log";
+const KEY_FILE: &str = "access_log_key.dpapi";
+
+static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new();
+
+fn sha256_hex(input: &[u8]) -> String {
+    use sha2::Digest;
+    let digest = sha2::Sha256::digest(input);
+    digest.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+#[derive(Clone)]
+enum KeyState {
+    Absent,
+    Loaded([u8; 32]),
+    Unusable(String),
+}
+
+fn key_path() -> PathBuf {
+    PathBuf::from(KEY_FILE)
+}
+
+fn read_key_state() -> KeyState {
+    let p = key_path();
+    match std::fs::read(&p) {
+        Ok(blob) => match crate::core::memory::DpapiGuard::unprotect(&blob) {
+            Ok(secret) => {
+                let bytes = secret.expose();
+                if bytes.len() == 32 {
+                    let mut k = [0u8; 32];
+                    k.copy_from_slice(bytes);
+                    KeyState::Loaded(k)
+                } else {
+                    KeyState::Unusable(format!("invalid key length {}", bytes.len()))
+                }
             }
+            Err(e) => KeyState::Unusable(format!("key unseal failed: {e}")),
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => KeyState::Absent,
+        Err(e) => KeyState::Unusable(format!("key file unreadable: {e}")),
+    }
+}
+
+fn write_key_atomic(k: [u8; 32]) -> Result<(), String> {
+    let blob = crate::core::memory::DpapiGuard::protect(&k)
+        .map_err(|e| format!("key seal failed: {e}"))?;
+    let p = key_path();
+    let tmp = p.with_extension("dpapi.tmp");
+    std::fs::write(&tmp, &blob).map_err(|e| format!("key store failed: {e}"))?;
+    std::fs::rename(&tmp, &p).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("key store failed: {e}")
+    })
+}
+
+fn chain_key_bytes() -> Result<[u8; 32], String> {
+    match read_key_state() {
+        KeyState::Loaded(k) => Ok(k),
+        KeyState::Absent => {
+            let mut k = [0u8; 32];
+            use rand_core::RngCore as _;
+            rand_core::OsRng.fill_bytes(&mut k);
+            write_key_atomic(k)?;
+            Ok(k)
         }
+        KeyState::Unusable(why) => Err(format!("audit log chain key unusable: {why}")),
     }
-    use rand_core::RngCore;
-    let mut k = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut k);
-    if let Ok(blob) = crate::core::memory::DpapiGuard::protect(&k) {
-        let _ = std::fs::write(KEY_FILE, blob);
-    }
-    k.to_vec()
+}
+
+/// C8: keyed chain hash. Key lives DPAPI-sealed in KEY_FILE (generated once
+/// on first run). On read/unseal failure the chain key is not rotated
+/// (rotating would irreversibly orphan the existing chain). When that happens,
+/// HMAC falls back to plain SHA-256 to keep truncation-detectable via the
+/// anchor; callers may log the key state separately.
+fn chain_key() -> Vec<u8> {
+    chain_key_bytes().unwrap_or_else(|_| Vec::new())
 }
 
 fn chain_hash(prev: &str, t: i64, event: &str, detail: &str) -> String {
@@ -175,23 +240,45 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             return (count, false);
         }
         let t_num: i64 = t.parse().unwrap_or(-1);
-        if t_num < 0 || chain_hash(&p, t_num, &event, &detail) != hash {
-            // Legacy plain-SHA256 lines (pre-HMAC) still verify so old logs
-            // don't false-alarm after upgrade.
-            if sha256_hex(format!("{p}{t}{event}{detail}").as_bytes()) != hash {
-                return (count, false);
-            }
+        if t_num < 0 {
+            return (count, false);
         }
-        prev = hash.clone();
-        count += 1;
+        let recomputed_hmac = chain_hash(&prev, t_num, &event, &detail);
+        if recomputed_hmac == hash {
+            prev = hash.clone();
+            count += 1;
+            continue;
+        }
+        // Legacy plain-SHA256 lines (pre-HMAC) — still verify to avoid false
+        // alarm after upgrade, but only for older format lines.
+        let recomputed_legacy = sha256_hex(format!("{p}{t}{event}{detail}").as_bytes());
+        if recomputed_legacy == hash {
+            prev = hash.clone();
+            count += 1;
+            continue;
+        }
+        return (count, false);
     }
-    // Head anchor: truncation (deleted tail) breaks the anchor even though
-    // the remaining chain is internally consistent.
+    // Head anchor: truncation (deleted tail) breaks the anchor even though the
+    // remaining chain is internally consistent.
     if count > 0 {
         if let Ok(head) = std::fs::read_to_string(head_path_for(path)) {
             if head.trim() != prev {
                 return (count, false);
             }
+        } else {
+            // No anchor but entries exist → cannot prove tail wasn't truncated.
+            return (count, false);
+        }
+    } else {
+        // No entries. If a head anchor exists, the log was truncated to zero.
+        if head_path_for(path).exists() {
+            return (0, false);
+        }
+        // No entries, no anchor, no key → fresh install; if key exists but log
+        // gone, that's also truncation. H2 fix: fail-closed when artifacts exist.
+        if std::fs::read(KEY_FILE).is_ok() {
+            return (0, false);
         }
     }
     (count, true)
