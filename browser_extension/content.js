@@ -844,13 +844,18 @@
       pvPendingPersist();
       try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     }
-    // Unconditional, and no longer gated on `entry.totp`: that field was only a
-    // hint that the row carries a secret, but trusting the same payload that
-    // also carries a stale code invites its reuse. The id-scoped lookup is the
-    // single source of truth and returns nothing for a row without TOTP.
-    await fillLoginOtp(entry);
+    // `entry.totp` is read as a PRESENCE HINT ONLY — never as the code. Native
+    // mints it fresh for this query (`live_totp`) and returns "" for a row with
+    // no secret, so its truthiness answers "does this row carry a 2FA secret at
+    // all", nothing more. Replaying the VALUE was the bug G4 fixed; gating on the
+    // flag is not that. Without the gate every ordinary username+password fill
+    // also attempted the id-scoped lookup, found nothing, and showed a false
+    // "2FA code পাওয়া যায়নি" error toast plus an extra native round-trip.
+    const otpFilled = entry.totp ? await fillLoginOtp(entry) : false;
     staleNudge(entry);
-    pingFilled(entry.id);
+    // Exactly one `filled` stamp per user gesture: `fillFromCandidate` pings the
+    // candidate it filled, so ping here only when no OTP candidate claimed it.
+    if (!otpFilled) pingFilled(entry.id);
     notePicked();
     if (settings.auto_submit) {
       const form = (f.pass[0] || f.users[0] || document.activeElement || {}).form;
@@ -923,21 +928,25 @@
   // longer in tension. The scope also keeps coverage this path used to get from
   // the fallback, because a row the issuer/domain scorer cannot match is still
   // served when the caller states which row it means.
+  // Returns true only when a code actually reached a field. Callers use that to
+  // keep the `filled` stamp single: `fillFromCandidate` already pings on success,
+  // so a caller that also pings unconditionally double-counts one user gesture
+  // (auto-verify then fires a fill early, and stats inflate).
   async function fillLoginOtp(entry) {
-    if (!entry || !entry.id) return;
+    if (!entry || !entry.id) return false;
     const list = await totpCandidates(undefined, entry.id);
     const c = list.find((x) => x.id === entry.id);
     if (!c) {
       toast("🛡️ এই entry-র জন্য 2FA code পাওয়া গেল না।");
-      return;
+      return false;
     }
     if (!c.code) {
       // Withheld by the native expiry guard. Say when to come back rather than
       // substituting a stale code, which is exactly what this path used to do.
       toast(`⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
-      return;
+      return false;
     }
-    fillFromCandidate(c);
+    return fillFromCandidate(c);
   }
 
   function fillTotpNow(code, fields) {
