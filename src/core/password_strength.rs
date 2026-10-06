@@ -36,13 +36,9 @@ pub fn level(password: &str) -> u8 {
         0.0
     };
     // Pattern penalties: all-one-class, repeated char, sequence.
-    let penalty: u8 = if classes <= 1 && len < 12 {
-        1
-    } else if has_repeat_run(password, 4) || has_sequence(password) {
-        1
-    } else {
-        0
-    };
+    let penalty: u8 = u8::from(
+        (classes <= 1 && len < 12) || has_repeat_run(password, 4) || has_sequence(password),
+    );
     let score: u8 = if bits >= 80.0 && len >= 14 && classes >= 3 {
         3
     } else if bits >= 55.0 && len >= 11 && classes >= 3 {

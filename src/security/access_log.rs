@@ -25,31 +25,50 @@ fn sha256_hex(input: &[u8]) -> String {
 /// C8: keyed chain hash. Key lives DPAPI-sealed in KEY_FILE (generated once
 /// via OsRng). Falls back to plain SHA-256 only if DPAPI is unavailable
 /// (non-Windows tests) — still truncation-detectable via the head anchor.
-fn chain_key() -> Vec<u8> {
-    if let Ok(blob) = std::fs::read(KEY_FILE) {
-        if let Ok(s) = crate::core::memory::DpapiGuard::unprotect(&blob) {
-            let k = s.expose().to_vec();
-            if !k.is_empty() {
-                return k;
+/// H1 fix: a key file that EXISTS but cannot be used (unreadable, unseal
+/// failure, empty) is NEVER overwritten — regenerating over it would
+/// permanently orphan every previously chained line. Only a MISSING file
+/// (first run) provisions a fresh key. Returns None on broken state, and
+/// the chain visibly downgrades to plain SHA (same fallback as no-DPAPI).
+fn key_path() -> std::path::PathBuf {
+    std::env::var("PV_ACCESS_KEY_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(KEY_FILE))
+}
+
+fn chain_key() -> Option<Vec<u8>> {
+    match std::fs::read(key_path()) {
+        Ok(blob) => match crate::core::memory::DpapiGuard::unprotect(&blob) {
+            Ok(s) => {
+                let k = s.expose().to_vec();
+                if k.is_empty() {
+                    None
+                } else {
+                    Some(k)
+                }
             }
+            Err(_) => None,
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            use rand_core::RngCore;
+            let mut k = [0u8; 32];
+            rand_core::OsRng.fill_bytes(&mut k);
+            if let Ok(blob) = crate::core::memory::DpapiGuard::protect(&k) {
+                let _ = std::fs::write(key_path(), blob);
+            }
+            Some(k.to_vec())
         }
+        Err(_) => None,
     }
-    use rand_core::RngCore;
-    let mut k = [0u8; 32];
-    rand_core::OsRng.fill_bytes(&mut k);
-    if let Ok(blob) = crate::core::memory::DpapiGuard::protect(&k) {
-        let _ = std::fs::write(KEY_FILE, blob);
-    }
-    k.to_vec()
 }
 
 fn chain_hash(prev: &str, t: i64, event: &str, detail: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     let key = chain_key();
-    if key.is_empty() {
+    let Some(key) = key.filter(|k| !k.is_empty()) else {
         return sha256_hex(format!("{prev}{t}{event}{detail}").as_bytes());
-    }
+    };
     let mut mac = Hmac::<Sha256>::new_from_slice(&key).expect("hmac key");
     mac.update(prev.as_bytes());
     mac.update(t.to_string().as_bytes());
@@ -102,8 +121,7 @@ fn last_hash(path: &Path) -> String {
 
 fn log_event_at(path: &Path, event: &str, detail: &str) {
     let clean = |s: &str| {
-        s.replace('\\', "")
-            .replace('"', "")
+        s.replace(['\\', '"'], "")
             .replace(['\r', '\n'], " ")
             .chars()
             .take(160)
@@ -138,7 +156,7 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             // ⇒ invalid. INTERACTION: bridge-fetch entries are HMAC-chained,
             // so same-user malware needs DPAPI unprotect (not just file
             // write) to forge — higher bar, not a TPM-grade seal.
-            if !head_path_for(path).exists() && std::fs::read(KEY_FILE).is_err() {
+            if !head_path_for(path).exists() && std::fs::read(key_path()).is_err() {
                 return (0, true);
             }
             return (0, false);
@@ -149,8 +167,8 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             .nth(1)
             .and_then(|rest| {
                 let rest = rest.trim_start();
-                if rest.starts_with('"') {
-                    rest[1..].split('"').next().map(str::to_string)
+                if let Some(inner) = rest.strip_prefix('"') {
+                    inner.split('"').next().map(str::to_string)
                 } else {
                     rest.split([',', '}']).next().map(str::to_string)
                 }
@@ -214,8 +232,8 @@ fn recent_at(path: &Path, n: usize) -> Vec<String> {
             .nth(1)
             .and_then(|rest| {
                 let rest = rest.trim_start();
-                if rest.starts_with('"') {
-                    rest[1..].split('"').next().map(str::to_string)
+                if let Some(inner) = rest.strip_prefix('"') {
+                    inner.split('"').next().map(str::to_string)
                 } else {
                     rest.split([',', '}']).next().map(str::to_string)
                 }
@@ -242,6 +260,10 @@ mod tests {
 
     #[test]
     fn chain_verifies_and_tamper_breaks() {
+        // Serialized with the key-file env jugglers below: the key source
+        // must not flip between this test's two appends (HMAC vs fallback
+        // mix breaks the chain spuriously).
+        let _g = KEY_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let p = tmp("ok");
         log_event_at(&p, "unlock", "ok");
         log_event_at(&p, "copy", "login");
@@ -258,6 +280,7 @@ mod tests {
 
     #[test]
     fn secrets_never_touch_the_log() {
+        let _g = KEY_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let p = tmp("clean");
         log_event_at(&p, "copy", "user typed \"quoted\" pass\nword\\x");
         let text = std::fs::read_to_string(&p).unwrap();
@@ -269,6 +292,7 @@ mod tests {
 
     #[test]
     fn recent_is_newest_first() {
+        let _g = KEY_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let p = tmp("recent");
         log_event_at(&p, "a", "1");
         log_event_at(&p, "b", "2");
@@ -276,5 +300,57 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].contains('b'));
         let _ = std::fs::remove_file(&p);
+    }
+
+    // H1: env-sandboxed key file (process-global env ⇒ serialized).
+    static KEY_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    fn with_key_file(path: &std::path::Path) -> std::sync::MutexGuard<'static, ()> {
+        let guard = KEY_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("PV_ACCESS_KEY_FILE", path);
+        guard
+    }
+    fn clear_key_file() {
+        std::env::remove_var("PV_ACCESS_KEY_FILE");
+    }
+
+    #[test]
+    fn broken_key_file_is_never_overwritten() {
+        let sandbox = std::env::temp_dir().join(format!("pv-access-key-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let keyfile = sandbox.join("access_log.key.dpapi");
+        // Garbage blob (unseal failure) — the old code regenerated over it.
+        std::fs::write(&keyfile, b"corrupt-not-dpapi").unwrap();
+        let _guard = with_key_file(&keyfile);
+        let p = tmp("brokenkey");
+        log_event_at(&p, "unlock", "ok");
+        log_event_at(&p, "copy", "login");
+        // Chain still verifies (plain-SHA fallback, consistent within file).
+        let (n, valid) = verify_at(&p);
+        assert_eq!(n, 2);
+        assert!(valid);
+        // And the broken key file is byte-identical — never "healed".
+        assert_eq!(std::fs::read(&keyfile).unwrap(), b"corrupt-not-dpapi");
+        let _ = std::fs::remove_file(&p);
+        clear_key_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn missing_key_file_provisions_once() {
+        let sandbox = std::env::temp_dir().join(format!("pv-access-keygen-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let keyfile = sandbox.join("access_log.key.dpapi");
+        let _ = std::fs::remove_file(&keyfile);
+        let _guard = with_key_file(&keyfile);
+        let p = tmp("keygen");
+        log_event_at(&p, "unlock", "ok");
+        // First run provisions a key file where none existed.
+        assert!(keyfile.is_file());
+        let (n, valid) = verify_at(&p);
+        assert_eq!(n, 1);
+        assert!(valid);
+        let _ = std::fs::remove_file(&p);
+        clear_key_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
     }
 }

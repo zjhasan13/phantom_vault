@@ -23,6 +23,37 @@
     blocked_domains: [],
   };
   let settings = { ...DEFAULTS };
+  // Page-side micro-i18n: the popup owns the full I18N dict, but content
+  // toasts hardcoded Bengali — so they now follow the stored language
+  // through this tiny table instead. EN fallbacks keep every key safe.
+  let contentLang = "en";
+  try {
+    chrome.storage.local.get({ lang: "en" }).then((s) => {
+      contentLang = s && s.lang === "bn" ? "bn" : "en";
+    }).catch(() => {});
+  } catch (_) {}
+  const CSTR = {
+    otp_picker_hd: ["🔑 Which 2FA account?", "যে 2FA account?"],
+    mark_unmark_title: ["Unmark working (not working)", "Working mark সরান (এটা working নয়)"],
+    mark_mark_title: ["Mark this account as working", "এই account-টি কাজ করেছে — চিহ্নিত করুন"],
+    mark_denied: ["🛡️ Working mark cancelled — vault locked, blocked site, or decoy.", "🛡️ Working mark বাতিল — vault locked, ব্লকড সাইট, বা decoy।"],
+    mark_set: [(n) => `✅ ${n} — marked working`, (n) => `✅ ${n} — working মার্ক হলো`],
+    mark_cleared: [(n) => `⚠️ ${n} — working mark removed`, (n) => `⚠️ ${n} — working mark সরানো হলো`],
+    wait_secs: [(w) => (w != null ? `⏳ New code in ${w}s — try again shortly.` : "⏳ Try again shortly."), (w) => (w != null ? `⏳ নতুন code আসতে বাকি ${w}s` : "⏳ একটু পরে আবার চেপুন।")],
+    all_expired: [(w) => (w != null ? `All codes expired — retry in ${w}s.` : "All codes expired — retry shortly."), (w) => (w != null ? `সব code-ই মেয়াদ শেষ — ${w}s পরে আবার চেপুন।` : "সব code-ই মেয়াদ শেষ — কিছুক্ষণ পরে আবার চেপুন।")],
+    no_entry_code: ["🛡️ No 2FA code found for this entry.", "🛡️ এই entry-র জন্য 2FA code পাওয়া গেল না।"],
+    multi_accounts: ["🔐 Multiple 2FA accounts — pick one from the popup.", "🔐 একাধিক 2FA account — popup থেকে বেছে নিন।"],
+    no_site_code: ["🛡️ No 2FA code for this site.", "🛡️ এই সাইটের জন্য কোনো 2FA code নেই।"],
+  };
+  function ct(key, ...a) {
+    const t = CSTR[key] || {};
+    const v = t[contentLang] !== undefined ? t[contentLang] : t.en !== undefined ? t.en : key;
+    try {
+      return typeof v === "function" ? v(...a) : v;
+    } catch (_) {
+      return key;
+    }
+  }
   // H15: multi-step pending entry lives in this isolated-world closure var,
   // NEVER in page-readable sessionStorage (any XSS/third-party script could
   // read password+TOTP from there for the whole login window).
@@ -372,7 +403,7 @@
     root.appendChild(style);
     const wrap = document.createElement("div");
     wrap.className = "wrap";
-    wrap.innerHTML = '<div class="hd">যে 2FA account?</div>';
+    wrap.innerHTML = `<div class="hd">${ct("otp_picker_hd")}</div>`;
     const tagEl = (cls, text) => {
       const s = document.createElement("span");
       s.className = "tag " + cls;
@@ -447,9 +478,7 @@
         if (!c.verified && !c.is_dup && c.rank === 1) tags.appendChild(tagEl("pri", "Primary"));
         if (c.source === "login") tags.appendChild(tagEl("pri", "from login"));
         mark.textContent = c.verified ? "✓ Working" : "Mark working";
-        mark.title = c.verified
-          ? "Working mark সরান (এটা working নয়)"
-          : "এই account-টি কাজ করেছে — চিহ্নিত করুন";
+        mark.title = c.verified ? ct("mark_unmark_title") : ct("mark_mark_title");
       };
       const paintCode = () => {
         if (code) {
@@ -525,17 +554,17 @@
         const now = await pvVerify(c.id, !c.verified);
         mark.disabled = false;
         if (now === null) {
-          toast("🛡️ Working mark বাতিল — vault locked, ব্লকড সাইট, বা decoy।");
+          toast(ct("mark_denied"));
           return;
         }
         c.verified = now;
         paint();
-        toast(now ? `✅ ${name} — working মার্ক হলো` : `⚠️ ${name} — working mark সরানো হলো`);
+        toast(now ? ct("mark_set", name) : ct("mark_cleared", name));
       });
       row.addEventListener("click", () => {
         if (!code) {
           const w = remaining != null ? remaining : waiting;
-          toast(w != null ? `⏳ নতুন code আসতে বাকি ${w}s` : "⏳ একটু পরে আবার চেপুন।");
+          toast(ct("wait_secs", w));
           return;
         }
         closeOtpPicker();
@@ -549,7 +578,7 @@
       const wait = candidates[0] ? candidates[0].next_in : null;
       const w = document.createElement("div");
       w.className = "wait";
-      w.textContent = `সব code-ই মেয়াদ শেষ — ${wait != null ? wait + "s পরে" : "কিছুক্ষণ পরে"} আবার চেপুন।`;
+      w.textContent = ct("all_expired", wait);
       wrap.appendChild(w);
     }
     root.appendChild(wrap);
@@ -937,13 +966,13 @@
     const list = await totpCandidates(undefined, entry.id);
     const c = list.find((x) => x.id === entry.id);
     if (!c) {
-      toast("🛡️ এই entry-র জন্য 2FA code পাওয়া গেল না।");
+      toast(ct("no_entry_code"));
       return false;
     }
     if (!c.code) {
       // Withheld by the native expiry guard. Say when to come back rather than
       // substituting a stale code, which is exactly what this path used to do.
-      toast(`⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`);
+      toast(ct("wait_secs", c.next_in));
       return false;
     }
     return fillFromCandidate(c);
@@ -1455,7 +1484,7 @@
           fillTotpNow(r.code, findFields());
           if (r.id) pingFilled(r.id);
         } else if (r.expired && r.wait != null) {
-          toast(`⏳ নতুন code আসতে বাকি ${r.wait}s`);
+          toast(ct("wait_secs", r.wait));
         }
       }
       pvPendingClear();
@@ -1528,13 +1557,13 @@
       if (r.ambiguous) {
         // Hands-free means hands-free: a sweep must NOT pop UI the user never
         // asked for. One hint, then the popup button is the way in.
-        toast("🔐 একাধিক 2FA account — popup থেকে বেছে নিন।");
+        toast(ct("multi_accounts"));
         console.log(`PV OTP: ${r.candidates.length} candidates, no blind auto-fill`);
         return;
       }
       if (r.expired) {
-        const w = r.wait != null ? ` (${r.wait}s)` : "";
-        toast(`⏳ নতুন code আসতে বাকি${w} — একটু পরে আবার চাপুন।`);
+        const w = r.wait;
+        toast(ct("wait_secs", w));
         return;
       }
       if (r.code) {
@@ -1943,7 +1972,7 @@
           : null;
         if (pinned) {
           if (!pinned.code) {
-            toast(`⏳ নতুন code আসতে বাকি ${pinned.next_in != null ? pinned.next_in + "s" : "কিছুক্ষণ"}`);
+            toast(ct("wait_secs", pinned.next_in));
             return { ok: false, error: "code expiring" };
           }
           return { ok: fillFromCandidate(pinned) };
@@ -1959,11 +1988,11 @@
         if (only) {
           if (only.code) return { ok: fillFromCandidate(only) };
           if (only.next_in != null) {
-            toast(`⏳ নতুন code আসতে বাকি ${only.next_in}s`);
+            toast(ct("wait_secs", only.next_in));
             return { ok: false, error: "code expiring" };
           }
         }
-        toast("🛡️ এই সাইটের জন্য কোনো 2FA code নেই।");
+        toast(ct("no_site_code"));
         return { ok: false };
       }
       // Step-1 handoff from popup fills (direct inject bypassed us): look

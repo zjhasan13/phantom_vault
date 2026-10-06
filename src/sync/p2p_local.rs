@@ -970,6 +970,21 @@ mod tests {
     /// file. This test pins the success path; the guarantee is structural (no
     /// delete before the write) rather than observable from here.
     #[test]
+    fn creation_failure_refuses_listener_gate() {
+        // The UI enables P2P threads only when get_or_create_pin() succeeds.
+        // Point the PIN path at a directory: reads fail, writes fail — the
+        // gate must refuse instead of serving an open LAN.
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-dir-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let _guard = with_pin_file(sandbox.to_str().unwrap());
+        assert!(get_or_create_pin().is_err());
+        // A broken path still counts as "pairing was attempted" — never open.
+        assert!(pin_required());
+        assert!(!verify_pin("123456"));
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+    #[test]
     fn regenerate_never_leaves_pin_absent() {
         let sandbox = std::env::temp_dir().join(format!("pv-pin-rot-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&sandbox);

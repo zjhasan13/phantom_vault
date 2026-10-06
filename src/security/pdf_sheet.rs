@@ -170,8 +170,10 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert!(build_recovery_sheet_pdf(&demo_shards()[..4].to_vec(), "").is_err());
-        assert!(build_recovery_sheet_pdf(&demo_shards()[..6.min(5)].to_vec(), "").is_ok());
+        assert!(build_recovery_sheet_pdf(&demo_shards()[..4], "").is_err());
+        // Full 5-shard happy path (the product is 3-of-5 by design — there is
+        // no 6-shard layout; the old `6.min(5)` spelling hid that).
+        assert!(build_recovery_sheet_pdf(&demo_shards(), "").is_ok());
         let mut bad = demo_shards();
         bad[2] = "   ".into();
         assert!(build_recovery_sheet_pdf(&bad, "").is_err());

@@ -176,11 +176,6 @@ fn b64_any(s: &str) -> Option<Vec<u8>> {
 use std::sync::atomic::{AtomicU64, Ordering};
 static ASSERT_COUNT: AtomicU64 = AtomicU64::new(0);
 static ASSERT_WINDOW: AtomicU64 = AtomicU64::new(0);
-#[cfg(test)]
-pub(crate) fn reset_assert_rate() {
-    ASSERT_COUNT.store(0, Ordering::SeqCst);
-    ASSERT_WINDOW.store(0, Ordering::SeqCst);
-}
 fn assert_rate_ok() -> bool {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -782,7 +777,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 .map(|c| {
                     let fresh = c
                         .expires_in
-                        .map_or(true, |s| s >= MIN_TOTP_FILL_REMAINING_SECS);
+                        .is_none_or(|s| s >= MIN_TOTP_FILL_REMAINING_SECS);
                     serde_json::json!({
                         "id": c.id,
                         "issuer": c.issuer,
@@ -972,7 +967,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     // valid chain, e.g. "c1 — user confirmed verbally").
                     crate::security::access_log::log_event(
                         "bridge-fetch",
-                        &format!("{kind}:{}", &crate::security::access_log::short_hash(id)),
+                        &format!("{kind}:{}", crate::security::access_log::short_hash(id)),
                     );
                     Answer { reply: serde_json::json!({"ok": true, "entry": e}), persist: false }
                 }

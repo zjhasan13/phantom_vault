@@ -7,6 +7,7 @@
 //!   Reporting from shipping full-memory dumps (with embedded secrets) to
 //!   Microsoft. Bound via plain `extern "system"` (wer.dll) — no new crate.
 //! - Admin-elevation probe: loud warning when running elevated.
+//!
 //! All three are best-effort booleans; failure never blocks startup.
 
 /// `MicrosoftSignedOnly`: bit 0 of `PROCESS_MITIGATION_BINARY_SIGNATURE_POLICY`.

@@ -295,6 +295,13 @@ AGENT WORKFLOW & VERIFICATION:
 Build iteratively module by module.
 Run cargo check and cargo test after implementing each module.
 Always retain existing passing unit tests.
+Bridge protocol discipline: any change to a native-host reply SHAPE
+(new/renamed/removed fields, e.g. `codes` → `candidates`) is a BREAKING
+change — the commit message MUST carry a `BREAKING:` trailer naming the
+message type, and every reader (popup, content, tests) must migrate in the
+same commit. Silent shape drift strands the other side with no error.
+Page-side strings go through the content `ct()` table (never hardcoded
+non-English toasts); popup strings go through the `t()` I18N dict.
 Supply-chain audit: `cargo audit` (RustSec) runs in CI on every push/PR (`.github/workflows/security.yml`); no known-RUSTSEC-vulnerable dependency may ship.
 Never stub out security functions with "TODO" or insecure dummy fallbacks.
 Keep comments concise and maintain maximum code clarity.

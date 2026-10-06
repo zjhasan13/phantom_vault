@@ -589,6 +589,12 @@ pub(crate) fn parse_bw_datetime(raw: &str) -> Option<u64> {
     let mut d = date.split('-');
     let (y, m, day): (i64, i64, i64) =
         (d.next()?.parse().ok()?, d.next()?.parse().ok()?, d.next()?.parse().ok()?);
+    // Year MUST be bounded: unbounded years overflow days*86400 below
+    // (wrapping to garbage-positive in release, aborting in debug) on
+    // hostile import files. 1900..=3000 covers every real-world date.
+    if !(1900..=3000).contains(&y) {
+        return None;
+    }
     let mut tm = time.split(':');
     let (hh, mm, ss): (i64, i64, i64) =
         (tm.next()?.parse().ok()?, tm.next()?.parse().ok()?, tm.next()?.parse().ok()?);
@@ -698,6 +704,13 @@ mod tests {
         assert_eq!(a, 1_717_243_200);
         assert!(parse_bw_datetime("garbage").is_none());
         assert!(parse_bw_datetime("2024-13-01T00:00:00Z").is_none());
+        // Hostile years: unbounded input overflowed days*86400 below.
+        assert!(parse_bw_datetime("99999999999999-01-01T00:00:00Z").is_none());
+        assert!(parse_bw_datetime("0001-01-01T00:00:00Z").is_none());
+        // Boundaries hold real history: Y2K vaults and far-future expiry.
+        assert!(parse_bw_datetime("1999-12-31T23:59:59Z").is_some());
+        assert!(parse_bw_datetime("3000-01-01T00:00:00Z").is_some());
+        assert!(parse_bw_datetime("3001-01-01T00:00:00Z").is_none());
     }
 
     #[test]

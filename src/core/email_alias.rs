@@ -5,7 +5,8 @@
 //!   JSON body `{"domain": <id-or-shared-domain>, "description": ...}` →
 //!   response `{"data": {"email": ...}}`.
 //! - SimpleLogin: `POST {base}/api/alias/random/new`, raw-key header
-//!   `Authentication: <key>` (NOT Bearer) → response `{"alias": ...}`.
+//!   `Authentication: <key>` (NOT Bearer) — response `{"alias": ...}`.
+//!
 //! The API token is DPAPI-sealed on disk (`alias_token.dpapi`); the provider
 //! choice + Addy domain ride alongside in `alias_provider.txt`. Server-side
 //! error bodies are surfaced verbatim so misconfiguration is diagnosable.
