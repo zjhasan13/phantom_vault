@@ -1,0 +1,15 @@
+# Dependabot keeps SHA-pinned Actions fresh: it reads the `# vX` version
+# comments in security.yml and opens update PRs (SHA + comment together),
+# so pins never silently age. Same weekly cadence as the supply-chain audit.
+version: 2
+updates:
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "ci"

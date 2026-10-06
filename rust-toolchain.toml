@@ -1,0 +1,7 @@
+[toolchain]
+# Pinned so local builds, CI, and future clippy gates all run the SAME
+# compiler/lint set. Bump deliberately (then re-run the full suite +
+# clippy), never by surprise. Verified with: rustc 1.98.1.
+channel = "1.98.1"
+targets = ["x86_64-pc-windows-msvc"]
+profile = "minimal"

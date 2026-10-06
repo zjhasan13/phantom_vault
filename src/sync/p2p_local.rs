@@ -1285,6 +1285,99 @@ mod tests {
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 
+    /// Live wire test: real TCP loopback, real challenge round-trip, real
+    /// MAC verify — the closest to two-device sync a unit test can get
+    /// without LAN. The fake server speaks just enough protocol to prove
+    /// the CLIENT constructs spec-exact MACs (same canonical forms as
+    /// route() verifies).
+    #[test]
+    fn mac_roundtrip_over_loopback_tcp() {
+        use std::io::{Read, Write};
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-wire-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let pinfile = sandbox.join("p2p_pin.dpapi");
+        let _ = std::fs::remove_file(&pinfile);
+        let _guard = with_pin_file(pinfile.to_str().unwrap());
+        let pin = get_or_create_pin().unwrap();
+
+        // Fixed challenge so the server side is deterministic.
+        let nonce = "ab".repeat(16);
+        let blob = b"wire-ct";
+        let sha = sha_hex(blob);
+        // Pull flow: challenge, then ?nonce=&mac= with MAC over [nonce,pull].
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let pin_c = pin.clone();
+        let sha_srv = sha.clone();
+        let server = std::thread::spawn(move || {
+            for _ in 0..2 {
+                let (mut s, _) = listener.accept().unwrap();
+                let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(10)));
+                let mut raw = Vec::new();
+                let mut one = [0u8; 1];
+                // Read headers only (client closes write side; simpler: read
+                // until blank line, no body on GETs).
+                loop {
+                    match s.read(&mut one) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {
+                            raw.extend_from_slice(&one);
+                            if raw.len() > 8192
+                                || (raw.len() >= 4
+                                    && &raw[raw.len() - 4..] == b"\r\n\r\n")
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+                let head = String::from_utf8_lossy(&raw);
+                let resp = if head.starts_with("GET /p2p/challenge") {
+                    serde_json::json!({"ok": true, "nonce": nonce, "exp": 9999999999u64}).to_string()
+                } else if head.starts_with("GET /p2p/pull") {
+                    // MUST carry a MAC the server-side rule accepts.
+                    let path = head.split_whitespace().nth(1).unwrap_or("");
+                    let q = path.split_once('?').map(|(_, x)| x).unwrap_or("");
+                    let get = |k: &str| {
+                        q.split('&').find_map(|kv| {
+                            let (kk, v) = kv.split_once('=')?;
+                            (kk == k).then(|| v.to_string())
+                        })
+                    };
+                    let ok = match (get("nonce"), get("mac")) {
+                        (Some(n), Some(m)) => n == nonce && mac_eq(&mac_pin(&pin_c, &[&n, "pull"]), &m),
+                        _ => false,
+                    };
+                    if !ok {
+                        r#"{"ok":false,"error":"bad auth"}"#.to_string()
+                    } else {
+                        serde_json::json!({"sha": sha_srv.clone(), "mtime": 7, "blob_b64": base64_encode(blob)}).to_string()
+                    }
+                } else {
+                    r#"{"ok":false}"#.to_string()
+                };
+                let out = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    resp.len(),
+                    resp
+                );
+                let _ = s.write_all(out.as_bytes());
+            }
+        });
+        let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let (got_sha, mtime, got_blob) = pull_peer(addr, &pin).unwrap();
+        assert_eq!(got_sha, sha);
+        assert_eq!(mtime, 7);
+        assert_eq!(got_blob, blob);
+        // Wrong PIN ⇒ server-side MAC mismatch ⇒ pull fails (no plaintext
+        // PIN ever crossed, so there is nothing to assert except failure).
+        // (A second listener would be needed; the route-level wrong-MAC
+        // 403 above already covers server refusal — skip live negative.)
+        let _ = server.join();
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
     #[test]
     fn pin_lockout_after_five_fails() {
         pin_throttle_test_clear();

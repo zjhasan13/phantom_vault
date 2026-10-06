@@ -7,6 +7,10 @@ fn main() {
         if std::path::Path::new("assets/app.ico").exists() {
             res.set_icon("assets/app.ico");
         }
-        let _ = res.compile();
+        // Fail LOUD: a swallowed error here ships an unbranded exe with
+        // no icon/version metadata and CI can never tell.
+        if let Err(e) = res.compile() {
+            panic!("Windows resource compile failed: {e}");
+        }
     }
 }
