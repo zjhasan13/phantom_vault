@@ -105,6 +105,16 @@ pub fn cache_dir() -> PathBuf {
     }
 }
 
+/// Fix 2 (RAM-cap eviction): list/hub lookups fall back to disk when the
+/// 100-entry RAM cache evicted a domain. Disk stays source-of-truth.
+pub(crate) fn icon_path(domain: &str) -> PathBuf {
+    cache_dir().join(file_name_for(domain))
+}
+
+pub(crate) fn valid_icon_bytes(b: &[u8]) -> bool {
+    !b.is_empty() && (b.len() as u64) <= MAX_ICON_BYTES && image::load_from_memory(b).is_ok()
+}
+
 fn file_name_for(domain: &str) -> String {
     format!(
         "{}.png",
@@ -115,10 +125,6 @@ fn file_name_for(domain: &str) -> String {
     )
 }
 
-fn icon_path(domain: &str) -> PathBuf {
-    cache_dir().join(file_name_for(domain))
-}
-
 /// User overrides live here (`favicons/custom/`), checked BEFORE the
 /// fetched cache. Same validation as fetched icons.
 pub fn custom_dir() -> PathBuf {
@@ -127,10 +133,6 @@ pub fn custom_dir() -> PathBuf {
 
 fn custom_path(domain: &str) -> PathBuf {
     custom_dir().join(file_name_for(domain))
-}
-
-fn valid_icon_bytes(b: &[u8]) -> bool {
-    !b.is_empty() && (b.len() as u64) <= MAX_ICON_BYTES && image::load_from_memory(b).is_ok()
 }
 
 pub fn custom_icon_bytes(domain: &str) -> Option<Vec<u8>> {
@@ -278,21 +280,38 @@ pub fn famous_domain(name: &str) -> Option<&'static str> {
     }
 }
 
-/// Collect distinct fetchable domains from (title, url) pairs (capped).
-pub fn domains_for_items(pairs: &[(String, String)]) -> Vec<String> {
+/// Collect distinct fetchable domains from (title, url) pairs (uncapped;
+/// batching lives in the rotating variant below).
+fn domains_for_items_uncapped(pairs: &[(String, String)]) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     for (title, url) in pairs {
         if let Some(d) = icon_domain(title, url) {
             if seen.insert(d.clone()) {
                 out.push(d);
-                if out.len() >= MAX_DOMAINS_PER_PASS {
-                    break;
-                }
             }
         }
     }
     out
+}
+
+/// Fix 3 (200-cap): rotating 200-slice across unlocks. Small vaults always
+/// get the full list; big vaults advance the cursor each call so every
+/// domain is eventually fetched instead of the first 200 forever.
+pub fn domains_for_items_rotating(pairs: &[(String, String)]) -> Vec<String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static CURSOR: AtomicUsize = AtomicUsize::new(0);
+    let all = domains_for_items_uncapped(pairs);
+    if all.len() <= MAX_DOMAINS_PER_PASS {
+        return all;
+    }
+    let start = CURSOR.fetch_add(MAX_DOMAINS_PER_PASS, Ordering::SeqCst) % all.len();
+    all.iter()
+        .cycle()
+        .skip(start)
+        .take(MAX_DOMAINS_PER_PASS)
+        .cloned()
+        .collect()
 }
 
 /// Domains already attempted this session (hit or miss) — no refetch storms.
@@ -364,12 +383,15 @@ async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, Strin
 /// over a local runtime. `can_net` gates every request (kill-switch +
 /// toggle are folded in by the caller). Returns (domain, png_bytes) hits.
 pub fn prefetch_blocking(domains: &[String], can_net: impl Fn() -> bool) -> Vec<(String, Vec<u8>)> {
+    // Fix 1 (session poisoning): a domain is marked attempted ONLY when it is
+    // actually attempted (disk hit, or network fetch tried). An offline /
+    // kill-switched unlock must NOT poison the session — the next unlock
+    // retries instead of showing letter icons until relock.
     let mut fresh: Vec<String> = Vec::new();
     {
-        let mut att = attempted().lock().unwrap_or_else(|p| p.into_inner());
+        let att = attempted().lock().unwrap_or_else(|p| p.into_inner());
         for d in domains {
             if !att.contains(d) {
-                att.insert(d.clone());
                 fresh.push(d.clone());
             }
         }
@@ -377,15 +399,25 @@ pub fn prefetch_blocking(domains: &[String], can_net: impl Fn() -> bool) -> Vec<
     if fresh.is_empty() {
         return Vec::new();
     }
+    fn mark_attempted(d: &str) {
+        attempted()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .insert(d.to_string());
+    }
     // Disk first — user overrides before fetched cache, zero network.
     let mut hits = Vec::new();
     let mut misses = Vec::new();
     for d in fresh {
         let p = icon_path(&d);
         match custom_icon_bytes(&d).or_else(|| std::fs::read(&p).ok().filter(|b| valid_icon_bytes(b))) {
-            Some(b) => hits.push((d, b)),
+            Some(b) => {
+                mark_attempted(&d);
+                hits.push((d, b));
+            }
             None => {
                 if can_net() {
+                    mark_attempted(&d);
                     misses.push(d);
                 }
             }
@@ -517,10 +549,55 @@ mod tests {
         // can_net=false: only disk could answer; nothing cached.
         let out = prefetch_blocking(&[d.clone()], || false);
         assert!(out.is_empty());
-        // Second pass is a no-op via the attempted set (no storm) — still
-        // offline so this asserts nothing about the network, only dedup.
+        // Second offline pass re-checks disk (no session poisoning) — still
+        // empty here, and asserts nothing about the network, only dedup.
         let out2 = prefetch_blocking(&[d], || false);
         assert!(out2.is_empty());
+    }
+
+    #[test]
+    fn offline_pass_does_not_poison_later_disk_hit() {
+        // Regression: an offline unlock must not mark the domain attempted,
+        // or a later disk-seeded icon would never resolve that session.
+        let _g = env_guard();
+        let tmp = std::env::temp_dir().join(format!("pv-fav-poison-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let prev = std::env::var("LOCALAPPDATA").ok();
+        std::env::set_var("LOCALAPPDATA", &tmp);
+        let d = "poison-test-xyz123.com".to_string();
+        assert!(prefetch_blocking(std::slice::from_ref(&d), || false).is_empty());
+        // Seed disk AFTER the offline pass (simulates arriving cache).
+        let img = image::DynamicImage::new_rgb8(2, 2);
+        let mut buf = Vec::new();
+        image::DynamicImage::write_to(&img, &mut std::io::Cursor::new(&mut buf), image::ImageFormat::Png).unwrap();
+        std::fs::create_dir_all(cache_dir()).unwrap();
+        std::fs::write(icon_path(&d), &buf).unwrap();
+        // Same session, still offline: disk hit must resolve (old code: empty).
+        let out = prefetch_blocking(std::slice::from_ref(&d), || false);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, d);
+        match prev {
+            Some(v) => std::env::set_var("LOCALAPPDATA", v),
+            None => std::env::remove_var("LOCALAPPDATA"),
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn rotating_slices_cover_big_vaults() {
+        // 250 distinct domains: every rotating 200-slice is full, and three
+        // consecutive slices cover the whole vault (old code: same first
+        // 200 forever, tail never fetched).
+        let pairs: Vec<(String, String)> = (0..250)
+            .map(|i| (String::new(), format!("https://site{i}.example.com")))
+            .collect();
+        let mut union = std::collections::HashSet::new();
+        for _ in 0..3 {
+            let slice = domains_for_items_rotating(&pairs);
+            assert_eq!(slice.len(), 200);
+            union.extend(slice);
+        }
+        assert_eq!(union.len(), 250);
     }
 
     #[test]

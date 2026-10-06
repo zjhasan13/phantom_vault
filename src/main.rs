@@ -1722,11 +1722,7 @@ fn favicon_image_for_domain(domain: &str) -> Option<slint::Image> {
     if !crate::core::favicon::show_favicons() {
         return None;
     }
-    let bytes = favicon_bytes()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(domain)
-        .cloned()?;
+    let bytes = favicon_bytes_for_domain(domain)?;
     png_bytes_to_image(&bytes)
 }
 
@@ -2524,16 +2520,40 @@ fn clear_favicon_bytes() {
     crate::core::favicon::clear_memory_cache();
 }
 
+/// Shared RAM→disk icon resolve. RAM miss (A2-lite 100-cap eviction) falls
+/// back to the disk cache — custom override first, then fetched file.
+/// Fail-closed: undecodable bytes yield None (letter icon), never a panic.
+fn favicon_bytes_for_domain(domain: &str) -> Option<Vec<u8>> {
+    if let Some(b) = favicon_bytes()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(domain)
+        .cloned()
+    {
+        return Some(b);
+    }
+    let b = crate::core::favicon::custom_icon_bytes(domain).or_else(|| {
+        std::fs::read(crate::core::favicon::icon_path(domain))
+            .ok()
+            .filter(|b| crate::core::favicon::valid_icon_bytes(b))
+    })?;
+    // Repopulate RAM (still under the cap — eviction policy lives at insert).
+    let mut cache = favicon_bytes().lock().unwrap_or_else(|p| p.into_inner());
+    if cache.len() >= FAVICON_RAM_CAP {
+        if let Some(k) = cache.keys().next().cloned() {
+            cache.remove(&k);
+        }
+    }
+    cache.insert(domain.to_string(), b.clone());
+    Some(b)
+}
+
 fn favicon_for_item(title: &str, url: &str) -> Option<slint::Image> {
     if !crate::core::favicon::show_favicons() {
         return None;
     }
     let domain = crate::core::favicon::icon_domain(title, url)?;
-    let bytes = favicon_bytes()
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
-        .get(&domain)
-        .cloned()?;
+    let bytes = favicon_bytes_for_domain(&domain)?;
     png_bytes_to_image(&bytes)
 }
 
@@ -2571,7 +2591,9 @@ fn trigger_favicon_prefetch(
                 .map(|c| (c.title.clone(), c.urls.first().cloned().unwrap_or_default()))
                 .collect()
         };
-        let mut domains = crate::core::favicon::domains_for_items(&pairs);
+        // Fix 3: rotating slice — 200+ domain vaults cover a new window
+        // each unlock instead of re-fetching the same first 200 forever.
+        let mut domains = crate::core::favicon::domains_for_items_rotating(&pairs);
         // 2FA issuers ride along (famous names + domain-like issuers), so
         // hub cards pop icons in on the same pass as the login list.
         {
