@@ -46,26 +46,64 @@ fn pin_path() -> std::path::PathBuf {
 }
 
 /// True when this device enforces PIN pairing (sealed PIN present).
+///
+/// A file that exists but cannot be decrypted still counts as "pairing on":
+/// the file's existence is the evidence that pairing was enabled, so the beacon
+/// keeps advertising it and peers keep sending a PIN. Treating the stored PIN
+/// as optional made "the blob got corrupted" indistinguishable from "the user
+/// never enabled pairing", which silently switched authentication off.
 pub fn pin_required() -> bool {
-    load_pin().is_some()
+    !matches!(read_pin(), PinState::Absent)
 }
 
-fn load_pin() -> Option<String> {
-    let blob = std::fs::read(pin_path()).ok()?;
-    let secret = crate::core::memory::DpapiGuard::unprotect(&blob).ok()?;
+/// The sealed PIN, or why it could not be recovered.
+///
+/// `Absent` is the ONLY state that legitimately leaves the LAN open. `Unusable`
+/// is a broken pairing and must never be downgraded to it.
+enum PinState {
+    /// No PIN file: pairing was never enabled. Open LAN, unchanged behaviour.
+    Absent,
+    /// A valid sealed 6-digit PIN.
+    Loaded(String),
+    /// A PIN file exists but does not yield a PIN (read error, DPAPI unseal
+    /// failure, wrong length, or non-digits). Fails closed.
+    Unusable(String),
+}
+
+fn read_pin() -> PinState {
+    let blob = match std::fs::read(pin_path()) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return PinState::Absent,
+        Err(e) => return PinState::Unusable(format!("pin file unreadable: {e}")),
+    };
+    let secret = match crate::core::memory::DpapiGuard::unprotect(&blob) {
+        Ok(s) => s,
+        Err(e) => return PinState::Unusable(format!("pin unseal failed: {e}")),
+    };
     let pin = String::from_utf8_lossy(secret.expose()).into_owned();
     if pin.len() == 6 && pin.chars().all(|c| c.is_ascii_digit()) {
-        Some(pin)
+        PinState::Loaded(pin)
     } else {
-        None
+        PinState::Unusable("sealed blob is not a 6-digit PIN".to_string())
     }
 }
 
-/// Fetch the sealed PIN, generating + sealing one on first call.
-pub fn get_or_create_pin() -> Result<String, String> {
-    if let Some(pin) = load_pin() {
-        return Ok(pin);
-    }
+/// Replace the sealed PIN without ever leaving the file missing.
+///
+/// Write to a sibling temp file, then rename over the target. Rename is atomic
+/// on NTFS, so a crash, a full disk or a seal failure leaves the PREVIOUS PIN
+/// intact rather than no PIN at all.
+fn write_pin_atomic(blob: &[u8]) -> Result<(), String> {
+    let target = pin_path();
+    let tmp = target.with_extension("dpapi.tmp");
+    std::fs::write(&tmp, blob).map_err(|e| format!("pin store failed: {e}"))?;
+    std::fs::rename(&tmp, &target).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("pin store failed: {e}")
+    })
+}
+
+fn new_pin() -> String {
     // H13: rejection sampling removes the `% 1_000_000` modulo bias
     // (2^32 % 1M != 0). NOTE residual: pairing HTTP is still plaintext LAN
     // (rustls + fingerprint pinning is the full fix, tracked separately);
@@ -81,24 +119,59 @@ pub fn get_or_create_pin() -> Result<String, String> {
             break v % 1_000_000;
         }
     };
-    let pin = format!("{pin_val:06}");
+    format!("{pin_val:06}")
+}
+
+/// Fetch the sealed PIN, generating + sealing one on first call.
+pub fn get_or_create_pin() -> Result<String, String> {
+    match read_pin() {
+        PinState::Loaded(pin) => return Ok(pin),
+        // Fail closed. Do NOT mint a replacement over an existing file: that
+        // turned a corrupted blob into "authentication off", and handing the
+        // fresh PIN back to the caller turned it into an unauthenticated
+        // takeover. Resetting pairing is an explicit user act — regenerate_pin.
+        PinState::Unusable(why) => {
+            return Err(format!(
+                "pairing PIN is unusable ({why}); regenerate or delete {} to reset pairing",
+                pin_path().display()
+            ))
+        }
+        PinState::Absent => {}
+    }
+    let pin = new_pin();
     let blob = crate::core::memory::DpapiGuard::protect(pin.as_bytes())
         .map_err(|e| format!("pin seal failed: {e}"))?;
-    std::fs::write(pin_path(), blob).map_err(|e| format!("pin store failed: {e}"))?;
+    write_pin_atomic(&blob)?;
     Ok(pin)
 }
 
 /// Regenerate the PIN (old pairings break immediately).
+///
+/// An explicit rotate, deliberately NOT delete-then-create. Removing the file
+/// first meant any failure in the gap left no PIN file at all — which
+/// `pin_required()` read as "never configured" and `verify_pin()` honoured as
+/// "accept anything", so a failed rotation silently opened the LAN. The atomic
+/// rename keeps the old PIN usable until the new one is fully in place.
+///
+/// Unlike `get_or_create_pin` this deliberately does not care about
+/// `Unusable`: rotating is how a user recovers from a corrupted blob.
 pub fn regenerate_pin() -> Result<String, String> {
-    let _ = std::fs::remove_file(pin_path());
-    get_or_create_pin()
+    let pin = new_pin();
+    let blob = crate::core::memory::DpapiGuard::protect(pin.as_bytes())
+        .map_err(|e| format!("pin seal failed: {e}"))?;
+    write_pin_atomic(&blob)?;
+    Ok(pin)
 }
 
 /// Length-first + full compare (interactive-attempt-rate path).
 pub fn verify_pin(candidate: &str) -> bool {
-    let Some(expected) = load_pin() else {
-        // No PIN configured → pairing check disabled (open LAN).
-        return true;
+    let expected = match read_pin() {
+        // Never configured → pairing check disabled (open LAN).
+        PinState::Absent => return true,
+        // Pairing is configured but the PIN cannot be read. Accepting anything
+        // here is the fail-open that let a lost/corrupted blob disable auth.
+        PinState::Unusable(_) => return false,
+        PinState::Loaded(pin) => pin,
     };
     let candidate = candidate.trim();
     expected.len() == candidate.len()
@@ -829,6 +902,93 @@ mod tests {
         let pin2 = regenerate_pin().unwrap();
         assert!(verify_pin(&pin2));
         assert!(!verify_pin(&pin));
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    /// A PIN file that exists but cannot be turned into a PIN is a BROKEN
+    /// pairing, not an absent one. The old `load_pin() -> Option<String>`
+    /// returned `None` for every failure, so a corrupted or un-unsealable blob
+    /// made `pin_required()` false and `verify_pin()` accept ANY string — i.e.
+    /// losing the DPAPI file silently disabled authentication and opened the LAN.
+    #[test]
+    fn corrupt_pin_file_fails_closed() {
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-corrupt-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let pinfile = sandbox.join("p2p_pin.dpapi");
+        let _ = std::fs::remove_file(&pinfile);
+        let _guard = with_pin_file(pinfile.to_str().unwrap());
+
+        let pin = get_or_create_pin().unwrap();
+        assert!(verify_pin(&pin), "baseline: valid PIN must verify");
+
+        // Case 1: file exists, DPAPI cannot unseal it.
+        std::fs::write(&pinfile, b"not-a-sealed-blob").unwrap();
+        assert!(
+            pin_required(),
+            "an unreadable PIN file still proves pairing was enabled"
+        );
+        assert!(!verify_pin(&pin), "unsealable PIN must not verify");
+        assert!(!verify_pin(""), "unsealable PIN must not accept empty");
+        assert!(
+            !verify_pin("123456"),
+            "fail-closed, not 'accept anything': an arbitrary PIN must be rejected"
+        );
+        // And it must not silently mint a replacement over the top.
+        assert!(
+            get_or_create_pin().is_err(),
+            "get_or_create_pin must refuse to overwrite a broken PIN file"
+        );
+        assert_eq!(
+            std::fs::read(&pinfile).unwrap(),
+            b"not-a-sealed-blob",
+            "the broken file must be left untouched, not silently reset"
+        );
+
+        // Case 2: unseals fine, but the payload is not a 6-digit PIN.
+        let bad = crate::core::memory::DpapiGuard::protect(b"abcdefghij").unwrap();
+        std::fs::write(&pinfile, bad).unwrap();
+        assert!(pin_required(), "malformed PIN content still means pairing on");
+        assert!(!verify_pin("abcdefghij"), "malformed payload must not verify");
+        assert!(get_or_create_pin().is_err());
+
+        // Explicit rotation is the documented recovery path, and it works.
+        let rotated = regenerate_pin().unwrap();
+        assert_eq!(rotated.len(), 6);
+        assert!(pin_required());
+        assert!(verify_pin(&rotated));
+        assert!(!verify_pin("abcdefghij"));
+
+        clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    /// `regenerate_pin` used to `remove_file` then create. Any failure in that
+    /// gap left NO pin file, which reads as "pairing never configured" and makes
+    /// `verify_pin` accept everything. The atomic rename means the old PIN stays
+    /// valid right up to the swap, and no failure path can produce a missing
+    /// file. This test pins the success path; the guarantee is structural (no
+    /// delete before the write) rather than observable from here.
+    #[test]
+    fn regenerate_never_leaves_pin_absent() {
+        let sandbox = std::env::temp_dir().join(format!("pv-pin-rot-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let pinfile = sandbox.join("p2p_pin.dpapi");
+        let _ = std::fs::remove_file(&pinfile);
+        let _guard = with_pin_file(pinfile.to_str().unwrap());
+
+        let mut first = get_or_create_pin().unwrap();
+        for _ in 0..8 {
+            let next = regenerate_pin().unwrap();
+            // Never absent, never open, even mid-rotation.
+            assert!(pin_required());
+            assert!(verify_pin(&next));
+            assert!(!verify_pin(&first));
+            first = next;
+        }
+        // No temp file left behind by the atomic write.
+        assert!(!pinfile.with_extension("dpapi.tmp").exists());
+
         clear_pin_file();
         let _ = std::fs::remove_dir_all(&sandbox);
     }
