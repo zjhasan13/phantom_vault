@@ -77,6 +77,30 @@ fn stop_bridge_heartbeat() {
     let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
 }
 
+/// PR-1: seal the master passphrase for Hello unlocks (single choke point).
+/// Used by the auto path in `unlock_with_password` and the explicit
+/// New-Device [Re-enroll Hello] button. Returns true on success.
+fn seal_hello_token(master: &str) -> bool {
+    match core::memory::DpapiGuard::protect(master.as_bytes()) {
+        Ok(blob) => std::fs::write(HELLO_TOKEN_FILE, blob).is_ok(),
+        Err(_) => false,
+    }
+}
+
+/// PR-1: true when a Hello token file exists but cannot be unprotected
+/// (foreign-machine/user DPAPI seal, or corruption). Missing file means
+/// "never enrolled" — not a new-device signal. Pure filesystem probe.
+fn is_hello_token_unreadable_at(path: &std::path::Path) -> bool {
+    match std::fs::read(path) {
+        Err(_) => false,
+        Ok(blob) => core::memory::DpapiGuard::unprotect(&blob).is_err(),
+    }
+}
+
+fn is_hello_token_unreadable() -> bool {
+    is_hello_token_unreadable_at(std::path::Path::new(HELLO_TOKEN_FILE))
+}
+
 /// Native-host launch detector: humans type `native-host`, but Chromium
 /// launches the bridge as `<exe> chrome-extension://<id>/ [...]` (origin URL
 /// as argv[1]). Both spellings must enter the stdio serve loop — otherwise
@@ -513,6 +537,8 @@ fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> 
         // Bridge liveness beacon: stale alone can't serve (no token), but
         // a reset must leave zero bridge state behind.
         HEARTBEAT_FILE,
+        // PR-3: a reset vault genuinely has no sheet — warn again.
+        RECOVERY_EXPORTED_FILE,
     ] {
         let p = dir.join(name);
         if p.is_file() && !out.contains(&p) {
@@ -546,6 +572,24 @@ fn shard_nudge_seen() -> bool {
 
 fn mark_shard_nudged() {
     let _ = std::fs::write("shards_nudged.pref", "1");
+}
+
+/// PR-3: persistent recovery-sheet export state (`recovery_exported.pref`,
+/// separate from the nudge pref). Missing/anything-else = "Not Backed Up".
+const RECOVERY_EXPORTED_FILE: &str = "recovery_exported.pref";
+
+fn recovery_exported_at(path: &std::path::Path) -> bool {
+    std::fs::read_to_string(path)
+        .map(|s| s.trim() == "1")
+        .unwrap_or(false)
+}
+
+fn recovery_exported() -> bool {
+    recovery_exported_at(std::path::Path::new(RECOVERY_EXPORTED_FILE))
+}
+
+fn mark_recovery_exported() {
+    let _ = std::fs::write(RECOVERY_EXPORTED_FILE, "1");
 }
 
 /// Shared Shamir-split core behind Settings + the post-setup nudge banner.
@@ -856,6 +900,9 @@ fn lock_vault_now(
         ui.set_rp_secret(String::new().into());
         ui.set_rp_error(String::new().into());
         ui.set_rp_show(false);
+        // PR-1: new-device modal must never survive a lock.
+        ui.set_show_new_device_modal(false);
+        ui.set_new_device_error(String::new().into());
     });
 }
 
@@ -1097,12 +1144,30 @@ fn publish_unlocked_vault(
     if !shard_nudge_seen() {
         ui.set_show_shard_nudge(true);
     }
+    // PR-3: persistent badge state, painted every unlock (portable-USB dir
+    // without the pref correctly shows "Not Backed Up").
+    ui.set_recovery_backed_up(recovery_exported());
     // Hardware binding (rules Cat 6): warn-only machine check.
     // Registry + DPAPI read is milliseconds — safe inline.
-    if windows_native::device_bind::check_device() {
+    // PR-1 New-Device Modal (blocking): fires when the vault was bound to a
+    // different machine OR the Hello token exists but can't be unprotected
+    // (foreign DPAPI seal). Re-shows every unlock until enrolled — no pref.
+    let device_mismatch = windows_native::device_bind::check_device();
+    if device_mismatch {
         ui.set_notification_text(
             "⚠️ Bound to a different machine (ignore for portable USB).".into(),
         );
+    }
+    let hello_broken = is_hello_token_unreadable();
+    if device_mismatch || hello_broken {
+        ui.set_new_device_reason(
+            if hello_broken && !device_mismatch {
+                "hello-token".into()
+            } else {
+                "different-machine".into()
+            },
+        );
+        ui.set_show_new_device_modal(true);
     }
     if and_downgrade {
         ui.set_notification_text(
@@ -1352,9 +1417,7 @@ fn unlock_with_password(    pass: String,
         // Phase 11: on success, DPAPI-seal the passphrase for Hello unlocks.
         // Failures are silent — Hello simply stays unavailable.
         if cache_hello_token && loaded_result.is_ok() {
-            if let Ok(blob) = core::memory::DpapiGuard::protect(pass.as_bytes()) {
-                let _ = std::fs::write(HELLO_TOKEN_FILE, blob);
-            }
+            seal_hello_token(&pass);
         }
 
         // Phase 15 (Option 1): duress fallback. Only attempted when the real
@@ -2442,6 +2505,10 @@ fn pending_import_store() -> &'static Mutex<Option<PendingImport>> {
 /// `slint::Image` happens ONLY on the event-loop thread — Slint images are
 /// neither Send nor Sync). Filled by the prefetch worker; list/detail builds
 /// (always on the event loop) decode on demand.
+/// A2-lite: RAM icon cap (100). Disk cache is unbounded (keyed by domain,
+/// never by secret); RAM holds at most 100 decoded PNGs for the live list.
+const FAVICON_RAM_CAP: usize = 100;
+
 fn favicon_bytes() -> &'static Mutex<std::collections::HashMap<String, Vec<u8>>> {
     static ICONS: std::sync::OnceLock<Mutex<std::collections::HashMap<String, Vec<u8>>>> =
         std::sync::OnceLock::new();
@@ -2532,6 +2599,14 @@ fn trigger_favicon_prefetch(
             for (d, bytes) in hits {
                 if cache.contains_key(&d) {
                     continue;
+                }
+                // A2-lite: cap 100 RAM icons. Evict one arbitrary entry when
+                // full (true LRU needs a new dep — not worth it for icons;
+                // disk cache refills on demand, keyed by domain not secret).
+                if cache.len() >= FAVICON_RAM_CAP {
+                    if let Some(k) = cache.keys().next().cloned() {
+                        cache.remove(&k);
+                    }
                 }
                 cache.insert(d, bytes);
                 fresh += 1;
@@ -4405,6 +4480,96 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             }
         });
+    });
+
+    // PR-1: New-device explicit re-enroll. Unlocked + non-decoy only.
+    // Runs Hello auth off-thread, then seals via the single `seal_hello_token`
+    // choke point. Modal stays open on failure/cancel; [Later] just hides it
+    // (it re-shows on next unlock until enrolled).
+    let reenroll_weak = main_window.as_weak();
+    let reenroll_master = Arc::clone(&active_master_pw);
+    main_window.on_reenroll_hello_requested(move || {
+        let Some(ui) = reenroll_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_new_device_error("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        use secrecy::ExposeSecret;
+        let master_opt = lock_master_pw(&reenroll_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_new_device_error("❌ Vault not unlocked!".into());
+            return;
+        };
+        let master_copy = master_pw.expose_secret().clone();
+        drop(master_pw);
+        ui.set_new_device_error("".into());
+        ui.set_status_text("🖐 Confirm Windows Hello to enroll this PC…".into());
+        let weak = reenroll_weak.clone();
+        std::thread::spawn(move || {
+            let runtime = match tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(rt) => rt,
+                Err(_) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_new_device_error(
+                                "Could not start biometric service.".into(),
+                            );
+                        }
+                    });
+                    return;
+                }
+            };
+            let auth = runtime.block_on(windows_native::hello::WindowsHello::authenticate(
+                "Enroll Windows Hello on this PC",
+            ));
+            match auth {
+                Ok(true) => {
+                    if seal_hello_token(&master_copy) {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_show_new_device_modal(false);
+                                ui.set_new_device_error("".into());
+                                ui.set_status_text("✅ Hello enrolled on this PC.".into());
+                            }
+                        });
+                    } else {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_new_device_error(
+                                    "⚠️ Hello verified but seal failed.".into(),
+                                );
+                            }
+                        });
+                    }
+                }
+                Ok(false) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_new_device_error("Canceled — Hello not enrolled.".into());
+                        }
+                    });
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_new_device_error(msg.into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+    let dismiss_weak = main_window.as_weak();
+    main_window.on_dismiss_new_device_modal(move || {
+        if let Some(ui) = dismiss_weak.upgrade() {
+            ui.set_show_new_device_modal(false);
+        }
     });
 
     // App PIN quick-unlock (DPAPI-bound, device-local). Mirrors the Hello
@@ -8163,9 +8328,15 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let res = security::pdf_sheet::export_recovery_sheet_pdf(&dest, &sheets);
             if res.is_ok() {
                 security::access_log::log_event("export", "recovery-sheet");
+                // PR-3: success only — cancel/split-fail/pdf-fail never marks.
+                mark_recovery_exported();
             }
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
+                    if res.is_ok() {
+                        // PR-3: flip the Settings badge immediately.
+                        ui.set_recovery_backed_up(true);
+                    }
                     ui.set_notification_text(match res {
                         Ok(()) => "🖨️ Recovery sheet saved — print + store fireproof.".into(),
                         Err(e) => format!("❌ Sheet failed: {e}").into(),
@@ -11687,6 +11858,109 @@ mod grid_tests {
         assert!(!is_native_host_launch(""));
         assert!(!is_native_host_launch("chrome-extension"));
         assert!(!is_native_host_launch("https://github.com/"));
+    }
+
+    #[test]
+    fn pr3_missing_pref_means_not_backed_up() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-rec-{}-missing.pref",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&p);
+        assert!(!recovery_exported_at(&p));
+    }
+
+    #[test]
+    fn pr3_exported_pref_means_backed_up() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-rec-{}-done.pref",
+            std::process::id()
+        ));
+        std::fs::write(&p, "1").unwrap();
+        assert!(recovery_exported_at(&p));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn pr3_garbage_pref_means_not_backed_up() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-rec-{}-junk.pref",
+            std::process::id()
+        ));
+        std::fs::write(&p, "yes-ish").unwrap();
+        assert!(!recovery_exported_at(&p));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn a2lite_favicon_ram_cap_is_100() {
+        assert_eq!(FAVICON_RAM_CAP, 100);
+        // Simulate the capped insert: 150 domains → exactly 100 retained.
+        let mut cache: std::collections::HashMap<String, Vec<u8>> =
+            std::collections::HashMap::new();
+        for i in 0..150 {
+            let d = format!("d{i}.example");
+            if !cache.contains_key(&d) {
+                if cache.len() >= FAVICON_RAM_CAP {
+                    if let Some(k) = cache.keys().next().cloned() {
+                        cache.remove(&k);
+                    }
+                }
+                cache.insert(d, vec![1, 2, 3]);
+            }
+        }
+        assert_eq!(cache.len(), 100);
+    }
+
+    #[test]
+    fn a2lite_lock_clear_empties_favicon_ram() {
+        {
+            let mut c = favicon_bytes().lock().unwrap_or_else(|p| p.into_inner());
+            c.insert("x.example".to_string(), vec![9u8; 8]);
+        }
+        clear_favicon_bytes();
+        assert!(favicon_bytes()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .is_empty());
+    }
+
+    #[test]
+    fn pr1_missing_hello_token_is_not_new_device() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-hello-nd-{}-missing.dpapi",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_file(&p);
+        assert!(!is_hello_token_unreadable_at(&p));
+    }
+
+    #[test]
+    fn pr1_corrupt_hello_token_is_new_device() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-hello-nd-{}-junk.dpapi",
+            std::process::id()
+        ));
+        std::fs::write(&p, b"definitely-not-a-dpapi-blob").unwrap();
+        assert!(is_hello_token_unreadable_at(&p));
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn pr1_sealed_hello_token_reads_back() {
+        let p = std::env::temp_dir().join(format!(
+            "pv-hello-nd-{}-sealed.dpapi",
+            std::process::id()
+        ));
+        let blob = crate::core::memory::DpapiGuard::protect(b"nd-probe").unwrap();
+        std::fs::write(&p, &blob).unwrap();
+        assert!(!is_hello_token_unreadable_at(&p));
+        let back = crate::core::memory::DpapiGuard::unprotect(
+            &std::fs::read(&p).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(back.expose(), b"nd-probe");
+        let _ = std::fs::remove_file(&p);
     }
 
     #[test]

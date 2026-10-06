@@ -45,6 +45,16 @@ const MIN_TOTP_FILL_REMAINING_SECS: u64 = 3;
 /// correctness input.
 const RECENT_FILL_SECS: u64 = 30 * 24 * 3600;
 
+/// Phase C: host session idle TTL (60s). One decrypted session serves the
+/// burst, then exits — bounds the plaintext window. Next query pays one
+/// fresh KDF. Unit-tested below.
+pub(crate) const HOST_IDLE_TTL_SECS: u64 = 60;
+
+/// Pure TTL decision (unit-testable): idle longer than TTL ⇒ expired.
+pub(crate) fn session_idle_expired(idle_secs: u64) -> bool {
+    idle_secs > HOST_IDLE_TTL_SECS
+}
+
 /// Picker bound. Enough rows to disambiguate, small enough that a loose
 /// substring match can't dump the entire hub into the popup.
 const MAX_TOTP_CANDIDATES: usize = 12;
@@ -1832,7 +1842,9 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
 /// Hello token + idle/max lifetimes (lock deletes the token → host exits).
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
-    const IDLE_SECS: u64 = 300;
+    // Phase C: 60s idle TTL — one decrypted session serves the burst, then
+    // exits. Bounds the plaintext window; next query pays one fresh KDF.
+    const IDLE_SECS: u64 = HOST_IDLE_TTL_SECS;
     const MAX_SECS: u64 = 8 * 3600;
     let origin = std::env::args().nth(1).unwrap_or_default();
     if origin != "native-host" && !origin_allowed(&origin) {
@@ -2961,6 +2973,16 @@ mod tests {
         assert!(!heartbeat_parts(None, now));
         // Future beacon (clock moved) ⇒ tolerated, not a lockout.
         assert!(heartbeat_parts(Some(now + 3600), now));
+    }
+
+    #[test]
+    fn session_ttl_is_60s_and_boundary_holds() {
+        assert_eq!(HOST_IDLE_TTL_SECS, 60);
+        assert!(!session_idle_expired(0));
+        assert!(!session_idle_expired(30));
+        assert!(!session_idle_expired(60));
+        assert!(session_idle_expired(61));
+        assert!(session_idle_expired(3600));
     }
 
     #[test]

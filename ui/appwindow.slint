@@ -607,6 +607,8 @@ export component MainWindow inherits Window {
     callback set_peep_mode(bool);
     callback set_moire(bool);
     // Phase 17: Shamir recovery sheet (unlocked) + shard recovery (lock)
+    // PR-3: persistent badge — true only after a successful PDF export.
+    in-out property <bool> recovery_backed_up: false;
     in-out property <bool> show_shards: false;
     in-out property <string> shard_1;
     in-out property <string> shard_2;
@@ -629,6 +631,12 @@ export component MainWindow inherits Window {
     // Post-setup shard nudge (one-shot banner; shards need an unlocked vault).
     in-out property <bool> ob_shards_ok: false;
     in-out property <bool> show_shard_nudge: false;
+    // PR-1: New-device modal (blocking; re-shows every unlock until enrolled).
+    in-out property <bool> show_new_device_modal: false;
+    in-out property <string> new_device_reason: "";
+    in-out property <string> new_device_error: "";
+    callback reenroll_hello_requested();
+    callback dismiss_new_device_modal();
     callback shard_nudge_generate();
     callback shard_nudge_later();
     callback generate_shards();
@@ -1090,7 +1098,9 @@ export component MainWindow inherits Window {
                             } }
                         }
                         HorizontalLayout { alignment: center;
-                            AuraButton { label: "Skip tour"; width: 110px; height: 30px; clicked => { root.show_onboarding = false; } }
+                            // PR-2: mandatory setup — no vault file ⇒ Skip jumps to Step 3 (Create).
+                            if !root.has_vault_file : AuraButton { label: "Skip to setup ▶"; width: 130px; height: 30px; clicked => { root.ob_error = ""; root.onboarding_step = 3; } }
+                            if root.has_vault_file : AuraButton { label: "Skip tour"; width: 110px; height: 30px; clicked => { root.show_onboarding = false; } }
                         }
                     }
                 }
@@ -1463,6 +1473,9 @@ export component MainWindow inherits Window {
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Paranoia & Recovery"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    // PR-3: persistent backup badge — survives nudge dismissal.
+                    if !root.recovery_backed_up : Text { text: "⚠️ Not Backed Up — export your Recovery Sheet PDF"; color: #fbbf24; font-size: 12px; font-weight: 800; wrap: word-wrap; }
+                    if root.recovery_backed_up : Text { text: "✅ Recovery Sheet exported"; color: #34d399; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "Recovery Sheet"; width: 200px; clicked => { root.generate_shards(); } } AuraButton { label: "Hide in PNG"; width: 200px; clicked => { root.stego_hide(); } } AuraButton { label: "Restore PNG"; width: 200px; clicked => { root.stego_restore(); } }
                     AuraButton { label: "🖨️ Export Printable PDF Recovery Sheet"; primary: true; height: 40px; clicked => { root.export_recovery_sheet(); } }
                     FieldLabel { text: "DURESS PASSWORD (DECOY VAULT)"; }
@@ -2038,6 +2051,32 @@ export component MainWindow inherits Window {
                 if !root.fr_armed : AuraButton { label: "⏳ Verify & Start 5s Countdown"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_arm(); } }
                 if root.fr_armed : AuraButton { label: "🔥 DELETE EVERYTHING NOW"; danger: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_confirm(); } }
                 AuraButton { label: "✕ Cancel (keep my vault)"; horizontal-stretch: 1; height: 36px; clicked => { root.factory_reset_cancel(); } }
+            }
+        }
+    }
+
+    // ==== PR-1: New-device modal (blocking; re-shows every unlock until enrolled) ====
+    if root.show_new_device_modal : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            width: 460px;
+            background: #0d131f;
+            border-radius: 16px;
+            border-width: 1px;
+            border-color: #fbbf24;
+            clip: true;
+            VerticalLayout { padding: 20px; spacing: 10px;
+                Text { text: "🖥️ New PC detected"; color: #fbbf24; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.new_device_reason == "hello-token" ? "Windows Hello credential can't be read on this PC. You unlocked with your Master Password. Re-enroll Hello for this machine?" : "This vault was bound to a different machine (normal for portable USB). You unlocked with your Master Password. Re-enroll Windows Hello for this PC?"; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                if root.new_device_error != "" : Text { text: root.new_device_error; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                AuraButton { label: "🖐 Re-enroll Hello"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.reenroll_hello_requested(); } }
+                AuraButton { label: "Later"; horizontal-stretch: 1; height: 36px; clicked => { root.dismiss_new_device_modal(); } }
             }
         }
     }
