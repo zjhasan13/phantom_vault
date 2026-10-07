@@ -3006,7 +3006,6 @@ mod tests {
     }
 
     #[test]
-    #[test]
     fn assert_brake_allows_100_then_rejects() {
         let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         reset_assert_rate();
