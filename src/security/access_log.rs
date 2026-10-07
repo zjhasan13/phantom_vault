@@ -8,32 +8,14 @@
 //! edited line breaks every later hash, and a head-hash anchor file makes
 //! tail truncation detectable. Appends are fsync'd + mutex-serialized.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const LOG_FILE: &str = "access.log";
+/// DPAPI-sealed HMAC chain key. Dotted name matches `.gitignore`
+/// (`access_log.key.dpapi`) so the key can never be committed.
 const KEY_FILE: &str = "access_log.key.dpapi";
 
-static LOG_MUTEX: std::sync::Mutex<()> =
-    std::sync::Mutex::new(());
-
-fn sha256_hex(input: &[u8]) -> String {
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(input);
-    digest.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::OnceLock;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-use aes_gcm::{AeadInPlace, Aes256Gcm, KeyInit, Nonce};
-use serde::{Deserialize, Serialize};
-
-const LOG_FILE: &str = "access.log";
-const KEY_FILE: &str = "access_log_key.dpapi";
-
-static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new();
+static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn sha256_hex(input: &[u8]) -> String {
     use sha2::Digest;
@@ -105,7 +87,7 @@ fn chain_key_bytes() -> Result<[u8; 32], String> {
 /// HMAC falls back to plain SHA-256 to keep truncation-detectable via the
 /// anchor; callers may log the key state separately.
 fn chain_key() -> Vec<u8> {
-    chain_key_bytes().unwrap_or_else(|_| Vec::new())
+    chain_key_bytes().map(|k| k.to_vec()).unwrap_or_else(|_| Vec::new())
 }
 
 fn chain_hash(prev: &str, t: i64, event: &str, detail: &str) -> String {

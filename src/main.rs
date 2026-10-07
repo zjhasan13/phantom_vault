@@ -11091,6 +11091,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
 mod grid_tests {
     use super::*;
 
+    // Merge repair (parallel flake): `vault_to_items` writes the process-global
+    // `total_matches_registry`, so tests that build list models must never run
+    // concurrently — same precedent as tray.rs ACTION_TEST_LOCK.
+    static LIST_MODEL_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn totp_acct(id: &str, issuer: &str, name: &str) -> TotpAccount {
         TotpAccount {
             id: id.into(),
@@ -11531,6 +11536,7 @@ mod grid_tests {
 
     #[test]
     fn paging_grows_window_and_reports_total() {
+        let _guard = LIST_MODEL_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         fn login(id: &str) -> Credential {
             Credential {
                 id: id.into(),
@@ -11709,6 +11715,7 @@ mod grid_tests {
 
     #[test]
     fn standalone_2fa_in_all_items_and_favorites() {
+        let _guard = LIST_MODEL_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         fn acc(id: &str, fav: bool) -> TotpAccount {
             TotpAccount {
                 id: id.into(),

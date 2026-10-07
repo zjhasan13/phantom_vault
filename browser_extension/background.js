@@ -253,7 +253,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!base || faviconPushed.has(base)) return { ok: true, cached: true };
         const url = String(msg.iconUrl || "");
         if (!/^https?:\/\//i.test(url)) return { ok: false, error: "bad icon url" };
-        faviconPushed.add(base);
+        // Rollback rule: mark pushed ONLY after a host-confirmed store — a
+        // transient fetch/bridge failure retries next page load instead of
+        // blackholing the domain for the whole SW lifetime.
         const ctl = new AbortController();
         const timer = setTimeout(() => ctl.abort(), 10000);
         let buf;
@@ -272,11 +274,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         for (let i = 0; i < bytes.length; i += 8192) {
           bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192));
         }
-        return await hostRequest({
+        const stored = await hostRequest({
           cmd: "cache_favicon",
           domain: base,
           data: btoa(bin),
         });
+        if (stored && stored.ok) faviconPushed.add(base);
+        return stored;
       } catch (e) {
         return { ok: false, error: String((e && e.message) || e) };
       }

@@ -550,6 +550,11 @@ fn read_adopted_head() -> AdoptedHead {
     }
 }
 
+/// NOTE (merge repair): currently unwired — `read_adopted_head` has no
+/// writer, so the monotonic guard always sees default. The other line's
+/// follow-up should call this wherever remote state is adopted.
+/// Kept (not deleted) so that wiring is a one-line call, not a rewrite.
+#[allow(dead_code)]
 fn write_adopted_head(mtime: u64, sha: &str) {
     let p = adopted_head_path();
     let ah = AdoptedHead {

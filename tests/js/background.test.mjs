@@ -174,30 +174,22 @@ test("port disconnect fails pending and reconnects on next query", async () => {
   assert.equal(r2.ok, true);
 });
 
-test("PV_ASSERT relays ceremony with host-minted uv", async () => {
+test("PV_ASSERT relay removed: fails closed, never reaches the host", async () => {
+  // Merge repair: the other line removed the ceremony relay (no content.js /
+  // popup.js sender remains). The router must fail closed with zero host
+  // spawn — NOT silently drop or partially relay.
   const { chrome, onMessage } = fresh();
-  const pending = sendMessage(onMessage, chrome, {
+  const r = await sendMessage(onMessage, chrome, {
     type: "PV_ASSERT",
     rpId: "github.com",
     challenge: "abc",
     clientDataHash: "a".repeat(44),
     credentialId: "cred1",
   });
-  await flushTicks();
-  assert.equal(chrome.__state.postedNative.length, 1);
-  const q = chrome.__state.postedNative[0];
-  assert.equal(q.cmd, "assert");
-  assert.equal(q.rp_id, "github.com");
-  assert.equal(q.client_data_hash, "a".repeat(44));
-  assert.equal(q.uv, true);
-  const port = chrome.__state.ports[0];
-  port.handlers.message.forEach((fn) => fn({
-    ok: true, credential_id: "cred1", authenticator_data: "AUTH", signature: "SIG", sign_count: 3,
-  }));
-  const r = await pending;
-  assert.equal(r.ok, true);
-  assert.equal(r.authenticator_data, "AUTH");
-  assert.equal(r.sign_count, 3);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /unknown/i);
+  assert.equal(chrome.__state.ports.length, 0);
+  assert.equal(chrome.__state.postedNative.length, 0);
 });
 
 test("PV_FAVICON_HARVEST failure leaves no pushed marker (retries later)", async () => {
