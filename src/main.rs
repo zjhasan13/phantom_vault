@@ -811,6 +811,9 @@ fn lock_vault_now(
     // P1 fix: stop the bridge beats too — a stale heartbeat refuses serves.
     stop_bridge_heartbeat();
     panic_wipe(vault_arc, master_arc);
+    // SSH agent session dies with unlock: signing keys must never outlive
+    // the vault (the serving thread exits at its next 1s accept tick).
+    developer::ssh_agent::stop_agent();
     // Lightweight release: trim the working set AFTER the wipe (never before —
     // trimming first would page wiped secrets back in on next touch). Locked
     // CPU stays 0% (all loops deep-sleep) and RAM drops to OS-kept pages.
@@ -910,6 +913,10 @@ fn lock_vault_now(
         // PR-1: new-device modal must never survive a lock.
         ui.set_show_new_device_modal(false);
         ui.set_new_device_error(String::new().into());
+        // SSH agent dies with unlock (stop_agent above) — the button must
+        // read Stopped and the status returns to the probe ground truth.
+        ui.set_ssh_agent_running(false);
+        ui.set_ssh_status("○ Stopped".into());
     });
 }
 
@@ -10661,11 +10668,53 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     ui.set_ssh_status(if live {
                         "● Running".into()
                     } else {
-                        "○ Stopped (run: phantom_vault ssh-agent)".into()
+                        "○ Stopped".into()
                     });
+                    ui.set_ssh_agent_running(live);
                 }
             });
         });
+    });
+    // One-click agent Start: snapshot vault SSH keys into a background serving
+    // thread. Unlocked + non-decoy only (decoy keys must never be served).
+    // Lock always stops the session (see lock_vault_now) — keys die with it.
+    let start_weak = main_window.as_weak();
+    let start_vault = Arc::clone(&active_vault);
+    let start_master = Arc::clone(&active_master_pw);
+    main_window.on_start_ssh_agent(move || {
+        let Some(ui) = start_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if lock_master_pw(&start_master).is_none() {
+            ui.set_notification_text("❌ Vault not unlocked!".into());
+            return;
+        }
+        let keys = developer::ssh_agent::collect_keys(&lock_vault(&start_vault));
+        match developer::ssh_agent::start_agent(keys) {
+            Ok(()) => {
+                ui.set_ssh_agent_running(true);
+                ui.set_ssh_status("● Running".into());
+                ui.set_notification_text("🔑 SSH agent serving vault keys.".into());
+                security::access_log::log_event("ssh-agent", "start");
+            }
+            Err(e) => {
+                ui.set_notification_text(format!("⚠️ Agent not started: {e}").into());
+            }
+        }
+    });
+    let stop_weak = main_window.as_weak();
+    main_window.on_stop_ssh_agent(move || {
+        developer::ssh_agent::stop_agent();
+        if let Some(ui) = stop_weak.upgrade() {
+            ui.set_ssh_agent_running(false);
+            ui.set_ssh_status("○ Stopped".into());
+            ui.set_notification_text("🔑 SSH agent stopped.".into());
+            security::access_log::log_event("ssh-agent", "stop");
+        }
     });
 
     // Cat 8 access-log viewer: newest 20 events + chain verdict.

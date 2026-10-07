@@ -588,6 +588,12 @@ export component MainWindow inherits Window {
     in-out property <string> ext_pin_status: "";
     in-out property <string> ssh_status: "Not checked";
     callback refresh_ssh_status();
+    // One-click agent (no terminal): Start serves a vault-keys snapshot on a
+    // background thread, Stop (or vault lock) kills it. Status text stays the
+    // pipe-probe ground truth; this flag only picks the button label.
+    in-out property <bool> ssh_agent_running: false;
+    callback start_ssh_agent();
+    callback stop_ssh_agent();
     in-out property <bool> and_mode: false;
     callback set_and_mode(bool);
     in-out property <string> unlock_error_message: "";
@@ -1515,7 +1521,7 @@ export component MainWindow inherits Window {
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Health & Dev"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: root.health_status; color: #38e1ff; font-size: 12px; wrap: word-wrap; } AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } }
-                    HorizontalLayout { spacing: 8px; Text { text: "SSH Agent"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: #8e99c0; font-size: 11px; vertical-alignment: center; } AuraButton { label: "Refresh"; width: 90px; clicked => { root.refresh_ssh_status(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "SSH Agent"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: #8e99c0; font-size: 11px; vertical-alignment: center; } if root.ssh_agent_running : AuraButton { label: "Stop"; danger: true; width: 90px; clicked => { root.stop_ssh_agent(); } } if !root.ssh_agent_running : AuraButton { label: "Start"; primary: true; width: 90px; clicked => { root.start_ssh_agent(); } } AuraButton { label: "Refresh"; width: 90px; clicked => { root.refresh_ssh_status(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline audit (no network)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_audit ? "ON" : "OFF"; primary: root.offline_audit; width: 90px; clicked => { root.offline_audit = !root.offline_audit; } } }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;

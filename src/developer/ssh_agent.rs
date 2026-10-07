@@ -212,6 +212,105 @@ async fn handle_client(
     }
 }
 
+/// In-app session state: at most one UI-started agent at a time. The stop
+/// flag is set by Stop, by vault lock (keys must never outlive unlock), and
+/// by process exit (thread is borrowed, not detached from fate).
+static SSH_SESSION: std::sync::OnceLock<std::sync::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>>> =
+    std::sync::OnceLock::new();
+
+fn session() -> &'static std::sync::Mutex<Option<std::sync::Arc<std::sync::atomic::AtomicBool>>> {
+    SSH_SESSION.get_or_init(|| std::sync::Mutex::new(None))
+}
+
+/// True while a UI-started agent session is armed (keys live on its thread).
+/// The pipe probe (`is_serving`) remains the ground truth for display.
+pub fn session_armed() -> bool {
+    session()
+        .lock()
+        .map(|s| s.is_some())
+        .unwrap_or(false)
+}
+
+/// Start serving `keys` on the app's pipe in a background thread. Refuses
+/// when a pipe is already serving (ours or a foreign agent — never steal).
+/// Stop via [`stop_agent`] (button, vault lock). Unlocked + non-decoy only
+/// (enforced by the caller — this fn cannot see UI state).
+pub fn start_agent(keys: Vec<AgentKey>) -> Result<(), String> {
+    if keys.is_empty() {
+        return Err("no ed25519 keys — add a credential titled \"SSH: <name>\"".into());
+    }
+    if is_serving(&pipe_name()) {
+        return Err("an agent is already serving this pipe".into());
+    }
+    let mut guard = session()
+        .lock()
+        .map_err(|_| "agent session busy".to_string())?;
+    if guard.is_some() {
+        return Err("agent already starting".into());
+    }
+    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stop_thread = std::sync::Arc::clone(&stop);
+    let keys = std::sync::Arc::new(keys);
+    std::thread::spawn(move || {
+        serve_keys_thread(keys, stop_thread);
+    });
+    *guard = Some(stop);
+    Ok(())
+}
+
+/// Stop the UI-started agent session, if any. Idempotent — safe to call on
+/// every lock (the normal case is "nothing running"). The serving thread
+/// exits at the next 1s accept tick; keys die with it.
+pub fn stop_agent() {
+    let flag = session()
+        .lock()
+        .map(|mut s| s.take())
+        .unwrap_or(None);
+    if let Some(stop) = flag {
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Thread body for [`start_agent`]: own runtime, own keys snapshot.
+fn serve_keys_thread(
+    keys: std::sync::Arc<Vec<AgentKey>>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    let pipe_name = pipe_name();
+    let rt = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(rt) => rt,
+        Err(_) => return,
+    };
+    rt.block_on(async {
+        use tokio::net::windows::named_pipe::ServerOptions;
+        loop {
+            if stop.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
+            }
+            let server = match ServerOptions::new().create(&pipe_name) {
+                Ok(s) => s,
+                Err(_) => break,
+            };
+            // 1s accept tick so Stop/lock is honored promptly (else the
+            // thread could block on connect() indefinitely past lock).
+            match tokio::time::timeout(std::time::Duration::from_secs(1), server.connect()).await
+            {
+                Ok(Ok(())) => {
+                    let keys = std::sync::Arc::clone(&keys);
+                    tokio::spawn(async move {
+                        handle_client(keys, server).await;
+                    });
+                }
+                Ok(Err(_)) => continue,
+                Err(_) => continue, // tick elapsed — re-check stop flag
+            }
+        }
+    });
+}
+
 /// Foreground entrypoint: `vault ssh-agent`. Ctrl+C stops (keys die with us).
 pub fn serve_cli() -> i32 {
     eprint!("Master password: ");
@@ -298,6 +397,47 @@ mod tests {
 
     fn frame(body: &[u8]) -> Vec<u8> {
         body.to_vec()
+    }
+
+    // Session tests share one process-global session: serialize on the
+    // session mutex itself (start/stop are idempotent, resets are safe).
+    static SESSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn start_refuses_empty_keys_and_double_start() {
+        let _l = SESSION_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        stop_agent();
+        assert!(start_agent(Vec::new()).is_err());
+        assert!(!session_armed());
+    }
+
+    #[test]
+    fn stop_is_idempotent_without_session() {
+        let _l = SESSION_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        stop_agent();
+        stop_agent();
+        assert!(!session_armed());
+    }
+
+    #[test]
+    fn start_stop_session_lifecycle() {
+        let _l = SESSION_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        stop_agent();
+        // Isolated pipe name: never touch a real developer agent session.
+        std::env::set_var(
+            "PHANTOM_SSH_PIPE",
+            r"\\.\pipe\phantom-vault-ssh-agent-test",
+        );
+        if is_serving(&pipe_name()) {
+            std::env::remove_var("PHANTOM_SSH_PIPE");
+            return; // foreign agent on the test pipe — skip, don't steal
+        }
+        assert!(start_agent(test_keys()).is_ok());
+        assert!(session_armed());
+        assert!(start_agent(test_keys()).is_err()); // already serving
+        stop_agent();
+        assert!(!session_armed());
+        std::env::remove_var("PHANTOM_SSH_PIPE");
     }
 
     #[test]

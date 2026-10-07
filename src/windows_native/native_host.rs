@@ -279,22 +279,12 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             reply: serde_json::json!({"ok": true, "pong": true, "unlocked": unlocked}),
             persist: false,
         },
-        // Extension PIN state/hash — managed ONLY from the desktop app.
+        // Extension PIN hash — managed ONLY from the desktop app.
         // The extension keeps zero PIN state and enforces against this hash.
         // Gated on unlocked like stats: a locked vault reveals nothing,
         // and the extension already gates on lock separately.
-        "ext_pin_state" => {
-            if !unlocked {
-                return no("vault locked");
-            }
-            Answer {
-                reply: serde_json::json!({
-                    "ok": true,
-                    "set": crate::security::ext_pin::is_set(std::path::Path::new(".")),
-                }),
-                persist: false,
-            }
-        }
+        // NOTE: the old `ext_pin_state` command was removed (no caller in any
+        // extension file) — one command, one purpose.
         "ext_pin_hash" => {
             if !unlocked {
                 return no("vault locked");
@@ -3079,6 +3069,19 @@ mod tests {
                 let _ = std::fs::remove_file(HEARTBEAT_FILE);
             }
         }
+    }
+
+    #[test]
+    fn removed_ext_pin_state_cmd_is_unknown() {
+        // `ext_pin_state` had no caller in any extension file — removed.
+        // It must fail closed as unknown, never serve PIN state.
+        let mut v = crate::models::Vault::new();
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "ext_pin_state"}),
+        );
+        assert_eq!(r.reply["ok"], false);
     }
 
     #[test]
