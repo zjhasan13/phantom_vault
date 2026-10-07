@@ -7,6 +7,7 @@
 //! - Standard CSV: logins + cards in Bitwarden-style columns.
 //! - Attachments: binaries are NOT embedded (a 5MB photo would nuke the
 //!   file); filename + size ride the notes so nothing is silently lost.
+//!
 //! Only ACTIVE items export (trash stays behind). Pure + unit tested.
 
 use crate::models::{CustomFieldType, Vault};

@@ -547,7 +547,7 @@ mod tests {
         // shared with real app runs under %LOCALAPPDATA%).
         let d = "favtest-nonexistent-xyz123.com".to_string();
         // can_net=false: only disk could answer; nothing cached.
-        let out = prefetch_blocking(&[d.clone()], || false);
+        let out = prefetch_blocking(std::slice::from_ref(&d), || false);
         assert!(out.is_empty());
         // Second offline pass re-checks disk (no session poisoning) — still
         // empty here, and asserts nothing about the network, only dedup.

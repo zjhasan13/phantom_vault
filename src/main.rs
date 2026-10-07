@@ -792,6 +792,9 @@ fn panic_wipe(vault_arc: &Arc<Mutex<Vault>>, master_arc: &Arc<Mutex<Option<Secre
 /// (detail secrets, history, form drafts, health badges) survived in UI-layer
 /// RAM — exactly what Mimikatz-style dumping hunts. Everything secret-shaped
 /// below is scrubbed here; the next unlock repopulates from disk.
+/// UI-callback arity is structural (8 principals: two windows, vault, master,
+// drafts, editing state + status strings). Split would churn 40 call sites.
+#[allow(clippy::too_many_arguments)]
 fn lock_vault_now(
     main_weak: slint::Weak<MainWindow>,
     cap_weak: slint::Weak<QuickCaptureWindow>,
@@ -1304,6 +1307,7 @@ fn publish_unlocked_vault(
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn unlock_with_password(    pass: String,
     main_weak: slint::Weak<MainWindow>,
     vault_arc: Arc<Mutex<Vault>>,
@@ -1354,8 +1358,7 @@ fn unlock_with_password(    pass: String,
                         let stage = format!("{VAULT_FILE}.migrating");
                         match save_vault(&vault, &pass, &stage)
                             .and_then(|_| storage::load_vault_versioned(&pass, &stage)
-                                .map(|_| ())
-                                .map_err(|e| e))
+                                .map(|_| ()))
                         {
                             Ok(()) => {
                                 if std::fs::rename(&stage, VAULT_FILE).is_err() {
@@ -1465,7 +1468,7 @@ fn unlock_with_password(    pass: String,
         // BOTH factors pass. No cached Hello credential ⇒ loud downgrade to
         // password-only (the success branch announces it).
         let hello_enrolled = Path::new(HELLO_TOKEN_FILE).exists();
-        if and_mode && matches!(&loaded_result, Ok(_)) && decoy_vault.is_none() && hello_enrolled
+        if and_mode && loaded_result.is_ok() && decoy_vault.is_none() && hello_enrolled
         {
             if let Ok(v) = loaded_result.as_mut() {
                 zeroize::Zeroize::zeroize(v);
@@ -1529,7 +1532,7 @@ fn unlock_with_password(    pass: String,
             return;
         }
         let and_downgrade =
-            and_mode && matches!(&loaded_result, Ok(_)) && decoy_vault.is_none() && !hello_enrolled;
+            and_mode && loaded_result.is_ok() && decoy_vault.is_none() && !hello_enrolled;
 
         let pass_for_store = pass.clone();
         let _ = slint::invoke_from_event_loop(move || {
@@ -1729,7 +1732,6 @@ fn favicon_image_for_domain(domain: &str) -> Option<slint::Image> {
 /// Identity of a card for duplicate-detection purposes lives in `models`
 /// (`dup_key` / `dup_marks`), shared with the native bridge so its ranked
 /// lookup candidates use exactly one definition of "duplicate".
-
 /// "GitHub / zjhasan13" — what the badge tooltip explains the collision is.
 /// The secret is never included: it must not reach a tooltip or a log line.
 fn dup_of_label(accs: &[&TotpAccount], a: &TotpAccount) -> String {
@@ -5954,7 +5956,7 @@ fn replace_item(
             }
             .into(),
         );
-        set_paged_credentials(&ui, vault_to_items(vault, search));
+        set_paged_credentials(ui, vault_to_items(vault, search));
     }
     let sel_weak = main_window.as_weak();
     let sel_vault = Arc::clone(&active_vault);
@@ -5988,6 +5990,7 @@ fn replace_item(
     });
     // Shared batch runner: snapshot-rollback re-seal, list + hub + QuickBar
     // refresh, selection cleared, single sync push. Returns affected count.
+    #[allow(clippy::too_many_arguments)]
     fn run_bulk_op(
         weak: slint::Weak<MainWindow>,
         vault_clone: Arc<Mutex<Vault>>,
@@ -7149,7 +7152,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     .map(|p| PeerView {
                         name: p.name.clone().into(),
                         ip: p.ip.clone().into(),
-                        detail: format!("v{} • {}{}", p.version, &p.head_sha.chars().take(8).collect::<String>(), if p.pin_required { " • 🔒 PIN" } else { "" }).into(),
+                        detail: format!("v{} • {}{}", p.version, p.head_sha.chars().take(8).collect::<String>(), if p.pin_required { " • 🔒 PIN" } else { "" }).into(),
                     })
                     .collect();
                 ui.set_p2p_peers(ModelRc::new(VecModel::from(rows)));
@@ -8056,7 +8059,6 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     .and_then(|a| {
                         totp_engine::generate_code_for_account(a)
                             .ok()
-                            .map(|(code, remaining)| (code, remaining))
                     })
             };
             let Some((code, remaining)) = fresh else {
@@ -8175,7 +8177,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         // Snapshot before merging: `ReplaceExisting` edits cards IN PLACE, so a
         // failed seal could not be undone by removing the newly added entries.
         // Restoring the snapshot is the only rollback that is actually correct.
-        let outcome: Result<usize, String> = (|| {
+        let outcome: Result<usize, String> = {
             let mut vault = lock_vault(&dup_vault);
             let snapshot = vault.clone();
             let report: MergeReport = merge_2fa_with_policy(&mut vault, batch, policy);
@@ -8186,7 +8188,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     Err(e.to_string())
                 }
             }
-        })();
+        };
         match outcome {
             Ok(imported) => {
                 let vault = lock_vault(&dup_vault);
@@ -9087,9 +9089,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         let v = lock_vault(&rp_del_vault);
                         login_type_request(
                             &v,
-                            &ui.get_rp_id().to_string(),
-                            &ui.get_rp_user().to_string(),
-                            &ui.get_rp_secret().to_string(),
+                            ui.get_rp_id().as_ref(),
+                            ui.get_rp_user().as_ref(),
+                            ui.get_rp_secret().as_ref(),
                             &totp,
                         )
                     },

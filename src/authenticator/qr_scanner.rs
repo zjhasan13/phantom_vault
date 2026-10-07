@@ -80,12 +80,12 @@ fn rxing_hints(pure: bool) -> rxing::DecodingHintDictionary {
 fn rxing_try(luma: Vec<u8>, w: u32, h: u32, pure: bool) -> Option<String> {
     use rxing::Reader;
     let mut reader = rxing::MultiFormatReader::default();
-    let mut hints = rxing_hints(pure);
+    let hints = rxing_hints(pure);
     let mut bitmap = rxing::BinaryBitmap::new(rxing::common::HybridBinarizer::new(
         rxing::Luma8LuminanceSource::new(luma, w, h),
     ));
     reader
-        .decode_with_hints(&mut bitmap, &mut hints)
+        .decode_with_hints(&mut bitmap, &hints)
         .ok()
         .map(|r| r.getText().to_owned())
         .filter(|s| !s.is_empty())

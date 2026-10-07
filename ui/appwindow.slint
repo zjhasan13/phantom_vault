@@ -1211,7 +1211,8 @@ export component MainWindow inherits Window {
                                             HorizontalLayout { spacing: 6px; alignment: center;
                                                 Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
                                                 if acc.is_dup : Rectangle { border-radius: 6px; background: #4a2c00; border-width: 1px; border-color: #fbbf24;
-                                                    Text { text: "⚠ DUP"; color: #fbbf24; font-size: 9px; font-weight: 800; padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px; } } }
+                                                    HorizontalLayout { padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px;
+                                                        Text { text: "⚠ DUP"; color: #fbbf24; font-size: 9px; font-weight: 800; } } } }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                         AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 28px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }

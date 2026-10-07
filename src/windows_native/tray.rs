@@ -165,7 +165,7 @@ mod win {
             (M_EXIT, "❌ Exit Completely"),
         ];
         for (id, label) in items {
-            AppendMenuW(menu, MF_STRING, id, wide(&label).as_ptr());
+            AppendMenuW(menu, MF_STRING, id, wide(label).as_ptr());
         }
         AppendMenuW(menu, MF_SEPARATOR, 0, std::ptr::null());
         let mut pt = POINT { x: 0, y: 0 };
@@ -231,7 +231,7 @@ mod win {
                 0,
                 CLASS.as_ptr(),
                 std::ptr::null(),
-                WS_OVERLAPPEDWINDOW as u32,
+                WS_OVERLAPPEDWINDOW,
                 0, 0, 0, 0,
                 HWND_MESSAGE,
                 std::ptr::null_mut(),
@@ -336,9 +336,9 @@ mod tests {
         // CWD = crate root, so this file is live, not a fixture).
         let original = std::fs::read_to_string(TRAY_PREF_FILE).ok();
         save_tray_pref(false);
-        assert_eq!(load_tray_pref(), false);
+        assert!(!load_tray_pref());
         save_tray_pref(true);
-        assert_eq!(load_tray_pref(), true);
+        assert!(load_tray_pref());
         match original {
             Some(c) => {
                 let _ = std::fs::write(TRAY_PREF_FILE, c);

@@ -235,6 +235,7 @@ fn bring_up_watcher(
 /// - `is_unlocked`: vault-open probe (locked ticks reset the monitor).
 /// - `on_status`: Settings live-status line (worker thread — route to UI).
 /// - `on_fire`: lock trigger (worker thread — route to UI).
+///
 /// Never panics, never locks the vault on radio errors.
 pub fn start_proximity_service(
     config: Arc<Mutex<ProximityConfig>>,

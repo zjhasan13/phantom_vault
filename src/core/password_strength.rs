@@ -36,9 +36,11 @@ pub fn level(password: &str) -> u8 {
         0.0
     };
     // Pattern penalties: all-one-class, repeated char, sequence.
-    let penalty: u8 = if classes <= 1 && len < 12 {
-        1
-    } else if has_repeat_run(password, 4) || has_sequence(password) {
+    // (Single merged arm — the old two-arm form computed the same `1`.)
+    let penalty: u8 = if (classes <= 1 && len < 12)
+        || has_repeat_run(password, 4)
+        || has_sequence(password)
+    {
         1
     } else {
         0

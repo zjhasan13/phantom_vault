@@ -170,8 +170,8 @@ mod tests {
 
     #[test]
     fn rejects_bad_input() {
-        assert!(build_recovery_sheet_pdf(&demo_shards()[..4].to_vec(), "").is_err());
-        assert!(build_recovery_sheet_pdf(&demo_shards()[..6.min(5)].to_vec(), "").is_ok());
+        assert!(build_recovery_sheet_pdf(&demo_shards()[..4], "").is_err());
+        assert!(build_recovery_sheet_pdf(&demo_shards()[..5], "").is_ok());
         let mut bad = demo_shards();
         bad[2] = "   ".into();
         assert!(build_recovery_sheet_pdf(&bad, "").is_err());

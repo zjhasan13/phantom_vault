@@ -208,20 +208,26 @@ fn assert_rate_ok() -> bool {
 
 /// M12: fill-event brake (120/min per host process — popup tiles report
 /// per frame; unauthenticated floods must not spin the sidecar).
+/// Counters are module-level (not fn-local) so cfg(test) resets make
+/// budget tests hermetic — same pattern as the assert limiter above.
+static FILL_COUNT: AtomicU64 = AtomicU64::new(0);
+static FILL_WINDOW: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(crate) fn reset_fill_rate() {
+    FILL_COUNT.store(0, Ordering::SeqCst);
+    FILL_WINDOW.store(0, Ordering::SeqCst);
+}
 fn fill_rate_ok() -> bool {
-    use std::sync::atomic::{AtomicU64, Ordering};
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() / 60)
         .unwrap_or(0);
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    static WINDOW: AtomicU64 = AtomicU64::new(0);
-    if WINDOW.load(Ordering::SeqCst) != now {
-        WINDOW.store(now, Ordering::SeqCst);
-        COUNT.store(1, Ordering::SeqCst);
+    if FILL_WINDOW.load(Ordering::SeqCst) != now {
+        FILL_WINDOW.store(now, Ordering::SeqCst);
+        FILL_COUNT.store(1, Ordering::SeqCst);
         return true;
     }
-    COUNT.fetch_add(1, Ordering::SeqCst) < 120
+    FILL_COUNT.fetch_add(1, Ordering::SeqCst) < 120
 }
 
 fn short_id(id: &str) -> String {
@@ -231,20 +237,25 @@ fn short_id(id: &str) -> String {
 /// M13: re-seal brake (30/min per host process). Each save is a full
 /// Argon2id + ML-KEM reseal + backup rotation — unthrottled, one caller
 /// can pin the disk. Bumps still reach disk under the cap.
+/// Module-level counters + cfg(test) reset, same as the fill limiter.
+static SAVE_COUNT: AtomicU64 = AtomicU64::new(0);
+static SAVE_WINDOW: AtomicU64 = AtomicU64::new(0);
+#[cfg(test)]
+pub(crate) fn reset_save_rate() {
+    SAVE_COUNT.store(0, Ordering::SeqCst);
+    SAVE_WINDOW.store(0, Ordering::SeqCst);
+}
 fn save_rate_ok() -> bool {
-    use std::sync::atomic::{AtomicU64, Ordering};
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() / 60)
         .unwrap_or(0);
-    static COUNT: AtomicU64 = AtomicU64::new(0);
-    static WINDOW: AtomicU64 = AtomicU64::new(0);
-    if WINDOW.load(Ordering::SeqCst) != now {
-        WINDOW.store(now, Ordering::SeqCst);
-        COUNT.store(1, Ordering::SeqCst);
+    if SAVE_WINDOW.load(Ordering::SeqCst) != now {
+        SAVE_WINDOW.store(now, Ordering::SeqCst);
+        SAVE_COUNT.store(1, Ordering::SeqCst);
         return true;
     }
-    COUNT.fetch_add(1, Ordering::SeqCst) < 30
+    SAVE_COUNT.fetch_add(1, Ordering::SeqCst) < 30
 }
 
 fn live_totp(secret: &str) -> String {
@@ -792,7 +803,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 .map(|c| {
                     let fresh = c
                         .expires_in
-                        .map_or(true, |s| s >= MIN_TOTP_FILL_REMAINING_SECS);
+                        .is_none_or(|s| s >= MIN_TOTP_FILL_REMAINING_SECS);
                     serde_json::json!({
                         "id": c.id,
                         "issuer": c.issuer,
@@ -982,7 +993,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     // valid chain, e.g. "c1 — user confirmed verbally").
                     crate::security::access_log::log_event(
                         "bridge-fetch",
-                        &format!("{kind}:{}", &crate::security::access_log::short_hash(id)),
+                        &format!("{kind}:{}", crate::security::access_log::short_hash(id)),
                     );
                     Answer { reply: serde_json::json!({"ok": true, "entry": e}), persist: false }
                 }
@@ -2065,6 +2076,11 @@ mod tests {
     use super::*;
     use crate::models::{Credential, PasskeyItem, Vault};
 
+    // Rate-budget tests consume process-global limiter state, so every test
+    // that touches a limiter (directly or via filled()/assert) serializes
+    // here AND resets its budget first. Lock order: sidecar_guard, then this.
+    static RATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn vault_with_login() -> Vault {
         let mut v = Vault::new();
         v.credentials.push(Credential {
@@ -2119,6 +2135,10 @@ mod tests {
         // Distinctive id: the CWD sidecar is shared with other tests running
         // in parallel — only assert on keys this test owns, under the guard.
         let _g = sidecar_guard();
+        // Rate budget is process-global: reset + serialize so brake-test
+        // consumption (120/min) can never reject these small-count fills.
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("verify-count-id");
         let mut v = vault_with_login();
@@ -2185,6 +2205,8 @@ mod tests {
     #[test]
     fn auto_verify_crossing_at_three() {
         let _g = sidecar_guard();
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("auto-v-id");
         let mut v = vault_with_login();
@@ -2209,6 +2231,8 @@ mod tests {
     #[test]
     fn no_reseal_past_threshold() {
         let _g = sidecar_guard();
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("auto-v-past");
         let mut v = vault_with_login();
@@ -2231,6 +2255,8 @@ mod tests {
     #[test]
     fn manual_unverify_suppresses_reverify() {
         let _g = sidecar_guard();
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("auto-v-man");
         let mut v = vault_with_login();
@@ -2255,6 +2281,8 @@ mod tests {
     fn non_login_never_auto_verifies() {
         use crate::models::PaymentCard;
         let _g = sidecar_guard();
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("auto-v-card");
         let mut v = Vault::new();
@@ -2285,6 +2313,8 @@ mod tests {
     fn totp_fill_stamps_sidecar_and_auto_verifies_at_three() {
         use crate::models::TotpAccount;
         let _g = sidecar_guard();
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
         let snap = snap_sidecar();
         reset_test_id("totp-v-1");
         let mut v = Vault::new();
@@ -2973,6 +3003,46 @@ mod tests {
         assert!(!heartbeat_parts(None, now));
         // Future beacon (clock moved) ⇒ tolerated, not a lockout.
         assert!(heartbeat_parts(Some(now + 3600), now));
+    }
+
+    #[test]
+    #[test]
+    fn assert_brake_allows_100_then_rejects() {
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_assert_rate();
+        // Window-start call + 99 counted calls = 100 allowed…
+        for _ in 0..100 {
+            assert!(assert_rate_ok());
+        }
+        // …101st call trips the brake.
+        assert!(!assert_rate_ok());
+        // New window (reset) re-arms.
+        reset_assert_rate();
+        assert!(assert_rate_ok());
+    }
+
+    #[test]
+    fn fill_brake_allows_120_then_rejects() {
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_fill_rate();
+        for _ in 0..120 {
+            assert!(fill_rate_ok());
+        }
+        assert!(!fill_rate_ok());
+        reset_fill_rate();
+        assert!(fill_rate_ok());
+    }
+
+    #[test]
+    fn save_brake_allows_30_then_rejects() {
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_save_rate();
+        for _ in 0..30 {
+            assert!(save_rate_ok());
+        }
+        assert!(!save_rate_ok());
+        reset_save_rate();
+        assert!(save_rate_ok());
     }
 
     #[test]

@@ -149,8 +149,7 @@ fn last_hash(path: &Path) -> String {
 
 fn log_event_at(path: &Path, event: &str, detail: &str) {
     let clean = |s: &str| {
-        s.replace('\\', "")
-            .replace('"', "")
+        s.replace(['\\', '"'], "")
             .replace(['\r', '\n'], " ")
             .chars()
             .take(160)
@@ -197,7 +196,9 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             .and_then(|rest| {
                 let rest = rest.trim_start();
                 if rest.starts_with('"') {
-                    rest[1..].split('"').next().map(str::to_string)
+                    rest.strip_prefix('"')
+                        .and_then(|r| r.split('"').next())
+                        .map(str::to_string)
                 } else {
                     rest.split([',', '}']).next().map(str::to_string)
                 }
@@ -284,7 +285,9 @@ fn recent_at(path: &Path, n: usize) -> Vec<String> {
             .and_then(|rest| {
                 let rest = rest.trim_start();
                 if rest.starts_with('"') {
-                    rest[1..].split('"').next().map(str::to_string)
+                    rest.strip_prefix('"')
+                        .and_then(|r| r.split('"').next())
+                        .map(str::to_string)
                 } else {
                     rest.split([',', '}']).next().map(str::to_string)
                 }
