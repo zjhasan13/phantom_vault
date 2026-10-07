@@ -15,6 +15,29 @@ struct KEntry {
     custom: Vec<(String, String)>,
 }
 
+/// Resolve one XML entity body (the text between `&` and `;`, as delivered
+/// by quick-xml 0.41's `GeneralRef` event): the 5 predefined entities plus
+/// decimal/hex char refs. Anything else → None (fail-closed).
+fn resolve_xml_ref(name: &str) -> Option<String> {
+    match name {
+        "amp" => Some("&".to_string()),
+        "lt" => Some("<".to_string()),
+        "gt" => Some(">".to_string()),
+        "quot" => Some("\"".to_string()),
+        "apos" => Some("'".to_string()),
+        _ => {
+            let digits = name.strip_prefix('#')?;
+            let n = if let Some(hex) = digits.strip_prefix(['x', 'X']) {
+                u32::from_str_radix(hex, 16).ok()?
+            } else {
+                digits.parse::<u32>().ok()?
+            };
+            // from_u32 rejects surrogates + out-of-range → None.
+            char::from_u32(n).map(|c| c.to_string())
+        }
+    }
+}
+
 /// Parse KeePass XML. Group hierarchy becomes `Parent / Child` folders;
 /// `<History>` snapshots are skipped (current entries only).
 pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawItem>> {
@@ -101,7 +124,16 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
             }
             Ok(Event::Empty(_)) => {}
             Ok(Event::Text(e)) => {
-                let txt = e.unescape().unwrap_or_default().into_owned();
+                // quick-xml 0.41: `unescape()` removed; `xml_content()`
+                // resolves the same predefined entities + char refs.
+                // KeePass exports declare `<?xml version="1.0"?>`.
+                // APPEND (not assign): 0.41 fragments text around entity
+                // refs (Text + GeneralRef events), so one Value arrives
+                // as several pieces that must be concatenated.
+                let txt = e
+                    .xml_content(quick_xml::XmlVersion::Explicit1_0)
+                    .unwrap_or_default()
+                    .into_owned();
                 if group_name_pending && !in_entry {
                     // Push every group level verbatim (Root DB name included):
                     // deterministic, never loses hierarchy info.
@@ -111,9 +143,23 @@ pub fn parse_xml(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIte
                     group_name_pending = false;
                 } else if in_string && !in_history {
                     if cur_key.is_empty() {
-                        cur_key = txt;
+                        cur_key.push_str(&txt);
                     } else {
-                        cur_val = txt;
+                        cur_val.push_str(&txt);
+                    }
+                }
+            }
+            Ok(Event::GeneralRef(e)) => {
+                // Entity fragment (`&amp;`, `&#65;`, …) inside a Key/Value.
+                // Unknown/custom entities → contribute nothing (fail-closed:
+                // no raw `&foo;` ever lands in the vault).
+                if in_string && !in_history {
+                    if let Some(txt) = resolve_xml_ref(&e.decode().unwrap_or_default()) {
+                        if cur_key.is_empty() {
+                            cur_key.push_str(&txt);
+                        } else {
+                            cur_val.push_str(&txt);
+                        }
                     }
                 }
             }
@@ -297,6 +343,34 @@ mod tests {
         // Custom String field preserved; empty value dropped.
         assert!(items[0].custom_text.iter().any(|(n, v)| n == "SecurityQ" && v == "pet?"));
         assert!(!items[0].custom_text.iter().any(|(n, _)| n == "Empty"));
+    }
+
+    #[test]
+    fn keepass_xml_unescapes_entities_in_secrets() {
+        // Pins the 0.41 `xml_content(Explicit1_0)` path: predefined entities
+        // in secret-bearing fields must decode exactly (no double-escaping,
+        // no raw `&amp;` landing in the vault).
+        let data = br#"<?xml version="1.0"?><KeePassFile><Root><Group><Name>G</Name>
+<Entry><String><Key>Title</Key><Value>T</Value></String>
+<String><Key>Password</Key><Value>a&amp;b&lt;c&gt;d&quot;e&apos;f</Value></String>
+</Entry></Group></Root></KeePassFile>"#;
+        let mut s = ImportSummary::default();
+        let items = parse_xml(data, &mut s).unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].b, "a&b<c>d\"e'f");
+    }
+
+    #[test]
+    fn keepass_xml_char_refs_resolve_unknown_refs_dropped() {
+        let data = br#"<?xml version="1.0"?><KeePassFile><Root><Group><Name>G</Name>
+<Entry><String><Key>Title</Key><Value>T</Value></String>
+<String><Key>Password</Key><Value>&#65;&#x42;&foo;</Value></String>
+</Entry></Group></Root></KeePassFile>"#;
+        let mut s = ImportSummary::default();
+        let items = parse_xml(data, &mut s).unwrap();
+        assert_eq!(items.len(), 1);
+        // Decimal + hex char refs resolve; unknown `&foo;` contributes nothing.
+        assert_eq!(items[0].b, "AB");
     }
 
     #[test]

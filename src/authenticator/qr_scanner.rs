@@ -7,7 +7,7 @@
 
 use crate::error::{Result, VaultError};
 use image::DynamicImage;
-use std::collections::{HashMap, HashSet};
+
 
 /// Bright-card threshold: luma above this belongs to the QR card, darker
 /// pixels are screenshot chrome / dark-mode surroundings.
@@ -57,23 +57,16 @@ fn crop_gray(gray: &image::GrayImage, bbox: (u32, u32, u32, u32)) -> image::Gray
     gray.view(bbox.0, bbox.1, bbox.2, bbox.3).to_image()
 }
 
-fn rxing_hints(pure: bool) -> rxing::DecodingHintDictionary {
-    let mut hints: rxing::DecodingHintDictionary = HashMap::new();
-    hints.insert(
-        rxing::DecodeHintType::POSSIBLE_FORMATS,
-        rxing::DecodeHintValue::PossibleFormats(HashSet::from([rxing::BarcodeFormat::QR_CODE])),
-    );
-    hints.insert(
-        rxing::DecodeHintType::TRY_HARDER,
-        rxing::DecodeHintValue::TryHarder(true),
-    );
-    if pure {
-        hints.insert(
-            rxing::DecodeHintType::PURE_BARCODE,
-            rxing::DecodeHintValue::PureBarcode(true),
-        );
+/// rxing 0.9: typeless HashMap hints replaced by the `DecodeHints` struct.
+/// Same semantics (QR-only, try-harder, optional pure-barcode fast path).
+fn rxing_hints(pure: bool) -> rxing::DecodeHints {
+    use std::collections::HashSet;
+    rxing::DecodeHints {
+        PossibleFormats: Some(HashSet::from([rxing::BarcodeFormat::QR_CODE])),
+        TryHarder: Some(true),
+        PureBarcode: if pure { Some(true) } else { None },
+        ..Default::default()
     }
-    hints
 }
 
 /// One rxing attempt over raw luma bytes (caller picks pure or hybrid).
@@ -81,9 +74,9 @@ fn rxing_try(luma: Vec<u8>, w: u32, h: u32, pure: bool) -> Option<String> {
     use rxing::Reader;
     let mut reader = rxing::MultiFormatReader::default();
     let hints = rxing_hints(pure);
-    let mut bitmap = rxing::BinaryBitmap::new(rxing::common::HybridBinarizer::new(
-        rxing::Luma8LuminanceSource::new(luma, w, h),
-    ));
+    // rxing 0.9 validates dimensions at construction (was infallible).
+    let source = rxing::Luma8LuminanceSource::new(luma, w, h).ok()?;
+    let mut bitmap = rxing::BinaryBitmap::new(rxing::common::HybridBinarizer::new(source));
     reader
         .decode_with_hints(&mut bitmap, &hints)
         .ok()

@@ -201,6 +201,12 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     // mis-parse an older stream into a plausible-but-wrong Vault and then
     // re-seal the garbage over the only good copy. Size-capped options
     // prevent garbage-length OOM aborts on corrupt input.
+    //
+    // RUSTSEC-2025-0141 (bincode unmaintained) containment: bincode is
+    // READ-ONLY here (pre-JSON migration only — all new saves are
+    // `serde_json`, see save path), behind a 16MB length pre-check +
+    // fixint + allocation cap. No format bump (would brick old vaults);
+    // re-audit if bincode ever leaves this function.
     use bincode::Options;
     // Reject trailing bytes: with allow_trailing_bytes a current-Vault
     // payload prefix-parses as a legacy gen (false positive, empty vault).
