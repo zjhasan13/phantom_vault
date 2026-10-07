@@ -29,7 +29,9 @@ prost = "0.13"
 base64 = "0.22"
 data-encoding = "2.6"
 url = "2.5"
-rqrr = "0.7"
+# RUSTSEC-2026-0002/0253 (lru UB via rqrr): 0.11 moves off the affected
+# lru. Fallback-only QR path (3 calls: prepare/detect_grids/decode).
+rqrr = "0.11"
 # Indestructible QR ingestion: ZXing-port multi-pass decoder (+ rqrr fallback).
 rxing = "0.9"
 image = "0.25"
