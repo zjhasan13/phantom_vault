@@ -22,7 +22,11 @@ bincode = "1.3"
 totp-rs = { version = "5.7", features = ["gen_secret"] }
 
 # Native Slint GUI Engine
-slint = { version = "1.8", features = ["raw-window-handle-06"] }
+# Diet: software renderer only (drops femtovg/OpenGL + slint system-tray —
+# custom tray.rs is raw windows-sys). Accessibility kept (no a11y regression).
+# Slint is ours alone in the tree (no unification trap) — this directly
+# shrinks the exe and kills the GPU context for tray-sitting.
+slint = { version = "1.8", default-features = false, features = ["std", "backend-winit", "renderer-software", "accessibility", "compat-1-2", "raw-window-handle-06"] }
 
 # Phase 8: Google Migration & QR Scanner
 prost = "0.13"
@@ -34,7 +38,12 @@ url = "2.5"
 rqrr = "0.11"
 # Indestructible QR ingestion: ZXing-port multi-pass decoder (+ rqrr fallback).
 rxing = "0.9"
-image = "0.25"
+# Diet: only the formats QR/favicon/custom-logos need (png/ico/jpeg/gif/
+# bmp/webp). HONEST CAVEAT: single shared image 0.25.x with arboard→slint
+# (full defaults) means feature unification keeps avif/exr/tiff linked in
+# the final binary TODAY — this line documents intent and pays off if/when
+# upstream trims. Webp stays: file picker allows it.
+image = { version = "0.25", default-features = false, features = ["png", "ico", "jpeg", "gif", "bmp", "webp"] }
 # Zero-lockin: on-screen Google Authenticator migration QR (grid API only —
 # PNG rasterized manually via `image`, no default features needed).
 qrcode = { version = "0.14", default-features = false }
@@ -52,7 +61,10 @@ thiserror = "2"
 once_cell = "1.19"
 
 # Phase 25: HIBP k-anonymity breach check
-reqwest = { version = "0.12", features = ["rustls-tls"] }
+# Diet: rustls-only TLS (drops schannel/native-tls second stack), no http2
+# (all endpoints fine on 1.1). KEEPS socks (Tor socks5h was advertised but
+# broken without it) + charset (.text() callers). No json/stream/multipart.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "socks", "charset"] }
 
 # Phase 18: Omni-Universal Vault Importer
 csv = "1.3"
