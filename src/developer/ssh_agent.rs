@@ -224,6 +224,8 @@ fn session() -> &'static std::sync::Mutex<Option<std::sync::Arc<std::sync::atomi
 
 /// True while a UI-started agent session is armed (keys live on its thread).
 /// The pipe probe (`is_serving`) remains the ground truth for display.
+/// Test-only: production reads liveness from the pipe, not this flag.
+#[cfg(test)]
 pub fn session_armed() -> bool {
     session()
         .lock()
