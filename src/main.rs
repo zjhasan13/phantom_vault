@@ -4670,240 +4670,11 @@ fn main() -> Result<(), slint::PlatformError> {
         });
     });
 
-/// Bitwarden-parity: construct + push any of the 6 item kinds.
-/// Pure field-mapping (no I/O) — heavily exercised via integration path.
-#[allow(clippy::too_many_arguments)]
-fn push_new_item(
-    vault: &mut Vault,
-    kind: i32,
-    id: String,
-    title: &str,
-    a: &str,
-    b: &str,
-    cc: &str,
-    dd: &str,
-    ee: &str,
-    notes: &str,
-    folder: &str,
-    urls: Vec<String>,
-    backup: Vec<String>,
-    custom: Vec<models::CustomField>,
-    totp: &str,
-    reprompt: bool,
-    fav: bool,
-    travel: bool,
-) {
-    match kind {
-        1 => vault.credentials.push(Credential {
-            id,
-            title: title.to_string(),
-            username: a.to_string(),
-            password: b.to_string(),
-            totp_secret: totp.to_string(),
-            urls,
-            backup_codes: backup,
-            custom_fields: custom,
-            notes: notes.to_string(),
-            folder: folder.to_string(),
-            reprompt,
-            attachments: Vec::new(),
-            travel_safe: travel,
-            last_changed: crate::models::current_timestamp(),
-            password_history: Vec::new(),
-            favorite: fav,
-            deleted_at: None,
-        }),
-        2 => vault.licenses.push(models::SoftwareLicense {
-            id,
-            app_name: title.to_string(),
-            license_key: a.to_string(),
-            expiry_date: (!b.trim().is_empty()).then(|| b.to_string()),
-            folder: folder.to_string(),
-            attachments: Vec::new(),
-            travel_safe: travel,
-            favorite: fav,
-            deleted_at: None,
-        }),
-        3 => vault.notes.push(models::SecureNote {
-            id,
-            title: title.to_string(),
-            content: a.to_string(),
-            folder: folder.to_string(),
-            travel_safe: travel,
-            favorite: fav,
-            deleted_at: None,
-        }),
-        4 => {
-            let (em, ey) = split_card_expiry(cc);
-            vault.cards.push(models::PaymentCard {
-                id,
-                title: title.to_string(),
-                cardholder_name: a.to_string(),
-                card_number: b.to_string(),
-                exp_month: em,
-                exp_year: ey,
-                cvv: dd.to_string(),
-                folder: folder.to_string(),
-                notes: notes.to_string(),
-                travel_safe: travel,
-                favorite: fav,
-                deleted_at: None,
-            })
-        }
-        5 => vault.identities.push(models::IdentityItem {
-            id,
-            title: title.to_string(),
-            full_name: a.to_string(),
-            nid_or_passport: b.to_string(),
-            email: cc.to_string(),
-            phone: dd.to_string(),
-            address: ee.to_string(),
-            folder: folder.to_string(),
-            notes: String::new(),
-            travel_safe: travel,
-            favorite: fav,
-            deleted_at: None,
-        }),
-        6 => vault.ssh_keys.push(models::SshKeyItem {
-            id,
-            title: title.to_string(),
-            public_key: a.to_string(),
-            private_key: b.to_string(),
-            fingerprint: cc.to_string(),
-            folder: folder.to_string(),
-            notes: notes.to_string(),
-            travel_safe: travel,
-            favorite: fav,
-            deleted_at: None,
-        }),
-        _ => {}
-    }
-}
 
-/// Edit-mode: overwrite an existing item's fields in place. Returns false if missing.
-#[allow(clippy::too_many_arguments)]
-fn replace_item(
-    vault: &mut Vault,
-    kind: i32,
-    id: &str,
-    title: &str,
-    a: &str,
-    b: &str,
-    cc: &str,
-    dd: &str,
-    ee: &str,
-    notes: &str,
-    folder: &str,
-    urls: &[String],
-    backup: &[String],
-    custom: &[models::CustomField],
-    totp: &str,
-    reprompt: bool,
-    fav: bool,
-    travel: bool,
-) -> bool {
-    match kind {
-        1 => {
-            let Some(c) = vault.credentials.iter_mut().find(|c| c.id == id) else {
-                return false;
-            };
-            c.title = title.to_string();
-            c.username = a.to_string();
-            // Retire the outgoing password (only on real change), then rotate.
-            if c.password != b {
-                let retired = c.password.clone();
-                crate::models::push_history(
-                    &mut c.password_history,
-                    &retired,
-                    crate::models::current_timestamp(),
-                );
-            }
-            c.password = b.to_string();
-            // Rotation clock restarts on every credential edit.
-            c.last_changed = crate::models::current_timestamp();
-            c.totp_secret = totp.to_string();
-            c.urls = urls.to_vec();
-            c.backup_codes = backup.to_vec();
-            c.custom_fields = custom.to_vec();
-            c.notes = notes.to_string();
-            c.folder = folder.to_string();
-            c.reprompt = reprompt;
-            c.favorite = fav;
-            c.travel_safe = travel;
-            true
-        }
-        2 => {
-            let Some(l) = vault.licenses.iter_mut().find(|l| l.id == id) else {
-                return false;
-            };
-            l.app_name = title.to_string();
-            l.license_key = a.to_string();
-            l.expiry_date = (!b.trim().is_empty()).then(|| b.to_string());
-            l.folder = folder.to_string();
-            l.favorite = fav;
-            l.travel_safe = travel;
-            true
-        }
-        3 => {
-            let Some(n) = vault.notes.iter_mut().find(|n| n.id == id) else {
-                return false;
-            };
-            n.title = title.to_string();
-            n.content = a.to_string();
-            n.folder = folder.to_string();
-            n.favorite = fav;
-            n.travel_safe = travel;
-            true
-        }
-        4 => {
-            let Some(k) = vault.cards.iter_mut().find(|k| k.id == id) else {
-                return false;
-            };
-            k.title = title.to_string();
-            k.cardholder_name = a.to_string();
-            k.card_number = b.to_string();
-            let (em, ey) = split_card_expiry(cc);
-            k.exp_month = em;
-            k.exp_year = ey;
-            k.cvv = dd.to_string();
-            k.folder = folder.to_string();
-            k.notes = notes.to_string();
-            k.favorite = fav;
-            k.travel_safe = travel;
-            true
-        }
-        5 => {
-            let Some(i) = vault.identities.iter_mut().find(|i| i.id == id) else {
-                return false;
-            };
-            i.title = title.to_string();
-            i.full_name = a.to_string();
-            i.nid_or_passport = b.to_string();
-            i.email = cc.to_string();
-            i.phone = dd.to_string();
-            i.address = ee.to_string();
-            i.folder = folder.to_string();
-            i.favorite = fav;
-            i.travel_safe = travel;
-            true
-        }
-        6 => {
-            let Some(s) = vault.ssh_keys.iter_mut().find(|s| s.id == id) else {
-                return false;
-            };
-            s.title = title.to_string();
-            s.public_key = a.to_string();
-            s.private_key = b.to_string();
-            s.fingerprint = cc.to_string();
-            s.folder = folder.to_string();
-            s.notes = notes.to_string();
-            s.favorite = fav;
-            s.travel_safe = travel;
-            true
-        }
-        _ => false,
-    }
-}
+/// NOTE: push_new_item + replace_item used to live nested inside a setup
+/// closure (untestable). Moved to crate root verbatim — pure field-mapping,
+/// zero behavior change. See above the test module for the bodies.
+
 
     // Bitwarden-parity: one generic saver for all 6 item kinds.
     // kind: 1 login(a=user,b=pass,c=url) 2 license(a=key,b=expiry)
@@ -11281,6 +11052,242 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.run()
 }
 
+/// Bitwarden-parity: construct + push any of the 6 item kinds.
+/// Pure field-mapping (no I/O) — heavily exercised via integration path.
+#[allow(clippy::too_many_arguments)]
+fn push_new_item(
+    vault: &mut Vault,
+    kind: i32,
+    id: String,
+    title: &str,
+    a: &str,
+    b: &str,
+    cc: &str,
+    dd: &str,
+    ee: &str,
+    notes: &str,
+    folder: &str,
+    urls: Vec<String>,
+    backup: Vec<String>,
+    custom: Vec<models::CustomField>,
+    totp: &str,
+    reprompt: bool,
+    fav: bool,
+    travel: bool,
+) {
+    match kind {
+        1 => vault.credentials.push(Credential {
+            id,
+            title: title.to_string(),
+            username: a.to_string(),
+            password: b.to_string(),
+            totp_secret: totp.to_string(),
+            urls,
+            backup_codes: backup,
+            custom_fields: custom,
+            notes: notes.to_string(),
+            folder: folder.to_string(),
+            reprompt,
+            attachments: Vec::new(),
+            travel_safe: travel,
+            last_changed: crate::models::current_timestamp(),
+            password_history: Vec::new(),
+            favorite: fav,
+            deleted_at: None,
+        }),
+        2 => vault.licenses.push(models::SoftwareLicense {
+            id,
+            app_name: title.to_string(),
+            license_key: a.to_string(),
+            expiry_date: (!b.trim().is_empty()).then(|| b.to_string()),
+            folder: folder.to_string(),
+            attachments: Vec::new(),
+            travel_safe: travel,
+            favorite: fav,
+            deleted_at: None,
+        }),
+        3 => vault.notes.push(models::SecureNote {
+            id,
+            title: title.to_string(),
+            content: a.to_string(),
+            folder: folder.to_string(),
+            travel_safe: travel,
+            favorite: fav,
+            deleted_at: None,
+        }),
+        4 => {
+            let (em, ey) = split_card_expiry(cc);
+            vault.cards.push(models::PaymentCard {
+                id,
+                title: title.to_string(),
+                cardholder_name: a.to_string(),
+                card_number: b.to_string(),
+                exp_month: em,
+                exp_year: ey,
+                cvv: dd.to_string(),
+                folder: folder.to_string(),
+                notes: notes.to_string(),
+                travel_safe: travel,
+                favorite: fav,
+                deleted_at: None,
+            })
+        }
+        5 => vault.identities.push(models::IdentityItem {
+            id,
+            title: title.to_string(),
+            full_name: a.to_string(),
+            nid_or_passport: b.to_string(),
+            email: cc.to_string(),
+            phone: dd.to_string(),
+            address: ee.to_string(),
+            folder: folder.to_string(),
+            notes: notes.to_string(),
+            travel_safe: travel,
+            favorite: fav,
+            deleted_at: None,
+        }),
+        6 => vault.ssh_keys.push(models::SshKeyItem {
+            id,
+            title: title.to_string(),
+            public_key: a.to_string(),
+            private_key: b.to_string(),
+            fingerprint: cc.to_string(),
+            folder: folder.to_string(),
+            notes: notes.to_string(),
+            travel_safe: travel,
+            favorite: fav,
+            deleted_at: None,
+        }),
+        _ => {}
+    }
+}
+
+/// Edit-mode: overwrite an existing item's fields in place. Returns false if missing.
+#[allow(clippy::too_many_arguments)]
+fn replace_item(
+    vault: &mut Vault,
+    kind: i32,
+    id: &str,
+    title: &str,
+    a: &str,
+    b: &str,
+    cc: &str,
+    dd: &str,
+    ee: &str,
+    notes: &str,
+    folder: &str,
+    urls: &[String],
+    backup: &[String],
+    custom: &[models::CustomField],
+    totp: &str,
+    reprompt: bool,
+    fav: bool,
+    travel: bool,
+) -> bool {
+    match kind {
+        1 => {
+            let Some(c) = vault.credentials.iter_mut().find(|c| c.id == id) else {
+                return false;
+            };
+            c.title = title.to_string();
+            c.username = a.to_string();
+            // Retire the outgoing password (only on real change), then rotate.
+            if c.password != b {
+                let retired = c.password.clone();
+                crate::models::push_history(
+                    &mut c.password_history,
+                    &retired,
+                    crate::models::current_timestamp(),
+                );
+            }
+            c.password = b.to_string();
+            // Rotation clock restarts on every credential edit.
+            c.last_changed = crate::models::current_timestamp();
+            c.totp_secret = totp.to_string();
+            c.urls = urls.to_vec();
+            c.backup_codes = backup.to_vec();
+            c.custom_fields = custom.to_vec();
+            c.notes = notes.to_string();
+            c.folder = folder.to_string();
+            c.reprompt = reprompt;
+            c.favorite = fav;
+            c.travel_safe = travel;
+            true
+        }
+        2 => {
+            let Some(l) = vault.licenses.iter_mut().find(|l| l.id == id) else {
+                return false;
+            };
+            l.app_name = title.to_string();
+            l.license_key = a.to_string();
+            l.expiry_date = (!b.trim().is_empty()).then(|| b.to_string());
+            l.folder = folder.to_string();
+            l.favorite = fav;
+            l.travel_safe = travel;
+            true
+        }
+        3 => {
+            let Some(n) = vault.notes.iter_mut().find(|n| n.id == id) else {
+                return false;
+            };
+            n.title = title.to_string();
+            n.content = a.to_string();
+            n.folder = folder.to_string();
+            n.favorite = fav;
+            n.travel_safe = travel;
+            true
+        }
+        4 => {
+            let Some(k) = vault.cards.iter_mut().find(|k| k.id == id) else {
+                return false;
+            };
+            k.title = title.to_string();
+            k.cardholder_name = a.to_string();
+            k.card_number = b.to_string();
+            let (em, ey) = split_card_expiry(cc);
+            k.exp_month = em;
+            k.exp_year = ey;
+            k.cvv = dd.to_string();
+            k.folder = folder.to_string();
+            k.notes = notes.to_string();
+            k.favorite = fav;
+            k.travel_safe = travel;
+            true
+        }
+        5 => {
+            let Some(i) = vault.identities.iter_mut().find(|i| i.id == id) else {
+                return false;
+            };
+            i.title = title.to_string();
+            i.full_name = a.to_string();
+            i.nid_or_passport = b.to_string();
+            i.email = cc.to_string();
+            i.phone = dd.to_string();
+            i.address = ee.to_string();
+            i.notes = notes.to_string();
+            i.folder = folder.to_string();
+            i.favorite = fav;
+            i.travel_safe = travel;
+            true
+        }
+        6 => {
+            let Some(s) = vault.ssh_keys.iter_mut().find(|s| s.id == id) else {
+                return false;
+            };
+            s.title = title.to_string();
+            s.public_key = a.to_string();
+            s.private_key = b.to_string();
+            s.fingerprint = cc.to_string();
+            s.folder = folder.to_string();
+            s.notes = notes.to_string();
+            s.favorite = fav;
+            s.travel_safe = travel;
+            true
+        }
+        _ => false,
+    }
+}
+
 #[cfg(test)]
 mod grid_tests {
     use super::*;
@@ -11773,6 +11780,29 @@ mod grid_tests {
         let mut f3 = f.clone();
         f3.limit = 10_000;
         assert_eq!(vault_to_items(&v, &f3).iter().count(), 120);
+    }
+
+    #[test]
+    fn identity_notes_survive_push_and_replace() {
+        // Regression: kind-5 notes were silently dropped on create AND edit.
+        let _guard = LIST_MODEL_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut v = Vault::new();
+        crate::push_new_item(
+            &mut v, 5, "id1".into(), "Passport", "Jane Doe", "N123",
+            "jane@x.com", "555-0100", "12 Main St", "my secret note",
+            "General", Vec::new(), Vec::new(), Vec::new(), "", false, false, false,
+        );
+        assert_eq!(v.identities.len(), 1);
+        assert_eq!(v.identities[0].notes, "my secret note");
+        assert_eq!(v.identities[0].email, "jane@x.com");
+        // Edit path preserves notes too.
+        let ok = crate::replace_item(
+            &mut v, 5, "id1", "Passport", "Jane Doe", "N123",
+            "jane@x.com", "555-0100", "12 Main St", "updated note",
+            "General", &[], &[], &[], "", false, false, false,
+        );
+        assert!(ok);
+        assert_eq!(v.identities[0].notes, "updated note");
     }
 
     #[test]
