@@ -6596,6 +6596,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     // and owns the parse → re-seal → UI-refresh flow end to end (no dead arms).
     // Spawned per scan AND per camera switch; stale generations die via the
     // scanner's SCAN_GEN (no resurrection, no double-serve).
+    /// Spawn generation: only the NEWEST worker may touch the modal. A stale
+    /// worker (double-click spawn, rapid camera switch) exits silently —
+    /// otherwise the loser closes the modal out from under the winner
+    /// ("camera flashes then vanishes").
+    static WEBCAM_SPAWN_GEN: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(0);
+
     fn spawn_webcam_worker(
         main_weak: slint::Weak<MainWindow>,
         vault_arc: Arc<Mutex<Vault>>,
@@ -6603,6 +6610,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         search_arc: Arc<Mutex<FilterState>>,
         camera_index: u32,
     ) {
+        let my_gen = WEBCAM_SPAWN_GEN.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         let weak = main_weak.clone();
         let vault_clone = Arc::clone(&vault_arc);
         let master_clone = Arc::clone(&master_pw_arc);
@@ -6657,6 +6665,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 on_frame,
                 move |qr_content| {
                     let weak_in = weak_cb.clone();
+                    // Stale generation: a newer spawn owns the modal — never
+                    // import/notify from a superseded worker.
+                    if my_gen
+                        != WEBCAM_SPAWN_GEN.load(std::sync::atomic::Ordering::SeqCst)
+                    {
+                        return;
+                    }
                     // Parse the decoded QR string (migration or plain otpauth).
                     let (accounts, batch_suffix) = match authenticator::parse_google_migration_url(&qr_content) {
                         Ok((a, batch)) => {
@@ -6742,7 +6757,14 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             );
             // Camera-level failure (no device / timeout / cancel): the modal
             // closes here; per-account outcomes were already reported above.
+            // STALE workers (superseded by a newer spawn) exit SILENTLY —
+            // only the newest generation may close the modal or notify.
             if let Err(e) = res {
+                if my_gen
+                    != WEBCAM_SPAWN_GEN.load(std::sync::atomic::Ordering::SeqCst)
+                {
+                    return;
+                }
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_show_webcam_scan(false);
@@ -6758,6 +6780,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let master_pw_cam = Arc::clone(&active_master_pw);
     let cam_search = Arc::clone(&search_state);
     main_window.on_scan_webcam_requested(move || {
+        // Debounce: a scan already showing ignores re-entry (double-click
+        // would spawn a loser worker whose death-flash closes the modal).
+        if let Some(ui) = window_weak_cam.upgrade() {
+            if ui.get_show_webcam_scan() {
+                return;
+            }
+        }
         // Enumerate FIRST: no visible camera = guidance, never a black modal.
         // (Slim builds: list is always empty → same guidance path.)
         let cams = authenticator::camera_scanner::list_cameras();
