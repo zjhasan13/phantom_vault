@@ -1639,6 +1639,27 @@ fn split_card_expiry(raw: &str) -> (String, String) {
     (m, y)
 }
 
+/// Validated MM/YY parse for card saves. Empty = optional → blank pair.
+/// Otherwise requires exactly MM 01–12 + YY 2 digits (after the same
+/// separator normalization as the splitter). Garbage → None so the save
+/// gate can refuse LOUD instead of persisting ("13/99" as month 13).
+fn parse_card_expiry(raw: &str) -> Option<(String, String)> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Some((String::new(), String::new()));
+    }
+    let (m, y) = split_card_expiry(raw);
+    let mm_ok = m.len() == 2
+        && m.bytes().all(|b| b.is_ascii_digit())
+        && (1..=12).contains(&m.parse::<u32>().unwrap_or(0));
+    let yy_ok = y.len() == 2 && y.bytes().all(|b| b.is_ascii_digit());
+    if mm_ok && yy_ok {
+        Some((m, y))
+    } else {
+        None
+    }
+}
+
 /// Audit scope: only live (non-trashed) logins are health-checked.
 /// Trashed items are shredded within 30 days — scoring their stale/breached
 /// passwords only adds noise to the report and its badges. Pure — tested.
@@ -4755,6 +4776,16 @@ fn main() -> Result<(), slint::PlatformError> {
                             format!("⚠️ {kind_name} needs a title + key fields!").into(),
                         );
                     }
+                }
+                return;
+            }
+            // Card expiry gate: refuse garbage LOUD (never store month 13).
+            // Empty stays optional; push/replace re-validate defensively.
+            if kind == 4 && parse_card_expiry(&cc).is_none() {
+                if let Some(ui) = window_weak_add.upgrade() {
+                    ui.set_notification_text(
+                        "⚠️ Card expiry must be MM/YY with month 01–12.".into(),
+                    );
                 }
                 return;
             }
@@ -11116,7 +11147,9 @@ fn push_new_item(
             deleted_at: None,
         }),
         4 => {
-            let (em, ey) = split_card_expiry(cc);
+            // Handler gate refuses garbage first; blank fallback here is
+            // unreachable in production (defense in depth, never silent).
+            let (em, ey) = parse_card_expiry(cc).unwrap_or_default();
             vault.cards.push(models::PaymentCard {
                 id,
                 title: title.to_string(),
@@ -11151,7 +11184,14 @@ fn push_new_item(
             title: title.to_string(),
             public_key: a.to_string(),
             private_key: b.to_string(),
-            fingerprint: cc.to_string(),
+            // Blank fingerprint auto-derives (OpenSSH `SHA256:`) from the
+            // pasted key; unparseable input stays blank (never blocks save).
+            fingerprint: if cc.trim().is_empty() {
+                crate::developer::ssh_agent::fingerprint_of_private(b)
+                    .unwrap_or_default()
+            } else {
+                cc.to_string()
+            },
             folder: folder.to_string(),
             notes: notes.to_string(),
             travel_safe: travel,
@@ -11244,7 +11284,9 @@ fn replace_item(
             k.title = title.to_string();
             k.cardholder_name = a.to_string();
             k.card_number = b.to_string();
-            let (em, ey) = split_card_expiry(cc);
+            // Handler gate refuses garbage first; blank fallback here is
+            // unreachable in production (defense in depth, never silent).
+            let (em, ey) = parse_card_expiry(cc).unwrap_or_default();
             k.exp_month = em;
             k.exp_year = ey;
             k.cvv = dd.to_string();
@@ -11277,7 +11319,14 @@ fn replace_item(
             s.title = title.to_string();
             s.public_key = a.to_string();
             s.private_key = b.to_string();
-            s.fingerprint = cc.to_string();
+            // Same auto-derive rule as create: explicit wins, blank derives,
+            // garbage stays blank.
+            s.fingerprint = if cc.trim().is_empty() {
+                crate::developer::ssh_agent::fingerprint_of_private(b)
+                    .unwrap_or_default()
+            } else {
+                cc.to_string()
+            };
             s.folder = folder.to_string();
             s.notes = notes.to_string();
             s.favorite = fav;
@@ -11806,6 +11855,47 @@ mod grid_tests {
     }
 
     #[test]
+    fn ssh_fingerprint_auto_derives_only_when_blank() {
+        let _guard = LIST_MODEL_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        // Real PEM via ssh-key itself (deterministic seed — NOT a secret).
+        use ssh_key::private::Ed25519Keypair;
+        let pair = Ed25519Keypair::from_seed(&[7u8; 32]);
+        let pem = ssh_key::PrivateKey::from(pair)
+            .to_openssh(ssh_key::LineEnding::LF)
+            .map(|s| s.to_string())
+            .unwrap();
+        // Blank → derived `SHA256:…`, matching the helper directly.
+        let mut v = Vault::new();
+        crate::push_new_item(
+            &mut v, 6, "s1".into(), "Deploy", "ssh-ed25519 PUB", &pem, "", "", "",
+            "n", "General", Vec::new(), Vec::new(), Vec::new(), "", false, false,
+            false,
+        );
+        assert_eq!(v.ssh_keys.len(), 1);
+        let fp = &v.ssh_keys[0].fingerprint;
+        assert!(fp.starts_with("SHA256:"), "derived, got {fp}");
+        assert_eq!(
+            Some(fp.clone()),
+            crate::developer::ssh_agent::fingerprint_of_private(&pem)
+        );
+        // Garbage key parses to nothing → stays blank, save NOT blocked.
+        let mut v3 = Vault::new();
+        crate::push_new_item(
+            &mut v3, 6, "s3".into(), "Deploy", "pub", "not-a-key", "", "", "", "n",
+            "General", Vec::new(), Vec::new(), Vec::new(), "", false, false, false,
+        );
+        assert_eq!(v3.ssh_keys[0].fingerprint, "");
+        // Explicit fingerprint always wins over derivation.
+        let mut v2 = Vault::new();
+        crate::push_new_item(
+            &mut v2, 6, "s2".into(), "Deploy", "pub", &pem, "SHA256:mine", "", "",
+            "n", "General", Vec::new(), Vec::new(), Vec::new(), "", false, false,
+            false,
+        );
+        assert_eq!(v2.ssh_keys[0].fingerprint, "SHA256:mine");
+    }
+
+    #[test]
     fn grid_chunks_in_pairs() {        assert!(chunk_rows_of::<u8>(vec![], 2).is_empty());
         assert_eq!(chunk_rows_of(vec![1, 2], 2), vec![vec![1, 2]]);
         // 5 items → 2 + 2 + 1; the lone card gets spacers, never full-width.
@@ -11874,6 +11964,22 @@ mod grid_tests {
         // the save path must split it back.
         let (m, y) = split_card_expiry(&format!("{}/{}", "05", "31"));
         assert_eq!((m, y), ("05".to_string(), "31".to_string()));
+    }
+
+    #[test]
+    fn card_expiry_parse_refuses_garbage() {
+        let ok = |s: &str| parse_card_expiry(s).map(|(m, y)| format!("{m}/{y}"));
+        // Valid shapes (separators normalized like the splitter).
+        assert_eq!(ok("12/28").as_deref(), Some("12/28"));
+        assert_eq!(ok("01-99").as_deref(), Some("01/99"));
+        assert_eq!(ok(" 05.31 ").as_deref(), Some("05/31"));
+        // Empty stays optional (blank pair, never a refusal).
+        assert_eq!(ok("").as_deref(), Some("/"));
+        assert_eq!(ok("   ").as_deref(), Some("/"));
+        // Garbage → None so the save gate refuses LOUD (never month 13).
+        for bad in ["13/99", "00/25", "1/25", "123/45", "ab/cd", "12/", "/25", "12/2", "1225"] {
+            assert_eq!(ok(bad), None, "must refuse {bad:?}");
+        }
     }
 
     #[test]

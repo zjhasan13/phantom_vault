@@ -71,6 +71,14 @@ impl std::fmt::Debug for AgentKey {
     }
 }
 
+/// OpenSSH-style `SHA256:` fingerprint for a pasted private key (any type).
+/// Auto-fills the fingerprint field when the user leaves it blank.
+/// Unparseable input → None (caller keeps the field blank, never blocks save).
+pub fn fingerprint_of_private(pem: &str) -> Option<String> {
+    let key = ssh_key::PrivateKey::from_openssh(pem.trim()).ok()?;
+    Some(key.fingerprint(ssh_key::HashAlg::Sha256).to_string())
+}
+
 /// Collect ed25519 keys from vault credentials titled `SSH: <comment>`.
 /// Private key PEM lives in the password field. Non-ed25519 entries are
 /// skipped (never error — one bad entry must not kill the agent).
@@ -404,6 +412,38 @@ mod tests {
     // Session tests share one process-global session: serialize on the
     // session mutex itself (start/stop are idempotent, resets are safe).
     static SESSION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn test_key_pem() -> String {
+        // Deterministic fixture (NOT a real secret — same committed constant
+        // style as test_keys()): rendered through the real OpenSSH encoder,
+        // so the fingerprint path parses exactly what users paste.
+        use ssh_key::private::Ed25519Keypair;
+        let pair = Ed25519Keypair::from_seed(&[9u8; 32]);
+        let key = PrivateKey::from(pair);
+        key.to_openssh(ssh_key::LineEnding::LF)
+            .map(|s| s.to_string())
+            .unwrap()
+    }
+
+    #[test]
+    fn fingerprint_derives_stable_sha256() {
+        let pem = test_key_pem();
+        let fp = fingerprint_of_private(&pem).expect("fixture must parse");
+        assert!(fp.starts_with("SHA256:"), "OpenSSH style, got {fp}");
+        assert_eq!(fp.len(), 7 + 43, "32 raw bytes = 43 unpadded b64 chars");
+        // Stable + whitespace-tolerant.
+        assert_eq!(fingerprint_of_private(&format!("  {pem}\n")), Some(fp));
+    }
+
+    #[test]
+    fn fingerprint_rejects_garbage() {
+        assert_eq!(fingerprint_of_private(""), None);
+        assert_eq!(fingerprint_of_private("not a key"), None);
+        assert_eq!(
+            fingerprint_of_private("-----BEGIN RSA PRIVATE KEY-----\nx\n-----END RSA PRIVATE KEY-----"),
+            None
+        );
+    }
 
     #[test]
     fn start_refuses_empty_keys_and_double_start() {
