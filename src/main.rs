@@ -6583,32 +6583,65 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         });
     });
 
+    // Webcam camera list (driver index, display name), refreshed on every
+    // scan open. The picker handler resolves a display name back through it.
+    fn webcam_cam_list() -> &'static Mutex<Vec<(u32, String)>> {
+        static CAMS: std::sync::OnceLock<Mutex<Vec<(u32, String)>>> =
+            std::sync::OnceLock::new();
+        CAMS.get_or_init(|| Mutex::new(Vec::new()))
+    }
+
     // Batch-4: live webcam QR → same import pipeline as clipboard QR.
-    // The capture callback runs on the camera worker thread and owns the
-    // parse → re-seal → UI-refresh flow end to end (no dead arms).
-    let window_weak_cam = main_window.as_weak();
-    let vault_arc_cam = Arc::clone(&active_vault);
-    let master_pw_cam = Arc::clone(&active_master_pw);
-    let cam_search = Arc::clone(&search_state);
-    main_window.on_scan_webcam_requested(move || {
-        if let Some(ui) = window_weak_cam.upgrade() {
-            if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
-                return;
-            }
-            ui.set_show_webcam_scan(true);
-            ui.set_notification_text("📷 Point the QR at camera 0…".into());
-        }
-        let weak = window_weak_cam.clone();
-        let vault_clone = Arc::clone(&vault_arc_cam);
-        let master_clone = Arc::clone(&master_pw_cam);
-        let search_clone_cam = Arc::clone(&cam_search);
+    // Worker mother-fn: the capture callback runs on the camera worker thread
+    // and owns the parse → re-seal → UI-refresh flow end to end (no dead arms).
+    // Spawned per scan AND per camera switch; stale generations die via the
+    // scanner's SCAN_GEN (no resurrection, no double-serve).
+    fn spawn_webcam_worker(
+        main_weak: slint::Weak<MainWindow>,
+        vault_arc: Arc<Mutex<Vault>>,
+        master_pw_arc: Arc<Mutex<Option<SecretString>>>,
+        search_arc: Arc<Mutex<FilterState>>,
+        camera_index: u32,
+    ) {
+        let weak = main_weak.clone();
+        let vault_clone = Arc::clone(&vault_arc);
+        let master_clone = Arc::clone(&master_pw_arc);
+        let search_clone_cam = Arc::clone(&search_arc);
         std::thread::spawn(move || {
             let weak_cb = weak.clone();
             let weak_frame = weak.clone();
             // Live preview: every camera frame becomes the modal image.
             // Runs on this worker thread — hop to the event loop per frame.
+            // Lens-cover hint: sustained near-black frames mean a covered lens
+            // (a dead camera never reaches on_frame at all). The hint prop
+            // updates only on dark↔light transitions, never per frame.
+            let dark_state =
+                std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let dark_state_cb = std::sync::Arc::clone(&dark_state);
             let on_frame = move |rgba: Vec<u8>, w: u32, h: u32| {
+                // Sampled mean red (~luma proxy): sustained near-black means
+                // a covered lens. Threshold compare is branchless-safe here.
+                let mut sum: u64 = 0;
+                let mut count: u64 = 0;
+                for b in rgba.iter().step_by(16) {
+                    sum += *b as u64;
+                    count += 1;
+                }
+                let dark_now = count > 0 && sum / count < 6;
+                if dark_state_cb.swap(dark_now, std::sync::atomic::Ordering::SeqCst)
+                    != dark_now
+                {
+                    let weak_hint = weak_frame.clone();
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak_hint.upgrade() {
+                            ui.set_webcam_hint(if dark_now {
+                                "🌑 Very dark — lens covered?".into()
+                            } else {
+                                String::new().into()
+                            });
+                        }
+                    });
+                }
                 let weak_frame = weak_frame.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak_frame.upgrade() {
@@ -6619,90 +6652,94 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     }
                 });
             };
-            let res = authenticator::camera_scanner::capture_and_scan_frame(on_frame, move |qr_content| {
-                let weak_in = weak_cb.clone();
-                // Parse the decoded QR string (migration or plain otpauth).
-                let (accounts, batch_suffix) = match authenticator::parse_google_migration_url(&qr_content) {
-                    Ok((a, batch)) => {
-                        let suffix = batch.display().map(|s| format!(" ({s})")).unwrap_or_default();
-                        (a, suffix)
-                    },
-                    Err(e) => {
+            let res = authenticator::camera_scanner::capture_and_scan_frame(
+                camera_index,
+                on_frame,
+                move |qr_content| {
+                    let weak_in = weak_cb.clone();
+                    // Parse the decoded QR string (migration or plain otpauth).
+                    let (accounts, batch_suffix) = match authenticator::parse_google_migration_url(&qr_content) {
+                        Ok((a, batch)) => {
+                            let suffix = batch.display().map(|s| format!(" ({s})")).unwrap_or_default();
+                            (a, suffix)
+                        },
+                        Err(e) => {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = weak_in.upgrade() {
+                                    ui.set_show_webcam_scan(false);
+                                    ui.set_notification_text(format!("❌ QR parse failed: {}", e).into());
+                                }
+                            });
+                            return;
+                        }
+                    };
+                    // Phase 28: same blind `extend()` as the clipboard QR path, same
+                    // fix — park the collision and let the user decide.
+                    let conflicts = {
+                        let v = lock_vault(&vault_clone);
+                        dup_conflicts_against(&v, &accounts)
+                    };
+                    if !conflicts.is_empty() {
+                        let dup_ui = weak_in.clone();
                         let _ = slint::invoke_from_event_loop(move || {
-                            if let Some(ui) = weak_in.upgrade() {
+                            if let Some(ui) = dup_ui.upgrade() {
                                 ui.set_show_webcam_scan(false);
-                                ui.set_notification_text(format!("❌ QR parse failed: {}", e).into());
+                                park_twofa_for_dup(&ui, accounts, conflicts);
                             }
                         });
                         return;
                     }
-                };
-                // Phase 28: same blind `extend()` as the clipboard QR path, same
-                // fix — park the collision and let the user decide.
-                let conflicts = {
-                    let v = lock_vault(&vault_clone);
-                    dup_conflicts_against(&v, &accounts)
-                };
-                if !conflicts.is_empty() {
-                    let dup_ui = weak_in.clone();
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = dup_ui.upgrade() {
-                            ui.set_show_webcam_scan(false);
-                            park_twofa_for_dup(&ui, accounts, conflicts);
+                    let master_opt = lock_master_pw(&master_clone).clone();
+                    let Some(master_pw) = master_opt else {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak_in.upgrade() {
+                                ui.set_show_webcam_scan(false);
+                                ui.set_notification_text("❌ Vault not unlocked!".into());
+                            }
+                        });
+                        return;
+                    };
+                    let save_result: Result<usize, String> = {
+                        let mut vault = lock_vault(&vault_clone);
+                        let snapshot = vault.clone();
+                        let report: MergeReport =
+                            merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
+                        let imported = report.imported + report.replaced;
+                        match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                            Ok(()) => Ok(imported),
+                            Err(e) => {
+                                *vault = snapshot;
+                                Err(e.to_string())
+                            }
                         }
-                    });
-                    return;
-                }
-                let master_opt = lock_master_pw(&master_clone).clone();
-                let Some(master_pw) = master_opt else {
+                    };
+                    let vault_for_list = Arc::clone(&vault_clone);
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak_in.upgrade() {
                             ui.set_show_webcam_scan(false);
-                            ui.set_notification_text("❌ Vault not unlocked!".into());
+                            match save_result {
+                                Ok(imported) => {
+                                    ui.set_notification_text(
+                                        format!("✅ Webcam imported {imported} 2FA accounts!{}", batch_suffix).into(),
+                                    );
+                                    {
+                                        let v = lock_vault(&vault_for_list);
+                                        ui.set_auth_accounts(rebuild_auth_list(&v));
+                                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                                        // Standalone 2FA also lives in All items / Favorites.
+                                        let f = search_clone_cam.lock().unwrap().clone();
+                                        set_paged_credentials(&ui, vault_to_items(&v, &f));
+                                    }
+                                    trigger_sync_push(ui.as_weak());
+                                }
+                                Err(e) => {
+                                    ui.set_notification_text(format!("❌ Import save failed: {}", e).into());
+                                }
+                            }
                         }
                     });
-                    return;
-                };
-                let save_result: Result<usize, String> = {
-                    let mut vault = lock_vault(&vault_clone);
-                    let snapshot = vault.clone();
-                    let report: MergeReport =
-                        merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
-                    let imported = report.imported + report.replaced;
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
-                        Ok(()) => Ok(imported),
-                        Err(e) => {
-                            *vault = snapshot;
-                            Err(e)
-                        }
-                    }
-                };
-                let vault_for_list = Arc::clone(&vault_clone);
-                let _ = slint::invoke_from_event_loop(move || {
-                    if let Some(ui) = weak_in.upgrade() {
-                        ui.set_show_webcam_scan(false);
-                        match save_result {
-                            Ok(imported) => {
-                                ui.set_notification_text(
-                                    format!("✅ Webcam imported {imported} 2FA accounts!{}", batch_suffix).into(),
-                                );
-                                {
-                                    let v = lock_vault(&vault_for_list);
-                                    ui.set_auth_accounts(rebuild_auth_list(&v));
-                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
-                                    // Standalone 2FA also lives in All items / Favorites.
-                                    let f = search_clone_cam.lock().unwrap().clone();
-                                    set_paged_credentials(&ui, vault_to_items(&v, &f));
-                                }
-                                trigger_sync_push(ui.as_weak());
-                            }
-                            Err(e) => {
-                                ui.set_notification_text(format!("❌ Import save failed: {}", e).into());
-                            }
-                        }
-                    }
-                });
-            });
+                },
+            );
             // Camera-level failure (no device / timeout / cancel): the modal
             // closes here; per-account outcomes were already reported above.
             if let Err(e) = res {
@@ -6714,6 +6751,83 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 });
             }
         });
+    }
+
+    let window_weak_cam = main_window.as_weak();
+    let vault_arc_cam = Arc::clone(&active_vault);
+    let master_pw_cam = Arc::clone(&active_master_pw);
+    let cam_search = Arc::clone(&search_state);
+    main_window.on_scan_webcam_requested(move || {
+        // Enumerate FIRST: no visible camera = guidance, never a black modal.
+        // (Slim builds: list is always empty → same guidance path.)
+        let cams = authenticator::camera_scanner::list_cameras();
+        if let Some(ui) = window_weak_cam.upgrade() {
+            if ui.get_is_decoy() {
+                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                return;
+            }
+            if cams.is_empty() {
+                ui.set_notification_text(
+                    "📷 No camera found — check Windows Privacy → Camera, or close apps using it.".into(),
+                );
+                return;
+            }
+            {
+                let mut stored = webcam_cam_list().lock().unwrap_or_else(|p| p.into_inner());
+                *stored = cams.clone();
+            }
+            let names: Vec<slint::SharedString> =
+                cams.iter().map(|(_, n)| n.as_str().into()).collect();
+            ui.set_webcam_cams(slint::ModelRc::new(slint::VecModel::from_slice(
+                &names,
+            )));
+            ui.set_webcam_cam_current(names[0].clone());
+            ui.set_webcam_hint(String::new().into());
+            ui.set_show_webcam_scan(true);
+            ui.set_notification_text(
+                format!("📷 Point the QR at {}…", cams[0].1).into(),
+            );
+        }
+        spawn_webcam_worker(
+            window_weak_cam.clone(),
+            Arc::clone(&vault_arc_cam),
+            Arc::clone(&master_pw_cam),
+            Arc::clone(&cam_search),
+            cams.first().map(|(i, _)| *i).unwrap_or(0),
+        );
+    });
+    // Camera switch: cancel the running worker (generation-guarded, no
+    // resurrection) and respawn on the chosen driver index.
+    let pick_weak = main_window.as_weak();
+    let pick_vault = Arc::clone(&active_vault);
+    let pick_master = Arc::clone(&active_master_pw);
+    let pick_search = Arc::clone(&search_state);
+    main_window.on_webcam_camera_picked(move |name| {
+        let wanted = name.to_string();
+        let idx = webcam_cam_list()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .find(|(_, n)| n == &wanted)
+            .map(|(i, _)| *i);
+        let Some(idx) = idx else {
+            return;
+        };
+        authenticator::camera_scanner::cancel_webcam_scan();
+        if let Some(ui) = pick_weak.upgrade() {
+            ui.set_webcam_cam_current(wanted.into());
+            ui.set_webcam_hint(String::new().into());
+            ui.set_notification_text(
+                format!("📷 Switched camera — point the QR…").into(),
+            );
+        }
+        spawn_webcam_worker(
+            pick_weak.clone(),
+            Arc::clone(&pick_vault),
+            Arc::clone(&pick_master),
+            Arc::clone(&pick_search),
+            idx,
+        );
     });
     let window_weak_cam_cancel = main_window.as_weak();
     main_window.on_cancel_webcam_scan(move || {

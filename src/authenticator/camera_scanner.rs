@@ -19,10 +19,45 @@ const SCAN_TIMEOUT: Duration = Duration::from_secs(60);
 const FRAME_PERIOD: Duration = Duration::from_millis(100);
 
 static CANCEL: AtomicBool = AtomicBool::new(false);
+/// Generation counter: a fresh spawn must never resurrect a cancelled
+/// predecessor (the new spawn clears CANCEL while the old thread may still
+/// be inside one last frame poll — the stale generation exits regardless).
+static SCAN_GEN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// Cooperative stop for an in-flight [`capture_and_scan_frame`] (modal Cancel).
+/// Cooperative stop for an in-flight [`capture_and_scan_frame`] (modal Cancel,
+/// camera switch, lock). Bumps the generation so late polls die too.
 pub fn cancel_webcam_scan() {
     CANCEL.store(true, Ordering::SeqCst);
+    SCAN_GEN.fetch_add(1, Ordering::SeqCst);
+}
+
+/// Enumerate usable cameras as (driver index, display name). Empty = none
+/// visible (privacy off / no device / busy) — the caller shows guidance,
+/// never a black scan modal. Camera-gated like the rest of this module.
+#[cfg(feature = "camera")]
+pub fn list_cameras() -> Vec<(u32, String)> {
+    use nokhwa::utils::{ApiBackend, CameraIndex};
+    let infos = nokhwa::query(ApiBackend::Auto).unwrap_or_default();
+    infos
+        .into_iter()
+        .filter_map(|info| {
+            let idx = match info.index() {
+                CameraIndex::Index(n) => *n,
+                _ => return None,
+            };
+            let mut name = info.human_name();
+            if name.trim().is_empty() {
+                name = format!("Camera {idx}");
+            }
+            Some((idx, format!("{name} (#{idx})")))
+        })
+        .collect()
+}
+
+/// Slim builds have no camera stack: empty list, guidance path only.
+#[cfg(not(feature = "camera"))]
+pub fn list_cameras() -> Vec<(u32, String)> {
+    Vec::new()
 }
 
 /// Pure helper: QR-detect over a raw luma8 buffer. No camera, fully tested.
@@ -54,6 +89,7 @@ pub fn scan_luma_buffer(width: u32, height: u32, pixels: &[u8]) -> Option<String
 /// loud error, no nokhwa linkage.
 #[cfg(feature = "camera")]
 pub fn capture_and_scan_frame(
+    camera_index: u32,
     on_frame: impl Fn(Vec<u8>, u32, u32) + Send + Sync + 'static,
     on_qr_found: impl FnOnce(String) + Send + 'static,
 ) -> Result<()> {
@@ -62,13 +98,23 @@ pub fn capture_and_scan_frame(
     use nokhwa::Camera;
 
     CANCEL.store(false, Ordering::SeqCst);
+    let gen = SCAN_GEN.fetch_add(1, Ordering::SeqCst);
     let mut cam = Camera::new(
-        CameraIndex::Index(0),
+        CameraIndex::Index(camera_index),
         RequestedFormat::new::<RgbFormat>(RequestedFormatType::AbsoluteHighestFrameRate),
     )
     .map_err(|e| VaultError::Security(format!("camera open: {e}")))?;
-    cam.open_stream()
-        .map_err(|e| VaultError::Security(format!("camera stream: {e}")))?;
+    // Format fallback: picky webcams reject exotic negotiations outright —
+    // retry with the driver default before failing loud.
+    if cam.open_stream().is_err() {
+        cam = Camera::new(
+            CameraIndex::Index(camera_index),
+            RequestedFormat::new::<RgbFormat>(RequestedFormatType::None),
+        )
+        .map_err(|e| VaultError::Security(format!("camera open: {e}")))?;
+        cam.open_stream()
+            .map_err(|e| VaultError::Security(format!("camera stream: {e}")))?;
+    }
     let deadline = Instant::now() + SCAN_TIMEOUT;
     // Consecutive dead frames mean a stuck/denied device, not bad luck:
     // fail LOUD after ~5s instead of staring at a black modal for 60s.
@@ -76,7 +122,9 @@ pub fn capture_and_scan_frame(
     // device-busy both present exactly like this.)
     let mut dead_frames = 0u32;
     loop {
-        if CANCEL.load(Ordering::SeqCst) {
+        // Stale generation (a newer spawn cleared CANCEL beneath us) exits
+        // exactly like an explicit cancel — no resurrection, no double-serve.
+        if CANCEL.load(Ordering::SeqCst) || gen != SCAN_GEN.load(Ordering::SeqCst) {
             let _ = cam.stop_stream();
             return Err(VaultError::Security("webcam scan cancelled".into()));
         }
@@ -127,6 +175,7 @@ pub fn capture_and_scan_frame(
 /// so call sites compile unchanged. Loud error, never silent.
 #[cfg(not(feature = "camera"))]
 pub fn capture_and_scan_frame(
+    _camera_index: u32,
     _on_frame: impl Fn(Vec<u8>, u32, u32) + Send + Sync + 'static,
     _on_qr_found: impl FnOnce(String) + Send + 'static,
 ) -> Result<()> {
@@ -157,5 +206,18 @@ mod tests {
         cancel_webcam_scan();
         assert!(CANCEL.load(Ordering::SeqCst));
         CANCEL.store(false, Ordering::SeqCst);
+    }
+
+    #[test]
+    #[cfg(feature = "camera")]
+    fn list_cameras_never_panics() {
+        // Hardware-dependent output (empty on CI, populated on dev PCs) —
+        // assert only well-formedness: no panic, sane display names.
+        let cams = list_cameras();
+        assert!(cams.len() < 64);
+        for (idx, name) in &cams {
+            assert!(!name.trim().is_empty());
+            assert!(name.contains(&idx.to_string()));
+        }
     }
 }
