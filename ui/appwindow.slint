@@ -471,8 +471,18 @@ export component MainWindow inherits Window {
     in-out property <string> f_c;
     // Secondary website URLs (primary stays in f_c above).
     in-out property <[string]> f_urls;
+    // Per-URL match rule, index-aligned with f_urls (0 Default … 5 Never).
+    // Narrow labels keep rows compact; full names live in the tooltip.
+    in-out property <[int]> f_url_rules;
+    callback cycle_url_rule(int);
     in-out property <string> f_d;
     in-out property <string> f_e;
+    // Identity structured parts (kind 5 only; all optional).
+    in-out property <string> f_company;
+    in-out property <string> f_city;
+    in-out property <string> f_state;
+    in-out property <string> f_zip;
+    in-out property <string> f_country;
     in-out property <string> f_notes;
     in-out property <string> f_folder: "General";
     in-out property <string> f_totp;
@@ -790,7 +800,7 @@ export component MainWindow inherits Window {
     callback dup_confirm_replace();
     callback dup_confirm_keep();
     callback dup_confirm_cancel();
-    callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
+    callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
     callback delete_item_requested(int, string);
     callback type_filter_changed(int);
     callback folder_filter_changed(string);
@@ -1679,6 +1689,13 @@ export component MainWindow inherits Window {
                             LineEdit { placeholder-text: root.new_kind == 4 ? "CVV" : "Phone"; text <=> root.f_d; height: 36px; }
                         }
                         if root.new_kind == 5 : LineEdit { placeholder-text: "Address"; text <=> root.f_e; height: 36px; }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: "Company (optional)"; text <=> root.f_company; height: 36px; }
+                        if root.new_kind == 5 : HorizontalLayout { spacing: 6px;
+                            LineEdit { placeholder-text: "City"; text <=> root.f_city; height: 36px; horizontal-stretch: 2; }
+                            LineEdit { placeholder-text: "State"; text <=> root.f_state; height: 36px; horizontal-stretch: 1; }
+                            LineEdit { placeholder-text: "ZIP"; text <=> root.f_zip; height: 36px; horizontal-stretch: 1; }
+                        }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: "Country (optional)"; text <=> root.f_country; height: 36px; }
                         if root.new_kind == 1 : VerticalLayout { spacing: 8px;
                             FieldLabel { text: "AUTHENTICATOR KEY (TOTP)"; }
                             LineEdit { placeholder-text: "Paste otpauth secret…"; text <=> root.f_totp; height: 36px; }
@@ -1686,12 +1703,14 @@ export component MainWindow inherits Window {
                             TextEdit { placeholder-text: "Paste one-time recovery / backup codes here (one per line)..."; text <=> root.f_backup; height: 56px; wrap: word-wrap; }
                             FieldLabel { text: "AUTOFILL OPTIONS"; }
                             LineEdit { placeholder-text: "Website (URI), e.g. https://example.com/login"; text <=> root.f_c; height: 36px; }
-                            for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: "🗑️"; width: 44px; height: 36px; danger: true; clicked => { root.remove_url(idx); } } }
+                            for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: root.f_url_rules[idx] == 0 ? "Auto" : (root.f_url_rules[idx] == 1 ? "Base" : (root.f_url_rules[idx] == 2 ? "Host" : (root.f_url_rules[idx] == 3 ? "Exact" : (root.f_url_rules[idx] == 4 ? "Prefix" : "Never")))); width: 64px; height: 36px; clicked => { root.cycle_url_rule(idx); } } AuraButton { label: "🗑️"; width: 44px; height: 36px; danger: true; clicked => { root.remove_url(idx); } } }
                             AuraButton { label: "+ Add website"; height: 34px; clicked => { root.add_url(); } }
-                            FieldLabel { text: "SECRET KEYS / API TOKENS"; }
-                            for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; vertical-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
-                            AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
                         }
+                        // Custom fields ride every item kind (logins/cards/notes/
+                        // identities/SSH/licenses) — same pending store, same save.
+                        FieldLabel { text: "SECRET KEYS / API TOKENS"; }
+                        for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
+                        AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
                         FieldLabel { text: "NOTES"; }
                         TextEdit { text <=> root.f_notes; height: 64px; wrap: word-wrap; }
                         HorizontalLayout { spacing: 12px;
@@ -1700,7 +1719,7 @@ export component MainWindow inherits Window {
                             CheckBox { text: "✈️ Travel safe"; checked <=> root.f_travel; }
                         }
                         HorizontalLayout { spacing: 8px;
-                            AuraButton { label: "💾 Save"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.add_item_requested(root.new_kind, root.f_title, root.f_a, root.f_b, root.f_c, root.f_d, root.f_e, root.f_notes, root.f_folder, root.f_totp, root.f_backup, root.f_reprompt, root.f_fav, root.f_travel); } }
+                            AuraButton { label: "💾 Save"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.add_item_requested(root.new_kind, root.f_title, root.f_a, root.f_b, root.f_c, root.f_d, root.f_e, root.f_notes, root.f_folder, root.f_totp, root.f_backup, root.f_company, root.f_city, root.f_state, root.f_zip, root.f_country, root.f_reprompt, root.f_fav, root.f_travel); } }
                             AuraButton { label: "Cancel"; width: 120px; height: 38px; clicked => { root.cancel_form(); } }
                         }
                     }}

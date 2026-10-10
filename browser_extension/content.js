@@ -170,7 +170,8 @@
     const urls = (entry && entry.urls) || [];
     for (const raw of urls) {
       try {
-        const h = stripHostPrefixes(new URL(raw.includes("://") ? raw : "https://" + raw).hostname);
+        const t = (typeof raw === "string") ? raw : (raw && raw.url) || "";
+        const h = stripHostPrefixes(new URL(t.includes("://") ? t : "https://" + t).hostname);
         const m = h.match(/[a-z0-9]/);
         if (m) return m[0].toUpperCase();
       } catch (_) { /* next source */ }
@@ -199,20 +200,33 @@
   }
   // Entry allow-list by match mode. Entries WITHOUT stored urls pass through
   // (legacy titles) — only entries WITH urls are strictly verified.
+  // Per-URL rule override (0 Default → global match_mode; 1 base, 2 host,
+  // 3 exact, 4 prefix, 5 never). Host may send strings (legacy/default)
+  // or {url, rule} objects — both shapes accepted.
   function entryAllowed(entry) {
     const urls = entry.urls || [];
     if (!urls.length) return true;
     const pageHost = location.hostname.toLowerCase();
     const pageHref = location.href.split("#")[0].replace(/\/$/, "");
+    const normHref = (h) => h.split("#")[0].replace(/\/$/, "");
     for (const raw of urls) {
+      const text = (typeof raw === "string") ? raw : (raw && raw.url) || "";
+      const rule = (typeof raw === "object" && raw && Number.isInteger(raw.rule)) ? raw.rule : 0;
+      if (!text) continue;
+      // NEVER: this URL never authorizes a fill (but doesn't veto siblings).
+      if (rule === 5) continue;
       let u;
-      try { u = new URL(raw.includes("://") ? raw : "https://" + raw); }
+      try { u = new URL(text.includes("://") ? text : "https://" + text); }
       catch (_) { continue; }
-      const mode = settings.match_mode || "base";
+      const mode = rule === 0 ? (settings.match_mode || "base")
+        : rule === 1 ? "base" : rule === 2 ? "host" : rule === 3 ? "exact"
+        : rule === 4 ? "prefix" : "base";
       if (mode === "exact") {
-        if (u.href.split("#")[0].replace(/\/$/, "") === pageHref) return true;
+        if (normHref(u.href) === pageHref) return true;
       } else if (mode === "host") {
         if (u.hostname.toLowerCase() === pageHost) return true;
+      } else if (mode === "prefix") {
+        if (pageHref.startsWith(normHref(u.href))) return true;
       } else {
         // Base domain OR equivalent sibling (youtube ↔ google, …).
         if (registrable(u.hostname) === pageBase()) return true;

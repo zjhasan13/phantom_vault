@@ -11,6 +11,42 @@ fn str_field(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Str
     obj.get(key).map(s).unwrap_or_default()
 }
 
+/// Bitwarden item `fields` array → RawItem customs (all item kinds, not just
+/// logins — our own exporter writes `fields` on cards/identities/notes too,
+/// so round-trips must restore them everywhere).
+/// Custom fields: type 0 text, 1 hidden, 2 boolean, 3 linked.
+fn parse_bw_fields(o: &serde_json::Map<String, serde_json::Value>, r: &mut RawItem) {
+    if let Some(fields) = o.get("fields").and_then(|f| f.as_array()) {
+        for f in fields {
+            let (Some(fname), ftype) = (
+                f.get("name").map(s),
+                f.get("type").and_then(|t| t.as_i64()).unwrap_or(0),
+            ) else {
+                continue;
+            };
+            if fname.trim().is_empty() {
+                continue;
+            }
+            match ftype {
+                1 => r.custom_hidden.push((fname, f.get("value").map(s).unwrap_or_default())),
+                2 => {
+                    let v = f.get("value").map(s).unwrap_or_default();
+                    r.custom_check.push((fname, v == "true" || v == "1"));
+                }
+                3 => {
+                    // Bitwarden linked ids: 100 username, 101 password.
+                    let target = match f.get("linkedId").and_then(|i| i.as_i64()) {
+                        Some(100) => "username",
+                        _ => "password",
+                    };
+                    r.custom_linked.push((fname, target.to_string()));
+                }
+                _ => r.custom_text.push((fname, f.get("value").map(s).unwrap_or_default())),
+            }
+        }
+    }
+}
+
 /// Bitwarden unencrypted export: {folders, items[]}.
 pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawItem>> {
     let text = super::sniffer::decode_text(bytes);
@@ -48,13 +84,15 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
         match itype {
             2 => {
                 // Secure note.
-                out.push(RawItem { kind: 3, title: name, a: notes, folder, ..Default::default() });
+                let mut r = RawItem { kind: 3, title: name, a: notes, folder, ..Default::default() };
+                parse_bw_fields(o, &mut r);
+                out.push(r);
             }
             3 => {
                 // Card.
                 let c = o.get("card").and_then(|c| c.as_object());
                 let get = |k: &str| c.map(|c| str_field(c, k)).unwrap_or_default();
-                out.push(RawItem {
+                let mut r = RawItem {
                     kind: 4,
                     title: name,
                     a: get("cardholderName"),
@@ -64,7 +102,9 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                     notes,
                     folder,
                     ..Default::default()
-                });
+                };
+                parse_bw_fields(o, &mut r);
+                out.push(r);
             }
             4 => {
                 // Identity (email/company/state/postal have no dedicated
@@ -82,52 +122,68 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                 if idnum.is_empty() {
                     idnum = get("ssn");
                 }
-                let mut inotes = notes.clone();
-                for (label, val) in [
-                    ("Company", get("company")),
-                    ("State", get("state")),
-                    ("Postal", get("postalCode")),
-                ] {
-                    if !val.trim().is_empty() {
-                        if !inotes.is_empty() {
-                            inotes.push('\n');
-                        }
-                        inotes.push_str(&format!("{label}: {}", val.trim()));
-                    }
-                }
-                out.push(RawItem {
+                // Structured identity parts map 1:1; address1/2 stay in the
+                // free-form address box. Unknown extras still ride notes.
+                let mut r = RawItem {
                     kind: 5,
                     title: name,
                     a: full,
                     b: idnum,
                     c: get("email"),
                     d: get("phone"),
-                    e: [&get("address1"), &get("address2"), &get("city"), &get("country")]
+                    e: [&get("address1"), &get("address2")]
                         .iter()
                         .filter(|s| !s.is_empty())
                         .map(|s| s.to_string())
                         .collect::<Vec<_>>()
                         .join(", "),
-                    notes: inotes,
+                    company: get("company"),
+                    city: get("city"),
+                    state: get("state"),
+                    zip: get("postalCode"),
+                    country: get("country"),
+                    notes,
                     folder,
                     ..Default::default()
-                });
+                };
+                parse_bw_fields(o, &mut r);
+                out.push(r);
             }
             _ => {
                 // Login.
                 let l = o.get("login").and_then(|l| l.as_object());
                 let get = |k: &str| l.map(|l| str_field(l, k)).unwrap_or_default();
-                let uris = l
+                // (url, rule): Bitwarden UriMatchType → our rule ids.
+                // 0 base, 1 host, 2 starts-with, 3 exact, 5 never;
+                // 4 regex + unknown → Default (no counterpart, documented).
+                let uri_pairs: Vec<(String, u8)> = l
                     .and_then(|l| l.get("uris"))
                     .and_then(|u| u.as_array())
                     .map(|arr| {
                         arr.iter()
-                            .filter_map(|u| u.get("uri").map(s))
-                            .filter(|u| !u.is_empty())
-                            .collect::<Vec<_>>()
-                            .join("\n")
+                            .filter_map(|u| {
+                                let t = u.get("uri").map(s).unwrap_or_default();
+                                if t.is_empty() {
+                                    return None;
+                                }
+                                let rule = match u.get("match").and_then(|m| m.as_i64()) {
+                                    Some(0) => 1,
+                                    Some(1) => 2,
+                                    Some(2) => 4,
+                                    Some(3) => 3,
+                                    Some(5) => 5,
+                                    _ => 0,
+                                };
+                                Some((t, rule))
+                            })
+                            .collect()
                     })
                     .unwrap_or_default();
+                let uris = uri_pairs
+                    .iter()
+                    .map(|(u, _)| u.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n");
                 let (totp, notes) =
                     super::apply_totp(&get("totp"), &name, notes, summary);
                 let mut r = RawItem {
@@ -139,6 +195,7 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                     totp,
                     notes,
                     folder,
+                    url_rules: uri_pairs.iter().map(|(_, r)| *r).collect(),
                     ..Default::default()
                 };
                 // Bitwarden passwordHistory: [{lastUsedDate, password}] —
@@ -166,36 +223,7 @@ pub fn parse_json(bytes: &[u8], summary: &mut ImportSummary) -> Result<Vec<RawIt
                         });
                     }
                 }
-                // Custom fields: type 0 text, 1 hidden, 2 boolean, 3 linked.
-                if let Some(fields) = o.get("fields").and_then(|f| f.as_array()) {
-                    for f in fields {
-                        let (Some(fname), ftype) = (
-                            f.get("name").map(s),
-                            f.get("type").and_then(|t| t.as_i64()).unwrap_or(0),
-                        ) else {
-                            continue;
-                        };
-                        if fname.trim().is_empty() {
-                            continue;
-                        }
-                        match ftype {
-                            1 => r.custom_hidden.push((fname, f.get("value").map(s).unwrap_or_default())),
-                            2 => {
-                                let v = f.get("value").map(s).unwrap_or_default();
-                                r.custom_check.push((fname, v == "true" || v == "1"));
-                            }
-                            3 => {
-                                // Bitwarden linked ids: 100 username, 101 password.
-                                let target = match f.get("linkedId").and_then(|i| i.as_i64()) {
-                                    Some(100) => "username",
-                                    _ => "password",
-                                };
-                                r.custom_linked.push((fname, target.to_string()));
-                            }
-                            _ => r.custom_text.push((fname, f.get("value").map(s).unwrap_or_default())),
-                        }
-                    }
-                }
+                parse_bw_fields(o, &mut r);
                 out.push(r);
             }
         }
@@ -459,11 +487,13 @@ mod tests {
         assert_eq!(items[0].history.len(), 2);
         assert_eq!(items[0].history[0].password, "old1");
         assert!(items[0].history[0].changed_at > items[0].history[1].changed_at);
-        // Identity: email in `c`, company/state/postal appended to notes.
+        // Identity: email in `c`, company/state/postal in structured
+        // fields (no longer crammed into notes).
         assert_eq!(items[1].c, "ada@x.com");
-        assert!(items[1].notes.contains("Company: Acme"));
-        assert!(items[1].notes.contains("State: DHK"));
-        assert!(items[1].notes.contains("Postal: 1205"));
+        assert_eq!(items[1].company, "Acme");
+        assert_eq!(items[1].state, "DHK");
+        assert_eq!(items[1].zip, "1205");
+        assert!(!items[1].notes.contains("Company:"));
         // Full merge: backup box filled from field AND notes, customs kept.
         let mut v = crate::models::Vault::new();
         let mut ms = super::ImportSummary::default();

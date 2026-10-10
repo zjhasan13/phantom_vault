@@ -41,7 +41,7 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         totp_secret: String::new(),
         backup_codes: Vec::new(),
         custom_fields: Vec::new(),
-        urls: vec!["https://mail.google.com".to_string()],
+        urls: vec![crate::models::LoginUrl::from("https://mail.google.com")],
         notes: "Personal".into(),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
@@ -62,7 +62,7 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         totp_secret: String::new(),
         backup_codes: Vec::new(),
         custom_fields: Vec::new(),
-        urls: vec!["https://facebook.com".to_string()],
+        urls: vec![crate::models::LoginUrl::from("https://facebook.com")],
         notes: String::new(),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 

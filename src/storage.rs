@@ -310,6 +310,8 @@ mod tests {
                 title: format!("t{i}"),
                 content: String::new(),
                 folder: "General".into(),
+                custom_fields: Vec::new(),
+                attachments: Vec::new(),
                 travel_safe: false,
                 favorite: false,
                 deleted_at: None,

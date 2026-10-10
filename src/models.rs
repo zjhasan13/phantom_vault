@@ -135,6 +135,106 @@ pub fn ago(ts: u64, now: u64) -> String {
     }
 }
 
+/// Per-URL autofill match rule (Bitwarden parity: Base/Host/Exact/Starts-with
+/// plus Never + Default-inherit). Stored inline with the URL; plain strings
+/// (legacy vaults, default rule) deserialize losslessly via the untagged
+/// enum, and Default-rule items re-serialize as bare strings so old app
+/// versions keep loading new vaults.
+pub mod url_rule {
+    pub const DEFAULT: u8 = 0;
+    pub const BASE: u8 = 1;
+    pub const HOST: u8 = 2;
+    pub const EXACT: u8 = 3;
+    pub const PREFIX: u8 = 4;
+    pub const NEVER: u8 = 5;
+
+    pub fn label(rule: u8) -> &'static str {
+        match rule {
+            BASE => "Base domain",
+            HOST => "Host",
+            EXACT => "Exact URL",
+            PREFIX => "Starts with",
+            NEVER => "Never",
+            _ => "Default",
+        }
+    }
+
+    pub fn is_known(rule: u8) -> bool {
+        rule <= NEVER
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, PartialEq)]
+#[serde(untagged)]
+pub enum LoginUrl {
+    Plain(String),
+    Rich { url: String, #[serde(default)] rule: u8 },
+}
+
+impl LoginUrl {
+    pub fn new(url: String, rule: u8) -> Self {
+        let rule = if url_rule::is_known(rule) { rule } else { url_rule::DEFAULT };
+        if rule == url_rule::DEFAULT {
+            // Canonical shape: default-rule items stay bare strings so old
+            // vault readers (expecting Vec<String>) never choke.
+            LoginUrl::Plain(url)
+        } else {
+            LoginUrl::Rich { url, rule }
+        }
+    }
+
+    pub fn url(&self) -> &str {
+        match self {
+            LoginUrl::Plain(u) => u,
+            LoginUrl::Rich { url, .. } => url,
+        }
+    }
+
+    pub fn rule(&self) -> u8 {
+        match self {
+            LoginUrl::Plain(_) => url_rule::DEFAULT,
+            LoginUrl::Rich { rule, .. } => {
+                if url_rule::is_known(*rule) {
+                    *rule
+                } else {
+                    url_rule::DEFAULT
+                }
+            }
+        }
+    }
+
+    /// Display strings for exporters/favicon/pickers (rules ride separately).
+    pub fn url_strings(urls: &[LoginUrl]) -> Vec<String> {
+        urls.iter().map(|u| u.url().to_string()).collect()
+    }
+
+    pub fn join(urls: &[LoginUrl], sep: &str) -> String {
+        urls.iter().map(|u| u.url()).collect::<Vec<_>>().join(sep)
+    }
+
+    pub fn plain_vec(urls: Vec<String>) -> Vec<LoginUrl> {
+        urls.into_iter().map(LoginUrl::Plain).collect()
+    }
+}
+
+impl Default for LoginUrl {
+    fn default() -> Self {
+        LoginUrl::Plain(String::new())
+    }
+}
+
+impl From<String> for LoginUrl {
+    fn from(s: String) -> Self {
+        LoginUrl::Plain(s)
+    }
+}
+
+impl From<&str> for LoginUrl {
+    fn from(s: &str) -> Self {
+        LoginUrl::Plain(s.to_string())
+    }
+}
+
 /// Rich login item (Bitwarden parity).
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Credential {
@@ -145,7 +245,7 @@ pub struct Credential {
     #[serde(default)]
     pub totp_secret: String,
     #[serde(default)]
-    pub urls: Vec<String>,
+    pub urls: Vec<LoginUrl>,
     #[serde(default)]
     pub backup_codes: Vec<String>,
     #[serde(default)]
@@ -239,6 +339,9 @@ pub struct SoftwareLicense {
     pub expiry_date: Option<String>,
     #[serde(default)]
     pub folder: String,
+    /// Dynamic custom fields (parity with logins).
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
     #[serde(default)]
     pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
@@ -259,6 +362,12 @@ pub struct SecureNote {
     pub content: String,
     #[serde(default)]
     pub folder: String,
+    /// Dynamic custom fields (parity with logins — text/hidden/checkbox/linked).
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
+    /// Encrypted file attachments (parity with logins/licenses).
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
     /// Pinned by the user (sidebar ⭐ filter).
@@ -282,9 +391,15 @@ pub struct PaymentCard {
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    /// Dynamic custom fields (parity with logins).
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
+    /// Encrypted file attachments (parity with logins/licenses).
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
-    /// Pinned by the user (sidebar ⭐ filter).
+    /// Pinned by the user (sidebar ��? filter).
     #[serde(default)]
     pub favorite: bool,
     /// Soft-delete timestamp (None = active vault). Trash = Some(..).
@@ -301,10 +416,29 @@ pub struct IdentityItem {
     pub email: String,
     pub phone: String,
     pub address: String,
+    /// Structured address parts (Bitwarden parity). The free-form `address`
+    /// box stays the primary input/display; these refine it for autofill.
+    /// All optional, all `serde(default)` — old vaults load untouched.
+    #[serde(default)]
+    pub company: String,
+    #[serde(default)]
+    pub city: String,
+    #[serde(default)]
+    pub state: String,
+    #[serde(default)]
+    pub zip: String,
+    #[serde(default)]
+    pub country: String,
     #[serde(default)]
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    /// Dynamic custom fields (parity with logins).
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
+    /// Encrypted file attachments (parity with logins/licenses).
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
     /// Pinned by the user (sidebar ⭐ filter).
@@ -354,6 +488,12 @@ pub struct SshKeyItem {
     pub folder: String,
     #[serde(default)]
     pub notes: String,
+    /// Dynamic custom fields (parity with logins).
+    #[serde(default)]
+    pub custom_fields: Vec<CustomField>,
+    /// Encrypted file attachments (parity with logins/licenses).
+    #[serde(default)]
+    pub attachments: Vec<EncryptedAttachment>,
     #[serde(default)]
     pub travel_safe: bool,
     /// Pinned by the user (sidebar ⭐ filter).
@@ -803,6 +943,7 @@ impl From<VaultLegacy> for Vault {
                     license_key: l.license_key,
                     expiry_date: l.expiry_date,
                     folder: DEFAULT_FOLDER.to_string(),
+                    custom_fields: Vec::new(),
                     attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
@@ -817,6 +958,8 @@ impl From<VaultLegacy> for Vault {
                     title: n.title,
                     content: n.content,
                     folder: DEFAULT_FOLDER.to_string(),
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -942,6 +1085,8 @@ impl From<VaultGen1> for Vault {
                     cvv: k.cvv,
                     folder: k.folder,
                     notes: String::new(),
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -958,8 +1103,15 @@ impl From<VaultGen1> for Vault {
                     email: i.email,
                     phone: i.phone,
                     address: i.address,
+                    company: String::new(),
+                    city: String::new(),
+                    state: String::new(),
+                    zip: String::new(),
+                    country: String::new(),
                     folder: i.folder,
                     notes: String::new(),
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -976,6 +1128,8 @@ impl From<VaultGen1> for Vault {
                     fingerprint: s.fingerprint,
                     folder: s.folder,
                     notes: String::new(),
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -1091,7 +1245,7 @@ impl From<VaultGen2> for Vault {
                     username: c.username,
                     password: c.password,
                     totp_secret: c.totp_secret,
-                    urls: c.urls,
+                    urls: LoginUrl::plain_vec(c.urls),
                     backup_codes: c.backup_codes,
                     custom_fields: c.custom_fields,
                     notes: c.notes,
@@ -1116,6 +1270,7 @@ impl From<VaultGen2> for Vault {
                     license_key: l.license_key,
                     expiry_date: l.expiry_date,
                     folder: l.folder,
+                    custom_fields: Vec::new(),
                     attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
@@ -1130,6 +1285,8 @@ impl From<VaultGen2> for Vault {
                     title: n.title,
                     content: n.content,
                     folder: n.folder,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -1148,6 +1305,8 @@ impl From<VaultGen2> for Vault {
                     cvv: k.cvv,
                     folder: k.folder,
                     notes: k.notes,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -1164,8 +1323,15 @@ impl From<VaultGen2> for Vault {
                     email: i.email,
                     phone: i.phone,
                     address: i.address,
+                    company: String::new(),
+                    city: String::new(),
+                    state: String::new(),
+                    zip: String::new(),
+                    country: String::new(),
                     folder: i.folder,
                     notes: i.notes,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -1182,6 +1348,8 @@ impl From<VaultGen2> for Vault {
                     fingerprint: s.fingerprint,
                     folder: s.folder,
                     notes: s.notes,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -1306,6 +1474,42 @@ mod tests {
     use super::*;
 
     #[test]
+    fn login_url_rules_and_compat_shapes() {
+        use url_rule::*;
+        // Plain = Default rule, accessors trivial.
+        let p = LoginUrl::Plain("https://a.com/x".into());
+        assert_eq!(p.url(), "https://a.com/x");
+        assert_eq!(p.rule(), DEFAULT);
+        // new() canonicalizes: default → Plain, unknown → Default.
+        assert_eq!(LoginUrl::new("https://a.com".into(), HOST), LoginUrl::Rich { url: "https://a.com".into(), rule: HOST });
+        assert!(matches!(LoginUrl::new("https://a.com".into(), DEFAULT), LoginUrl::Plain(_)));
+        assert!(matches!(LoginUrl::new("https://a.com".into(), 99), LoginUrl::Plain(_)));
+        assert_eq!(LoginUrl::new("https://a.com".into(), 99).rule(), DEFAULT);
+        // Unknown stored rule reads back as Default (never mis-fills).
+        let weird = LoginUrl::Rich { url: "https://a.com".into(), rule: 77 };
+        assert_eq!(weird.rule(), DEFAULT);
+        assert_eq!(url_rule::label(NEVER), "Never");
+        assert_eq!(url_rule::label(42), "Default");
+        // Serialize: default stays a bare string (old readers keep working).
+        let v = serde_json::to_value(vec![
+            LoginUrl::Plain("https://a.com".into()),
+            LoginUrl::new("https://b.com/login".into(), EXACT),
+        ])
+        .unwrap();
+        assert_eq!(v[0], serde_json::json!("https://a.com"));
+        assert_eq!(v[1]["url"], serde_json::json!("https://b.com/login"));
+        assert_eq!(v[1]["rule"], serde_json::json!(3));
+        // Deserialize: legacy string arrays load losslessly.
+        let back: Vec<LoginUrl> = serde_json::from_value(v).unwrap();
+        assert_eq!(back[0].url(), "https://a.com");
+        assert_eq!(back[1].rule(), EXACT);
+        let legacy: Vec<LoginUrl> =
+            serde_json::from_str(r#"["https://old.com", {"url": "https://n.com", "rule": 2}]"#).unwrap();
+        assert_eq!(legacy[0].rule(), DEFAULT);
+        assert_eq!(legacy[1].rule(), HOST);
+    }
+
+    #[test]
     fn delete_item_hits_every_vector() {
         let mut v = Vault::new();
         v.credentials.push(Credential {
@@ -1338,6 +1542,8 @@ mod tests {
             cvv: "123".into(),
             folder: "Finance".into(),
             notes: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
             travel_safe: false,
             favorite: false,
             deleted_at: None,
@@ -1500,6 +1706,8 @@ mod tests {
                 title: "t".into(),
                 content: "c".into(),
                 folder: "General".into(),
+                custom_fields: Vec::new(),
+                attachments: Vec::new(),
                 travel_safe: false,
                 favorite: false,
                 deleted_at: Some(ts),

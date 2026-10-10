@@ -336,7 +336,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     let title = c.title.to_lowercase();
                     let user = c.username.to_lowercase();
                     variants.iter().any(|v| {
-                        title.contains(v) || user.contains(v) || c.urls.iter().any(|u| u.to_lowercase().contains(v))
+                        title.contains(v) || user.contains(v) || c.urls.iter().any(|u| u.url().to_lowercase().contains(v))
                     })
                 })
                 .map(|c| {
@@ -1170,7 +1170,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let existing = vault.credentials.iter_mut().find(|c| {
                 c.deleted_at.is_none()
                     && c.username.to_lowercase() == username.to_lowercase()
-                    && (c.urls.iter().any(|u| url_domain(u) == dom)
+                    && (c.urls.iter().any(|u| url_domain(u.url()) == dom)
                         || c.title.to_lowercase() == dom)
             });
             let updated;
@@ -1181,8 +1181,8 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     c.password = password;
                     c.last_changed = now;
                 }
-                if !c.urls.iter().any(|u| u.to_lowercase() == url.to_lowercase()) {
-                    c.urls.push(url);
+                if !c.urls.iter().any(|u| u.url().to_lowercase() == url.to_lowercase()) {
+                    c.urls.push(crate::models::LoginUrl::from(url));
                 }
                 updated = true;
             } else {
@@ -1199,7 +1199,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     username,
                     password,
                     totp_secret: totp,
-                    urls: vec![url],
+                    urls: vec![crate::models::LoginUrl::from(url)],
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: String::from("Saved via browser extension"),
@@ -1580,7 +1580,7 @@ fn score_credential_totp_candidate(
     }
     // Issuer = the user's own label for the site, plus its URL text as a second
     // haystack (a row titled "Work email" on github.com still resolves).
-    let url_text = cred.urls.first().map(|u| u.as_str()).unwrap_or("");
+    let url_text = cred.urls.first().map(|u| u.url()).unwrap_or("");
     let issuer_raw = format!("{} {}", cred.title, url_text);
     // Same `trusted` waiver as the hub scorer, and for the same reason: it drops
     // the MATCH requirement only. The live/secret checks above and the minting
@@ -2286,6 +2286,8 @@ mod tests {
             cvv: "123".into(),
             folder: String::new(),
             notes: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
             travel_safe: false,
             favorite: false,
             deleted_at: None,
@@ -3238,6 +3240,8 @@ mod tests {
             cvv: "123".into(),
             folder: String::new(),
             notes: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
             travel_safe: false,
             favorite: false,
             deleted_at: None,
@@ -3250,8 +3254,15 @@ mod tests {
             email: "ada@example.com".into(),
             phone: "123".into(),
             address: "1 Analytic Way".into(),
+            company: String::new(),
+            city: String::new(),
+            state: String::new(),
+            zip: String::new(),
+            country: String::new(),
             folder: String::new(),
             notes: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
             travel_safe: false,
             favorite: false,
             deleted_at: None,

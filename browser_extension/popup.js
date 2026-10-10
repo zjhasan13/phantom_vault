@@ -372,10 +372,15 @@
   }
   // Strict WEBSITE-domain extraction: username/email NEVER participate.
   // A "@gmail.com" username must not turn the whole vault into "Google".
+  // Host may send strings (legacy/default) or {url, rule} objects.
+  function urlText(raw) {
+    return (typeof raw === "string") ? raw : (raw && raw.url) || "";
+  }
   function itemDomains(e) {
     return (e.urls || []).map((raw) => {
       try {
-        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
+        const t = urlText(raw);
+        const u = new URL(t.includes("://") ? t : "https://" + t);
         return u.hostname.toLowerCase();
       } catch (_) { return ""; }
     }).filter(Boolean);
@@ -405,7 +410,8 @@
     if (!urls.length) return true;
     return urls.some((raw) => {
       try {
-        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
+        const t = urlText(raw);
+        const u = new URL(t.includes("://") ? t : "https://" + t);
         return domainMatchesPage(u.hostname);
       } catch (_) { return false; }
     });
@@ -611,7 +617,8 @@
     const roots = [];
     for (const raw of urls) {
       try {
-        const h = new URL(raw.includes("://") ? raw : "https://" + raw).hostname.toLowerCase();
+        const t = urlText(raw);
+        const h = new URL(t.includes("://") ? t : "https://" + t).hostname.toLowerCase();
         roots.push(stripBrandPrefix(h).split(".").filter(Boolean)[0] || "");
       } catch (_) {}
     }
@@ -1438,7 +1445,7 @@
     // the desktop audit kinds (breach N/A here — needs the desktop audit).
     const healthIcon = e.health === "reused" ? "♻️" : e.health === "weak" ? "🟡" : e.health === "stale" ? "🕰️" : "";
     const sub = [e.reprompt ? "🔒" : "", e.title || "", e.verified ? "✅" : "", healthIcon].filter(Boolean).join(" ");
-    const row = brandRow(brandIcon(e), uname, sub, (e.urls && e.urls[0]) || "");
+    const row = brandRow(brandIcon(e), uname, sub, (e.urls && e.urls.length) ? urlText(e.urls[0]) : "");
     if (e.totp) {
       const badge = document.createElement("div");
       badge.className = "t2fa";

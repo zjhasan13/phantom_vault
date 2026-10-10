@@ -30,6 +30,13 @@ pub struct RawItem {
     pub e: String,
     pub notes: String,
     pub folder: String,
+    /// Identity structured parts (kind 5 only; Bitwarden company/city/
+    /// state/postalCode/country). Others leave empty (String::default).
+    pub company: String,
+    pub city: String,
+    pub state: String,
+    pub zip: String,
+    pub country: String,
     pub totp: String,
     pub backup: Vec<String>,
     /// Bitwarden login.passwordHistory (newest-first, capped at KEEP on merge).
@@ -38,6 +45,9 @@ pub struct RawItem {
     pub custom_hidden: Vec<(String, String)>,
     pub custom_check: Vec<(String, bool)>,
     pub custom_linked: Vec<(String, String)>, // (label, "username"|"password")
+    /// Per-URL match rules index-aligned with `c` lines (Bitwarden UriMatchType
+    /// mapped to our rule ids; missing/short = Default). Other engines leave empty.
+    pub url_rules: Vec<u8>,
 }
 
 /// Field layout per kind (mirrors main.rs push_new_item):
@@ -244,6 +254,7 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     license_key: r.a,
                     expiry_date: (!r.b.trim().is_empty()).then(|| r.b.clone()),
                     folder,
+                    custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
                     attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
@@ -261,7 +272,7 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     summary.duplicates_skipped += 1;
                     continue;
                 }
-                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, travel_safe: false, favorite: false, deleted_at: None });
+                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked), attachments: Vec::new(), travel_safe: false, favorite: false, deleted_at: None });
                 summary.notes += 1;
             }
             4 => {
@@ -287,6 +298,8 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     cvv: r.d,
                     folder,
                     notes: r.notes,
+                    custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -312,8 +325,15 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     email: r.c,
                     phone: r.d,
                     address: r.e,
+                    company: r.company,
+                    city: r.city,
+                    state: r.state,
+                    zip: r.zip,
+                    country: r.country,
                     folder,
                     notes: r.notes,
+                    custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -338,6 +358,8 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     fingerprint: r.c,
                     folder,
                     notes: r.notes,
+                    custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
+                    attachments: Vec::new(),
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
@@ -349,7 +371,22 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     summary.rows_failed += 1;
                     continue;
                 }
-                let urls: Vec<String> = r.c.lines().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string).collect();
+                // URLs carry their match rules (index-aligned url_rules from
+                // Bitwarden `match`; other engines leave it empty = Default).
+                // Order-preserving dedup on the URL string; first rule wins.
+                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+                let mut urls: Vec<crate::models::LoginUrl> = Vec::new();
+                for (i, line) in r.c.lines().enumerate() {
+                    let t = line.trim();
+                    if t.is_empty() {
+                        continue;
+                    }
+                    if !seen.insert(t.to_lowercase()) {
+                        continue;
+                    }
+                    let rule = r.url_rules.get(i).copied().unwrap_or(0);
+                    urls.push(crate::models::LoginUrl::new(t.to_string(), rule));
+                }
                 if dup_login(vault, &title, &r.a, &r.b) {
                     summary.duplicates_skipped += 1;
                     continue;
@@ -670,6 +707,8 @@ mod tests {
             title: "Memo".into(),
             content: "gone".into(),
             folder: "General".into(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
             travel_safe: false,
             favorite: false,
             deleted_at: Some(1000),

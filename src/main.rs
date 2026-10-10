@@ -886,8 +886,14 @@ fn lock_vault_now(
         ui.set_f_b(String::new().into());
         ui.set_f_c(String::new().into());
         ui.set_f_urls(ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())));
+        ui.set_f_url_rules(ModelRc::new(VecModel::from(Vec::<i32>::new())));
         ui.set_f_d(String::new().into());
         ui.set_f_e(String::new().into());
+        ui.set_f_company(String::new().into());
+        ui.set_f_city(String::new().into());
+        ui.set_f_state(String::new().into());
+        ui.set_f_zip(String::new().into());
+        ui.set_f_country(String::new().into());
         ui.set_f_notes(String::new().into());
         ui.set_f_totp(String::new().into());
         ui.set_f_backup(String::new().into());
@@ -1394,7 +1400,7 @@ fn unlock_with_password(    pass: String,
                 totp_secret: String::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
-                urls: vec!["https://github.com".to_string()],
+                urls: vec!["https://github.com".into()],
                 notes: "Primary Token".into(),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
@@ -1639,6 +1645,80 @@ fn split_card_expiry(raw: &str) -> (String, String) {
     (m, y)
 }
 
+/// Card brand from BIN prefix (digits only; spaces/dashes stripped).
+/// Prefix-only, no length gate — Luhn below is the validity check.
+/// Unknown → "" (caller omits the brand chip, never shows "Unknown").
+fn card_brand(number: &str) -> &'static str {
+    let d: String = number.chars().filter(|c| c.is_ascii_digit()).collect();
+    // MasterCard 2221–2720 range needs numeric compare, not prefix.
+    if d.starts_with('4') {
+        "Visa"
+    } else if d.len() >= 4
+        && (d.starts_with("51")
+            || d.starts_with("52")
+            || d.starts_with("53")
+            || d.starts_with("54")
+            || d.starts_with("55")
+            || (2221..=2720).contains(&d[..4].parse::<u32>().unwrap_or(0)))
+    {
+        "Mastercard"
+    } else if d.starts_with("34") || d.starts_with("37") {
+        "Amex"
+    } else if d.starts_with("6011")
+        || d.starts_with("65")
+        || (d.len() >= 3 && (644..=649).contains(&d[..3].parse::<u32>().unwrap_or(0)))
+    {
+        "Discover"
+    } else if d.starts_with("300")
+        || d.starts_with("301")
+        || d.starts_with("302")
+        || d.starts_with("303")
+        || d.starts_with("304")
+        || d.starts_with("305")
+        || d.starts_with("36")
+        || d.starts_with("38")
+    {
+        "Diners"
+    } else if d.starts_with("35") {
+        "JCB"
+    } else if d.starts_with("62") {
+        "UnionPay"
+    } else {
+        ""
+    }
+}
+
+/// Luhn checksum over digits (spaces/dashes ignored). Empty → false
+/// (callers treat empty as "not provided", not "invalid").
+fn luhn_valid(number: &str) -> bool {
+    let digits: Vec<u32> = number
+        .chars()
+        .filter(|c| c.is_ascii_digit())
+        .filter_map(|c| c.to_digit(10))
+        .collect();
+    if digits.is_empty() {
+        return false;
+    }
+    let sum: u32 = digits
+        .iter()
+        .rev()
+        .enumerate()
+        .map(|(i, d)| {
+            if i % 2 == 1 {
+                let x = d * 2;
+                if x > 9 {
+                    x - 9
+                } else {
+                    x
+                }
+            } else {
+                *d
+            }
+        })
+        .sum();
+    sum.is_multiple_of(10)
+}
+
 /// Validated MM/YY parse for card saves. Empty = optional → blank pair.
 /// Otherwise requires exactly MM 01–12 + YY 2 digits (after the same
 /// separator normalization as the splitter). Garbage → None so the save
@@ -1744,7 +1824,7 @@ fn totp_icon_domain(vault: &Vault, issuer: &str, account: &str) -> Option<String
                 && (c.title.to_lowercase().contains(&needle) || needle.contains(&c.title.to_lowercase()))
         })
         .and_then(|c| c.urls.first())
-        .and_then(|u| crate::core::favicon::domain_of_url(u))
+        .and_then(|u| crate::core::favicon::domain_of_url(u.url()))
 }
 
 /// Cached favicon image for a domain (event-loop thread only — `Image`
@@ -2328,8 +2408,8 @@ fn eff_folder(folder: &str) -> &str {
     }
 }
 
-fn primary_url(urls: &[String]) -> String {
-    urls.first().cloned().unwrap_or_default()
+fn primary_url(urls: &[models::LoginUrl]) -> String {
+    urls.first().map(|u| u.url().to_string()).unwrap_or_default()
 }
 fn custom_to_ui(fields: &[models::CustomField]) -> ModelRc<CustomFieldView> {
     ModelRc::new(VecModel::from(
@@ -2618,7 +2698,12 @@ fn trigger_favicon_prefetch(
             let v = lock_vault(&vault_arc);
             v.credentials
                 .iter()
-                .map(|c| (c.title.clone(), c.urls.first().cloned().unwrap_or_default()))
+                .map(|c| {
+                    (
+                        c.title.clone(),
+                        c.urls.first().map(|u| u.url().to_string()).unwrap_or_default(),
+                    )
+                })
                 .collect()
         };
         // Fix 3: rotating slice — 200+ domain vaults cover a new window
@@ -2684,7 +2769,7 @@ fn trigger_favicon_prefetch(
             // Detail header follows if it shows a login.
             if ui.get_d_kind() == 1 {
                 if let Some(c) = v.credentials.iter().find(|c| c.id == ui.get_d_id().as_str()) {
-                    let first_url = c.urls.first().map(String::as_str).unwrap_or("");
+                    let first_url = c.urls.first().map(|u| u.url()).unwrap_or("");
                     match favicon_for_item(&c.title, first_url) {
                         Some(img) => {
                             ui.set_d_icon(img);
@@ -4692,9 +4777,9 @@ fn main() -> Result<(), slint::PlatformError> {
     });
 
 
-/// NOTE: push_new_item + replace_item used to live nested inside a setup
-/// closure (untestable). Moved to crate root verbatim — pure field-mapping,
-/// zero behavior change. See above the test module for the bodies.
+// NOTE: push_new_item + replace_item used to live nested inside a setup
+// closure (untestable). Moved to crate root verbatim — pure field-mapping,
+// zero behavior change. See above the test module for the bodies.
 
 
     // Bitwarden-parity: one generic saver for all 6 item kinds.
@@ -4710,7 +4795,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let pending_cf_add = Arc::clone(&pending_cf);
     let editing_add = Arc::clone(&editing_item);
     main_window.on_add_item_requested(
-        move |kind, title, a, b, c, d, e, notes, folder, totp, backup, reprompt, fav, travel| {
+        move |kind, title, a, b, c, d, e, notes, folder, totp, backup, company, city, state, zip, country, reprompt, fav, travel| {
             if let Some(ui) = window_weak_add.upgrade() {
                 // Decoy vaults are read-mostly cover: never write through them.
                 if ui.get_is_decoy() {
@@ -4724,8 +4809,12 @@ fn main() -> Result<(), slint::PlatformError> {
             let mut cc = c.as_str().to_string();
             // Secondary website rows (AUTOFILL + Add website) merge into the
             // primary box: trimmed, de-duplicated, empties dropped.
+            // Their per-URL match rules ride a SEPARATE Vec<LoginUrl> (a plain
+            // string merge would destroy rules); primary-box lines stay Plain.
+            let mut url_rules: Vec<models::LoginUrl> = Vec::new();
             if let Some(ui) = window_weak_add.upgrade() {
-                for extra in ui.get_f_urls().iter() {
+                let rules: Vec<i32> = ui.get_f_url_rules().iter().collect();
+                for (ri, extra) in ui.get_f_urls().iter().enumerate() {
                     let t = extra.trim().to_string();
                     if !t.is_empty()
                         && cc.lines().map(str::trim).all(|l| l != t)
@@ -4734,6 +4823,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             cc.push('\n');
                         }
                         cc.push_str(&t);
+                        let rule = rules.get(ri).copied().unwrap_or(0).clamp(0, 5) as u8;
+                        url_rules.push(models::LoginUrl::new(t, rule));
                     }
                 }
             }
@@ -4779,6 +4870,11 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
                 return;
             }
+            // Luhn flag rides into the worker: the success notification below
+            // appends the typo warning (a warn here would be overwritten by
+            // the Encrypting/Saved messages). Never blocks — exotic cards save.
+            let luhn_warn_for_thread =
+                kind == 4 && !b.trim().is_empty() && !luhn_valid(&b);
             // Card expiry gate: refuse garbage LOUD (never store month 13).
             // Empty stays optional; push/replace re-validate defensively.
             if kind == 4 && parse_card_expiry(&cc).is_none() {
@@ -4801,6 +4897,13 @@ fn main() -> Result<(), slint::PlatformError> {
             let qb_weak = qb_weak_add.clone();
             // Favorite arrives as an explicit callback arg (form checkbox).
             let fav_for_thread = fav;
+            // Identity structured parts ride the same way (kind 5 only reads).
+            let company_for_thread = company.as_str().trim().to_string();
+            let city_for_thread = city.as_str().trim().to_string();
+            let state_for_thread = state.as_str().trim().to_string();
+            let zip_for_thread = zip.as_str().trim().to_string();
+            let country_for_thread = country.as_str().trim().to_string();
+            let mut url_rules_for_thread = url_rules;
             let title_for_thread = title.clone();
             let backup_for_thread = backup_for_cb.clone();
             let totp_for_thread = totp_for_cb.clone();
@@ -4835,12 +4938,19 @@ fn main() -> Result<(), slint::PlatformError> {
                     let mut vault = lock_vault(&vault_clone);
                     // Snapshot for rollback (cheap, in-RAM vaults are small).
                     let snapshot = vault.clone();
-                    let urls: Vec<String> = cc
+                    // Primary-box lines are always Default-rule; row rules
+                    // arrived above with their URLs (deduped there too).
+                    let mut urls: Vec<models::LoginUrl> = cc
                         .lines()
                         .map(str::trim)
                         .filter(|s| !s.is_empty())
-                        .map(str::to_string)
+                        .map(|s| models::LoginUrl::new(s.to_string(), 0))
                         .collect();
+                    for r in url_rules_for_thread.drain(..) {
+                        if !urls.iter().any(|u| u.url().eq_ignore_ascii_case(r.url())) {
+                            urls.push(r);
+                        }
+                    }
                     let backup: Vec<String> = backup_for_thread
                         .lines()
                         .map(str::trim)
@@ -4855,6 +4965,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             &a, &b, &cc, &dd, &ee, &notes, &folder,
                             &urls, &backup, &custom, &totp_for_thread, reprompt_for_thread,
                             fav_for_thread, travel_for_thread,
+                            &company_for_thread, &city_for_thread, &state_for_thread,
+                            &zip_for_thread, &country_for_thread,
                         )
                     } else {
                         false
@@ -4894,7 +5006,9 @@ fn main() -> Result<(), slint::PlatformError> {
                                     c.password = b.clone();
                                     c.last_changed = now;
                                     for u in &urls {
-                                        if !c.urls.iter().any(|x| x.to_lowercase() == u.to_lowercase()) {
+                                        if !c.urls.iter().any(|x| {
+                                            x.url().to_lowercase() == u.url().to_lowercase()
+                                        }) {
                                             c.urls.push(u.clone());
                                         }
                                     }
@@ -4906,6 +5020,8 @@ fn main() -> Result<(), slint::PlatformError> {
                                     &a, &b, &cc, &dd, &ee, &notes, &folder,
                                     urls, backup, custom, &totp_for_thread, reprompt_for_thread,
                                     fav_for_thread, travel_for_thread,
+                                    &company_for_thread, &city_for_thread, &state_for_thread,
+                                    &zip_for_thread, &country_for_thread,
                                 );
                             }
                         } else {
@@ -4914,6 +5030,8 @@ fn main() -> Result<(), slint::PlatformError> {
                                 &a, &b, &cc, &dd, &ee, &notes, &folder,
                                 urls, backup, custom, &totp_for_thread, reprompt_for_thread,
                                 fav_for_thread, travel_for_thread,
+                                &company_for_thread, &city_for_thread, &state_for_thread,
+                                &zip_for_thread, &country_for_thread,
                             );
                         }
                     }
@@ -4952,6 +5070,8 @@ fn main() -> Result<(), slint::PlatformError> {
                             ui.set_notification_text(
                                 if updated_existing {
                                     "🔄 Updated the existing login (old password kept in history).".into()
+                                } else if luhn_warn_for_thread {
+                                    "✅ Saved — ⚠️ card number fails Luhn check, verify digits.".into()
                                 } else {
                                     "✅ Item encrypted to disk!".into()
                                 },
@@ -6648,9 +6768,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         if let Some(ui) = pick_weak.upgrade() {
             ui.set_webcam_cam_current(wanted.into());
             ui.set_webcam_hint(String::new().into());
-            ui.set_notification_text(
-                format!("📷 Switched camera — point the QR…").into(),
-            );
+            ui.set_notification_text("📷 Switched camera — point the QR…".into());
         }
         spawn_webcam_worker(
             pick_weak.clone(),
@@ -8348,8 +8466,14 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         ui.set_f_b("".into());
         ui.set_f_c("".into());
         ui.set_f_urls(ModelRc::new(VecModel::from(Vec::<slint::SharedString>::new())));
+        ui.set_f_url_rules(ModelRc::new(VecModel::from(Vec::<i32>::new())));
         ui.set_f_d("".into());
         ui.set_f_e("".into());
+        ui.set_f_company("".into());
+        ui.set_f_city("".into());
+        ui.set_f_state("".into());
+        ui.set_f_zip("".into());
+        ui.set_f_country("".into());
         ui.set_f_notes("".into());
         ui.set_f_totp("".into());
         ui.set_f_backup("".into());
@@ -8493,8 +8617,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
 
     // Secondary website URLs: rows live in the Slint model directly
     // (editable rows can't two-way bind, so edits round-trip here).
+    // Rules ride a parallel int model, index-aligned; every mutation keeps
+    // both models the same length (reads clamp defensively anyway).
     fn f_urls_vec(ui: &MainWindow) -> Vec<slint::SharedString> {
         ui.get_f_urls().iter().collect()
+    }
+    fn f_rules_vec(ui: &MainWindow) -> Vec<i32> {
+        ui.get_f_url_rules().iter().collect()
     }
     let urladd_weak = main_window.as_weak();
     main_window.on_add_url(move || {
@@ -8507,7 +8636,22 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             return;
         }
         rows.push("".into());
+        let mut rules = f_rules_vec(&ui);
+        rules.push(0);
         ui.set_f_urls(ModelRc::new(VecModel::from(rows)));
+        ui.set_f_url_rules(ModelRc::new(VecModel::from(rules)));
+    });
+    let urlcycle_weak = main_window.as_weak();
+    main_window.on_cycle_url_rule(move |idx| {
+        let Some(ui) = urlcycle_weak.upgrade() else {
+            return;
+        };
+        let mut rules = f_rules_vec(&ui);
+        let i = idx as usize;
+        if i < rules.len() {
+            rules[i] = (rules[i] + 1).rem_euclid(6);
+            ui.set_f_url_rules(ModelRc::new(VecModel::from(rules)));
+        }
     });
     let urlupd_weak = main_window.as_weak();
     main_window.on_update_url(move |idx, text| {
@@ -8530,7 +8674,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let i = idx as usize;
         if i < rows.len() {
             rows.remove(i);
+            let mut rules = f_rules_vec(&ui);
+            if i < rules.len() {
+                rules.remove(i);
+            }
             ui.set_f_urls(ModelRc::new(VecModel::from(rows)));
+            ui.set_f_url_rules(ModelRc::new(VecModel::from(rules)));
         }
     });
 
@@ -8678,7 +8827,15 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_secret(c.password.clone().into());
             ui.set_d_meta(String::new().into());
             ui.set_d_url(primary_url(&c.urls).into());
-            ui.set_d_urls_extra(c.urls.iter().skip(1).cloned().collect::<Vec<_>>().join("\n").into());
+            ui.set_d_urls_extra(
+                c.urls
+                    .iter()
+                    .skip(1)
+                    .map(|u| u.url())
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    .into(),
+            );
             ui.set_d_notes(c.notes.clone().into());
             ui.set_d_folder(c.folder.clone().into());
             ui.set_d_trashed(c.deleted_at.is_some());
@@ -8723,7 +8880,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 };
                 ui.set_d_fill_info(fill_info.into());
             }
-            let first_url = c.urls.first().map(String::as_str).unwrap_or("");
+            let first_url = c.urls.first().map(|u| u.url()).unwrap_or("");
             if let Some(img) = favicon_for_item(&c.title, first_url) {
                 ui.set_d_icon(img);
                 ui.set_d_has_icon(true);
@@ -8751,7 +8908,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_reprompt(false);
             ui.set_d_totp(String::new().into());
             ui.set_d_backup(String::new().into());
-            ui.set_d_custom(custom_to_ui(&[]));
+            ui.set_d_custom(custom_to_ui(&l.custom_fields));
         } else if let Some(n) = vault.notes.iter().find(|n| n.id == id) {
             ui.set_d_id(n.id.clone().into());
             ui.set_d_kind(3);
@@ -8768,14 +8925,26 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_reprompt(false);
             ui.set_d_totp(String::new().into());
             ui.set_d_backup(String::new().into());
-            ui.set_d_custom(custom_to_ui(&[]));
+            ui.set_d_custom(custom_to_ui(&n.custom_fields));
         } else if let Some(k) = vault.cards.iter().find(|k| k.id == id) {
             ui.set_d_id(k.id.clone().into());
             ui.set_d_kind(4);
             ui.set_d_title(k.title.clone().into());
             ui.set_d_user(k.cardholder_name.clone().into());
             ui.set_d_secret(k.card_number.clone().into());
-            ui.set_d_meta(format!("exp {:0>2}/{:0>2}  CVV {}", k.exp_month, k.exp_year, k.cvv).into());
+            let brand = card_brand(&k.card_number);
+            let brand_chip = if brand.is_empty() {
+                String::new()
+            } else {
+                format!("{brand} • ")
+            };
+            ui.set_d_meta(
+                format!(
+                    "{brand_chip}exp {:0>2}/{:0>2}  CVV {}",
+                    k.exp_month, k.exp_year, k.cvv
+                )
+                .into(),
+            );
             ui.set_d_url(String::new().into());
             ui.set_d_urls_extra(String::new().into());
             ui.set_d_notes(k.notes.clone().into());
@@ -8785,7 +8954,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_reprompt(false);
             ui.set_d_totp(String::new().into());
             ui.set_d_backup(String::new().into());
-            ui.set_d_custom(custom_to_ui(&[]));
+            ui.set_d_custom(custom_to_ui(&k.custom_fields));
         } else if let Some(i) = vault.identities.iter().find(|i| i.id == id) {
             ui.set_d_id(i.id.clone().into());
             ui.set_d_kind(5);
@@ -8795,14 +8964,42 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_meta(i.phone.clone().into());
             ui.set_d_url(i.email.clone().into());
             ui.set_d_urls_extra(String::new().into());
-            ui.set_d_notes(i.address.clone().into());
+            // Address slot doubles for notes (5 data fields, 1 notes box):
+            // notes appended only when present, never a dangling separator.
+            // Structured locality (city/state/zip/country/company) composes
+            // its own line when any part is present.
+            let mut blocks: Vec<String> = Vec::new();
+            if !i.address.trim().is_empty() {
+                blocks.push(i.address.clone());
+            }
+            let locality = [
+                i.city.trim(),
+                i.state.trim(),
+                i.zip.trim(),
+                i.country.trim(),
+            ]
+            .iter()
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+            if !locality.is_empty() {
+                blocks.push(locality);
+            }
+            if !i.company.trim().is_empty() {
+                blocks.push(format!("Company: {}", i.company.trim()));
+            }
+            if !i.notes.trim().is_empty() {
+                blocks.push(i.notes.clone());
+            }
+            ui.set_d_notes(blocks.join("\n\n").into());
             ui.set_d_folder(i.folder.clone().into());
             ui.set_d_trashed(i.deleted_at.is_some());
             ui.set_d_fav(i.favorite);
             ui.set_d_reprompt(false);
             ui.set_d_totp(String::new().into());
             ui.set_d_backup(String::new().into());
-            ui.set_d_custom(custom_to_ui(&[]));
+            ui.set_d_custom(custom_to_ui(&i.custom_fields));
         } else if let Some(s) = vault.ssh_keys.iter().find(|s| s.id == id) {
             ui.set_d_id(s.id.clone().into());
             ui.set_d_kind(6);
@@ -8819,7 +9016,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_d_reprompt(false);
             ui.set_d_totp(String::new().into());
             ui.set_d_backup(String::new().into());
-            ui.set_d_custom(custom_to_ui(&[]));
+            ui.set_d_custom(custom_to_ui(&s.custom_fields));
         } else if let Some(a) = vault.totp_accounts.iter().find(|a| a.id == id) {
             // Standalone 2FA inspector: d_totp carries the SECRET so the
             // Column 3 card + 1s ticker render the live code, countdown ring,
@@ -8864,7 +9061,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 .map(|i| (i.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
             8 => (false, Vec::new()), // standalone 2FA: no travel flag, no attachments
             _ => vault.ssh_keys.iter().find(|s| s.id == id)
-                .map(|s| (s.travel_safe, Vec::new())).unwrap_or((false, Vec::new())),
+                .map(|s| (s.travel_safe, s.attachments.clone())).unwrap_or((false, Vec::new())),
         };
         ui.set_d_travel(travel);
         ui.set_d_attachments(attachments_to_ui(&files));
@@ -8899,10 +9096,18 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     ui.set_f_a(c.username.clone().into());
                     ui.set_f_b(c.password.clone().into());
                     // Primary URL in the main box, secondaries as rows.
-                    let mut urls = c.urls.iter().map(|u| u.trim().to_string()).filter(|u| !u.is_empty());
-                    ui.set_f_c(urls.next().unwrap_or_default().into());
+                    // Rules ride the parallel f_url_rules model (primary is
+                    // always Default — its box has no picker).
+                    let mut urls = c.urls.iter().filter(|u| !u.url().trim().is_empty());
+                    ui.set_f_c(urls.next().map(|u| u.url().to_string()).unwrap_or_default().into());
+                    let rest: Vec<(slint::SharedString, i32)> = urls
+                        .map(|u| (slint::SharedString::from(u.url()), u.rule() as i32))
+                        .collect();
                     ui.set_f_urls(ModelRc::new(VecModel::from(
-                        urls.map(slint::SharedString::from).collect::<Vec<_>>(),
+                        rest.iter().map(|(s, _)| s.clone()).collect::<Vec<_>>(),
+                    )));
+                    ui.set_f_url_rules(ModelRc::new(VecModel::from(
+                        rest.iter().map(|(_, r)| *r).collect::<Vec<_>>(),
                     )));
                     ui.set_f_totp(c.totp_secret.clone().into());
                     ui.set_f_backup(c.backup_codes.join("\n").into());
@@ -8955,6 +9160,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     ui.set_f_c(i.email.clone().into());
                     ui.set_f_d(i.phone.clone().into());
                     ui.set_f_e(i.address.clone().into());
+                    ui.set_f_company(i.company.clone().into());
+                    ui.set_f_city(i.city.clone().into());
+                    ui.set_f_state(i.state.clone().into());
+                    ui.set_f_zip(i.zip.clone().into());
+                    ui.set_f_country(i.country.clone().into());
                     ui.set_f_folder(i.folder.clone().into());
                     ui.set_f_fav(i.favorite);
                     ui.set_f_travel(i.travel_safe);
@@ -9685,8 +9895,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             ui.set_notification_text("⛔ Decoy mode is read-only.".into());
             return;
         }
-        if kind != 1 && kind != 2 {
-            ui.set_notification_text("⚠️ Attachments live on logins + licenses.".into());
+        if !is_attachable(kind) {
+            // Passkeys (7) + hub codes (8) carry no attachments.
+            ui.set_notification_text(
+                "📎 Attachments live on logins, licenses, notes, cards, identities + SSH keys.".into(),
+            );
             return;
         }
         let weak = att_weak.clone();
@@ -9740,12 +9953,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
-                let target: Option<&mut Vec<models::EncryptedAttachment>> = match kind {
-                    1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| &mut c.attachments),
-                    2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| &mut l.attachments),
-                    _ => None,
-                };
-                let Some(list) = target else {
+                let Some(list) = attachments_mut(&mut vault, kind, &id) else {
                     return;
                 };
                 if list.len() >= 10 {
@@ -9778,11 +9986,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 match saved {
                     Ok(v) => {
                         // Refresh detail attachment list for this item.
-                        let files: Vec<models::EncryptedAttachment> = match kind {
-                            1 => v.credentials.iter().find(|c| c.id == id).map(|c| c.attachments.clone()).unwrap_or_default(),
-                            2 => v.licenses.iter().find(|l| l.id == id).map(|l| l.attachments.clone()).unwrap_or_default(),
-                            _ => Vec::new(),
-                        };
+                        let files = attachments_of(&v, kind, &id);
                         ui.set_d_attachments(attachments_to_ui(&files));
                         let f = search_clone.lock().unwrap().clone();
                         set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -9808,17 +10012,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             return;
         };
         let vault = lock_vault(&dl_vault);
-        let found: Option<(String, Vec<u8>)> = match kind {
-            1 => vault.credentials.iter().find(|c| c.id == id.as_str()).and_then(|c| {
-                c.attachments.iter().find(|a| a.id == att_id.as_str())
-                    .map(|a| (a.filename.clone(), a.data.clone()))
-            }),
-            2 => vault.licenses.iter().find(|l| l.id == id.as_str()).and_then(|l| {
-                l.attachments.iter().find(|a| a.id == att_id.as_str())
-                    .map(|a| (a.filename.clone(), a.data.clone()))
-            }),
-            _ => None,
-        };
+        let found: Option<(String, Vec<u8>)> = attachments_of(&vault, kind, id.as_str())
+            .iter()
+            .find(|a| a.id == att_id.as_str())
+            .map(|a| (a.filename.clone(), a.data.clone()));
         drop(vault);
         let Some((filename, data)) = found else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
@@ -9857,17 +10054,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             return;
         };
         let vault = lock_vault(&pv_vault);
-        let found: Option<(String, Vec<u8>)> = match kind {
-            1 => vault.credentials.iter().find(|c| c.id == id.as_str()).and_then(|c| {
-                c.attachments.iter().find(|a| a.id == att_id.as_str())
-                    .map(|a| (a.filename.clone(), a.data.clone()))
-            }),
-            2 => vault.licenses.iter().find(|l| l.id == id.as_str()).and_then(|l| {
-                l.attachments.iter().find(|a| a.id == att_id.as_str())
-                    .map(|a| (a.filename.clone(), a.data.clone()))
-            }),
-            _ => None,
-        };
+        let found: Option<(String, Vec<u8>)> = attachments_of(&vault, kind, id.as_str())
+            .iter()
+            .find(|a| a.id == att_id.as_str())
+            .map(|a| (a.filename.clone(), a.data.clone()));
         drop(vault);
         let Some((filename, data)) = found else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
@@ -9934,19 +10124,11 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
-                let removed = match kind {
-                    1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| {
-                        let before = c.attachments.len();
-                        c.attachments.retain(|a| a.id != att_id);
-                        before != c.attachments.len()
-                    }),
-                    2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| {
-                        let before = l.attachments.len();
-                        l.attachments.retain(|a| a.id != att_id);
-                        before != l.attachments.len()
-                    }),
-                    _ => None,
-                };
+                let removed = attachments_mut(&mut vault, kind, &id).map(|list| {
+                    let before = list.len();
+                    list.retain(|a| a.id != att_id);
+                    before != list.len()
+                });
                 if removed != Some(true) {
                     Err("Attachment not found".to_string())
                 } else {
@@ -9965,11 +10147,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 };
                 match saved {
                     Ok(v) => {
-                        let files: Vec<models::EncryptedAttachment> = match kind {
-                            1 => v.credentials.iter().find(|c| c.id == id).map(|c| c.attachments.clone()).unwrap_or_default(),
-                            2 => v.licenses.iter().find(|l| l.id == id).map(|l| l.attachments.clone()).unwrap_or_default(),
-                            _ => Vec::new(),
-                        };
+                        let files = attachments_of(&v, kind, &id);
                         ui.set_d_attachments(attachments_to_ui(&files));
                         let f = search_clone.lock().unwrap().clone();
                         set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -10272,7 +10450,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let target: Option<(String, String)> = {
                 let v = lock_vault(&vault_clone);
                 v.credentials.iter().find(|c| c.id == id).map(|c| {
-                    (c.title.clone(), c.urls.first().cloned().unwrap_or_default())
+                    (
+                        c.title.clone(),
+                        c.urls.first().map(|u| u.url().to_string()).unwrap_or_default(),
+                    )
                 })
             };
             let Some((title, url)) = target else {
@@ -10739,7 +10920,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     .find(|c| {
                         live(c)
                             && (c.title.to_lowercase().contains(&needle)
-                                || c.urls.iter().any(|u| u.to_lowercase().contains(&needle)))
+                                || c.urls.iter().any(|u| u.url().to_lowercase().contains(&needle)))
                     })
                     .or_else(|| v.credentials.iter().find(|c| live(c)))
             };
@@ -11098,13 +11279,18 @@ fn push_new_item(
     ee: &str,
     notes: &str,
     folder: &str,
-    urls: Vec<String>,
+    urls: Vec<models::LoginUrl>,
     backup: Vec<String>,
     custom: Vec<models::CustomField>,
     totp: &str,
     reprompt: bool,
     fav: bool,
     travel: bool,
+    company: &str,
+    city: &str,
+    state: &str,
+    zip: &str,
+    country: &str,
 ) {
     match kind {
         1 => vault.credentials.push(Credential {
@@ -11132,6 +11318,7 @@ fn push_new_item(
             license_key: a.to_string(),
             expiry_date: (!b.trim().is_empty()).then(|| b.to_string()),
             folder: folder.to_string(),
+            custom_fields: custom.clone(),
             attachments: Vec::new(),
             travel_safe: travel,
             favorite: fav,
@@ -11142,6 +11329,8 @@ fn push_new_item(
             title: title.to_string(),
             content: a.to_string(),
             folder: folder.to_string(),
+            custom_fields: custom.clone(),
+            attachments: Vec::new(),
             travel_safe: travel,
             favorite: fav,
             deleted_at: None,
@@ -11160,6 +11349,8 @@ fn push_new_item(
                 cvv: dd.to_string(),
                 folder: folder.to_string(),
                 notes: notes.to_string(),
+                custom_fields: custom.clone(),
+                attachments: Vec::new(),
                 travel_safe: travel,
                 favorite: fav,
                 deleted_at: None,
@@ -11173,8 +11364,15 @@ fn push_new_item(
             email: cc.to_string(),
             phone: dd.to_string(),
             address: ee.to_string(),
+            company: company.to_string(),
+            city: city.to_string(),
+            state: state.to_string(),
+            zip: zip.to_string(),
+            country: country.to_string(),
             folder: folder.to_string(),
             notes: notes.to_string(),
+            custom_fields: custom.clone(),
+            attachments: Vec::new(),
             travel_safe: travel,
             favorite: fav,
             deleted_at: None,
@@ -11194,12 +11392,52 @@ fn push_new_item(
             },
             folder: folder.to_string(),
             notes: notes.to_string(),
+            custom_fields: custom.clone(),
+            attachments: Vec::new(),
             travel_safe: travel,
             favorite: fav,
             deleted_at: None,
         }),
         _ => {}
     }
+}
+
+/// Attachment vectors by kind (logins/licenses/notes/cards/identities/SSH).
+/// Passkeys + standalone 2FA carry none (None). Single choke point so a new
+/// attachable kind updates one match, not five call sites.
+/// Kinds carrying attachments (1 login, 2 license, 3 note, 4 card,
+/// 5 identity, 6 SSH). Passkeys (7) + hub codes (8) excluded.
+fn is_attachable(kind: i32) -> bool {
+    matches!(kind, 1..=6)
+}
+
+fn attachments_mut<'a>(
+    vault: &'a mut Vault,
+    kind: i32,
+    id: &str,
+) -> Option<&'a mut Vec<models::EncryptedAttachment>> {
+    match kind {
+        1 => vault.credentials.iter_mut().find(|c| c.id == id).map(|c| &mut c.attachments),
+        2 => vault.licenses.iter_mut().find(|l| l.id == id).map(|l| &mut l.attachments),
+        3 => vault.notes.iter_mut().find(|n| n.id == id).map(|n| &mut n.attachments),
+        4 => vault.cards.iter_mut().find(|k| k.id == id).map(|k| &mut k.attachments),
+        5 => vault.identities.iter_mut().find(|i| i.id == id).map(|i| &mut i.attachments),
+        6 => vault.ssh_keys.iter_mut().find(|s| s.id == id).map(|s| &mut s.attachments),
+        _ => None,
+    }
+}
+
+fn attachments_of(vault: &Vault, kind: i32, id: &str) -> Vec<models::EncryptedAttachment> {
+    let found: Option<&Vec<models::EncryptedAttachment>> = match kind {
+        1 => vault.credentials.iter().find(|c| c.id == id).map(|c| &c.attachments),
+        2 => vault.licenses.iter().find(|l| l.id == id).map(|l| &l.attachments),
+        3 => vault.notes.iter().find(|n| n.id == id).map(|n| &n.attachments),
+        4 => vault.cards.iter().find(|k| k.id == id).map(|k| &k.attachments),
+        5 => vault.identities.iter().find(|i| i.id == id).map(|i| &i.attachments),
+        6 => vault.ssh_keys.iter().find(|s| s.id == id).map(|s| &s.attachments),
+        _ => None,
+    };
+    found.cloned().unwrap_or_default()
 }
 
 /// Edit-mode: overwrite an existing item's fields in place. Returns false if missing.
@@ -11216,13 +11454,18 @@ fn replace_item(
     ee: &str,
     notes: &str,
     folder: &str,
-    urls: &[String],
+    urls: &[models::LoginUrl],
     backup: &[String],
     custom: &[models::CustomField],
     totp: &str,
     reprompt: bool,
     fav: bool,
     travel: bool,
+    company: &str,
+    city: &str,
+    state: &str,
+    zip: &str,
+    country: &str,
 ) -> bool {
     match kind {
         1 => {
@@ -11261,6 +11504,7 @@ fn replace_item(
             l.app_name = title.to_string();
             l.license_key = a.to_string();
             l.expiry_date = (!b.trim().is_empty()).then(|| b.to_string());
+            l.custom_fields = custom.to_vec();
             l.folder = folder.to_string();
             l.favorite = fav;
             l.travel_safe = travel;
@@ -11272,6 +11516,7 @@ fn replace_item(
             };
             n.title = title.to_string();
             n.content = a.to_string();
+            n.custom_fields = custom.to_vec();
             n.folder = folder.to_string();
             n.favorite = fav;
             n.travel_safe = travel;
@@ -11292,6 +11537,7 @@ fn replace_item(
             k.cvv = dd.to_string();
             k.folder = folder.to_string();
             k.notes = notes.to_string();
+            k.custom_fields = custom.to_vec();
             k.favorite = fav;
             k.travel_safe = travel;
             true
@@ -11306,7 +11552,13 @@ fn replace_item(
             i.email = cc.to_string();
             i.phone = dd.to_string();
             i.address = ee.to_string();
+            i.company = company.to_string();
+            i.city = city.to_string();
+            i.state = state.to_string();
+            i.zip = zip.to_string();
+            i.country = country.to_string();
             i.notes = notes.to_string();
+            i.custom_fields = custom.to_vec();
             i.folder = folder.to_string();
             i.favorite = fav;
             i.travel_safe = travel;
@@ -11329,6 +11581,7 @@ fn replace_item(
             };
             s.folder = folder.to_string();
             s.notes = notes.to_string();
+            s.custom_fields = custom.to_vec();
             s.favorite = fav;
             s.travel_safe = travel;
             true
@@ -11840,18 +12093,55 @@ mod grid_tests {
             &mut v, 5, "id1".into(), "Passport", "Jane Doe", "N123",
             "jane@x.com", "555-0100", "12 Main St", "my secret note",
             "General", Vec::new(), Vec::new(), Vec::new(), "", false, false, false,
+            "Acme", "Dhaka", "DHK", "1000", "BD",
         );
         assert_eq!(v.identities.len(), 1);
         assert_eq!(v.identities[0].notes, "my secret note");
         assert_eq!(v.identities[0].email, "jane@x.com");
+        assert_eq!(v.identities[0].company, "Acme");
+        assert_eq!(v.identities[0].city, "Dhaka");
+        assert_eq!(v.identities[0].zip, "1000");
         // Edit path preserves notes too.
         let ok = crate::replace_item(
             &mut v, 5, "id1", "Passport", "Jane Doe", "N123",
             "jane@x.com", "555-0100", "12 Main St", "updated note",
             "General", &[], &[], &[], "", false, false, false,
+            "Acme2", "", "", "", "",
         );
         assert!(ok);
         assert_eq!(v.identities[0].notes, "updated note");
+        assert_eq!(v.identities[0].company, "Acme2");
+        assert_eq!(v.identities[0].city, "");
+    }
+
+    #[test]
+    fn login_url_rules_survive_push_and_replace() {
+        use crate::models::{url_rule, LoginUrl};
+        let _guard = LIST_MODEL_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let mut v = Vault::new();
+        crate::push_new_item(
+            &mut v, 1, "u1".into(), "Bank", "me", "pw", "", "", "", "n", "General",
+            vec![
+                LoginUrl::new("https://bank.com/login".into(), url_rule::EXACT),
+                LoginUrl::Plain("https://bank.com".into()),
+            ],
+            Vec::new(), Vec::new(), "", false, false, false,
+            "", "", "", "", "",
+        );
+        assert_eq!(v.credentials.len(), 1);
+        let urls = &v.credentials[0].urls;
+        assert_eq!(urls.len(), 2);
+        assert_eq!(urls[0].rule(), url_rule::EXACT);
+        assert_eq!(urls[1].rule(), url_rule::DEFAULT);
+        // Edit path keeps rules (replace takes the full LoginUrl vec).
+        let ok = crate::replace_item(
+            &mut v, 1, "u1", "Bank", "me", "pw", "", "", "", "n", "General",
+            &[LoginUrl::new("https://bank.com/login".into(), url_rule::HOST)],
+            &[], &[], "", false, false, false,
+            "", "", "", "", "",
+        );
+        assert!(ok);
+        assert_eq!(v.credentials[0].urls[0].rule(), url_rule::HOST);
     }
 
     #[test]
@@ -11869,7 +12159,7 @@ mod grid_tests {
         crate::push_new_item(
             &mut v, 6, "s1".into(), "Deploy", "ssh-ed25519 PUB", &pem, "", "", "",
             "n", "General", Vec::new(), Vec::new(), Vec::new(), "", false, false,
-            false,
+            false, "", "", "", "", "",
         );
         assert_eq!(v.ssh_keys.len(), 1);
         let fp = &v.ssh_keys[0].fingerprint;
@@ -11883,6 +12173,7 @@ mod grid_tests {
         crate::push_new_item(
             &mut v3, 6, "s3".into(), "Deploy", "pub", "not-a-key", "", "", "", "n",
             "General", Vec::new(), Vec::new(), Vec::new(), "", false, false, false,
+            "", "", "", "", "",
         );
         assert_eq!(v3.ssh_keys[0].fingerprint, "");
         // Explicit fingerprint always wins over derivation.
@@ -11890,7 +12181,7 @@ mod grid_tests {
         crate::push_new_item(
             &mut v2, 6, "s2".into(), "Deploy", "pub", &pem, "SHA256:mine", "", "",
             "n", "General", Vec::new(), Vec::new(), Vec::new(), "", false, false,
-            false,
+            false, "", "", "", "", "",
         );
         assert_eq!(v2.ssh_keys[0].fingerprint, "SHA256:mine");
     }
@@ -11964,6 +12255,29 @@ mod grid_tests {
         // the save path must split it back.
         let (m, y) = split_card_expiry(&format!("{}/{}", "05", "31"));
         assert_eq!((m, y), ("05".to_string(), "31".to_string()));
+    }
+
+    #[test]
+    fn card_brand_and_luhn_vectors() {
+        // Real BINs (test numbers, not live cards).
+        assert_eq!(card_brand("4111 1111 1111 1111"), "Visa");
+        assert_eq!(card_brand("5555-5555-5555-4444"), "Mastercard");
+        assert_eq!(card_brand("2221 0000 0000 0009"), "Mastercard");
+        assert_eq!(card_brand("378282246310005"), "Amex");
+        assert_eq!(card_brand("6011111111111117"), "Discover");
+        assert_eq!(card_brand("30569309025904"), "Diners");
+        assert_eq!(card_brand("3530111333300000"), "JCB");
+        assert_eq!(card_brand("6200000000000005"), "UnionPay");
+        assert_eq!(card_brand("9999999999999999"), "");
+        assert_eq!(card_brand(""), "");
+        // Luhn: the same numbers validate (spaces/dashes ignored).
+        assert!(luhn_valid("4111 1111 1111 1111"));
+        assert!(luhn_valid("5555-5555-5555-4444"));
+        assert!(luhn_valid("378282246310005"));
+        assert!(!luhn_valid("4111 1111 1111 1112"));
+        assert!(!luhn_valid("123"));
+        assert!(!luhn_valid(""));
+        assert!(!luhn_valid("abcd"));
     }
 
     #[test]
