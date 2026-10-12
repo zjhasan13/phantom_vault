@@ -113,15 +113,46 @@ mod win {
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         AppendMenuW, CreatePopupMenu, CreateWindowExW, DefWindowProcW, DestroyMenu,
         DestroyWindow, DispatchMessageW, GetCursorPos, GetMessageW, LoadIconW, LoadImageW,
-        PostMessageW, PostQuitMessage, RegisterClassW, SetForegroundWindow, TrackPopupMenu,
-        TranslateMessage, HMENU, IDI_APPLICATION, IMAGE_ICON, LR_LOADFROMFILE,
+        PostMessageW, PostQuitMessage, RegisterClassW, RegisterWindowMessageW, SetForegroundWindow,
+        TrackPopupMenu, TranslateMessage, HMENU, IDI_APPLICATION, IMAGE_ICON, LR_LOADFROMFILE,
         MF_SEPARATOR, MF_STRING, TPM_RETURNCMD, TPM_RIGHTBUTTON, WM_APP, WM_CLOSE,
         WM_DESTROY, WM_LBUTTONDBLCLK, WM_LBUTTONUP, WM_RBUTTONUP, WNDCLASSW,
         WS_OVERLAPPEDWINDOW,
     };
     use windows_sys::Win32::UI::WindowsAndMessaging::HWND_MESSAGE;
 
-    const WM_TRAY: u32 = WM_APP + 0x7661;
+    /// Explorer restarts orphan every tray icon (classic Windows behavior —
+    /// the pump thread survives, but its icon is gone, so HideWindow strands
+    /// the app invisible). The OS broadcasts this registered message on every
+    /// taskbar re-creation; we NIM_ADD again (idempotent — same hWnd+uID).
+    static TASKBAR_CREATED_MSG: std::sync::atomic::AtomicU32 =
+        std::sync::atomic::AtomicU32::new(0);
+
+    fn taskbar_created_msg() -> u32 {
+        TASKBAR_CREATED_MSG.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    /// Rebuild the NOTIFYICONDATAW for `hwnd` (shared by initial add and
+    /// TaskbarCreated re-add — same hWnd + uID, so no duplicates).
+    pub(super) unsafe fn make_nid(hwnd: HWND) -> NOTIFYICONDATAW {
+        let icon = load_icon();
+        let mut tip = [0u16; 128];
+        for (i, c) in TIP.encode_utf16().take(127).enumerate() {
+            tip[i] = c;
+        }
+        NOTIFYICONDATAW {
+            cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+            hWnd: hwnd,
+            uID: 1,
+            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            uCallbackMessage: WM_TRAY,
+            hIcon: icon,
+            szTip: tip,
+            ..std::mem::zeroed()
+        }
+    }
+
+    pub(super) const WM_TRAY: u32 = WM_APP + 0x7661;
     const CLASS: &[u16] = &[
         b'P' as u16, b'V' as u16, b'T' as u16, b'r' as u16, b'a' as u16, b'y' as u16, 0,
     ];
@@ -142,6 +173,15 @@ mod win {
         wparam: WPARAM,
         lparam: LPARAM,
     ) -> LRESULT {
+        // Taskbar re-created under us (explorer restart/crash): our pump is
+        // alive but the icon is orphaned — re-add it so HideWindow never
+        // strands the app invisible.
+        let tbc = taskbar_created_msg();
+        if tbc != 0 && msg == tbc {
+            let nid = make_nid(hwnd);
+            Shell_NotifyIconW(NIM_ADD, &nid);
+            return 0;
+        }
         if msg == WM_TRAY {
             match lparam as u32 {
                 WM_LBUTTONUP | WM_LBUTTONDBLCLK => {
@@ -258,21 +298,13 @@ mod win {
                 let _ = tx.send(Err("tray window failed".into()));
                 return;
             }
-            let icon = load_icon();
-            let mut tip = [0u16; 128];
-            for (i, c) in TIP.encode_utf16().take(127).enumerate() {
-                tip[i] = c;
-            }
-            let nid = NOTIFYICONDATAW {
-                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-                hWnd: hwnd,
-                uID: 1,
-                uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
-                uCallbackMessage: WM_TRAY,
-                hIcon: icon,
-                szTip: tip,
-                ..std::mem::zeroed()
-            };
+            // Register the orphan-watch BEFORE the first add so no restart
+            // slips through the gap between NIM_ADD and pump start.
+            TASKBAR_CREATED_MSG.store(
+                RegisterWindowMessageW(wide("TaskbarCreated").as_ptr()),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            let nid = make_nid(hwnd);
             if Shell_NotifyIconW(NIM_ADD, &nid) == 0 {
                 let _ = tx.send(Err("tray Shell_NotifyIcon failed".into()));
                 DestroyWindow(hwnd);
@@ -380,6 +412,23 @@ mod tests {
         // icon) — so the flag must read false here. Proves the close-time
         // rescue path treats "never started" as dead, never as alive.
         assert!(!is_alive());
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn nid_rebuild_carries_same_identity() {
+        // The TaskbarCreated re-add must address the SAME hWnd+uID as the
+        // initial add (else the orphan stays orphaned and a duplicate appears).
+        // Null hwnd is fine here — pure struct fill, no Win32 calls that matter.
+        let nid = unsafe { super::win::make_nid(std::ptr::null_mut()) };
+        assert_eq!(nid.uID, 1);
+        assert_eq!(
+            nid.cbSize,
+            std::mem::size_of::<
+                windows_sys::Win32::UI::Shell::NOTIFYICONDATAW,
+            >() as u32
+        );
+        assert_eq!(nid.uCallbackMessage, super::win::WM_TRAY);
     }
 
     #[test]
