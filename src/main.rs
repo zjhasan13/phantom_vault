@@ -3229,6 +3229,9 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             Err(e) => {
                 eprintln!("⚠️ Tray unavailable ({e}) — close-to-tray falls back to exit.");
+                // Console is invisible in release builds: mirror into the
+                // access log so the user can SEE why X exits (Access Log viewer).
+                security::access_log::log_event("tray", &format!("boot failed: {e}"));
                 false
             }
         }
@@ -3242,8 +3245,23 @@ fn main() -> Result<(), slint::PlatformError> {
         let alive = Arc::clone(&tray_alive);
         let vis = Arc::clone(&ui_visible);
         main_window.window().on_close_requested(move || {
+            // Pref ON but pump dead (silent boot failure / later pump death)?
+            // Rescue once via respawn instead of surprise-exiting the user.
+            // Only the newest close wins: HideWindow returns immediately after.
             let minimize = windows_native::tray::load_tray_pref()
-                && alive.load(std::sync::atomic::Ordering::SeqCst);
+                && (alive.load(std::sync::atomic::Ordering::SeqCst)
+                    || {
+                        let ok = windows_native::tray::restart();
+                        if ok {
+                            alive.store(true, std::sync::atomic::Ordering::SeqCst);
+                        } else {
+                            security::access_log::log_event(
+                                "tray",
+                                "close-time respawn failed — exiting",
+                            );
+                        }
+                        ok
+                    });
             if minimize {
                 windows_native::tray::trim_working_set();
                 vis.store(false, std::sync::atomic::Ordering::SeqCst);

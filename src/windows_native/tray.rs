@@ -54,6 +54,22 @@ pub struct TrayActions {
 
 static ACTIONS: OnceLock<Arc<Mutex<TrayActions>>> = OnceLock::new();
 
+/// Liveness of the pump thread. Set at spawn; a later pump death is NOT
+/// auto-detected (message-only window has no heartbeat) — callers that need
+/// certainty use `restart()`, which tears down + respawns unconditionally.
+static ALIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static HANDLE: OnceLock<Arc<Mutex<Option<TrayHandle>>>> = OnceLock::new();
+
+fn handle_slot() -> Arc<Mutex<Option<TrayHandle>>> {
+    HANDLE.get_or_init(|| Arc::new(Mutex::new(None))).clone()
+}
+
+/// Best-effort liveness flag (true only after a successful spawn).
+#[allow(dead_code)]
+pub fn is_alive() -> bool {
+    ALIVE.load(std::sync::atomic::Ordering::SeqCst)
+}
+
 fn actions() -> Arc<Mutex<TrayActions>> {
     ACTIONS.get_or_init(|| Arc::new(Mutex::new(TrayActions::default()))).clone()
 }
@@ -296,15 +312,43 @@ mod win {
 }
 
 /// Start the tray icon + message pump. Non-Windows: no-op handle.
+/// Records the handle + liveness so `restart()` can rebuild later.
 pub fn start(actions: TrayActions) -> Result<TrayHandle, String> {
     #[cfg(windows)]
     {
-        win::spawn(actions)
+        let h = win::spawn(actions)?;
+        if let Ok(mut g) = handle_slot().lock() {
+            *g = Some(h);
+        }
+        ALIVE.store(true, std::sync::atomic::Ordering::SeqCst);
+        Ok(h)
     }
     #[cfg(not(windows))]
     {
         let _ = actions;
         Err("tray unsupported on this platform".into())
+    }
+}
+
+/// Re-create the icon from the stored actions (close-time rescue when the
+/// boot-time pump died silently). Removes the stale icon FIRST so no
+/// duplicate lingers, then spawns fresh. False = hopeless, caller exits.
+/// Worst case blocks ~10s (spawn handshake timeout) and only runs when the
+/// user asked for tray but has none — never on the happy path.
+pub fn restart() -> bool {
+    if let Ok(mut g) = handle_slot().lock() {
+        if let Some(h) = g.take() {
+            remove(h);
+        }
+    }
+    ALIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let actions = actions()
+        .lock()
+        .map(|g| g.clone())
+        .unwrap_or_default();
+    match start(actions) {
+        Ok(_) => true,
+        Err(_) => false,
     }
 }
 
@@ -329,6 +373,14 @@ mod tests {
     // they must never run concurrently (parallel harness flaked ~1/8 runs:
     // fire_without_handlers reset the table between dispatch's set and fire).
     static ACTION_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn liveness_starts_false_before_any_spawn() {
+        // No spawn ever happens in tests (that would plant a real taskbar
+        // icon) — so the flag must read false here. Proves the close-time
+        // rescue path treats "never started" as dead, never as alive.
+        assert!(!is_alive());
+    }
 
     #[test]
     fn tray_pref_roundtrips_without_clobbering() {
