@@ -3265,6 +3265,9 @@ fn main() -> Result<(), slint::PlatformError> {
             if minimize {
                 windows_native::tray::trim_working_set();
                 vis.store(false, std::sync::atomic::Ordering::SeqCst);
+                // Diagnosis trail: with no console in release builds, the
+                // access log is the only witness of which close path ran.
+                security::access_log::log_event("tray", "minimize accepted");
                 if let Some(ui) = w.upgrade() {
                     ui.set_notification_text("📥 Minimized to tray — right-click the tray icon to restore.".into());
                 }
