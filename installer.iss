@@ -64,6 +64,12 @@ Root: HKCU; \
   Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.phantomvault.host"; \
   ValueType: string; ValueName: ""; \
   ValueData: "{app}\browser_extension\{#HostJsonName}"; Flags: uninsdeletekey
+; Placeholder: the app's Firefox button rewrites this to
+; %LOCALAPPDATA%\PhantomVault\native-host-firefox.json (allowed_extensions).
+Root: HKCU; \
+  Subkey: "Software\Mozilla\NativeMessagingHosts\com.phantomvault.host"; \
+  ValueType: string; ValueName: ""; \
+  ValueData: "{app}\browser_extension\com.phantomvault.host.firefox.json"; Flags: uninsdeletekey
 
 [Code]
 // Write a locked-down host manifest (empty allowed_origins = no extension

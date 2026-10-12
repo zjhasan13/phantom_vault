@@ -1235,6 +1235,73 @@ pub fn manifest_json(allowed_origin: &str, exe_path: &str) -> serde_json::Value 
     })
 }
 
+/// Build the Firefox host manifest document (pure — unit tested). Firefox
+/// ignores unknown keys, but ships its own allow-list key, so this is a
+/// separate document (`native-host-firefox.json`) from the Chromium one.
+pub fn manifest_firefox_json(ext_id: &str, exe_path: &str) -> serde_json::Value {
+    serde_json::json!({
+        "name": "com.phantomvault.host",
+        "description": "PhantomVault native bridge (stdio, vault-gated)",
+        "path": exe_path.replace('/', "\\"),
+        "type": "stdio",
+        "allowed_extensions": [ext_id],
+    })
+}
+
+/// Firefox add-on ID gate: `{uuid}` or `name@domain` shapes only (MUST match
+/// `browser_specific_settings.gecko.id` handling — letters, digits and
+/// `@{}._-`, max 128 chars). Rejects `*`/empty/paths like the Chrome gate.
+pub fn valid_firefox_id(id: &str) -> bool {
+    let t = id.trim();
+    !t.is_empty()
+        && t.len() <= 128
+        && t.bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"@{}._-".contains(&b))
+}
+
+/// Our own Firefox add-on ID (must equal manifest.firefox.json gecko.id —
+/// pinned by the test below so the two can never drift apart).
+pub const FIREFOX_ADDON_ID: &str = "phantomvault@phantomvault.local";
+
+/// Register the Firefox bridge: `native-host-firefox.json` + the Mozilla
+/// HKCU key. Separate document from Chromium (different allow-list key).
+/// Same fail-closed ID discipline as [`register_native_host`].
+pub fn register_firefox_host(
+    ext_id: &str,
+) -> Result<String, crate::error::VaultError> {
+    use crate::error::VaultError;
+
+    let id = ext_id.trim().to_string();
+    if !valid_firefox_id(&id) {
+        return Err(VaultError::Sync(
+            "firefox add-on id must look like {uuid} or name@domain".into(),
+        ));
+    }
+    let dir = bridge_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| VaultError::Sync(format!("bridge dir: {e}")))?;
+    let manifest_path = dir.join("native-host-firefox.json");
+    let exe = std::env::current_exe()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|_| "phantom_vault.exe".to_string());
+    let doc = manifest_firefox_json(&id, &exe);
+    std::fs::write(
+        &manifest_path,
+        serde_json::to_string_pretty(&doc)
+            .map_err(|e| VaultError::Sync(format!("manifest json: {e}")))?,
+    )
+    .map_err(|e| VaultError::Sync(format!("manifest write: {e}")))?;
+
+    let manifest_str = manifest_path
+        .to_str()
+        .ok_or_else(|| VaultError::Sync("manifest path not unicode".into()))?;
+    write_host_key(
+        "Software\\Mozilla\\NativeMessagingHosts\\com.phantomvault.host",
+        manifest_str,
+    )?;
+    Ok(manifest_path.to_string_lossy().into_owned())
+}
+
 /// Print a manifest for `allowed_origin` (e.g. `chrome-extension://<id>/`).
 /// Install path: registry
 /// `HKCU\Software\Google\Chrome\NativeMessagingHosts\com.phantomvault.host`.
@@ -3509,6 +3576,38 @@ mod tests {
             assert!(m.get(k).is_some(), "missing {k}");
         }
         let _ = PasskeyItem::default();
+    }
+
+    #[test]
+    fn firefox_manifest_shape_and_id_gate() {
+        let m = manifest_firefox_json("phantomvault@phantomvault.local", "C:/x/pv.exe");
+        assert_eq!(m["name"], "com.phantomvault.host");
+        assert_eq!(m["type"], "stdio");
+        assert_eq!(m["allowed_extensions"][0], "phantomvault@phantomvault.local");
+        assert!(m.get("allowed_origins").is_none(), "chromium key must not leak in");
+        for k in ["name", "description", "path", "type", "allowed_extensions"] {
+            assert!(m.get(k).is_some(), "missing {k}");
+        }
+        // Pinned add-on ID matches the firefox manifest on disk (no drift).
+        let on_disk = std::fs::read_to_string("../browser_extension/manifest.firefox.json")
+            .or_else(|_| {
+                std::fs::read_to_string("browser_extension/manifest.firefox.json")
+            })
+            .expect("firefox manifest must exist");
+        let doc: serde_json::Value =
+            serde_json::from_str(&on_disk).expect("firefox manifest must parse");
+        assert_eq!(
+            doc["browser_specific_settings"]["gecko"]["id"].as_str(),
+            Some(FIREFOX_ADDON_ID)
+        );
+        // ID gate: uuid + name@domain pass, wildcards/empties/paths refuse.
+        assert!(valid_firefox_id("phantomvault@phantomvault.local"));
+        assert!(valid_firefox_id("{12345678-1234-1234-1234-123456789abc}"));
+        assert!(!valid_firefox_id(""));
+        assert!(!valid_firefox_id("*"));
+        assert!(!valid_firefox_id("chrome-extension://abc/"));
+        assert!(!valid_firefox_id(&"a".repeat(129)));
+        assert!(register_firefox_host("not an id!!").is_err());
     }
 
     #[test]

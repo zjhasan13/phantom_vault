@@ -861,6 +861,9 @@ export component MainWindow inherits Window {
     callback restart_update();
     callback pick_import_file();
     callback install_browser_host(string);
+    // Firefox uses the pinned add-on ID (manifest.firefox.json gecko.id) —
+    // no paste needed, the ID is fixed at build time.
+    callback install_firefox_host();
     // Zero-lockin reverse exporters (2FA hub QR + full-vault files).
     callback ga_export_start();
     callback ga_export_page(int);
@@ -1474,6 +1477,8 @@ export component MainWindow inherits Window {
                     Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "🌐 Install Browser Extension Host"; primary: true; width: 280px; clicked => { root.install_browser_host(root.ext_host_id); } } }
+                    Text { text: "Firefox: install dist/firefox/ via about:debugging, then lock our add-on ID below (same pinned ID as the Firefox manifest)."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "🦊 Install Firefox Host"; width: 280px; clicked => { root.install_firefox_host(); } } }
                     Text { text: root.bridge_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;

@@ -7454,6 +7454,33 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         });
     });
 
+    // Firefox bridge: pinned add-on ID (manifest.firefox.json gecko.id) —
+    // nothing to paste, nothing to validate beyond the pin itself.
+    let ffhost_weak = main_window.as_weak();
+    main_window.on_install_firefox_host(move || {
+        let Some(ui) = ffhost_weak.upgrade() else {
+            return;
+        };
+        ui.set_bridge_status("🦊 Installing Firefox extension host…".into());
+        let weak = ffhost_weak.clone();
+        std::thread::spawn(move || {
+            let res = windows_native::native_host::register_firefox_host(
+                windows_native::native_host::FIREFOX_ADDON_ID,
+            );
+            if res.is_ok() {
+                security::access_log::log_event("bridge", "firefox host installed");
+            }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_bridge_status(match res {
+                        Ok(path) => format!("✅ Firefox host installed — {path} (locked to {}). Load dist/firefox/ via about:debugging.", windows_native::native_host::FIREFOX_ADDON_ID).into(),
+                        Err(e) => format!("⚠️ Firefox host install failed: {e}").into(),
+                    });
+                }
+            });
+        });
+    });
+
     // Batch-4: privacy alias config (DPAPI-sealed token) + one-click generation.
     let alias_weak = main_window.as_weak();
     main_window.on_save_alias_config(move |provider_int, domain, token| {

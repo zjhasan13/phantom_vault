@@ -53,7 +53,8 @@ release. State the minimum peer version in the notes.
 - [ ] `exe_integrity.dpapi` reset (fresh seal on first launch)
 - [ ] Native-host pipe smoke test on the PACKED binary (ping/query/assert)
 - [ ] Installer build (Inno) smoke on clean profile
-- [ ] Extension zip (manifest version == Cargo version)
+- [ ] Extension zips, one per browser (`browser_extension/build.ps1 -Browser all`;
+  both manifests' versions == Cargo version): chrome zip + firefox zip
 - [ ] QA_CHECKLIST §11–13 manual pass
 - [ ] CHANGELOG: breaking changes called out (bridge shape, P2P auth)
 - [ ] Tag `vX.Y.Z` + push tag; GitHub Release with artifacts + SHA256SUMS

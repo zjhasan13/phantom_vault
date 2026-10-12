@@ -1,4 +1,5 @@
 /target
+browser_extension/dist/
 test_vault.enc
 **/*.rs.bk
 # Phase 11-14 local secrets: DPAPI-sealed keys/tokens + vault blobs + crash logs.
