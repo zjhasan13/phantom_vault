@@ -1,3 +1,7 @@
+// GUI subsystem: no console window beside the app. stdio pipes (native-host
+// bridge) keep working - only the visible console is suppressed.
+#![windows_subsystem = "windows"]
+
 #[allow(dead_code)]
 mod crypto;
 #[allow(dead_code)]
