@@ -378,10 +378,7 @@ pub fn restart() -> bool {
         .lock()
         .map(|g| g.clone())
         .unwrap_or_default();
-    match start(actions) {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    start(actions).is_ok()
 }
 
 /// Remove the icon + stop the pump.

@@ -6,7 +6,11 @@ fn main() {
         let mut res = winres::WindowsResource::new();
         if std::path::Path::new("assets/app.ico").exists() {
             res.set_icon("assets/app.ico");
+        } else {
+            println!("cargo:warning=app.ico missing — exe ships unbranded");
         }
-        let _ = res.compile();
+        if let Err(e) = res.compile() {
+            println!("cargo:warning=winres failed: {e}");
+        }
     }
 }

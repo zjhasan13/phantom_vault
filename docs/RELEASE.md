@@ -29,7 +29,7 @@ release. State the minimum peer version in the notes.
 
 ## 3. Rollback plan (tag discipline)
 
-- NO tags exist yet — the first release tag BECOMES the rollback anchor.
+- `v0.2.0` is tagged + pushed — it is the current rollback anchor.
 - Before publishing release N+1, confirm tag `vN` exists on GitHub with
   its artifacts attached (setup exe + extension zip + SHA256SUMS).
 - Rollback = users reinstall `vN` artifacts; vault file format is
@@ -37,8 +37,6 @@ release. State the minimum peer version in the notes.
   migration notes in rules.md before claiming otherwise).
 - Never delete/replace a published tag. A bad release gets a NEW
   patch version, never a force-push.
-- Suggested first tags: `v0.1.0` (last known-good baseline, tag
-  retroactively on the pre-MAC commit if needed) → then `v0.2.0`.
 
 ## 4. Release checklist (per release)
 

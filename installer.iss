@@ -7,9 +7,11 @@
 
 #define MyAppName "PhantomVault"
 ; KEEP IN SYNC with Cargo.toml [package] version.
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "PhantomVault Security Foundation"
 #define MyAppExeName "phantom_vault.exe"
+; Host manifests are GENERATED at install time by WriteHostManifest below
+; (nothing checked in — intentional, see [Code]). Same for the .firefox one.
 #define HostJsonName "com.phantomvault.host.json"
 
 [Setup]

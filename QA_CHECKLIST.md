@@ -2,7 +2,7 @@
 
 > All 12 tests must pass on a clean Windows 10/11 64-bit machine before any
 > release is tagged. Check each box only after PHYSICAL verification.
-> Baseline: `cargo check` zero-warning + `cargo test` 355 passed / 0 failing.
+> Baseline: `cargo check` zero-warning + `cargo test` 409 passed / 1 ignored (2026-10-13).
 
 ## 1. Master Password & Memory Hygiene
 - [ ] Fresh unlock with master password opens the vault.
@@ -43,7 +43,7 @@
 - [ ] Generate recovery sheet → 5 shards print/export.
 - [ ] Any 3 shards reconstruct; any 2 fail.
 - [ ] Lock-screen "Recover via Shards" restores vault access.
-- [ ] Tampered shard reconstructs WRONG (loud failure, never silent).
+- [ ] Tampered shard → combine errors loudly, unlock blocked (never a wrong secret).
 
 ## 7. Anti-Screen Capture (`WDA_MONITOR` vs `0` Live Toggle)
 - [ ] Blackout ON: Snipping Tool / OBS / Discord preview shows pitch black.
