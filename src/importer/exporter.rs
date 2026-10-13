@@ -238,7 +238,7 @@ pub fn export_csv_gated(vault: &Vault, is_decoy: bool) -> Result<String, String>
     if is_decoy {
         return Err("decoy mode is read-only".to_string());
     }
-    Ok(export_csv(vault))
+    export_csv_result(vault)
 }
 
 pub fn export_bitwarden_json_gated(
@@ -254,12 +254,22 @@ pub fn export_bitwarden_json_gated(
 /// Standard CSV (Bitwarden-style columns): logins + cards, active only.
 /// NOTE (M5): pure serializer — callers MUST enforce master-reprompt +
 /// decoy refusal (use `export_csv_gated` from UI paths).
+/// Legacy non-fallible wrapper (tests + importers). UI paths use
+/// `export_csv_gated`/`export_csv_result` so failures are loud.
+#[allow(dead_code)]
 pub fn export_csv(vault: &Vault) -> String {
+    export_csv_result(vault).unwrap_or_default()
+}
+
+/// Fallible CSV serializer: row/I-O/UTF-8 failures propagate instead of
+/// yielding a silently truncated export that looks successful.
+pub fn export_csv_result(vault: &Vault) -> Result<String, String> {
     let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
-    let _ = w.write_record([
+    w.write_record([
         "folder", "favorite", "type", "name", "notes", "fields", "login_uri",
         "login_username", "login_password", "login_totp", "backupcodes",
-    ]);
+    ])
+    .map_err(|e| format!("csv header failed: {e}"))?;
     for c in vault.credentials.iter().filter(|c| c.deleted_at.is_none()) {
         let fields = c
             .custom_fields
@@ -268,7 +278,7 @@ pub fn export_csv(vault: &Vault) -> String {
             .collect::<Vec<_>>()
             .join("; ");
         let fav = if c.favorite { "1" } else { "0" };
-        let _ = w.write_record([
+        w.write_record([
             csv_safe(c.folder.as_str()),
             fav.to_string(),
             "login".to_string(),
@@ -280,11 +290,12 @@ pub fn export_csv(vault: &Vault) -> String {
             csv_safe(c.password.as_str()),
             csv_safe(c.totp_secret.as_str()),
             csv_safe(&c.backup_codes.join("\n")),
-        ]);
+        ])
+        .map_err(|e| format!("csv login row failed: {e}"))?;
     }
     for k in vault.cards.iter().filter(|k| k.deleted_at.is_none()) {
         let fav = if k.favorite { "1" } else { "0" };
-        let _ = w.write_record([
+        w.write_record([
             csv_safe(k.folder.as_str()),
             fav.to_string(),
             "card".to_string(),
@@ -296,13 +307,14 @@ pub fn export_csv(vault: &Vault) -> String {
             csv_safe(k.card_number.as_str()),
             csv_safe(&format!("{}/{} cvv {}", k.exp_month, k.exp_year, k.cvv)),
             String::new(),
-        ]);
+        ])
+        .map_err(|e| format!("csv card row failed: {e}"))?;
     }
     // M4: never return a silent empty string as success — propagate the error.
-    w.into_inner()
-        .ok()
-        .and_then(|v| String::from_utf8(v).ok())
-        .unwrap_or_default()
+    let bytes = w
+        .into_inner()
+        .map_err(|e| format!("csv finalize failed: {e}"))?;
+    String::from_utf8(bytes).map_err(|e| format!("csv utf8 failed: {e}"))
 }
 
 #[cfg(test)]

@@ -147,13 +147,21 @@ impl PasswordGenerator {
                 })
             })
             .collect::<Result<Vec<&str>>>()?;
-        // 2-digit suffix in Bengali numerals (00–99).
+        // 2-digit suffix in Bengali numerals (00–99). Rejection-sampled
+        // bytes (u32::MAX % 10 != 0 would bias a bare `% 10`).
         let mut suffix = String::new();
         for _ in 0..2 {
-            let mut b = [0u8; 4];
-            use rand_core::RngCore as _;
-            rng.fill_bytes(&mut b);
-            suffix.push(BN_DIGITS[(u32::from_le_bytes(b) % 10) as usize]);
+            loop {
+                let mut b = [0u8; 4];
+                use rand_core::RngCore as _;
+                rng.fill_bytes(&mut b);
+                let v = u32::from_le_bytes(b);
+                // Largest multiple of 10 within u32: values below it are uniform mod 10.
+                if v < u32::MAX - (u32::MAX % 10) {
+                    suffix.push(BN_DIGITS[(v % 10) as usize]);
+                    break;
+                }
+            }
         }
         // Join words, then append separator + suffix.
         let mut s = picked.join(&separator.to_string());

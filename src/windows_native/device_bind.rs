@@ -74,9 +74,19 @@ pub fn check_device_at(path: &Path) -> bool {
     };
     match DpapiGuard::unprotect(&blob) {
         Ok(secret) => {
-            let expected = String::from_utf8_lossy(secret.expose()).into_owned();
+            // Constant-time compare directly on the unsealed bytes: no
+            // intermediate String alloc, and length feeds the accumulator
+            // (no early-out length oracle).
+            let a = secret.expose();
+            let b = guid.trim().as_bytes();
+            let mut diff = (a.len() ^ b.len()) as u8;
+            for i in 0..a.len().max(b.len()) {
+                let x = *a.get(i).unwrap_or(&0);
+                let y = *b.get(i).unwrap_or(&0);
+                diff |= x ^ y;
+            }
             drop(secret);
-            expected.trim() != guid.trim()
+            diff != 0
         }
         // Sealed for another machine/user — that IS the tripwire.
         Err(_) => true,

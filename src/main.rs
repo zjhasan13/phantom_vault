@@ -3159,6 +3159,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 let vis = vis.clone();
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = w.upgrade() {
+                        let hwnd = windows_native::ime_guard::hwnd_of(ui.window());
+                        if !hwnd.is_null() {
+                            use windows_sys::Win32::UI::WindowsAndMessaging::{
+                                ShowWindow, SW_SHOW,
+                            };
+                            unsafe {
+                                ShowWindow(hwnd, SW_SHOW);
+                            }
+                        }
                         ui.window().set_minimized(false);
                         ui.show().ok();
                         bring_to_foreground(ui.window());
@@ -3251,7 +3260,6 @@ fn main() -> Result<(), slint::PlatformError> {
             security::access_log::log_event("close", "requested");
             // Pref ON but pump dead (silent boot failure / later pump death)?
             // Rescue once via respawn instead of surprise-exiting the user.
-            // Only the newest close wins: HideWindow returns immediately after.
             let minimize = windows_native::tray::load_tray_pref()
                 && (alive.load(std::sync::atomic::Ordering::SeqCst)
                     || {
@@ -3274,8 +3282,21 @@ fn main() -> Result<(), slint::PlatformError> {
                 security::access_log::log_event("tray", "minimize accepted");
                 if let Some(ui) = w.upgrade() {
                     ui.set_notification_text("📥 Minimized to tray — right-click the tray icon to restore.".into());
+                    ui.window().set_minimized(true);
+                    // KeepWindowShown alone leaves a taskbar button; SW_HIDE
+                    // removes it so only the tray icon remains (restore uses
+                    // SW_SHOW + show() + foreground).
+                    let hwnd = windows_native::ime_guard::hwnd_of(ui.window());
+                    if !hwnd.is_null() {
+                        use windows_sys::Win32::UI::WindowsAndMessaging::{
+                            ShowWindow, SW_HIDE,
+                        };
+                        unsafe {
+                            ShowWindow(hwnd, SW_HIDE);
+                        }
+                    }
                 }
-                slint::CloseRequestResponse::HideWindow
+                slint::CloseRequestResponse::KeepWindowShown
             } else {
                 windows_native::clipboard::flush_now();
                 security::access_log::log_event("lock", "window close exit");

@@ -147,6 +147,30 @@ fn last_hash(path: &Path) -> String {
         .unwrap_or_else(|| "GENESIS".to_string())
 }
 
+fn lock_path_for(path: &Path) -> std::path::PathBuf {
+    let s = path.to_string_lossy().into_owned();
+    std::path::PathBuf::from(format!("{s}.lock"))
+}
+
+/// Cross-process append guard: desktop + native-host both append to the
+/// same file, but LOG_MUTEX is per-process. An atomic `create_new` lock
+/// file serializes read-prev + append across processes (best-effort with
+/// bounded spin; falls back to unlocked append rather than dropping events).
+fn cross_process_lock(path: &Path) -> Option<std::fs::File> {
+    let lock = lock_path_for(path);
+    for _ in 0..50 {
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+        {
+            Ok(f) => return Some(f),
+            Err(_) => std::thread::sleep(std::time::Duration::from_millis(10)),
+        }
+    }
+    None
+}
+
 fn log_event_at(path: &Path, event: &str, detail: &str) {
     let clean = |s: &str| {
         s.replace(['\\', '"'], "")
@@ -156,6 +180,7 @@ fn log_event_at(path: &Path, event: &str, detail: &str) {
             .collect::<String>()
     };
     let _guard = LOG_MUTEX.lock().unwrap_or_else(|p| p.into_inner());
+    let _xproc = cross_process_lock(path);
     let prev = last_hash(path);
     let t = now_unix();
     let (event, detail) = (clean(event), clean(detail));
@@ -169,6 +194,9 @@ fn log_event_at(path: &Path, event: &str, detail: &str) {
             let _ = f.sync_all();
             let _ = std::fs::write(head_path_for(path), &hash);
         }
+    }
+    if _xproc.is_some() {
+        let _ = std::fs::remove_file(lock_path_for(path));
     }
 }
 
@@ -336,6 +364,27 @@ mod tests {
         assert!(!valid2);
         assert_eq!(bad, Some(1));
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn duplicate_prev_reports_first_bad_line() {
+        // Multi-process race regression: two writers read the same tip and
+        // append with the same prev → second copy breaks the chain there.
+        let p = tmp("dup");
+        log_event_at(&p, "a", "1");
+        log_event_at(&p, "b", "2");
+        let second = std::fs::read_to_string(&p)
+            .unwrap()
+            .lines()
+            .nth(1)
+            .unwrap()
+            .to_string();
+        std::fs::write(&p, format!("{}\n{second}\n", std::fs::read_to_string(&p).unwrap().trim_end())).unwrap();
+        let (n, valid, bad) = verify_at_detailed(&p);
+        assert_eq!((n, valid, bad), (2, false, Some(3)));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(head_path_for(&p));
+        let _ = std::fs::remove_file(lock_path_for(&p));
     }
 
     #[test]

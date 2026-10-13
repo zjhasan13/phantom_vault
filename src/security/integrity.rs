@@ -37,7 +37,10 @@ fn sha256_file(path: &Path) -> Result<Vec<u8>, String> {
 pub fn check_at(seal_path: &Path, exe_path: &Path) -> Integrity {
     let hash = match sha256_file(exe_path) {
         Ok(h) => h,
-        Err(_) => return Integrity::Unknown,
+        Err(e) => {
+            crate::security::access_log::log_event("integrity", &format!("exe unreadable: {e}"));
+            return Integrity::Unknown;
+        }
     };
     let blob = match std::fs::read(seal_path) {
         Err(_) => {

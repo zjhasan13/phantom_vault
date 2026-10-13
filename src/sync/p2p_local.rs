@@ -406,7 +406,7 @@ pub fn route(
     local_sha: &str,
     local_mtime: u64,
     peer_ip: &str,
-) -> (u16, String, Option<(String, Vec<u8>)>) {
+) -> (u16, String, Option<(String, u64, Vec<u8>)>) {
     // Split query string (?pin=…) — minimal HTTP only.
     let (clean_path, query_pin) = match path.split_once('?') {
         Some((p, q)) => {
@@ -497,7 +497,7 @@ pub fn route(
         if !p2p_test_mode() && remote_mtime <= last.mtime && !last.sha.is_empty() && last.sha != sha {
             return (409, r#"{"ok":false,"error":"replay or rollback attempted — local kept"}"#.into(), None);
         }
-        return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, blob)));
+        return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, remote_mtime, blob)));
     }
     (404, r#"{"ok":false,"error":"unknown route"}"#.into(), None)
 }
@@ -545,23 +545,28 @@ struct AdoptedHead {
 fn read_adopted_head() -> AdoptedHead {
     let p = adopted_head_path();
     match std::fs::read_to_string(&p) {
-        Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
+        Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| {
+            crate::security::access_log::log_event("p2p", "adopted-head corrupt — guard reset");
+            AdoptedHead::default()
+        }),
         Err(_) => AdoptedHead::default(),
     }
 }
 
-/// NOTE (merge repair): currently unwired — `read_adopted_head` has no
-/// writer, so the monotonic guard always sees default. The other line's
-/// follow-up should call this wherever remote state is adopted.
-/// Kept (not deleted) so that wiring is a one-line call, not a rewrite.
-#[allow(dead_code)]
+/// Monotonic adopt guard writer — call on EVERY adopt path (serve_conn +
+/// sync_with_peer). Atomic tmp+rename so a torn write never resets the guard.
 fn write_adopted_head(mtime: u64, sha: &str) {
     let p = adopted_head_path();
     let ah = AdoptedHead {
         mtime,
         sha: sha.to_string(),
     };
-    let _ = std::fs::write(&p, serde_json::to_vec(&ah).unwrap_or_default());
+    if let Ok(bytes) = serde_json::to_vec(&ah) {
+        let tmp = p.with_extension("json.tmp");
+        if std::fs::write(&tmp, &bytes).is_ok() {
+            let _ = std::fs::rename(&tmp, &p);
+        }
+    }
 }
 
 fn read_full_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
@@ -618,7 +623,7 @@ fn serve_conn(mut stream: TcpStream) {
     let blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
     let (local_sha, local_mtime) = local_head();
     let (status, resp_body, adopt) = route(&method, &path, &body, &blob, &local_sha, local_mtime, &peer_ip);
-    if let Some((sha, data)) = adopt {
+    if let Some((sha, mtime, data)) = adopt {
         // Newer-or-different remote head: adopt atomically. mtime comparison
         // happens client-side (sync_with_peer); the listener trusts the
         // pusher's decision, verified by SHA above.
@@ -627,6 +632,7 @@ fn serve_conn(mut stream: TcpStream) {
             let _ = stream.write_all(&http_response(400, r#"{"ok":false,"error":"adopt failed"}"#));
             return;
         }
+        write_adopted_head(mtime, &sha);
         crate::security::access_log::log_event("p2p", &format!("adopted {sha}"));
     }
     let _ = stream.write_all(&http_response(status, &resp_body));
@@ -798,6 +804,7 @@ pub fn sync_with_peer(
     }
     if remote_mtime > local_mtime {
         adopt_local(remote_blob)?;
+        write_adopted_head(remote_mtime, &remote_sha);
         crate::security::access_log::log_event("p2p", &format!("adopted {remote_sha} from {ip}"));
         return Ok("📡 Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
     }
@@ -864,8 +871,9 @@ mod tests {
         let push2 = serde_json::json!({"sha": sha2, "mtime": 2, "blob_b64": base64_encode(blob2)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", push2.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 200);
-        let (got_sha, got_blob) = adopt.unwrap();
+        let (got_sha, got_mtime, got_blob) = adopt.unwrap();
         assert_eq!(got_sha, sha2);
+        assert_eq!(got_mtime, 2);
         assert_eq!(got_blob, blob2);
         // Stale push (older mtime) → 409, local kept.
         let stale = serde_json::json!({"sha": sha2, "mtime": 1, "blob_b64": base64_encode(blob2)}).to_string();
@@ -1086,6 +1094,31 @@ mod tests {
         assert_eq!(st, 200);
         assert!(adopt.is_some());
         clear_pin_file();
+        let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn adopted_head_roundtrips_and_guards_rollback() {
+        let sandbox = std::env::temp_dir().join(format!("pv-adopt-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&sandbox);
+        let f = sandbox.join("p2p_adopted.json");
+        std::env::set_var("PV_P2P_ADOPTED_FILE", &f);
+        let _ = std::fs::remove_file(&f);
+        write_adopted_head(9, "abc");
+        let back = read_adopted_head();
+        assert_eq!((back.mtime, back.sha.as_str()), (9, "abc"));
+        // Rollback blob (older mtime than local) must be refused.
+        // NOTE: the adopted-head monotonic guard is bypassed in test mode
+        // (p2p_test_mode), so this asserts the server freshness gate;
+        // roundtrip above proves the guard persists.
+        let blob = b"local";
+        let sha = sha_hex(blob);
+        let old = serde_json::json!({"sha": sha_hex(b"old"), "mtime": 5, "blob_b64": base64_encode(b"old")}).to_string();
+        let (st, _, adopt) = route("POST", "/p2p/sync", old.as_bytes(), blob, &sha, 9, "192.0.2.10");
+        assert_eq!(st, 409);
+        assert!(adopt.is_none());
+        let _ = std::fs::remove_file(&f);
+        std::env::remove_var("PV_P2P_ADOPTED_FILE");
         let _ = std::fs::remove_dir_all(&sandbox);
     }
 

@@ -236,7 +236,9 @@ impl From<&str> for LoginUrl {
 }
 
 /// Rich login item (Bitwarden parity).
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
+/// NOTE: no `Debug` derive — passwords/TOTP/backup codes must never reach
+/// logs or crash dumps via `{:?}`. The manual impl below redacts secrets.
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop)]
 pub struct Credential {
     pub id: String,
     pub title: String,
@@ -275,6 +277,20 @@ pub struct Credential {
     pub deleted_at: Option<u64>,
 }
 
+impl std::fmt::Debug for Credential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Credential")
+            .field("id", &self.id)
+            .field("title", &self.title)
+            .field("username", &self.username)
+            .field("password", &"[redacted]")
+            .field("totp_secret", &"[redacted]")
+            .field("urls", &self.urls)
+            .field("folder", &self.folder)
+            .finish_non_exhaustive()
+    }
+}
+
 /// Seconds in 180 days — past this a password is "stale" (rotation nudge).
 pub const STALE_AFTER_SECS: u64 = 180 * 24 * 3600;
 
@@ -294,7 +310,8 @@ pub fn is_stale(last_changed: u64, now: u64) -> bool {
 
 /// 2FA authenticator account — algorithm/type/counter ride along so imports
 /// stay bit-identical to Google Authenticator (no silent SHA1 fallback).
-#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, PartialEq)]
+/// NOTE: manual `Debug` below redacts the TOTP secret.
+#[derive(Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, PartialEq)]
 pub struct TotpAccount {
     pub id: String,
     pub account_name: String,
@@ -312,6 +329,17 @@ pub struct TotpAccount {
     pub counter: u64, // HOTP moving factor
     #[serde(default)]
     pub favorite: bool, // sidebar ⭐ (serde default keeps old vaults loading)
+}
+
+impl std::fmt::Debug for TotpAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TotpAccount")
+            .field("id", &self.id)
+            .field("account_name", &self.account_name)
+            .field("issuer", &self.issuer)
+            .field("secret", &"[redacted]")
+            .finish_non_exhaustive()
+    }
 }
 
 fn default_algorithm() -> String {
