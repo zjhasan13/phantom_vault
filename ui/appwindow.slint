@@ -930,6 +930,9 @@ export component MainWindow inherits Window {
     callback pick_attachment(int, string);
     callback download_attachment(int, string, string);
     callback delete_attachment(int, string, string);
+    // Two-tap Sure? for destructive detail actions (parity with hub/passkey).
+    in-out property <bool> confirm_delete_detail: false;
+    in-out property <string> confirm_delete_att_id: "";
     callback preview_attachment(int, string, string);
     callback override_favicon(string);
     callback clear_custom_favicons();
@@ -1890,7 +1893,7 @@ export component MainWindow inherits Window {
                         }}
                         if root.d_attachments.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
                             FieldLabel { text: "ATTACHMENTS"; }
-                            for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "👁"; width: 40px; height: 24px; y: 6px; clicked => { root.preview_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "🗑"; width: 36px; height: 24px; y: 6px; danger: true; clicked => { root.delete_attachment(root.d_kind, root.d_id, att.id); } } } }
+                            for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "👁"; width: 40px; height: 24px; y: 6px; clicked => { root.preview_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: root.confirm_delete_att_id == att.id ? "Sure?" : "🗑"; width: root.confirm_delete_att_id == att.id ? 56px : 36px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_att_id == att.id { root.confirm_delete_att_id = ""; root.delete_attachment(root.d_kind, root.d_id, att.id); } else { root.confirm_delete_att_id = att.id; } } } } }
                         }}
                         if root.d_attachments.length == 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
                             FieldLabel { text: "ATTACHMENTS"; }
@@ -1916,8 +1919,8 @@ export component MainWindow inherits Window {
                             HorizontalLayout { spacing: 8px; FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? #34d399 : #5b6589; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
                         }}
                         // Bottom action bar
-                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
-                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { root.delete_item_requested(root.d_kind, root.d_id); } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
+                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Shred" : "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
+                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Delete" : "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
                     }
                     if root.d_id == "" && !root.show_add_form : Text { text: "🛡️ Select an item from the list to view details"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
                 }}
@@ -2142,7 +2145,7 @@ export component MainWindow inherits Window {
                 if root.att_preview_kind == "other" : Text { text: "No in-app preview for this file type — export to view."; color: #fbbf24; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px; alignment: center;
                     AuraButton { label: "💾 Export File"; width: 140px; height: 36px; clicked => { root.att_preview = false; root.download_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
-                    AuraButton { label: "🗑️ Delete"; width: 120px; height: 36px; danger: true; clicked => { root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
+                    AuraButton { label: root.confirm_delete_att_id == root.att_preview_id ? "Sure?" : "🗑️ Delete"; width: root.confirm_delete_att_id == root.att_preview_id ? 110px : 120px; height: 36px; danger: true; clicked => { if root.confirm_delete_att_id == root.att_preview_id { root.confirm_delete_att_id = ""; root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } else { root.confirm_delete_att_id = root.att_preview_id; } } }
                     AuraButton { label: "✕ Close Preview"; width: 150px; height: 36px; clicked => { root.att_preview = false; } }
                 }
             }

@@ -8966,6 +8966,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if let Some(ui) = close_weak.upgrade() {
             ui.set_d_id(String::new().into());
             ui.set_show_detail(false);
+            ui.set_confirm_delete_detail(false);
+            ui.set_confirm_delete_att_id(String::new().into());
         }
     });
     // Column-2 keyboard nav: ↑↓ cycle the rendered rows with wraparound,
@@ -9011,6 +9013,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_d_stale(false);
         ui.set_d_age_info(String::new().into());
         ui.set_d_age_frac(0.0);
+        ui.set_confirm_delete_detail(false);
+        ui.set_confirm_delete_att_id(String::new().into());
         ui.set_d_fav(false);
         ui.set_d_trashed(false);
         ui.set_d_has_icon(false);
