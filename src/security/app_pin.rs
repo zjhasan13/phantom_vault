@@ -84,7 +84,7 @@ fn check_format(pin: &str) -> Result<(), PinError> {
 /// strike-wipe on top — KDF cost is the third layer, not the only one).
 fn derive_pin_key(pin: &str, salt: &[u8]) -> Result<Zeroizing<[u8; 32]>, PinError> {
     let mut out = Zeroizing::new([0u8; 32]);
-    crate::crypto::derive_key(pin, salt)
+    crate::crypto::derive_key_secret(&secrecy::SecretString::new(pin.to_string()), salt)
         .map(|k| {
             out.copy_from_slice(&k);
             // derive_key returns a plain array — wipe OUR copy source too.

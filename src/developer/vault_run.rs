@@ -8,7 +8,6 @@
 //! without it the child inherits everything plus a loud stderr note.
 
 use crate::models::Vault;
-use crate::storage::load_vault_versioned;
 use zeroize::Zeroize;
 
 pub const VAULT_FILE: &str = "my_secure_vault.enc";
@@ -162,15 +161,16 @@ pub fn run_cli(args: &[String]) -> i32 {
         eprintln!("vault run: empty password");
         return 2;
     }
-    let (vault, _) = match load_vault_versioned(password.trim(), VAULT_FILE) {
+    let pw = secrecy::SecretString::new(password.trim().to_string());
+    password.zeroize();
+    let (vault, _) = match crate::storage::load_vault_versioned_secret(&pw, VAULT_FILE) {
         Ok(v) => v,
         Err(e) => {
-            password.zeroize();
             eprintln!("vault run: unlock failed: {e}");
             return 1;
         }
     };
-    password.zeroize();
+    drop(pw);
     let pairs = match resolve_env(&maps, &vault) {
         Ok(p) => p,
         Err(e) => {

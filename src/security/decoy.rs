@@ -9,7 +9,8 @@
 use crate::core::memory::DpapiGuard;
 use crate::error::{Result, VaultError};
 use crate::models::{Credential, TotpAccount, Vault};
-use crate::storage::save_vault;
+use crate::storage::save_vault_secret;
+use secrecy::{ExposeSecret, SecretString};
 use std::path::Path;
 use zeroize::Zeroize;
 
@@ -87,7 +88,7 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         counter: 0,
         favorite: false,
     });
-    save_vault(&vault, &pw, DECOY_FILE)
+    save_vault_secret(&vault, &SecretString::new(pw.clone()), DECOY_FILE)
         .map_err(|e| VaultError::Security(format!("decoy seal failed: {e}")))?;
     // Verifier LAST: only a persisted container gets a valid verifier.
     let blob = DpapiGuard::protect(pw.as_bytes())
@@ -123,8 +124,14 @@ fn verify_duress(candidate: &str) -> bool {
 /// Try the decoy path. Returns Some(vault) only if the duress password
 /// verifies AND the decoy container decrypts with it.
 pub fn try_open_decoy(candidate: &str) -> Option<Vault> {
-    if !verify_duress(candidate) {
+    try_open_decoy_secret(&SecretString::new(candidate.to_string()))
+}
+
+/// Secret-owning variant — the candidate never lingers as `&str` past this
+/// call (the DPAPI-seal comparison inside still exposes transiently).
+pub fn try_open_decoy_secret(candidate: &SecretString) -> Option<Vault> {
+    if !verify_duress(candidate.expose_secret()) {
         return None;
     }
-    crate::storage::load_vault(candidate, DECOY_FILE).ok()
+    crate::storage::load_vault_secret(candidate, DECOY_FILE).ok()
 }

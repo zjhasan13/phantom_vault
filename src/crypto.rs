@@ -62,11 +62,10 @@ pub fn derive_key_secret(master_password: &SecretString, salt: &[u8]) -> Result<
     Ok(derived_key)
 }
 
-/// Legacy `&str` entrypoint — prefer [`derive_key_secret`]. Kept so the
-/// ~35 call sites migrate one by one instead of a flag day.
-/// NOTE: deliberately NOT `#[deprecated]` yet — that would flood ~35
-/// warnings in Phase 1 and break the zero-warning bar. Deprecation lands in
-/// the final migration phase once call sites are converted.
+/// Legacy `&str` entrypoint — prefer [`derive_key_secret`]. All production
+/// call sites are migrated; only compat tests still use this path
+/// (under `#[allow(deprecated)]` in `mod tests`).
+#[deprecated(note = "use derive_key_secret with a SecretString")]
 pub fn derive_key(master_password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
     derive_key_secret(&SecretString::new(master_password.to_string()), salt)
 }
@@ -105,7 +104,8 @@ pub fn encrypt_vault_secret(master_password: &SecretString, plaintext: &[u8]) ->
 }
 
 /// Legacy `&str` entrypoint — prefer [`encrypt_vault_secret`].
-/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].)
+#[deprecated(note = "use encrypt_vault_secret with a SecretString")]
 pub fn encrypt_vault(master_password: &str, plaintext: &[u8]) -> Result<Vec<u8>, String> {
     encrypt_vault_secret(&SecretString::new(master_password.to_string()), plaintext)
 }
@@ -139,7 +139,8 @@ pub fn decrypt_vault_secret(master_password: &SecretString, encrypted_payload: &
 }
 
 /// Legacy `&str` entrypoint — prefer [`decrypt_vault_secret`].
-/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].)
+#[deprecated(note = "use decrypt_vault_secret with a SecretString")]
 pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
     decrypt_vault_secret(&SecretString::new(master_password.to_string()), encrypted_payload)
 }
@@ -210,7 +211,8 @@ pub fn decrypt_vault_hybrid_legacy_secret(
 }
 
 /// Legacy `&str` entrypoint — prefer [`decrypt_vault_hybrid_legacy_secret`].
-/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].)
+#[deprecated(note = "use decrypt_vault_hybrid_legacy_secret with a SecretString")]
 pub fn decrypt_vault_hybrid_legacy(
     master_password: &str,
     payload: &[u8],
@@ -292,7 +294,8 @@ pub fn encrypt_vault_portable_secret(
 }
 
 /// Legacy `&str` entrypoint — prefer [`encrypt_vault_portable_secret`].
-/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].)
+#[deprecated(note = "use encrypt_vault_portable_secret with a SecretString")]
 pub fn encrypt_vault_portable(
     master_password: &str,
     plaintext: &[u8],
@@ -349,7 +352,8 @@ pub fn decrypt_vault_portable_secret(
 }
 
 /// Legacy `&str` entrypoint — prefer [`decrypt_vault_portable_secret`].
-/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].)
+#[deprecated(note = "use decrypt_vault_portable_secret with a SecretString")]
 pub fn decrypt_vault_portable(
     master_password: &str,
     payload: &[u8],
@@ -358,6 +362,7 @@ pub fn decrypt_vault_portable(
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 

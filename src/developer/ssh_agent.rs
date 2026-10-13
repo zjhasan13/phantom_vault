@@ -10,7 +10,6 @@
 //! you know what you are doing. Clients point via `SSH_AUTH_SOCK`.
 
 use crate::models::Vault;
-use crate::storage::load_vault_versioned;
 use ed25519_dalek::Signer as _;
 use ssh_key::private::{Ed25519Keypair, KeypairData};
 use ssh_key::PrivateKey;
@@ -331,22 +330,22 @@ pub fn serve_cli() -> i32 {
             return 2;
         }
     };
-    let (vault, _) = match load_vault_versioned(
-        password.trim(),
-        super::vault_run::VAULT_FILE,
-    ) {
-        Ok(v) => v,
-        Err(e) => {
-            use zeroize::Zeroize;
-            password.zeroize();
-            eprintln!("ssh-agent: unlock failed: {e}");
-            return 1;
-        }
-    };
+    let pw = secrecy::SecretString::new(password.trim().to_string());
     {
         use zeroize::Zeroize;
         password.zeroize();
     }
+    let (vault, _) = match crate::storage::load_vault_versioned_secret(
+        &pw,
+        super::vault_run::VAULT_FILE,
+    ) {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("ssh-agent: unlock failed: {e}");
+            return 1;
+        }
+    };
+    drop(pw);
     let keys = Arc::new(collect_keys(&vault));
     drop(vault);
     if keys.is_empty() {

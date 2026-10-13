@@ -157,7 +157,8 @@ pub fn save_vault_secret<P: AsRef<Path>>(
 }
 
 /// Legacy `&str` entrypoint — prefer [`save_vault_secret`].
-/// (Deprecation deferred to the final migration phase.)
+/// (Compat tests only — all production call sites are migrated.)
+#[deprecated(note = "use save_vault_secret with a SecretString")]
 pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_path: P) -> Result<(), String> {
     save_vault_secret(vault, &SecretString::new(master_password.to_string()), file_path)
 }
@@ -270,7 +271,8 @@ pub fn load_vault_secret<P: AsRef<Path>>(
 }
 
 /// Legacy `&str` entrypoints — prefer the `_secret` variants.
-/// (Deprecation deferred to the final migration phase.)
+/// (Compat tests only — all production call sites are migrated.)
+#[deprecated(note = "use load_vault_versioned_secret with a SecretString")]
 pub fn load_vault_versioned<P: AsRef<Path>>(
     master_password: &str,
     file_path: P,
@@ -279,11 +281,14 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
 }
 
 /// Legacy entrypoint: loads any version (migration flag discarded).
+#[deprecated(note = "use load_vault_secret with a SecretString")]
 pub fn load_vault<P: AsRef<Path>>(master_password: &str, file_path: P) -> Result<Vault, String> {
-    load_vault_versioned(master_password, file_path).map(|(v, _)| v)
+    load_vault_versioned_secret(&SecretString::new(master_password.to_string()), file_path)
+        .map(|(v, _)| v)
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
     use crate::models::{Credential, Vault};

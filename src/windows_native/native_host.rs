@@ -1973,34 +1973,31 @@ pub fn serve_cli() -> i32 {
             return 2;
         }
     };
-    let master = String::from_utf8_lossy(secret.expose()).into_owned();
+    let master = secrecy::SecretString::new(String::from_utf8_lossy(secret.expose()).into_owned());
     drop(secret);
     // Real vault first; on failure the cached passphrase may be the duress
     // password (cached by the decoy unlock path) — then serve ONLY the decoy
     // container. Real credentials never cross into the decoy branch.
     let mut serving_decoy = false;
-    let (mut vault, _) = match crate::storage::load_vault_versioned(
+    let (mut vault, _) = match crate::storage::load_vault_versioned_secret(
         &master,
         crate::developer::vault_run::VAULT_FILE,
     ) {
         Ok(v) => v,
-        Err(_) => match crate::security::decoy::try_open_decoy(&master) {
+        Err(_) => match crate::security::decoy::try_open_decoy(master.expose_secret()) {
             Some(d) => {
                 bridge_log("decoy cover served (duress credential)");
                 serving_decoy = true;
                 (d, false)
             }
             None => {
-                use zeroize::Zeroize;
-                let mut m = master;
-                m.zeroize();
+                drop(master);
                 bridge_log("vault unlock failed");
                 emit_err("unlock failed: wrong passphrase");
                 return 1;
             }
         },
     };
-    let master = secrecy::SecretString::new(master);
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout();
@@ -2107,9 +2104,9 @@ pub fn serve_cli() -> i32 {
                 continue;
             }
             // Clone-detection honesty: a bumped counter MUST reach disk.
-            if crate::storage::save_vault(
+            if crate::storage::save_vault_secret(
                 &vault,
-                master.expose_secret(),
+                &master,
                 crate::developer::vault_run::VAULT_FILE,
             )
             .is_err()

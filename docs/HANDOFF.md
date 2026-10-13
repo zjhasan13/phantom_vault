@@ -1,14 +1,20 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: HEAD `f7fe9e0`.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: SecretString migration done (Phases 1–5).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`, pushed, working tree clean. HEAD `f7fe9e0`
-  `fix(tray): log minimize-accepted path for close-path diagnosis`.
-- Baselines: `cargo test` 398 passed / 1 ignored, `node --test tests/js/` 12/12,
-  `cargo check --all-targets` zero warnings, `cargo clippy --all-targets` zero warnings.
+- Branch `main`, pushed, working tree clean.
+- Baselines: `cargo test` 409 passed / 1 ignored, `node --test tests/js/` 12/12,
+  `cargo check --all-targets` zero warnings, `cargo clippy --all-targets` 1 pre-existing
+  warning (`tray.rs:381` redundant match, untouched).
+- SecretString migration (Phases 1–5) DONE: crypto/storage `_secret` variants live,
+  all prod call sites (main unlock/save ×30+, bridge, CLI, decoy, app_pin) ride
+  `SecretString`/`Zeroizing`; legacy `&str` wrappers `#[deprecated]` (compat tests
+  only, under `#[allow(deprecated)]`). Models fields stay `String` (disk format
+  frozen — deliberate). Remaining `&str` edges: decoy-verify, app_pin-enroll,
+  Hello-compare (OS/DPAPI boundaries, documented).
 - Release v0.2.0 tagged + pushed (`cargo build --release` + UPX 6.7 MB exe,
   chrome+firefox zips, SHA256SUMS in `Desktop/pv-release-0.2.0/`).
 - `cargo audit`: HIGHs gone (quick-xml 0.41, webpki 0.103, rxing 0.9, rqrr 0.11).
