@@ -1103,7 +1103,7 @@ export component MainWindow inherits Window {
                     }
                     Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                     if root.has_vault_file : HorizontalLayout { alignment: center;
-                        AuraButton { label: "Forgot password? Shred vault & start over…"; width: 250px; height: 28px; clicked => { root.factory_reset_start(); } }
+                        AuraButton { label: "Forgot password? Shred & start over…"; width: 280px; height: 28px; clicked => { root.factory_reset_start(); } }
                     }
                     if root.has_vault_file : Text { text: "Reset shreds everything and cannot be undone."; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                 }
