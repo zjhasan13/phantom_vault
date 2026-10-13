@@ -1225,6 +1225,7 @@ fn publish_unlocked_vault(
     // TEMP DEBUG (2FA width hunt): real window pixels at unlock.
     let wsz = ui.window().size();
     security::access_log::log_event("dbg", &format!("win {}x{}", wsz.width, wsz.height));
+    push_hub_width(ui);
     trigger_sync_push(ui.as_weak());
     // Favicons resolve in the background (disk first, one gated batch for
     // misses) and pop into the list when ready — unlock never waits.
@@ -1338,6 +1339,7 @@ fn publish_unlocked_vault(
                     let v = lock_vault(&vault_for_row);
                     ui.set_auth_accounts(rebuild_auth_list(&v));
                     ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                    push_hub_width(&ui);
                 }
             });
             thread::sleep(Duration::from_secs(1));
@@ -2982,8 +2984,20 @@ fn qb_rank_score(q: &str, title: &str, username: &str, fav: bool) -> i32 {
     base + if fav { 15 } else { 0 }
 }
 
-fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
-    // The feed must not disturb the main list's total: save/restore it.
+/// Push the real hub content width (logical px) into Slint every TOTP tick:
+/// the layout formula cannot observe the window, but Rust can — this makes
+/// the 2FA grid self-healing across resizes. Sidebar + hub padding deducted,
+/// clamped sane for narrow windows.
+fn push_hub_width(ui: &MainWindow) {
+    let sz = ui.window().size();
+    let scale = ui.window().scale_factor();
+    let scale = if scale > 0.0 { scale } else { 1.0 };
+    let logical = sz.width as f32 / scale;
+    let side: f32 = if ui.get_sidebar_collapsed() { 64.0 } else { 220.0 };
+    ui.set_hub_px_w(((logical - side - 44.0).max(320.0)).min(4000.0));
+}
+
+fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {    // The feed must not disturb the main list's total: save/restore it.
     let prev = total_matches();
     let model = vault_to_items(
         vault,

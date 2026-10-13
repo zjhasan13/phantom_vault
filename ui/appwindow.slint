@@ -476,6 +476,8 @@ export component MainWindow inherits Window {
     in-out property <string> search_query;
     // Isolated 2FA Hub query — never touches the vault search above.
     in-out property <string> totp_search_query: "";
+    // Rust-fed hub content width (logical px) — self-healing every TOTP tick.
+    in-out property <float> hub_px_w: 1200;
     // Bitwarden-parity item management
     in-out property <int> new_kind: 1;
     in-out property <int> type_filter: 0;
@@ -1290,10 +1292,11 @@ export component MainWindow inherits Window {
                     // under-constrain and collapse narrow). Short rows
                     // left-align, no zigzag, no binding loop.
                     // TEMP DEBUG (remove before release): live widths.
-                    Text { text: "dbg scroll=" + hub_scroll.width / 1px; color: #5b6589; font-size: 11px; }
+                    // hub_px_w is Rust-fed from the real window (self-healing every TOTP tick).
+                    Text { text: "dbg scroll=" + hub_scroll.width / 1px + " forced=" + root.hub_px_w; color: #5b6589; font-size: 11px; }
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            horizontal-stretch: 1;
+                            width: (root.hub_px_w * 1px - 86px) / 4;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
