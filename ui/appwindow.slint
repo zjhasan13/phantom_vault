@@ -1264,8 +1264,8 @@ export component MainWindow inherits Window {
 
         // active_nav routing: 0=Vault 3-col, 1=2FA Hub grid, 2=Importer, 3=Settings center
         if root.active_nav == 1 : Rectangle {
-            background: #080c14; horizontal-stretch: 1; clip: true;
-            VerticalLayout { padding: 22px; spacing: 14px;
+            background: #080c14; horizontal-stretch: 1; vertical-stretch: 1; clip: true;
+            VerticalLayout { padding: 22px; spacing: 14px; horizontal-stretch: 1; vertical-stretch: 1;
                 HorizontalLayout { spacing: 8px;
                     AuraButton { label: "+ Add 2FA"; primary: true; width: 120px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
                     LineEdit { placeholder-text: "🔍 Search 2FA accounts..."; text <=> root.totp_search_query; height: 38px; horizontal-stretch: 1; edited(text) => { root.totp_search_changed(text); } }
