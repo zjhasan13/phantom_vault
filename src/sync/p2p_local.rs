@@ -398,6 +398,9 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
 /// Returns (status, body, optional adoption). Pairing PIN (when configured)
 /// gates BOTH endpoints: GET reads `?pin=`, POST reads the `pin` field.
 /// `peer_ip` feeds the brute-force brake (5 fails → 30s lockout, 429).
+/// Pending adoption from `route`: verified (sha, mtime, blob).
+type PendingAdopt = (String, u64, Vec<u8>);
+
 pub fn route(
     method: &str,
     path: &str,
@@ -406,7 +409,7 @@ pub fn route(
     local_sha: &str,
     local_mtime: u64,
     peer_ip: &str,
-) -> (u16, String, Option<(String, u64, Vec<u8>)>) {
+) -> (u16, String, Option<PendingAdopt>) {
     // Split query string (?pin=…) — minimal HTTP only.
     let (clean_path, query_pin) = match path.split_once('?') {
         Some((p, q)) => {
