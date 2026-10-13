@@ -36,7 +36,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use storage::save_vault;
+use storage::save_vault_secret;
 use zeroize::Zeroize;
 
 slint::include_modules!();
@@ -84,8 +84,8 @@ fn stop_bridge_heartbeat() {
 /// PR-1: seal the master passphrase for Hello unlocks (single choke point).
 /// Used by the auto path in `unlock_with_password` and the explicit
 /// New-Device [Re-enroll Hello] button. Returns true on success.
-fn seal_hello_token(master: &str) -> bool {
-    match core::memory::DpapiGuard::protect(master.as_bytes()) {
+fn seal_hello_token(master: &SecretString) -> bool {
+    match core::memory::DpapiGuard::protect(master.expose_secret().as_bytes()) {
         Ok(blob) => std::fs::write(HELLO_TOKEN_FILE, blob).is_ok(),
         Err(_) => false,
     }
@@ -1125,12 +1125,12 @@ fn publish_unlocked_vault(
     search_state: &Arc<Mutex<FilterState>>,
     ui_visible: &Arc<std::sync::atomic::AtomicBool>,
     vault: Vault,
-    master_store: Option<String>,
+    master_store: Option<SecretString>,
     purged_n: usize,
     and_downgrade: bool,
 ) {
     if let Some(pw) = master_store {
-        *lock_master_pw(master_pw_arc) = Some(SecretString::new(pw));
+        *lock_master_pw(master_pw_arc) = Some(pw);
     }
     // Bridge liveness starts here (P1 fix): the heartbeat proves a live,
     // unlocked app — the Hello token file alone no longer suffices.
@@ -1328,7 +1328,7 @@ fn publish_unlocked_vault(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn unlock_with_password(    pass: String,
+fn unlock_with_password(    pass: SecretString,
     main_weak: slint::Weak<MainWindow>,
     vault_arc: Arc<Mutex<Vault>>,
     master_pw_arc: Arc<Mutex<Option<SecretString>>>,
@@ -1338,7 +1338,7 @@ fn unlock_with_password(    pass: String,
     cache_hello_token: bool,
     and_mode: bool,
 ) {
-    if pass.is_empty() {
+    if pass.expose_secret().is_empty() {
         if let Some(ui) = main_weak.upgrade() {
             ui.set_status_text("⚠️ Password cannot be empty!".into());
         }
@@ -1370,14 +1370,14 @@ fn unlock_with_password(    pass: String,
         // Heavy work: Argon2id KDF + XChaCha20Poly1305 + file I/O
         // (+ ML-KEM-768 hybrid on save, transparent v1→v2 migration on unlock)
         let mut loaded_result: Result<Vault, String> = if Path::new(VAULT_FILE).exists() {
-            match storage::load_vault_versioned(&pass, VAULT_FILE) {
+            match storage::load_vault_versioned_secret(&pass, VAULT_FILE) {
                 Ok((vault, was_legacy)) => {
                     if was_legacy {
                         // C11: never re-seal blindly over the only good copy.
                         // Stage to .migrating, reload-round-trip, then rename.
                         let stage = format!("{VAULT_FILE}.migrating");
-                        match save_vault(&vault, &pass, &stage)
-                            .and_then(|_| storage::load_vault_versioned(&pass, &stage)
+                        match save_vault_secret(&vault, &pass, &stage)
+                            .and_then(|_| storage::load_vault_versioned_secret(&pass, &stage)
                                 .map(|_| ()))
                         {
                             Ok(()) => {
@@ -1435,7 +1435,7 @@ fn unlock_with_password(    pass: String,
                 favorite: false,
             });
 
-            match save_vault(&init_vault, &pass, VAULT_FILE) {
+            match save_vault_secret(&init_vault, &pass, VAULT_FILE) {
                 Ok(()) => Ok(init_vault),
                 Err(e) => Err(format!("Failed to create vault: {}", e)),
             }
@@ -1452,7 +1452,7 @@ fn unlock_with_password(    pass: String,
         // Argon2id cost lands solely on failed attempts — never on the happy path.
         let decoy_vault: Option<Vault> =
             if loaded_result.is_err() && security::decoy::decoy_exists() {
-                security::decoy::try_open_decoy(&pass)
+                security::decoy::try_open_decoy(pass.expose_secret())
             } else {
                 None
             };
@@ -1474,7 +1474,7 @@ fn unlock_with_password(    pass: String,
                 crate::models::TRASH_RETENTION_SECS,
             );
             if n > 0 {
-                let _ = save_vault(v, &pass, VAULT_FILE);
+                let _ = save_vault_secret(v, &pass, VAULT_FILE);
             }
             n
         } else {
@@ -1566,7 +1566,7 @@ fn unlock_with_password(    pass: String,
                         // vault + master WITHOUT publishing any UI state, then
                         // demand the authenticator code. Decoy vaults never
                         // carry the flag (provisioned fresh), so no cover leak.
-                        *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
+                        *lock_master_pw(&master_pw_arc) = Some(pass_for_store);
                         *lock_vault(&vault_arc) = vault;
                         ui.set_show_totp_step(true);
                         ui.set_totp_step_error("".into());
@@ -1595,10 +1595,10 @@ fn unlock_with_password(    pass: String,
                         // extension host serves ONLY the decoy container while
                         // this cover is active. The next real-password unlock
                         // re-seals the true master, restoring Hello.
-                        if let Ok(blob) = core::memory::DpapiGuard::protect(pass_for_store.as_bytes()) {
+                        if let Ok(blob) = core::memory::DpapiGuard::protect(pass_for_store.expose_secret().as_bytes()) {
                             let _ = std::fs::write(HELLO_TOKEN_FILE, blob);
                         }
-                        *lock_master_pw(&master_pw_arc) = Some(SecretString::new(pass_for_store));
+                        *lock_master_pw(&master_pw_arc) = Some(pass_for_store);
                         // Decoy cover is a full publish for bridging purposes:
                         // the host serves ONLY the decoy, so it needs liveness.
                         start_bridge_heartbeat(&master_pw_arc);
@@ -4148,7 +4148,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     favorite: false,
                     deleted_at: None,
                 });
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
@@ -4263,7 +4263,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Ok(mut t) = activity_unlock.lock() {
             *t = std::time::Instant::now();
         }
-        let pass = entered_password.as_str().trim().to_string();
+        let pass = SecretString::new(entered_password.as_str().trim().to_string());
         // Fresh unlock always starts with Travel Mode OFF.
         *travel_off.lock().unwrap() = false;
         if let Some(ui) = window_weak.upgrade() {
@@ -4488,7 +4488,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let snapshot = vault.clone();
                 vault.totp_unlock_enabled = true;
                 vault.totp_unlock_secret = secret.clone();
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
@@ -4545,7 +4545,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 vault.totp_unlock_enabled = false;
                 vault.totp_unlock_secret.zeroize();
                 vault.totp_unlock_secret = String::new();
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
@@ -4640,7 +4640,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     };
                     let pass = String::from_utf8_lossy(secret.expose()).into_owned();
                     drop(secret);
-                    if pass.is_empty() {
+    if pass.is_empty() {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak.upgrade() {
                                 ui.set_unlock_error_message(
@@ -4652,7 +4652,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         return;
                     }
                     unlock_with_password(
-                        pass, weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), false,
+                        SecretString::new(pass), weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), false,
                         false,
                     );
                 }
@@ -4690,13 +4690,13 @@ fn main() -> Result<(), slint::PlatformError> {
             ui.set_new_device_error("⛔ Decoy mode is read-only.".into());
             return;
         }
-        use secrecy::ExposeSecret;
         let master_opt = lock_master_pw(&reenroll_master).clone();
         let Some(master_pw) = master_opt else {
             ui.set_new_device_error("❌ Vault not unlocked!".into());
             return;
         };
-        let master_copy = master_pw.expose_secret().clone();
+        // SecretString clone: zeroizing buffer, no plaintext String anywhere.
+        let master_copy = master_pw.clone();
         drop(master_pw);
         ui.set_new_device_error("".into());
         ui.set_status_text("🖐 Confirm Windows Hello to enroll this PC…".into());
@@ -4798,11 +4798,8 @@ fn main() -> Result<(), slint::PlatformError> {
             // Argon2id + DPAPI happen here (never on the Slint thread).
             match security::app_pin::verify_and_recover(Path::new("."), &pin) {
                 Ok(master) => {
-                    use secrecy::ExposeSecret;
-                    let pass = master.expose_secret().to_string();
-                    drop(master);
                     unlock_with_password(
-                        pass, weak, vault_clone, master_clone, search_clone, qb_clone,
+                        master, weak, vault_clone, master_clone, search_clone, qb_clone,
                         Arc::clone(&uvis_clone), false, false,
                     );
                 }
@@ -5089,7 +5086,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
 
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -5226,7 +5223,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     if !remove_totp_account(&mut vault, &id) {
                         Err("Authenticator account not found (already deleted?)".to_string())
                     } else {
-                        match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                        match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                             Ok(()) => Ok((vault.clone(), true)),
                             Err(e) => {
                                 *vault = snapshot;
@@ -5244,7 +5241,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if !ok {
                     Err("Item not found (already deleted?)".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok((vault.clone(), already)),
                         Err(e) => {
                             *vault = snapshot;
@@ -5326,7 +5323,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if !vault.restore_item(kind, &id) {
                     Err("Item is not in Trash (already active?)".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -5449,7 +5446,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let weak = fra_weak.clone();
         std::thread::spawn(move || {
             // Trial decrypt proves the password WITHOUT unlocking anything.
-            if storage::load_vault_versioned(&pw, VAULT_FILE).is_err() {
+            if storage::load_vault_versioned_secret(&SecretString::new(pw), VAULT_FILE).is_err() {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_fr_error("❌ Wrong master password.".into());
@@ -5512,7 +5509,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let qb_clone = frc2_qb.clone();
         std::thread::spawn(move || {
             // Re-verify at execution time (seconds may have passed).
-            if storage::load_vault_versioned(&pw, VAULT_FILE).is_err() {
+            if storage::load_vault_versioned_secret(&SecretString::new(pw), VAULT_FILE).is_err() {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_fr_error("❌ Wrong master password.".into());
@@ -5639,7 +5636,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if n == 0 {
                     Err("Trash is already empty.".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok((vault.clone(), n)),
                         Err(e) => {
                             *vault = snapshot;
@@ -5834,7 +5831,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     None => return None,
                 };
-                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                if save_vault_secret(&vault, &master_pw, VAULT_FILE).is_err() {
                     if let Some(f) = fav_flag_mut(&mut vault, kind, &id) {
                         *f = !*f; // roll back the flip on disk failure
                     }
@@ -5919,10 +5916,10 @@ fn main() -> Result<(), slint::PlatformError> {
                 if !vault.set_verified(&id, !cur) {
                     return None;
                 }
-                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                if save_vault_secret(&vault, &master_pw, VAULT_FILE).is_err() {
                     // Roll back the flip on disk failure.
                     vault.set_verified(&id, cur);
-                    let _ = save_vault(&vault, master_pw.expose_secret(), VAULT_FILE);
+                    let _ = save_vault_secret(&vault, &master_pw, VAULT_FILE);
                     return None;
                 }
                 Some(!cur)
@@ -6028,7 +6025,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if n == 0 {
                     Err("No selected items found (already moved?).".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok((vault.clone(), n)),
                         Err(e) => {
                             *vault = snapshot;
@@ -6309,7 +6306,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let report: MergeReport =
                     merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
                 let imported = report.imported + report.replaced;
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(authenticator::universal_2fa::Import2faSummary {
                         accounts_imported: imported,
                         duplicates_skipped: report.skipped,
@@ -6546,7 +6543,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let report: MergeReport =
                     merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
                 let imported = report.imported + report.replaced;
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(imported),
                     Err(e) => {
                         // Roll back to the pre-import snapshot rather than
@@ -6722,7 +6719,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         let report: MergeReport =
                             merge_2fa_with_policy(&mut vault, accounts, DupPolicy::KeepBoth);
                         let imported = report.imported + report.replaced;
-                        match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                        match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                             Ok(()) => Ok(imported),
                             Err(e) => {
                                 *vault = snapshot;
@@ -7363,7 +7360,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 Ok(msg) if msg.contains("adopted") => {
                     let master_opt = lock_master_pw(&master_clone).clone();
                     master_opt.and_then(|master_pw| {
-                        crate::storage::load_vault_versioned(master_pw.expose_secret(), VAULT_FILE)
+                        crate::storage::load_vault_versioned_secret(&master_pw, VAULT_FILE)
                             .ok()
                             .map(|(v, _)| {
                                 *lock_vault(&vault_clone) = v.clone();
@@ -7706,7 +7703,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
                 let title = security::canary::plant_canary(&mut vault);
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => (title, Ok(())),
                     Err(e) => {
                         *vault = snapshot;
@@ -7773,7 +7770,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let saved = {
                 let mut vault = lock_vault(&vault_clone);
                 vault.passkeys.push(item);
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         vault.passkeys.pop();
@@ -7840,7 +7837,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 if !ok {
                     Err("passkey not found".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok((vault.clone(), already)),
                         Err(e) => {
                             *vault = snapshot;
@@ -7908,7 +7905,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 if !remove_totp_account(&mut vault, &target) {
                     Err("authenticator account not found".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -8112,7 +8109,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 if !vault.restore_item(7, &target) {
                     Err("passkey is not in Trash (already active?)".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -8175,7 +8172,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     }
                     None => return None,
                 };
-                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                if save_vault_secret(&vault, &master_pw, VAULT_FILE).is_err() {
                     if let Some(f) = fav_flag_mut(&mut vault, 7, &target) {
                         *f = !*f; // roll back the flip on disk failure
                     }
@@ -8358,7 +8355,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let mut vault = lock_vault(&dup_vault);
             let snapshot = vault.clone();
             let report: MergeReport = merge_2fa_with_policy(&mut vault, batch, policy);
-            match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+            match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                 Ok(()) => Ok(report.imported + report.replaced),
                 Err(e) => {
                     *vault = snapshot;
@@ -8425,7 +8422,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     }
                     None => return None,
                 };
-                if save_vault(&vault, master_pw.expose_secret(), VAULT_FILE).is_err() {
+                if save_vault_secret(&vault, &master_pw, VAULT_FILE).is_err() {
                     if let Some(f) = fav_flag_mut(&mut vault, 8, &target) {
                         *f = !*f; // roll back the flip on disk failure
                     }
@@ -8635,7 +8632,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 if let Err(e) = vault.add_folder(&name) {
                     Err(e)
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -8844,7 +8841,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 cred.custom_fields[idx].value =
                     if cur == "true" { "false" } else { "true" }.to_string();
                 let fields = cred.custom_fields.clone();
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(fields),
                     Err(e) => {
                         *vault = snapshot;
@@ -9393,7 +9390,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         if !ok {
                             Err("Item not found".to_string())
                         } else {
-                            match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                            match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                                 Ok(()) => Ok((vault.clone(), already)),
                                 Err(e) => {
                                     *vault = snapshot;
@@ -9607,7 +9604,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 return;
             }
             unlock_with_password(
-                pass, weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), true, false,
+                SecretString::new(pass), weak, vault_clone, master_clone, search_clone, qb_clone, Arc::clone(&uvis_clone), true, false,
             );
         });
     });
@@ -9738,7 +9735,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 importer::merge(&mut vault, staged.raws, &mut summary);
                 vault.ensure_folders();
                 summary.folders = vault.folders.len();
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(summary),
                     Err(e) => {
                         *vault = snapshot;
@@ -10078,7 +10075,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     size_bytes: bytes.len(),
                     data: bytes,
                 });
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
@@ -10239,7 +10236,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 if removed != Some(true) {
                     Err("Attachment not found".to_string())
                 } else {
-                    match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                    match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                         Ok(()) => Ok(vault.clone()),
                         Err(e) => {
                             *vault = snapshot;
@@ -10308,7 +10305,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let Some(now) = flipped else {
                     return;
                 };
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok((vault.clone(), now)),
                     Err(e) => {
                         *vault = snapshot;
@@ -10366,7 +10363,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     return;
                 }
                 acc.counter = acc.counter.saturating_add(1);
-                match save_vault(&vault, master_pw.expose_secret(), VAULT_FILE) {
+                match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
