@@ -1199,7 +1199,11 @@ export component MainWindow inherits Window {
     }
 
     // ================= APP SHELL — STRICT 3-COLUMN =================
+    // Explicit window-width binding (direct Window child — no layout loop):
+    // guarantees the shell always spans the window, whatever stretch does.
     if root.is_unlocked : HorizontalLayout {
+        width: parent.width;
+        height: parent.height;
         spacing: 0px;
 
         // 1. Column 1: Sidebar (220px, 64px collapsed)
