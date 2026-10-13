@@ -3245,6 +3245,10 @@ fn main() -> Result<(), slint::PlatformError> {
         let alive = Arc::clone(&tray_alive);
         let vis = Arc::clone(&ui_visible);
         main_window.window().on_close_requested(move || {
+            eprintln!("PV_CLOSE requested pref={} alive={}",
+                windows_native::tray::load_tray_pref(),
+                alive.load(std::sync::atomic::Ordering::SeqCst));
+            security::access_log::log_event("close", "requested");
             // Pref ON but pump dead (silent boot failure / later pump death)?
             // Rescue once via respawn instead of surprise-exiting the user.
             // Only the newest close wins: HideWindow returns immediately after.
@@ -10900,6 +10904,9 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.on_view_access_log(move || {
         if let Some(ui) = alog_weak.upgrade() {
             let (n, valid) = security::access_log::verify();
+            let fail_note = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2
+                .map(|i| format!(" (first-bad line {i})"))
+                .unwrap_or_default();
             let rows = security::access_log::recent(20);
             let body = if rows.is_empty() {
                 "No events recorded yet.".to_string()
@@ -10908,9 +10915,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             };
             ui.set_access_log_text(
                 format!(
-                    "{} entries · chain {}.\n\n{}",
+                    "{} entries · chain {}{}.\n\n{}",
                     n,
                     if valid { "VALID ✅" } else { "BROKEN 🚨" },
+                    fail_note,
                     body
                 )
                 .into(),

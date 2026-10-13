@@ -172,10 +172,16 @@ fn log_event_at(path: &Path, event: &str, detail: &str) {
     }
 }
 
-/// Verify the whole chain. Returns (entries, valid).
+/// Verify the whole chain. Returns (entries, valid, first-bad-line index or None).
 /// C8/M6: unreadable/corrupt ⇒ INVALID (was vacuously valid); tail
 /// truncation ⇒ invalid via the head anchor.
 pub fn verify_at(path: &Path) -> (usize, bool) {
+    let (n, v, _) = verify_at_detailed(path);
+    (n, v)
+}
+
+/// Verify with first-bad 1-based line index (None when valid).
+pub fn verify_at_detailed(path: &Path) -> (usize, bool, Option<usize>) {
     let text = match std::fs::read_to_string(path) {
         Ok(t) => t,
         Err(_) => {
@@ -185,9 +191,9 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             // so same-user malware needs DPAPI unprotect (not just file
             // write) to forge — higher bar, not a TPM-grade seal.
             if !head_path_for(path).exists() && std::fs::read(KEY_FILE).is_err() {
-                return (0, true);
+                return (0, true, None);
             }
-            return (0, false);
+            return (0, false, Some(0));
         }
     };
     let field = |line: &str, key: &str| {
@@ -206,10 +212,11 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
     };
     let mut prev = "GENESIS".to_string();
     let mut count = 0;
-    for line in text.lines() {
+    for (idx, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
+        let lineno = idx + 1;
         let (Some(t), Some(event), Some(detail), Some(p), Some(hash)) = (
             field(line, "t"),
             field(line, "event"),
@@ -217,14 +224,14 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             field(line, "prev"),
             field(line, "hash"),
         ) else {
-            return (count, false);
+            return (count, false, Some(lineno));
         };
         if p != prev {
-            return (count, false);
+            return (count, false, Some(lineno));
         }
         let t_num: i64 = t.parse().unwrap_or(-1);
         if t_num < 0 {
-            return (count, false);
+            return (count, false, Some(lineno));
         }
         let recomputed_hmac = chain_hash(&prev, t_num, &event, &detail);
         if recomputed_hmac == hash {
@@ -240,31 +247,31 @@ pub fn verify_at(path: &Path) -> (usize, bool) {
             count += 1;
             continue;
         }
-        return (count, false);
+        return (count, false, Some(lineno));
     }
     // Head anchor: truncation (deleted tail) breaks the anchor even though the
     // remaining chain is internally consistent.
     if count > 0 {
         if let Ok(head) = std::fs::read_to_string(head_path_for(path)) {
             if head.trim() != prev {
-                return (count, false);
+                return (count, false, None);
             }
         } else {
             // No anchor but entries exist → cannot prove tail wasn't truncated.
-            return (count, false);
+            return (count, false, None);
         }
     } else {
         // No entries. If a head anchor exists, the log was truncated to zero.
         if head_path_for(path).exists() {
-            return (0, false);
+            return (0, false, Some(0));
         }
         // No entries, no anchor, no key → fresh install; if key exists but log
         // gone, that's also truncation. H2 fix: fail-closed when artifacts exist.
         if std::fs::read(KEY_FILE).is_ok() {
-            return (0, false);
+            return (0, false, Some(0));
         }
     }
-    (count, true)
+    (count, true, None)
 }
 
 /// Verify the default log.
@@ -325,6 +332,9 @@ mod tests {
         std::fs::write(&p, text).unwrap();
         let (_, valid) = verify_at(&p);
         assert!(!valid);
+        let (_, valid2, bad) = verify_at_detailed(&p);
+        assert!(!valid2);
+        assert_eq!(bad, Some(1));
         let _ = std::fs::remove_file(&p);
     }
 
