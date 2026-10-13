@@ -11017,8 +11017,21 @@ fn launch_url(ui: &MainWindow, url: &str) {
     });
     // Batch-4: SSH agent status badge — real named-pipe probe, off-thread.
     let ssh_weak = main_window.as_weak();
-    main_window.on_refresh_ssh_status(move || {
-        let Some(ui) = ssh_weak.upgrade() else {
+    // Favicon manual refresh (no lock/unlock dance needed).
+    let favr_weak = main_window.as_weak();
+    let favr_vault = Arc::clone(&active_vault);
+    let favr_search = Arc::clone(&search_state);
+    main_window.on_refresh_favicons(move || {
+        if let Some(ui) = favr_weak.upgrade() {
+            ui.set_notification_text("🎨 Refreshing website icons…".into());
+        }
+        trigger_favicon_prefetch(
+            Arc::clone(&favr_vault),
+            Arc::clone(&favr_search),
+            favr_weak.clone(),
+        );
+    });
+    main_window.on_refresh_ssh_status(move || {        let Some(ui) = ssh_weak.upgrade() else {
             return;
         };
         ui.set_ssh_status("Probing…".into());

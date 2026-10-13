@@ -941,6 +941,7 @@ export component MainWindow inherits Window {
     callback preview_attachment(int, string, string);
     callback override_favicon(string);
     callback clear_custom_favicons();
+    callback refresh_favicons();
     callback toggle_travel(int, string);
     callback regenerate();
     callback use_password(string);
@@ -1155,8 +1156,13 @@ export component MainWindow inherits Window {
                         }
                         if root.onboarding_step == 3 : VerticalLayout { spacing: 10px;
                             Text { text: "🔐 Create your Master Password"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; }
-                            ob_new := LineEdit { placeholder-text: "New master password (12+ chars recommended)…"; input-type: password; height: 42px; text <=> root.ob_new_text; edited(text) => { root.ob_pw_changed(text); } }
-                            ob_confirm := LineEdit { placeholder-text: "Confirm master password…"; input-type: password; height: 42px; text <=> root.ob_confirm_text; }
+                            ob_new := LineEdit { placeholder-text: "New master password (8 min, 12+ recommended)…"; input-type: password; height: 42px; text <=> root.ob_new_text; edited(text) => { root.ob_pw_changed(text); } accepted(text) => { ob_confirm.focus(); } }
+                            ob_confirm := LineEdit { placeholder-text: "Confirm master password…"; input-type: password; height: 42px; text <=> root.ob_confirm_text; accepted(text) => {
+                                if root.ob_new_text == "" || root.ob_confirm_text == "" { root.ob_error = "⚠️ Type the password twice to confirm."; }
+                                else if root.ob_new_text != root.ob_confirm_text { root.ob_error = "⚠️ Passwords do not match."; }
+                                else if root.ob_new_text.character-count < 8 { root.ob_error = "⚠️ Minimum 8 characters (12+ recommended)."; }
+                                else { root.ob_error = ""; root.unlock_requested(root.ob_new_text); }
+                            } }
                             HorizontalLayout { spacing: 8px;
                                 Text { text: root.ob_strength_label; color: root.ob_strength_frac < 0.28 ? #fb7185 : (root.ob_strength_frac < 0.5 ? #fbbf24 : (root.ob_strength_frac < 0.8 ? #34d399 : #38e1ff)); font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; }
                             }
@@ -1172,7 +1178,7 @@ export component MainWindow inherits Window {
                             if root.onboarding_step == 3 : AuraButton { label: "🚀 Create Vault"; primary: true; width: 170px; height: 40px; clicked => {
                                 if root.ob_new_text == "" || root.ob_confirm_text == "" { root.ob_error = "⚠️ Type the password twice to confirm."; }
                                 else if root.ob_new_text != root.ob_confirm_text { root.ob_error = "⚠️ Passwords do not match."; }
-                                else if root.ob_new_text.character-count < 8 { root.ob_error = "⚠️ Minimum 8 characters."; }
+                                else if root.ob_new_text.character-count < 8 { root.ob_error = "⚠️ Minimum 8 characters (12+ recommended)."; }
                                 else { root.ob_error = ""; root.unlock_requested(root.ob_new_text); }
                             } }
                         }
@@ -1427,8 +1433,8 @@ export component MainWindow inherits Window {
                     Text { text: "Security"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 8px; Text { text: "Screen Blackout"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.blackout_enabled ? "ON" : "OFF"; primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Website Favicons (cached, DDG)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.favicons_enabled ? "ON" : "OFF"; primary: root.favicons_enabled; width: 90px; clicked => { root.set_favicons(!root.favicons_enabled); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Custom logos (per-domain override)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "🧹 Clear"; width: 90px; clicked => { root.clear_custom_favicons(); } } }
-                    Text { text: "Missing an icon? Open the login → tap 🖼️ to set a logo manually. Icons refresh on next unlock."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Custom logos (per-domain override)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "↻ Refresh"; width: 90px; clicked => { root.refresh_favicons(); } } AuraButton { label: "🧹 Clear"; width: 90px; clicked => { root.clear_custom_favicons(); } } }
+                    Text { text: "Missing an icon? Open the login → tap 🖼️ to set a logo manually, or hit Refresh."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Travel Mode"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.is_travel_mode ? "ON" : "OFF"; primary: root.is_travel_mode; width: 90px; clicked => { root.set_travel_mode(!root.is_travel_mode); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Windows Hello"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.hello_status; color: #8e99c0; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; wrap: word-wrap; } }
                     HorizontalLayout { spacing: 8px; Text { text: "App PIN quick unlock (this PC only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pin_available ? "SET" : "OFF"; color: root.pin_available ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
@@ -1667,7 +1673,7 @@ export component MainWindow inherits Window {
                 // holds focus — typing in fields takes precedence).
                 col2_keys := FocusScope {
                     key-pressed(event) => {
-                            if event.text == "/" { search_input.focus(); return accept; }
+                            if event.text == "/" && !search_input.has-focus { search_input.focus(); return accept; }
                             if event.text == Key.UpArrow { root.cycle_select(-1); return accept; }
                             if event.text == Key.DownArrow { root.cycle_select(1); return accept; }
                             if event.text == Key.Escape { root.close_detail(); return accept; }
