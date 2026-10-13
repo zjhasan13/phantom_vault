@@ -651,6 +651,7 @@ export component MainWindow inherits Window {
     in-out property <string> shard_4;
     in-out property <string> shard_5;
     in-out property <bool> show_recover: false;
+    in-out property <bool> show_recover_shards: false;
     in-out property <string> recover_1;
     in-out property <string> recover_2;
     in-out property <string> recover_3;
@@ -794,6 +795,8 @@ export component MainWindow inherits Window {
     // P0: hub delete needs a second tap (mis-tap = 2FA gone). First tap arms
     // per-card "Sure?", second tap really deletes; any other tap disarms.
     in-out property <string> confirm_delete_auth_id: "";
+    // P0 passkey: same two-tap Sure? (sticky until another tap — matches hub).
+    in-out property <string> confirm_delete_pk_id: "";
     callback toggle_totp_favorite(string);
 
     // ---- Phase 28: 2FA hub clarity, boundary guard, manual clock offset ----
@@ -1056,13 +1059,18 @@ export component MainWindow inherits Window {
                     if root.unlock_tab == 2 && root.show_recover : VerticalLayout {
                         spacing: 8px;
                         FieldLabel { text: "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
-                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; text <=> root.recover_1; height: 38px; }
-                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; text <=> root.recover_2; height: 38px; }
-                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; text <=> root.recover_3; height: 38px; }
+                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; }
+                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; }
+                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; }
+                        HorizontalLayout { spacing: 8px; alignment: center;
+                            AuraButton { label: root.show_recover_shards ? "🙈 Hide" : "👁 Show"; width: 110px; height: 34px; clicked => { root.show_recover_shards = !root.show_recover_shards; } }
+                        }
+                        if root.recover_1 == "" || root.recover_2 == "" || root.recover_3 == "" : Text { text: "Paste all 3 shards — any 3 of your 5."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         AuraButton {
                             label: "🔓  Rebuild & Unlock";
                             primary: true;
                             height: 42px;
+                            enabled: root.recover_1 != "" && root.recover_2 != "" && root.recover_3 != "";
                             clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); }
                         }
                     }
@@ -1296,7 +1304,7 @@ export component MainWindow inherits Window {
                         for pk in root.passkeys : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; height: 64px;
                             HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                 VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: pk.fav ? "⭐" : "☆"; width: 44px; height: 32px; clicked => { root.toggle_passkey_fav(pk.id); } } AuraButton { label: "📋 Pub"; width: 80px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: "🗑"; width: 44px; height: 32px; danger: true; clicked => { root.delete_passkey(pk.id); } } }
+                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: pk.fav ? "⭐" : "☆"; width: 44px; height: 32px; clicked => { root.toggle_passkey_fav(pk.id); } } AuraButton { label: "📋 Pub"; width: 80px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure?" : "🗑"; width: root.confirm_delete_pk_id == pk.id ? 72px : 44px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
                             }
                         }
                         if root.passkeys.length == 0 : Text { text: "No passkeys yet — register one above."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
@@ -1305,7 +1313,7 @@ export component MainWindow inherits Window {
                             for pk in root.passkeys_trash : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #fb718555; height: 64px;
                                 HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                     VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #8e99c0; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: "🔥"; width: 44px; height: 32px; danger: true; clicked => { root.delete_passkey(pk.id); } } }
+                                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure?" : "🔥"; width: root.confirm_delete_pk_id == pk.id ? 72px : 44px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
                                 }
                             }
                         }
