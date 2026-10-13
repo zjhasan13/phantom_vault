@@ -68,7 +68,9 @@
     .t2fa { display: inline-block; font-size: 10px; font-weight: 800; color: var(--cyan-dim);
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
       padding: 1px 6px; margin-top: 3px; }
-    #langToggle { float: right; flex: 0 0 auto; width: 44px; font-size: 11px; }
+    #langToggle { flex: 0 0 auto; min-width: 64px; min-height: 32px; font-size: 11px; }
+    .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+    .topbar h1 { margin: 0; flex: 1; }
     .row.focused { outline: 2px solid var(--cyan); }
     .totp { display: flex; align-items: center; gap: 8px; margin-top: 6px;
       color: var(--cyan-dim); font-size: 10px; font-weight: 800; }
@@ -120,22 +122,22 @@
       <div class="lockart">🔐</div>
       <div class="t" id="extLockTitle">🔒 Vault is Locked</div>
       <div class="u" id="extLockSub" style="margin:4px 0 10px">Unlock PhantomVault desktop app.</div>
-      <input id="extPinInput" class="pvinput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" style="display:none" />
+      <input id="extPinInput" class="pvinput" type="password" inputmode="numeric" autocomplete="off" placeholder="PIN" aria-label="Extension PIN" style="display:none" />
       <button id="extUnlockBtn" class="wide" style="width:100%;display:none">🔓 Unlock</button>
       <button id="extRetryBtn" class="wide" style="width:100%">🔄 Retry</button>
       <div class="hint" id="extLockMsg"></div>
     </div>
   </div>
-  <h1>🛡️ PhantomVault <button id="langToggle" title="BN/EN">EN</button></h1>
+  <div class="topbar"><h1>🛡️ PhantomVault</h1><button id="langToggle" title="BN/EN — ভাষা বদলান" aria-label="Switch language / ভাষা বদলান">EN ⇄ BN</button></div>
   <div class="tabs">
     <button id="tabVault" class="active">🔑 Vault</button>
     <button id="tabStats">📊 Stats</button>
     <button id="tabSettings">⚙️ Autofill Settings</button>
   </div>
   <div id="vaultPane">
-    <input id="vaultSearch" placeholder="🔍 Search" />
+    <input id="vaultSearch" placeholder="🔍 Search" aria-label="Search vault" />
     <div class="filterrow">
-      <select id="folderFilter"><option value="">📁 Folder</option></select>
+      <select id="folderFilter" aria-label="Filter by folder"><option value="">📁 All folders</option></select>
       <select id="typeFilter">
         <option value="all">📋 Type: All</option>
         <option value="1">🔑 Logins</option>
@@ -171,7 +173,7 @@
       </div>
     </div>
     <div id="lockHint" class="hint" style="text-align:center"></div>
-    <div id="status">Loading…</div>
+    <div id="status" aria-live="polite">Loading…</div>
   </div>
   <div id="statsPane" class="hidden">
     <div class="row" id="statsBox">Loading…</div>

@@ -41,6 +41,12 @@
       submit_btn: "⚡↩", lock_in: (m) => `🔒 Auto-locks in ${m}m`, lock_soon: "🔒 Locking soon…",
       pass_btn: "📋 Pass", user_btn: "👤 User", eye_show: "👁️", eye_hide: "🙈",
       mark_working: "✅ Working", unmark_working: "Mark working",
+      mark_tip_on: "Remove working mark (this one does not work)",
+      mark_tip_off: "Mark this credential as working",
+      mark_failed: "🛡️ Working mark rejected — vault locked or decoy.",
+      phishing: "⚠️ Phishing Hazard: Domain mismatch, autofill refused!",
+      otp_pick: (n) => `${n} 2FA accounts — pick the working one.`,
+      otp_expiring: (w) => `⏳ Code expiring —${w} press again.`,
       sync_locked: "🔒 Vault is Locked",
       sync_locked_sub: "Unlock PhantomVault desktop app.",
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
@@ -87,6 +93,12 @@
       submit_btn: "⚡↩", lock_in: (m) => `🔒 ${m} মি-এ অটো-লক`, lock_soon: "🔒 শীঘ্রই লক হচ্ছে…",
       pass_btn: "📋 পাস", user_btn: "👤 ইউজার", eye_show: "👁️", eye_hide: "🙈",
       mark_working: "✅ Working", unmark_working: "Working মার্ক",
+      mark_tip_on: "Working mark সরান (এইটা কাজ করে না)",
+      mark_tip_off: "এই credential-টা কাজ করেছে — চিহ্নিত করো",
+      mark_failed: "🛡️ Working mark বাতিল — vault locked বা decoy।",
+      phishing: "⚠️ Phishing Hazard: Domain mismatch, autofill refused!",
+      otp_pick: (n) => `${n} টি 2FA account — যেটা কাজ করে সেটি বেছে নিন।`,
+      otp_expiring: (w) => `⏳ code মেয়াদ শেষ হয়ে যাচ্ছে —${w} আবার চাপুন।`,
       sync_locked: "🔒 ভল্ট লকড",
       sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
@@ -155,7 +167,7 @@
   // ---------- language ----------
   const langBtn = document.getElementById("langToggle");
   function applyLang() {
-    langBtn.textContent = lang === "en" ? "EN" : "BN";
+    langBtn.textContent = lang === "en" ? "EN ⇄ BN" : "BN ⇄ EN";
     document.getElementById("tabVault").textContent = t("vault");
     document.getElementById("tabStats").textContent = t("stats");
     document.getElementById("tabSettings").textContent = t("settings");
@@ -245,7 +257,7 @@
       s = await chrome.runtime.sendMessage({ type: "PV_STATS" });
     } catch (_) { s = null; }
     if (!s || !s.ok) {
-      box.textContent = "🔒 Vault is locked. Please unlock PhantomVault desktop app.";
+      box.textContent = `${t("sync_locked")}. ${t("sync_locked_sub")}`;
       return;
     }
     const total = s.logins + s.cards + s.notes + s.identities + s.ssh_keys + s.licenses + s.passkeys;
@@ -465,7 +477,7 @@
       if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return false;
     }
     if (!entryAllowed(entry)) {
-      status.textContent = "⚠️ Phishing Hazard: Domain mismatch, autofill refused!";
+      status.textContent = t("phishing");
       return false;
     }
     return true;
@@ -493,9 +505,8 @@
     btn.className = "markBtn";
     const paintBtn = () => {
       btn.textContent = entry.verified ? t("mark_working") : t("unmark_working");
-      btn.title = entry.verified
-        ? "Working mark সরান (এইটা কাজ করে না)"
-        : "এই credential-টা কাজ করেছে — চিহ্নিত করুন";
+      btn.title = entry.verified ? t("mark_tip_on") : t("mark_tip_off");
+      btn.setAttribute("aria-label", btn.title);
       btn.classList.toggle("on", !!entry.verified);
     };
     paintBtn();
@@ -505,7 +516,7 @@
       const now = await pvVerify(entry.id, !entry.verified);
       btn.disabled = false;
       if (now === null) {
-        status.textContent = "🛡️ Working mark বাতিল — vault locked বা decoy।";
+        status.textContent = t("mark_failed");
         return;
       }
       entry.verified = now;
@@ -1075,8 +1086,10 @@
     try {
       await navigator.clipboard.writeText(genOut.textContent || "");
       btn.textContent = "✅";
-      setTimeout(() => { btn.textContent = "📋"; }, 1500);
-    } catch (_) { btn.textContent = "⚠️"; }
+      btn.title = t("copied");
+      btn.setAttribute("aria-label", t("copied"));
+      setTimeout(() => { btn.textContent = "📋"; btn.title = t("copy"); btn.setAttribute("aria-label", t("copy")); }, 1500);
+    } catch (_) { btn.textContent = "⚠️"; btn.title = t("blocked_cb"); }
   });
   // OTP-page banner: when the active tab sits on a 2FA ceremony, offer a
   // prominent one-click Fill-2FA (content resolves pending→first-with-totp).
@@ -1111,12 +1124,12 @@
       const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
       if (ambiguous) {
         renderOtpCandidates(list, tab.id);
-        status.textContent = `${list.length} টি 2FA account — যেটা কাজ করে সেটি বেছে নিন।`;
+        status.textContent = t("otp_pick", list.length);
         return;
       }
       if (list.length === 1 && list[0] && !list[0].code) {
-        const w = list[0].next_in != null ? ` ${list[0].next_in}s পরে` : "";
-        status.textContent = `⏳ code মেয়াদ শেষ হয়ে যাচ্ছে —${w} আবার চাপুন।`;
+        const w = list[0].next_in != null ? ` ${list[0].next_in}s` : "";
+        status.textContent = t("otp_expiring", w);
         return;
       }
       if (!list.length) {

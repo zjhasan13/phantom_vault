@@ -386,7 +386,7 @@
     root.appendChild(style);
     const wrap = document.createElement("div");
     wrap.className = "wrap";
-    wrap.innerHTML = '<div class="hd">যে 2FA account?</div>';
+    wrap.innerHTML = '<div class="hd">Which 2FA account? / যে 2FA account?</div>';
     const tagEl = (cls, text) => {
       const s = document.createElement("span");
       s.className = "tag " + cls;
