@@ -11,7 +11,7 @@
 use crate::core::memory::DpapiGuard;
 use crate::error::{Result, VaultError};
 use base64::Engine as _;
-use zeroize::Zeroize;
+use zeroize::{Zeroize, Zeroizing};
 
 const REPO_FILE: &str = "sync_repo.txt";
 const TOKEN_FILE: &str = "github_token.dpapi";
@@ -102,11 +102,14 @@ pub fn store_token(token: &str) -> Result<()> {
     Ok(())
 }
 
-fn load_token() -> Result<String> {
+/// Unseal the token into a zeroizing holder (never a plain `String` on
+/// the heap past this point — callers pass `&token` via deref coercion and
+/// the buffer wipes on drop).
+fn load_token() -> Result<Zeroizing<String>> {
     let blob =
         std::fs::read(TOKEN_FILE).map_err(|_| VaultError::Sync("sync not configured".into()))?;
     let secret = DpapiGuard::unprotect(&blob)?;
-    let token = String::from_utf8_lossy(secret.expose()).into_owned();
+    let token = Zeroizing::new(String::from_utf8_lossy(secret.expose()).into_owned());
     if token.trim().is_empty() {
         return Err(VaultError::Sync("stored token is empty".into()));
     }
@@ -238,7 +241,10 @@ pub async fn push_remote(
 }
 
 /// Convenience: load stored repo + token for worker threads.
-pub fn load_credentials() -> Result<(SyncConfig, String)> {
+/// The token rides zeroized; pass `&token` (deref coercion) — never clone
+/// it into a plain `String`. NOTE: octocrab clones it once inside `client()`
+/// (third-party boundary, unavoidable); our side stays wiped on drop.
+pub fn load_credentials() -> Result<(SyncConfig, Zeroizing<String>)> {
     let cfg = load_repo()?;
     let token = load_token()?;
     Ok((cfg, token))
@@ -270,6 +276,15 @@ mod tests {
                 .find(|(key, _)| *key == k)
                 .map(|(_, v)| v.to_string())
         }
+    }
+
+    #[test]
+    fn zeroizing_token_feeds_str_boundary_without_plain_string() {
+        // `&Zeroizing<String>` coerces to `&str` (what `client()` takes) —
+        // no `.to_string()` clone needed at the call site.
+        let token = Zeroizing::new("ghp_test".to_string());
+        let as_str: &str = &token;
+        assert_eq!(as_str, "ghp_test");
     }
 
     #[test]
