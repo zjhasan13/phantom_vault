@@ -430,6 +430,11 @@ component GeneratorPanel inherits Rectangle {
 
 export component MainWindow inherits Window {
     title: "PhantomVault — Zero-Knowledge Native Vault";
+    // Explicit default size: without it the window opens at content-minimum
+    // width, which strands views narrow on wide screens. Layouts still
+    // stretch, so maximize/resize stays fully responsive.
+    preferred-width: 1280px;
+    preferred-height: 800px;
     min-width: 960px;
     min-height: 620px;
     background: #080c14;
