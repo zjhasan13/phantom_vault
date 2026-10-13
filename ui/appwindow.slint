@@ -1281,7 +1281,7 @@ export component MainWindow inherits Window {
                     // left-align, no spacers, no zigzag, no binding loop.
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            width: (hub_scroll.width - 72px) / 3;
+                            width: Math.max((hub_scroll.width - 72px) / 3, 230px);
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
