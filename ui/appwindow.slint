@@ -627,6 +627,9 @@ export component MainWindow inherits Window {
     callback stop_ssh_agent();
     in-out property <bool> and_mode: false;
     callback set_and_mode(bool);
+    // Moat #4: hands-free 2FA chaining after autotype (default ON).
+    in-out property <bool> chain_2fa: true;
+    callback set_chain_2fa(bool);
     in-out property <string> unlock_error_message: "";
     // Phase 27: optional vault-unlock TOTP gate (DEFAULT OFF)
     in-out property <bool> show_totp_step: false;
@@ -692,6 +695,7 @@ export component MainWindow inherits Window {
     in-out property <[HealthRow]> health_rows;
     in-out property <bool> offline_audit: false;
     callback audit_vault();
+    callback open_health_url(string);
     callback filter_health(string);
     // Cat 8: kill-switch + tamper-evident access log
     in-out property <bool> offline_mode: false;
@@ -1432,6 +1436,7 @@ export component MainWindow inherits Window {
                     }
                     if root.ext_pin_status != "" : Text { text: root.ext_pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Two-factor unlock (password + Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.and_mode ? "ON" : "OFF"; primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "Hands-free 2FA after auto-type"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.chain_2fa ? "ON" : "OFF"; primary: root.chain_2fa; width: 90px; clicked => { root.set_chain_2fa(!root.chain_2fa); } } }
                     // Phase 27: vault-unlock TOTP gate (DEFAULT OFF).
                     HorizontalLayout { spacing: 8px; Text { text: "Unlock 2FA (authenticator code)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.totp2fa_on ? "ARMED" : "OFF"; color: root.totp2fa_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     if !root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Enable Unlock 2FA"; width: 200px; clicked => { root.setup_totp_unlock(); } } }
@@ -2282,6 +2287,7 @@ export component MainWindow inherits Window {
                                     Text { text: row.flags; color: #8e99c0; font-size: 11px; vertical-alignment: center; overflow: elide; }
                                 }
                                 Text { text: "›"; color: #5b6589; font-size: 16px; vertical-alignment: center; }
+                                AuraButton { label: "↗ Open"; width: 76px; height: 28px; clicked => { root.open_health_url(row.id); } }
                             }
                             if row.sev >= 0 : TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(row.id); root.show_health = false; } }
                         }
@@ -2435,6 +2441,7 @@ export component QuickBarWindow inherits Window {
     callback item_selected(int, string, string);
     callback copy_totp_selected(int, string);
     callback type_selected(int, string, string, string, string);
+    callback qb_open_url(string);
     callback dismiss();
 
     Rectangle {
@@ -2540,6 +2547,7 @@ export component QuickBarWindow inherits Window {
                                     if row_touch.has-hover || idx == root.qb_index : HorizontalLayout { spacing: 6px; alignment: center;
                                     if item.kind == 1 : AuraButton { label: "⌨️ Type"; width: 88px; y: 2px; clicked => { root.type_selected(item.kind, item.id, item.username, item.password, item.totp); } }
                                     if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; y: 2px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
+                                    if item.url != "" : AuraButton { label: "🌐"; width: 44px; y: 2px; clicked => { root.qb_open_url(item.url); } }
                                     }
                                     AuraButton { label: "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                                 }
@@ -2551,7 +2559,7 @@ export component QuickBarWindow inherits Window {
 
                 HorizontalLayout {
                     alignment: space-between;
-                    Text { text: "↑↓: pick  •  Enter: copy highlighted  •  Esc: dismiss"; color: #8e99c0; font-size: 11px; vertical-alignment: center; }
+                    Text { text: "↑↓: pick  •  Enter: copy highlighted  •  🌐: open site  •  Esc: dismiss"; color: #8e99c0; font-size: 11px; vertical-alignment: center; }
                     AuraButton { label: "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
                 }
             }

@@ -255,6 +255,14 @@ fn login_type_request(
     }
 }
 
+/// Moat #4: hands-free 2FA chain switch (`chain_2fa.pref`).
+/// Missing file = ON (existing behavior preserved).
+fn chain_2fa_enabled() -> bool {
+    std::fs::read_to_string("chain_2fa.pref")
+        .map(|s| s.trim() != "0")
+        .unwrap_or(true)
+}
+
 fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
@@ -345,7 +353,7 @@ fn trigger_autotype(
             && req.last_changed != 0
             && crate::models::current_timestamp().saturating_sub(req.last_changed)
                 > STALE_TYPE_SECS;
-        let chained = ok && !req.totp_secret.trim().is_empty();
+        let chained = ok && !req.totp_secret.trim().is_empty() && chain_2fa_enabled();
         // Arm the 2FA watcher BEFORE restoring UI (overlaps the app's
         // password-submit round-trip instead of serializing after it).
         let chain_handle = chained.then(|| {
@@ -2933,6 +2941,34 @@ fn set_paged_credentials(ui: &MainWindow, model: ModelRc<CredentialView>) {
 /// D6: Omni-Search QuickBar feed — ALL kinds (logins, cards, notes, licenses,
 /// identities, ssh). Rows display title + subtitle only (numbers/keys stay
 /// masked until Copy/Type), so screen-sharers see no secrets.
+///
+/// Moat #1: fuzzy rank — title-prefix beats word-prefix beats substring,
+/// favorites float (stable sort keeps vault order inside equal scores).
+/// QuickBar-only: the main list order is untouched.
+fn qb_rank_score(q: &str, title: &str, username: &str, fav: bool) -> i32 {
+    if q.is_empty() {
+        return if fav { 15 } else { 0 };
+    }
+    let t = title.to_lowercase();
+    let u = username.to_lowercase();
+    let base = if t == q {
+        100
+    } else if t.starts_with(q) {
+        60
+    } else if t.split_whitespace().any(|w| w.starts_with(q)) {
+        40
+    } else if t.contains(q) {
+        20
+    } else if u.starts_with(q) {
+        10
+    } else if u.contains(q) {
+        5
+    } else {
+        0
+    };
+    base + if fav { 15 } else { 0 }
+}
+
 fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
     // The feed must not disturb the main list's total: save/restore it.
     let prev = total_matches();
@@ -2944,9 +2980,14 @@ fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<Cred
     // Standalone 2FA stays out of the QuickBar: its copy/type flows dispatch
     // on secrets stored in the row, and kind-8 rows deliberately carry none
     // (fresh codes resolve by id in the main window only).
-    ModelRc::new(VecModel::from(
-        model.iter().filter(|r| r.kind != 8).collect::<Vec<_>>(),
-    ))
+    let q = query.trim().to_lowercase();
+    let mut rows: Vec<CredentialView> = model.iter().filter(|r| r.kind != 8).collect();
+    // Stable: equal scores keep vault order (no reshuffle surprises).
+    rows.sort_by(|a, b| {
+        qb_rank_score(&q, &b.title, &b.username, b.fav)
+            .cmp(&qb_rank_score(&q, &a.title, &a.username, a.fav))
+    });
+    ModelRc::new(VecModel::from(rows))
 }
 
 #[cfg(windows)]
@@ -3107,6 +3148,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Prefs painted before first frame (tray + backup).
     main_window.set_tray_minimize(windows_native::tray::load_tray_pref());
+    main_window.set_chain_2fa(chain_2fa_enabled());
     {
         let bcfg = storage::backup_scheduler::load_config();
         main_window.set_backup_enabled(bcfg.enabled);
@@ -3814,6 +3856,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 &format!("⏱️ TOTP copied! (Masked from Win+V, auto-clearing in {secs}s)"),
                 secs,
             );
+        }
+    });
+
+    // QuickBar open-URL (Moat #1 action-mode): same guarded launcher as the
+    // main list — QuickBar stays open so the user keeps context.
+    let main_weak_for_url = main_window.as_weak();
+    quick_bar.on_qb_open_url(move |url| {
+        if let Some(main_ui) = main_weak_for_url.upgrade() {
+            launch_url(&main_ui, url.as_str());
         }
     });
 
@@ -7083,31 +7134,57 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     // commands) + quoted arg, so a hostile stored URL cannot escape into
     // command execution. Best-effort: failure is a toast, never a panic.
     let window_weak_url = main_window.as_weak();
+/// Shared URL launcher (main list + QuickBar): http(s) only, length +
+/// control-char guards, access-logged. Pure UI helper — unit-tested shape.
+fn launch_url(ui: &MainWindow, url: &str) {
+    let target = url.trim().to_string();
+    let lower = target.to_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        ui.set_notification_text("⚠️ Only http(s) links can be launched.".into());
+        return;
+    }
+    if target.len() > 2048 || target.chars().any(|c| c.is_control()) {
+        ui.set_notification_text("⚠️ Link looks malformed — not launched.".into());
+        return;
+    }
+    match std::process::Command::new("cmd")
+        .args(["/C", "start", "", &target])
+        .spawn()
+    {
+        Ok(_) => {
+            ui.set_notification_text("↗ Opened in browser.".into());
+            security::access_log::log_event("open-url", "website");
+        }
+        Err(e) => {
+            ui.set_notification_text(format!("⚠️ Could not open link: {e}").into());
+        }
+    }
+}
+
     main_window.on_open_url(move |url| {
         let Some(ui) = window_weak_url.upgrade() else {
             return;
         };
-        let target = url.as_str().trim().to_string();
-        let lower = target.to_lowercase();
-        if !(lower.starts_with("http://") || lower.starts_with("https://")) {
-            ui.set_notification_text("⚠️ Only http(s) links can be launched.".into());
+        launch_url(&ui, url.as_str());
+    });
+    // Moat #3 breach-rotate loop, step 1: per-row Open-site (vault-side
+    // rotation already exists via bulk rotate; the site-side change starts
+    // here — change it there, then rotate here).
+    let health_url_weak = main_window.as_weak();
+    let health_url_vault = Arc::clone(&active_vault);
+    main_window.on_open_health_url(move |id| {
+        let Some(ui) = health_url_weak.upgrade() else {
             return;
-        }
-        if target.len() > 2048 || target.chars().any(|c| c.is_control()) {
-            ui.set_notification_text("⚠️ Link looks malformed — not launched.".into());
-            return;
-        }
-        match std::process::Command::new("cmd")
-            .args(["/C", "start", "", &target])
-            .spawn()
-        {
-            Ok(_) => {
-                ui.set_notification_text("↗ Opened in browser.".into());
-                security::access_log::log_event("open-url", "website");
-            }
-            Err(e) => {
-                ui.set_notification_text(format!("⚠️ Could not open link: {e}").into());
-            }
+        };
+        let v = lock_vault(&health_url_vault);
+        let url = v
+            .credentials
+            .iter()
+            .find(|c| c.id == id.as_str())
+            .map(|c| primary_url(&c.urls));
+        match url {
+            Some(u) if !u.is_empty() => launch_url(&ui, &u),
+            _ => ui.set_notification_text("⚠️ No saved website for this item.".into()),
         }
     });
 
@@ -10690,6 +10767,19 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             });
         }
     });
+    // Moat #4: hands-free 2FA chain opt-out (`chain_2fa.pref`, missing = ON).
+    let chain_weak = main_window.as_weak();
+    main_window.on_set_chain_2fa(move |on| {
+        let _ = std::fs::write("chain_2fa.pref", if on { "1" } else { "0" });
+        if let Some(ui) = chain_weak.upgrade() {
+            ui.set_chain_2fa(on);
+            ui.set_notification_text(if on {
+                "⚡ Hands-free 2FA ON.".into()
+            } else {
+                "⌨️ Hands-free 2FA OFF — codes stay manual.".into()
+            });
+        }
+    });
     // App PIN setup/removal (Settings, unlocked only — seals the LIVE master;
     // decoy mode is read-only like every other mutation path).
     let pinset_weak = main_window.as_weak();
@@ -11770,6 +11860,15 @@ fn replace_item(
 #[cfg(test)]
 mod grid_tests {
     use super::*;
+
+    #[test]
+    fn qb_rank_prefers_prefix_then_fav() {
+        assert!(qb_rank_score("git", "GitHub", "u", false) > qb_rank_score("git", "My Github", "u", false));
+        assert!(qb_rank_score("git", "My Github", "u", false) > qb_rank_score("git", "Other", "u", false));
+        assert!(qb_rank_score("git", "Other", "u", true) > qb_rank_score("git", "Other", "u", false));
+        assert_eq!(qb_rank_score("", "A", "u", true), 15);
+        assert_eq!(qb_rank_score("", "A", "u", false), 0);
+    }
 
     // Merge repair (parallel flake): `vault_to_items` writes the process-global
     // `total_matches_registry`, so tests that build list models must never run
