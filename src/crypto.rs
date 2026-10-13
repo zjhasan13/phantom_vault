@@ -4,6 +4,7 @@ use chacha20poly1305::{
     Key, XChaCha20Poly1305, XNonce,
 };
 use rand_core::RngCore;
+use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroize;
 
 use crate::core::pq_hybrid::{PqHybridEngine, CT_LEN};
@@ -42,8 +43,10 @@ pub fn detect_version(payload: &[u8]) -> VaultVersion {
     }
 }
 
-/// মাস্টার পাসওয়ার্ড এবং Salt থেকে Argon2id ব্যবহার করে ৩২ বাইটের কি (Key) ডেরাইভ করা
-pub fn derive_key(master_password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+/// মাস্টার পাসওয়ার্ড এবং Salt থেকে Argon2id ব্যবহার করে ৩২ বাইটের কি (Key) ডেরাইভ করা.
+/// Secret-owning variant: the password never materializes as `&str`.
+/// `expose_secret()` lives ONLY inside this call scope.
+pub fn derive_key_secret(master_password: &SecretString, salt: &[u8]) -> Result<[u8; 32], String> {
     let mut derived_key = [0u8; 32];
 
     // মেমোরি-হার্ড প্যারামিটার (OWASP স্ট্যান্ডার্ড: 64MB RAM, 3 Iterations, 4 Parallel threads)
@@ -53,21 +56,31 @@ pub fn derive_key(master_password: &str, salt: &[u8]) -> Result<[u8; 32], String
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
 
     argon2
-        .hash_password_into(master_password.as_bytes(), salt, &mut derived_key)
+        .hash_password_into(master_password.expose_secret().as_bytes(), salt, &mut derived_key)
         .map_err(|e| format!("Key derivation error: {}", e))?;
 
     Ok(derived_key)
 }
 
+/// Legacy `&str` entrypoint — prefer [`derive_key_secret`]. Kept so the
+/// ~35 call sites migrate one by one instead of a flag day.
+/// NOTE: deliberately NOT `#[deprecated]` yet — that would flood ~35
+/// warnings in Phase 1 and break the zero-warning bar. Deprecation lands in
+/// the final migration phase once call sites are converted.
+pub fn derive_key(master_password: &str, salt: &[u8]) -> Result<[u8; 32], String> {
+    derive_key_secret(&SecretString::new(master_password.to_string()), salt)
+}
+
 /// XChaCha20-Poly1305 দিয়ে প্লেইনটেক্সট এনক্রিপ্ট করা
 /// রিটার্ন করবে: [16 bytes Salt] + [24 bytes Nonce] + [Ciphertext + Auth Tag]
-pub fn encrypt_vault(master_password: &str, plaintext: &[u8]) -> Result<Vec<u8>, String> {
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn encrypt_vault_secret(master_password: &SecretString, plaintext: &[u8]) -> Result<Vec<u8>, String> {
     // ১. ১৬ বাইটের ক্রিপ্টোগ্রাফিক ট্রু র‍্যান্ডম Salt জেনারেট করা
     let mut salt = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
 
     // ২. কি (Key) তৈরি করা
-    let mut key_bytes = derive_key(master_password, &salt)?;
+    let mut key_bytes = derive_key_secret(master_password, &salt)?;
     let key = Key::from_slice(&key_bytes);
     let cipher = XChaCha20Poly1305::new(key);
 
@@ -91,8 +104,15 @@ pub fn encrypt_vault(master_password: &str, plaintext: &[u8]) -> Result<Vec<u8>,
     Ok(final_payload)
 }
 
+/// Legacy `&str` entrypoint — prefer [`encrypt_vault_secret`].
+/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+pub fn encrypt_vault(master_password: &str, plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    encrypt_vault_secret(&SecretString::new(master_password.to_string()), plaintext)
+}
+
 /// এনক্রিপ্ট করা পেলোড থেকে ডিক্রিপ্ট করে আসল ডাটা বের করা
-pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn decrypt_vault_secret(master_password: &SecretString, encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
     if encrypted_payload.len() < SALT_LEN + NONCE_LEN {
         return Err("Invalid payload: data is too short!".to_string());
     }
@@ -103,7 +123,7 @@ pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<
     let ciphertext = &encrypted_payload[SALT_LEN + NONCE_LEN..];
 
     // ২. একই মাস্টার পাসওয়ার্ড ও Salt দিয়ে কি রিকনস্ট্রাক্ট করা
-    let mut key_bytes = derive_key(master_password, salt)?;
+    let mut key_bytes = derive_key_secret(master_password, salt)?;
     let key = Key::from_slice(&key_bytes);
     let cipher = XChaCha20Poly1305::new(key);
 
@@ -116,6 +136,12 @@ pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<
     key_bytes.zeroize();
 
     Ok(plaintext)
+}
+
+/// Legacy `&str` entrypoint — prefer [`decrypt_vault_secret`].
+/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<Vec<u8>, String> {
+    decrypt_vault_secret(&SecretString::new(master_password.to_string()), encrypted_payload)
 }
 
 /// Phase 17: wrap arbitrary bytes (the DK) with a raw 32B key + fresh nonce.
@@ -152,8 +178,9 @@ fn unwrap_with_key(
 
 /// Phase 14 (legacy): hybrid decryption of a 3-byte-magic v2 payload.
 /// Kept ONLY for opening already-migrated vaults; new saves never use it.
-pub fn decrypt_vault_hybrid_legacy(
-    master_password: &str,
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn decrypt_vault_hybrid_legacy_secret(
+    master_password: &SecretString,
     payload: &[u8],
     decapsulation_key: &[u8],
 ) -> Result<Vec<u8>, String> {
@@ -166,7 +193,7 @@ pub fn decrypt_vault_hybrid_legacy(
     let nonce = XNonce::from_slice(&payload[3 + SALT_LEN + CT_LEN..3 + SALT_LEN + CT_LEN + NONCE_LEN]);
     let ciphertext = &payload[3 + SALT_LEN + CT_LEN + NONCE_LEN..];
 
-    let mut argon2_key = derive_key(master_password, salt)?;
+    let mut argon2_key = derive_key_secret(master_password, salt)?;
     let pq_secret = PqHybridEngine::decapsulate(decapsulation_key, pq_ct)
         .map_err(|e| format!("PQ decapsulate: {e}"))?;
     let hybrid = PqHybridEngine::combine(&argon2_key, &pq_secret)
@@ -180,6 +207,20 @@ pub fn decrypt_vault_hybrid_legacy(
         .decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())?;
     Ok(plaintext)
+}
+
+/// Legacy `&str` entrypoint — prefer [`decrypt_vault_hybrid_legacy_secret`].
+/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+pub fn decrypt_vault_hybrid_legacy(
+    master_password: &str,
+    payload: &[u8],
+    decapsulation_key: &[u8],
+) -> Result<Vec<u8>, String> {
+    decrypt_vault_hybrid_legacy_secret(
+        &SecretString::new(master_password.to_string()),
+        payload,
+        decapsulation_key,
+    )
 }
 
 /// Phase 17: portable self-contained hybrid encryption.
@@ -196,15 +237,17 @@ pub fn decrypt_vault_hybrid_legacy(
 /// into this portable container (it would brick cross-device sync); Argon2id
 /// stays at 64 MiB/t=3/p=4 for unlock-latency + test-suite reasons — a param
 /// bump needs container versioning and is tracked separately.
-pub fn encrypt_vault_portable(
-    master_password: &str,
+///
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn encrypt_vault_portable_secret(
+    master_password: &SecretString,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, String> {
     use crate::core::pq_hybrid::PqHybridEngine as PQ;
 
     let mut salt = [0u8; SALT_LEN];
     OsRng.fill_bytes(&mut salt);
-    let mut argon2_key = derive_key(master_password, &salt)?;
+    let mut argon2_key = derive_key_secret(master_password, &salt)?;
 
     // Fresh PQ keypair every save (per-save forward secrecy on the PQ half).
     let kp = PQ::generate_keypair();
@@ -248,10 +291,20 @@ pub fn encrypt_vault_portable(
     Ok(out)
 }
 
+/// Legacy `&str` entrypoint — prefer [`encrypt_vault_portable_secret`].
+/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+pub fn encrypt_vault_portable(
+    master_password: &str,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    encrypt_vault_portable_secret(&SecretString::new(master_password.to_string()), plaintext)
+}
+
 /// Phase 17: portable hybrid decryption. Password failures surface at the
 /// DK-unwrap step, before any lattice math runs.
-pub fn decrypt_vault_portable(
-    master_password: &str,
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn decrypt_vault_portable_secret(
+    master_password: &SecretString,
     payload: &[u8],
 ) -> Result<Vec<u8>, String> {
     use crate::core::pq_hybrid::PqHybridEngine as PQ;
@@ -273,7 +326,7 @@ pub fn decrypt_vault_portable(
     off += NONCE_LEN;
     let ciphertext = &payload[off..];
 
-    let mut argon2_key = derive_key(master_password, salt)?;
+    let mut argon2_key = derive_key_secret(master_password, salt)?;
     let dk_bytes = unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk)?;
     // H6: the 2400B decapsulation key must zeroize on EVERY path, including
     // the decapsulate-failure early return (corrupt/tampered pq_ct).
@@ -293,6 +346,15 @@ pub fn decrypt_vault_portable(
         .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())?;
     drop(hybrid);
     Ok(plaintext)
+}
+
+/// Legacy `&str` entrypoint — prefer [`decrypt_vault_portable_secret`].
+/// (Deprecation deferred to the final migration phase — see [`derive_key`].)
+pub fn decrypt_vault_portable(
+    master_password: &str,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    decrypt_vault_portable_secret(&SecretString::new(master_password.to_string()), payload)
 }
 
 #[cfg(test)]
@@ -315,6 +377,30 @@ mod tests {
         // ভুল পাসওয়ার্ড দিয়ে টেস্ট (ফেল মারতে হবে)
         let wrong_pass = "WrongPassword999";
         assert!(decrypt_vault(wrong_pass, &encrypted).is_err());
+    }
+
+    #[test]
+    fn secret_variants_match_legacy_paths_both_directions() {
+        let pw = SecretString::new("Phase1-Secret-Path!".to_string());
+        let data = b"scope-check payload";
+        // Secret encrypt → legacy (&str) decrypt.
+        let enc = encrypt_vault_secret(&pw, data).expect("secret encrypt");
+        let dec = decrypt_vault("Phase1-Secret-Path!", &enc).expect("legacy decrypt");
+        assert_eq!(data, dec.as_slice());
+        // Legacy encrypt → secret decrypt.
+        let enc2 = encrypt_vault("Phase1-Secret-Path!", data).expect("legacy encrypt");
+        let dec2 = decrypt_vault_secret(&pw, &enc2).expect("secret decrypt");
+        assert_eq!(data, dec2.as_slice());
+        // Portable pair, same cross-check.
+        let penc = encrypt_vault_portable_secret(&pw, data).expect("secret portable encrypt");
+        let pdec = decrypt_vault_portable("Phase1-Secret-Path!", &penc).expect("legacy portable decrypt");
+        assert_eq!(data, pdec.as_slice());
+        // KDF parity: same password + salt ⇒ same key on both paths.
+        let salt = [7u8; SALT_LEN];
+        assert_eq!(
+            derive_key_secret(&pw, &salt).expect("secret kdf"),
+            derive_key("Phase1-Secret-Path!", &salt).expect("legacy kdf")
+        );
     }
 
     #[test]
