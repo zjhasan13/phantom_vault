@@ -611,6 +611,8 @@ export component MainWindow inherits Window {
     // Lock tabs: 0 password · 1 PIN · 2 shards. Slint drives show_pin_pad /
     // show_recover from the tab (Rust only ever hides them).
     in-out property <int> unlock_tab: 0;
+    // Lock-screen language: static labels only (Rust-driven status stays EN).
+    in-out property <string> ui_lang: "en";
     in-out property <string> pin_error: "";
     in-out property <string> pin_status: "";
     in-out property <string> hello_status: "Checking…";
@@ -987,11 +989,14 @@ export component MainWindow inherits Window {
                 VerticalLayout {
                     padding: 28px;
                     spacing: 14px;
+                    HorizontalLayout { alignment: end;
+                        AuraButton { label: root.ui_lang == "bn" ? "BN ✓" : "EN"; width: 76px; height: 28px; clicked => { root.ui_lang = root.ui_lang == "bn" ? "en" : "bn"; } }
+                    }
                     Text { text: root.status_text; font-size: 13px; color: #8e99c0; horizontal-alignment: center; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px; alignment: center;
-                        AuraButton { label: "🔑 Password"; primary: root.unlock_tab == 0; width: 110px; height: 34px; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; } }
-                        if root.pin_available : AuraButton { label: "🔢 PIN"; primary: root.unlock_tab == 1; width: 90px; height: 34px; clicked => { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } }
-                        AuraButton { label: "🆘 Shards"; primary: root.unlock_tab == 2; width: 100px; height: 34px; clicked => { root.unlock_tab = 2; root.show_pin_pad = false; root.show_recover = true; } }
+                        AuraButton { label: root.ui_lang == "bn" ? "🔑 পাসওয়ার্ড" : "🔑 Password"; primary: root.unlock_tab == 0; width: 120px; height: 34px; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; } }
+                        if root.pin_available : AuraButton { label: root.ui_lang == "bn" ? "🔢 পিন" : "🔢 PIN"; primary: root.unlock_tab == 1; width: 90px; height: 34px; clicked => { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } }
+                        AuraButton { label: root.ui_lang == "bn" ? "🆘 শার্ড" : "🆘 Shards"; primary: root.unlock_tab == 2; width: 100px; height: 34px; clicked => { root.unlock_tab = 2; root.show_pin_pad = false; root.show_recover = true; } }
                     }
                     if root.integrity_warning != "" : Rectangle {
                         background: #3a1730;
@@ -1004,7 +1009,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     password_input := LineEdit {
-                        placeholder-text: "Master password…";
+                        placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড…" : "Master password…";
                         input-type: password;
                         height: 46px;
                         font-size: 15px;
@@ -1012,14 +1017,14 @@ export component MainWindow inherits Window {
                         accepted(text) => { root.unlock_requested(text); }
                     }
                     AuraButton {
-                        label: "🔓  Unlock Vault";
+                        label: root.ui_lang == "bn" ? "🔓  ভল্ট খুলুন" : "🔓  Unlock Vault";
                         primary: true;
                         height: 46px;
                         enabled: root.unlock_tab == 0;
                         clicked => { root.unlock_requested(password_input.text); }
                     }
                     if root.hello_available : AuraButton {
-                        label: "🖐  Quick Unlock with Windows Hello";
+                        label: root.ui_lang == "bn" ? "🖐  Hello দিয়ে খুলুন" : "🖐  Quick Unlock with Windows Hello";
                         height: 42px;
                         enabled: root.unlock_tab == 0;
                         clicked => { root.request_biometric_unlock(); }
@@ -1027,7 +1032,7 @@ export component MainWindow inherits Window {
                     if root.pin_available && root.unlock_tab == 1 && root.show_pin_pad : VerticalLayout {
                         spacing: 8px;
                         pin_input := LineEdit {
-                            placeholder-text: "4–8 digit PIN…";
+                            placeholder-text: root.ui_lang == "bn" ? "৪–৮ সংখ্যার পিন…" : "4–8 digit PIN…";
                             input-type: password;
                             height: 46px;
                             font-size: 18px;
@@ -1036,7 +1041,7 @@ export component MainWindow inherits Window {
                         }
                         if root.pin_error != "" : Text { text: root.pin_error; font-size: 12px; font-weight: 600; color: #fb7185; horizontal-alignment: center; wrap: word-wrap; }
                         AuraButton {
-                            label: "🔓  Unlock with PIN";
+                            label: root.ui_lang == "bn" ? "🔓  পিন দিয়ে খুলুন" : "🔓  Unlock with PIN";
                             primary: true;
                             height: 42px;
                             clicked => { root.request_pin_unlock(pin_input.text); }
@@ -1051,7 +1056,7 @@ export component MainWindow inherits Window {
                     // Phase 27: second factor — only when the vault armed it.
                     if root.show_totp_step : VerticalLayout {
                         spacing: 8px;
-                        Text { text: "🔐 Second factor required"; font-size: 14px; font-weight: 800; color: #eef1ff; horizontal-alignment: center; }
+                        Text { text: root.ui_lang == "bn" ? "🔐 দ্বিতীয় ধাপ প্রয়োজন" : "🔐 Second factor required"; font-size: 14px; font-weight: 800; color: #eef1ff; horizontal-alignment: center; }
                         totp_step_input := LineEdit {
                             placeholder-text: "6-digit code";
                             height: 46px;
@@ -1063,14 +1068,14 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: center;
-                            AuraButton { label: "✅ Verify & Unlock"; primary: true; height: 42px; horizontal-stretch: 1; clicked => { root.verify_totp_unlock(totp_step_input.text); } }
-                            AuraButton { label: "Back"; height: 42px; width: 90px; clicked => { root.cancel_totp_step(); } }
+                                AuraButton { label: root.ui_lang == "bn" ? "✅ যাচাই ও খুলুন" : "✅ Verify & Unlock"; primary: true; height: 42px; horizontal-stretch: 1; clicked => { root.verify_totp_unlock(totp_step_input.text); } }
+                                AuraButton { label: root.ui_lang == "bn" ? "পেছনে" : "Back"; height: 42px; width: 90px; clicked => { root.cancel_totp_step(); } }
                         }
                     }
                     // Phase 17: shard recovery (lost master password) — tab 2 only.
                     if root.unlock_tab == 2 && root.show_recover : VerticalLayout {
                         spacing: 8px;
-                        FieldLabel { text: "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
+                        FieldLabel { text: root.ui_lang == "bn" ? "যেকোনো ৩টি শার্ড বসান" : "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
                         LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; }
                         LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; }
                         LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; }
@@ -1079,7 +1084,7 @@ export component MainWindow inherits Window {
                         }
                         if root.recover_1 == "" || root.recover_2 == "" || root.recover_3 == "" : Text { text: "Paste all 3 shards — any 3 of your 5."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         AuraButton {
-                            label: "🔓  Rebuild & Unlock";
+                            label: root.ui_lang == "bn" ? "🔓  পুনর্গঠন ও খুলুন" : "🔓  Rebuild & Unlock";
                             primary: true;
                             height: 42px;
                             enabled: root.recover_1 != "" && root.recover_2 != "" && root.recover_3 != "";
@@ -1511,6 +1516,7 @@ export component MainWindow inherits Window {
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "👨‍👩‍👧 Family sync: same Wi-Fi + pairing PIN — phones and PCs stay in sync."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Enable Local Wi-Fi Discovery"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Pairing PIN (this device)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: #38e1ff; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New PIN"; width: 100px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
                     Text { text: "Peers with 🔒 need their PIN typed below before Sync."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
