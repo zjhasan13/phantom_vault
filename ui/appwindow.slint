@@ -1274,7 +1274,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } }
                     if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 } }
-                hub_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 14px;
+                hub_scroll := ScrollView { vertical-stretch: 1; horizontal-stretch: 1; VerticalLayout { spacing: 14px;
                     // Compact 3-column grid (rows of 3 from Rust). Card width
                     // derives from the ScrollView VIEWPORT (parent-determined,
                     // never content) — pixel-identical columns, short rows
