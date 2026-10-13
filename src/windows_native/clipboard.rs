@@ -281,6 +281,13 @@ pub fn copy_sensitive(
         let (tx, rx) = std::sync::mpsc::channel::<ClearJob>();
         std::thread::spawn(move || {
             while let Ok(mut job) = rx.recv() {
+                // Drain: a newer copy supersedes older queued ones — act on
+                // the LATEST deadline instead of serially sleeping through
+                // each (else copy B's clear waits behind copy A's sleep).
+                while let Ok(newer) = rx.try_recv() {
+                    job.expect.zeroize();
+                    job = newer;
+                }
                 let now = std::time::Instant::now();
                 if job.at > now {
                     std::thread::sleep(job.at - now);

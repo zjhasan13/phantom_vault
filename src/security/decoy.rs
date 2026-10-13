@@ -25,7 +25,7 @@ pub fn decoy_exists() -> bool {
 /// with believable dummy entries. The password never persists in plaintext.
 pub fn provision_decoy(duress_password: &str) -> Result<()> {
     let mut pw = duress_password.trim().to_string();
-    if pw.len() < 8 {
+    if pw.chars().count() < 8 {
         pw.zeroize();
         return Err(VaultError::Security("duress password too short".into()));
     }
@@ -108,16 +108,16 @@ fn verify_duress(candidate: &str) -> bool {
         Ok(s) => s,
         Err(_) => return false,
     };
-    let expected = String::from_utf8_lossy(secret.expose()).into_owned();
+    // Constant-time compare on the sealed bytes: no String alloc, and the
+    // length difference feeds the accumulator (no early-out length oracle).
+    let a = secret.expose();
+    let b = candidate.as_bytes();
+    let mut diff = (a.len() ^ b.len()) as u8;
+    for i in 0..a.len().max(b.len()) {
+        diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
+    }
     drop(secret);
-    // Length-first + full compare (adequate for an interactive-attempt-rate path).
-    expected.len() == candidate.len()
-        && expected
-            .as_bytes()
-            .iter()
-            .zip(candidate.as_bytes())
-            .fold(0u8, |acc, (a, b)| acc | (a ^ b))
-            == 0
+    diff == 0
 }
 
 /// Try the decoy path. Returns Some(vault) only if the duress password

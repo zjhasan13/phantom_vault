@@ -270,7 +270,7 @@ pub fn start_agent(keys: Vec<AgentKey>) -> Result<(), String> {
 
 /// Stop the UI-started agent session, if any. Idempotent — safe to call on
 /// every lock (the normal case is "nothing running"). The serving thread
-/// exits at the next 1s accept tick; keys die with it.
+/// exits at the next 200ms accept tick; keys die with it.
 pub fn stop_agent() {
     let flag = session()
         .lock()
@@ -304,9 +304,9 @@ fn serve_keys_thread(
                 Ok(s) => s,
                 Err(_) => break,
             };
-            // 1s accept tick so Stop/lock is honored promptly (else the
-            // thread could block on connect() indefinitely past lock).
-            match tokio::time::timeout(std::time::Duration::from_secs(1), server.connect()).await
+            // 200ms accept tick so Stop/lock is honored promptly (else the
+            // thread could block on connect() past lock with keys alive).
+            match tokio::time::timeout(std::time::Duration::from_millis(200), server.connect()).await
             {
                 Ok(Ok(())) => {
                     let keys = std::sync::Arc::clone(&keys);

@@ -80,6 +80,23 @@ fn digits_or(d: Option<u32>, fallback: u32) -> u32 {
     }
 }
 
+/// Parse-or-fallback that WARNS instead of silently coercing: a
+/// `"digits":"seven"` typo must not mint wrong OTPs quietly.
+fn num_or<T>(raw: &str, fallback: T, warnings: &mut Vec<String>, what: &str, entry: &str) -> T
+where
+    T: std::str::FromStr + std::fmt::Display + Copy,
+{
+    match raw.trim().parse() {
+        Ok(v) => v,
+        Err(_) => {
+            if !raw.trim().is_empty() {
+                warnings.push(format!("{entry}: odd {what} '{raw}' — assumed {fallback}"));
+            }
+            fallback
+        }
+    }
+}
+
 /// Test-only 9-arg constructor would trip `too_many_arguments`; the parser
 /// call sites pass positionally and stay readable, so allow it here.
 #[allow(clippy::too_many_arguments)]
@@ -168,11 +185,11 @@ fn parse_2fas(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(Vec<T
         } else {
             "totp"
         };
-        let digits: u32 = get("digits").parse().unwrap_or(6);
-        let period: u64 = get("period").parse().unwrap_or(30);
-        let counter: u64 = get("counter").parse().unwrap_or(0);
         let secret = o.get("secret").map(s).unwrap_or_default();
         let name = o.get("name").map(s).unwrap_or_default();
+        let digits: u32 = num_or(&get("digits"), 6, &mut warnings, "digits", &format!("2FAS entry '{name}'"));
+        let period: u64 = num_or(&get("period"), 30, &mut warnings, "period", &format!("2FAS entry '{name}'"));
+        let counter: u64 = get("counter").parse().unwrap_or(0);
         match mk_account(i, &name, "", &secret, digits, period, &get("algorithm"), otp_type, counter) {
             Some(a) => out.push(a),
             None => warnings.push(format!("2FAS entry '{name}' skipped (bad secret)")),
@@ -206,11 +223,11 @@ fn parse_aegis(obj: &serde_json::Map<String, serde_json::Value>) -> Result<(Vec<
         let etype = o.get("type").map(s).unwrap_or_default();
         let info = o.get("info").and_then(|v| v.as_object());
         let get = |k: &str| info.map(|o| o.get(k).map(s).unwrap_or_default()).unwrap_or_default();
-        let digits: u32 = get("digits").parse().unwrap_or(6);
-        let period: u64 = get("period").parse().unwrap_or(30);
-        let counter: u64 = get("counter").parse().unwrap_or(0);
         let name = o.get("name").map(s).unwrap_or_default();
         let issuer = o.get("issuer").map(s).unwrap_or_default();
+        let digits: u32 = num_or(&get("digits"), 6, &mut warnings, "digits", &format!("Aegis entry '{name}'"));
+        let period: u64 = num_or(&get("period"), 30, &mut warnings, "period", &format!("Aegis entry '{name}'"));
+        let counter: u64 = get("counter").parse().unwrap_or(0);
         match mk_account(i, &name, &issuer, &get("secret"), digits, period, &get("algo"), &etype, counter) {
             Some(a) => out.push(a),
             None => warnings.push(format!("Aegis entry '{name}' skipped (bad secret)")),
@@ -251,8 +268,9 @@ fn parse_andotp(arr: &[serde_json::Value]) -> (Vec<TotpAccount>, Vec<String>) {
     for (i, ev) in arr.iter().enumerate() {
         let Some(o) = ev.as_object() else { continue };
         let get = |k: &str| o.get(k).map(s).unwrap_or_default();
-        let digits: u32 = get("digits").parse().unwrap_or(6);
-        let period: u64 = get("period").parse().unwrap_or(30);
+        let tag = format!("andOTP entry {}", i + 1);
+        let digits: u32 = num_or(&get("digits"), 6, &mut warnings, "digits", &tag);
+        let period: u64 = num_or(&get("period"), 30, &mut warnings, "period", &tag);
         let counter: u64 = get("counter").parse().unwrap_or(0);
         match mk_account(i, &get("label"), &get("issuer"), &get("secret"), digits, period, &get("algorithm"), &get("type"), counter) {
             Some(a) => out.push(a),
@@ -281,8 +299,9 @@ fn parse_freeotp(obj: &serde_json::Map<String, serde_json::Value>) -> (Vec<TotpA
             }
             other => other.map(s).unwrap_or_default(),
         };
-        let digits: u32 = get("digits").parse().unwrap_or(6);
-        let period: u64 = get("period").parse().unwrap_or(30);
+        let tag = format!("FreeOTP entry {}", i + 1);
+        let digits: u32 = num_or(&get("digits"), 6, &mut warnings, "digits", &tag);
+        let period: u64 = num_or(&get("period"), 30, &mut warnings, "period", &tag);
         let counter: u64 = get("counter").parse().unwrap_or(0);
         let etype = get("type");
         let otp_type = if etype.eq_ignore_ascii_case("hotp") || etype == "1" { "hotp" } else { "totp" };
@@ -611,6 +630,22 @@ mod tests {
         assert_eq!(accs[1].algorithm, "SHA256");
         assert_eq!(accs[1].digits, 8);
         assert_eq!(warns.len(), 1);
+    }
+
+    #[test]
+    fn odd_digits_and_period_coerce_loud() {
+        let doc = serde_json::json!({
+            "schemaVersion": 2,
+            "services": [
+                {"name": "Typo", "secret": "JBSWY3DPEHPK3PXP",
+                 "otp": {"tokenType": "TOTP", "digits": "seven", "period": "soon"}}
+            ]
+        });
+        let (_, accs, warns) = sniff_and_parse_json(&doc).unwrap();
+        assert_eq!(accs.len(), 1);
+        assert_eq!((accs[0].digits, accs[0].period), (6, 30));
+        assert!(warns.iter().any(|w| w.contains("digits")), "warns={warns:?}");
+        assert!(warns.iter().any(|w| w.contains("period")), "warns={warns:?}");
     }
 
     #[test]

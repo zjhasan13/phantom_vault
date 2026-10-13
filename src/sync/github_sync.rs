@@ -207,10 +207,15 @@ pub async fn push_remote(
     }
     let b64 = base64::engine::general_purpose::STANDARD.encode(blob);
     if current.is_some() {
-        let head_sha = sha.or_else(|| current.map(|(_, s)| s)).ok_or_else(|| {
-            VaultError::Sync("remote vault exists — pull first".into())
-        })?;
-        let _ = expected_remote_sha;
+        // `expected_remote_sha` was just verified equal to the live head
+        // above — prefer it as the update base so the intent is explicit
+        // (the contents API has no atomic CAS beyond this sha check).
+        let head_sha = expected_remote_sha
+            .or(sha)
+            .or_else(|| current.clone().map(|(_, s)| s))
+            .ok_or_else(|| {
+                VaultError::Sync("remote vault exists — pull first".into())
+            })?;
         octo.repos(owner, repo)
             .update_file(REMOTE_PATH, COMMIT_MESSAGE, b64, head_sha)
             .branch("main")

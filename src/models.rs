@@ -686,8 +686,8 @@ impl Vault {
         if name.is_empty() {
             return Err("Folder name is empty".to_string());
         }
-        if name.len() > 48 {
-            return Err("Folder name too long (48 max)".to_string());
+        if name.chars().count() > 48 {
+            return Err("Folder name too long (48 chars max)".to_string());
         }
         if name.contains('/') || name.contains('\\') {
             return Err("Folder name cannot contain slashes".to_string());
@@ -1500,6 +1500,15 @@ impl From<VaultGen4> for Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn folder_name_limit_counts_chars_not_bytes() {
+        let mut v = Vault::new();
+        // 16 × é = 48 bytes but 16 chars → must be accepted.
+        assert!(v.add_folder(&"é".repeat(16)).is_ok());
+        assert!(v.add_folder(&"é".repeat(48)).is_ok());
+        assert!(v.add_folder(&"é".repeat(49)).is_err());
+    }
 
     #[test]
     fn login_url_rules_and_compat_shapes() {
