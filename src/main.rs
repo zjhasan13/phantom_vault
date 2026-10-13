@@ -1222,6 +1222,9 @@ fn publish_unlocked_vault(
         );
     }
     security::access_log::log_event("unlock", "password ok");
+    // TEMP DEBUG (2FA width hunt): real window pixels at unlock.
+    let wsz = ui.window().size();
+    security::access_log::log_event("dbg", &format!("win {}x{}", wsz.width, wsz.height));
     trigger_sync_push(ui.as_weak());
     // Favicons resolve in the background (disk first, one gated batch for
     // misses) and pop into the list when ready — unlock never waits.
