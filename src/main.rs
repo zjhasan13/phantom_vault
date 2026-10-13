@@ -5366,6 +5366,7 @@ fn main() -> Result<(), slint::PlatformError> {
         &GEN
     }
     let fr_weak = main_window.as_weak();
+    let fr_vault = Arc::clone(&active_vault);
     main_window.on_factory_reset_start(move || {
         let Some(ui) = fr_weak.upgrade() else {
             return;
@@ -5379,6 +5380,32 @@ fn main() -> Result<(), slint::PlatformError> {
         ui.set_fr_error(String::new().into());
         ui.set_fr_armed(false);
         ui.set_fr_countdown(0);
+        // Danger preview: live counts so the user sees the blast radius.
+        {
+            let v = lock_vault(&fr_vault);
+            let items = v.credentials.len()
+                + v.cards.len()
+                + v.identities.len()
+                + v.ssh_keys.len()
+                + v.totp_accounts.len()
+                + v.licenses.len()
+                + v.notes.len();
+            let vault_path = std::path::Path::new(developer::vault_run::VAULT_FILE);
+            let mut gens = 0;
+            for g in 1..=storage::BACKUP_KEEP {
+                if storage::backup_name(vault_path, g).exists() {
+                    gens += 1;
+                }
+            }
+            let decoy = if security::decoy::decoy_exists() {
+                " + decoy"
+            } else {
+                ""
+            };
+            ui.set_fr_preview(
+                format!("⚠️ Will shred: {items} items, {gens} backup generations{decoy}.").into(),
+            );
+        }
         ui.set_show_factory_reset(true);
     });
     let frc_weak = main_window.as_weak();
@@ -10928,7 +10955,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let fail_note = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2
                 .map(|i| format!(" (first-bad line {i})"))
                 .unwrap_or_default();
-            let rows = security::access_log::recent(20);
+            let rows = security::access_log::recent_filtered(20, ui.get_access_log_hide_bridge());
             let body = if rows.is_empty() {
                 "No events recorded yet.".to_string()
             } else {
@@ -10945,6 +10972,33 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 .into(),
             );
             ui.set_show_access_log(true);
+        }
+    });
+    // Access-log bridge filter toggle (re-render with the flipped flag).
+    let bridge_weak = main_window.as_weak();
+    main_window.on_toggle_log_bridge(move || {
+        if let Some(ui) = bridge_weak.upgrade() {
+            ui.set_access_log_hide_bridge(!ui.get_access_log_hide_bridge());
+            let rows = security::access_log::recent_filtered(20, ui.get_access_log_hide_bridge());
+            let (n, valid) = security::access_log::verify();
+            let fail_note = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2
+                .map(|i| format!(" (first-bad line {i})"))
+                .unwrap_or_default();
+            let body = if rows.is_empty() {
+                "No events recorded yet.".to_string()
+            } else {
+                rows.join("\n")
+            };
+            ui.set_access_log_text(
+                format!(
+                    "{} entries · chain {}{}.\n\n{}",
+                    n,
+                    if valid { "VALID ✅" } else { "BROKEN 🚨" },
+                    fail_note,
+                    body
+                )
+                .into(),
+            );
         }
     });
     // Phase 26: anti-photography toggles (persist + mirror to Slint).
@@ -11049,6 +11103,24 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     });
     // Wire-up #5: real secret-leak scan via native folder picker + worker.
     let sc_weak = main_window.as_weak();
+    // Dev card: copy a shell-completion script (public subcommands only —
+    // never vault titles) to the clipboard for the shell profile.
+    let comp_weak = main_window.as_weak();
+    main_window.on_copy_shell_complete(move |shell| {
+        let script = match shell.as_str() {
+            "bash" => developer::shell_complete::bash_script(),
+            "nushell" => developer::shell_complete::nushell_script(),
+            _ => developer::shell_complete::powershell_script(),
+        };
+        let msg = match windows_native::clipboard::copy_sensitive(&script, 60, || {}) {
+            Ok(()) => format!("📋 {shell} completion copied (60s) — paste into your shell profile."),
+            Err(e) => format!("⚠️ Copy failed: {e}"),
+        };
+        if let Some(ui) = comp_weak.upgrade() {
+            ui.set_health_status(msg.clone().into());
+            ui.set_notification_text(msg.into());
+        }
+    });
     main_window.on_scan_secrets(move || {
         let picked = rfd::FileDialog::new().pick_folder();
         let Some(folder) = picked else {

@@ -308,11 +308,31 @@ pub fn verify() -> (usize, bool) {
 }
 
 /// Newest-first human-readable tail for the Settings viewer.
-pub fn recent(n: usize) -> Vec<String> {
-    recent_at(Path::new(LOG_FILE), n)
+/// Pass true to hide high-volume bridge chatter so real events surface.
+pub fn recent_filtered(n: usize, hide_bridge: bool) -> Vec<String> {
+    recent_filtered_at(Path::new(LOG_FILE), n, hide_bridge)
 }
 
+/// Relative age for a unix timestamp (no calendar dep): "3m ago".
+fn ago(t: i64) -> String {
+    let d = now_unix().saturating_sub(t);
+    if d < 60 {
+        "just now".to_string()
+    } else if d < 3600 {
+        format!("{}m ago", d / 60)
+    } else if d < 86400 {
+        format!("{}h ago", d / 3600)
+    } else {
+        format!("{}d ago", d / 86400)
+    }
+}
+
+#[cfg(test)]
 fn recent_at(path: &Path, n: usize) -> Vec<String> {
+    recent_filtered_at(path, n, false)
+}
+
+fn recent_filtered_at(path: &Path, n: usize, hide_bridge: bool) -> Vec<String> {
     let text = std::fs::read_to_string(path).unwrap_or_default();
     let field = |line: &str, key: &str| {
         line.split(&format!("\"{key}\":"))
@@ -332,8 +352,16 @@ fn recent_at(path: &Path, n: usize) -> Vec<String> {
     text.lines()
         .rev()
         .filter(|l| !l.trim().is_empty())
+        .filter(|line| {
+            !hide_bridge
+                || !(line.contains("\"event\":\"bridge-")
+                    || line.contains("\"event\":\"p2p\""))
+        })
         .take(n.max(1))
-        .map(|line| format!("{} · {} {}", field(line, "t"), field(line, "event"), field(line, "detail")))
+        .map(|line| {
+            let t = field(line, "t").parse::<i64>().unwrap_or(0);
+            format!("{} · {} {}", ago(t), field(line, "event"), field(line, "detail"))
+        })
         .collect()
 }
 
@@ -382,6 +410,22 @@ mod tests {
         std::fs::write(&p, format!("{}\n{second}\n", std::fs::read_to_string(&p).unwrap().trim_end())).unwrap();
         let (n, valid, bad) = verify_at_detailed(&p);
         assert_eq!((n, valid, bad), (2, false, Some(3)));
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(head_path_for(&p));
+        let _ = std::fs::remove_file(lock_path_for(&p));
+    }
+
+    #[test]
+    fn recent_filtered_hides_bridge_and_shows_relative_age() {
+        let p = tmp("filter");
+        log_event_at(&p, "unlock", "ok");
+        log_event_at(&p, "bridge-verify", "abc123");
+        let all = recent_filtered_at(&p, 5, false);
+        assert_eq!(all.len(), 2);
+        assert!(all[0].contains("ago") || all[0].contains("just now"));
+        let quiet = recent_filtered_at(&p, 5, true);
+        assert_eq!(quiet.len(), 1);
+        assert!(quiet[0].contains("unlock"));
         let _ = std::fs::remove_file(&p);
         let _ = std::fs::remove_file(head_path_for(&p));
         let _ = std::fs::remove_file(lock_path_for(&p));
