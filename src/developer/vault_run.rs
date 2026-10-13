@@ -1,9 +1,11 @@
 //! Phase 16 (Option 2b) — `vault run` CLI secret injector.
 //!
-//! Usage: `phantom_vault run -e GitHub=GH_TOKEN -e GitHub.user=GH_USER -- npm start`
+//! Usage: `phantom_vault run -e GitHub=GH_TOKEN -e GitHub.user=GH_USER [--clean-env] -- npm start`
 //! Secrets travel vault → child-process env only. No `.env` files, no shell
 //! history (values never echoed), no disk writes. Values are zeroized in our
 //! own memory right after spawn; the child owns its copy from there on.
+//! `--clean-env` strips the inherited parent environment (recommended);
+//! without it the child inherits everything plus a loud stderr note.
 
 use crate::models::Vault;
 use crate::storage::load_vault_versioned;
@@ -19,10 +21,12 @@ pub struct EnvMap {
     pub var: String,
 }
 
-/// Parse CLI args after `run`. Returns (mappings, command+args).
+/// Parse CLI args after `run`. Returns (mappings, clean_env, command+args).
 /// Pure — unit tested. Expects the `--` separator before the command.
-pub fn parse_run_args(args: &[String]) -> Result<(Vec<EnvMap>, Vec<String>), String> {
+/// `--clean-env` (before `--`) strips the inherited environment in the child.
+pub fn parse_run_args(args: &[String]) -> Result<(Vec<EnvMap>, bool, Vec<String>), String> {
     let mut maps = Vec::new();
+    let mut clean_env = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -33,6 +37,7 @@ pub fn parse_run_args(args: &[String]) -> Result<(Vec<EnvMap>, Vec<String>), Str
                     .ok_or_else(|| "missing value after -e/--env".to_string())?;
                 maps.push(parse_env_spec(spec)?);
             }
+            "--clean-env" => clean_env = true,
             "--" => {
                 let cmd: Vec<String> = args[i + 1..].to_vec();
                 if cmd.is_empty() {
@@ -41,13 +46,57 @@ pub fn parse_run_args(args: &[String]) -> Result<(Vec<EnvMap>, Vec<String>), Str
                 if maps.is_empty() {
                     return Err("no -e/--env mappings given".to_string());
                 }
-                return Ok((maps, cmd));
+                return Ok((maps, clean_env, cmd));
             }
             other => return Err(format!("unexpected argument: {other}")),
         }
         i += 1;
     }
     Err("missing -- <command>".to_string())
+}
+
+/// Resolve the child executable WITHOUT trusting CWD: an explicit relative
+/// (`.\tool`, `sub\tool`) or absolute path is honored verbatim, but a bare
+/// name is searched on `PATH` only — a planted `npm.exe` in CWD never wins.
+pub fn resolve_exe(name: &str) -> std::path::PathBuf {
+    use std::path::PathBuf;
+    if name.contains('/') || name.contains('\\') {
+        return PathBuf::from(name);
+    }
+    let probe = |dir: &std::path::Path| {
+        let direct = dir.join(name);
+        if direct.is_file() {
+            return Some(direct);
+        }
+        #[cfg(windows)]
+        {
+            for ext in ["exe", "cmd", "bat"] {
+                let with_ext = dir.join(format!("{name}.{ext}"));
+                if with_ext.is_file() {
+                    return Some(with_ext);
+                }
+            }
+        }
+        None
+    };
+    if let Some(paths) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&paths) {
+            // CWD is never trusted, even if PATH lists it (often `.` or empty).
+            if dir.as_os_str().is_empty() {
+                continue;
+            }
+            if let Ok(cur) = std::env::current_dir() {
+                if dir == cur {
+                    continue;
+                }
+            }
+            if let Some(hit) = probe(&dir) {
+                return hit;
+            }
+        }
+    }
+    // Not found on PATH — let spawn report the error (unchanged message).
+    PathBuf::from(name)
 }
 
 fn parse_env_spec(spec: &str) -> Result<EnvMap, String> {
@@ -92,11 +141,11 @@ pub fn resolve_env(maps: &[EnvMap], vault: &Vault) -> Result<Vec<(String, String
 
 /// Headless entrypoint. Returns process exit code. Never panics on bad input.
 pub fn run_cli(args: &[String]) -> i32 {
-    let (maps, cmd) = match parse_run_args(args) {
+    let (maps, clean_env, cmd) = match parse_run_args(args) {
         Ok(v) => v,
         Err(e) => {
             eprintln!("vault run: {e}");
-            eprintln!("usage: vault run -e TITLE=VAR [-e TITLE.user=VAR2 ...] -- <cmd> [args...]");
+            eprintln!("usage: vault run [-e TITLE=VAR ...] [--clean-env] -- <cmd> [args...]");
             return 2;
         }
     };
@@ -129,8 +178,21 @@ pub fn run_cli(args: &[String]) -> i32 {
             return 2;
         }
     };
-    let mut child_cmd = std::process::Command::new(&cmd[0]);
+    let exe = resolve_exe(&cmd[0]);
+    let mut child_cmd = std::process::Command::new(&exe);
     child_cmd.args(&cmd[1..]);
+    if clean_env {
+        // Minimal loader set so Windows can still spawn; everything else
+        // must come from the vault mappings below.
+        child_cmd.env_clear();
+        for key in ["SystemRoot", "SystemDrive", "PATHEXT", "TMP", "TEMP"] {
+            if let Some(v) = std::env::var_os(key) {
+                child_cmd.env(key, v);
+            }
+        }
+    } else {
+        eprintln!("vault run: child inherits parent env (use --clean-env to strip it)");
+    }
     for (k, v) in &pairs {
         child_cmd.env(k, v);
     }
@@ -176,14 +238,37 @@ mod tests {
 
     #[test]
     fn parses_maps_and_command() {
-        let (maps, cmd) =
+        let (maps, clean, cmd) =
             parse_run_args(&s(&["-e", "GitHub=GH_TOKEN", "-e", "GitHub.user=GH_USER", "--", "npm", "start"]))
                 .unwrap();
         assert_eq!(maps.len(), 2);
         assert_eq!(maps[0].var, "GH_TOKEN");
         assert!(!maps[0].field_user);
         assert!(maps[1].field_user);
+        assert!(!clean);
         assert_eq!(cmd, s(&["npm", "start"]));
+    }
+
+    #[test]
+    fn parses_clean_env_flag() {
+        let (_, clean, cmd) =
+            parse_run_args(&s(&["--clean-env", "-e", "A=B", "--", "npm"])).unwrap();
+        assert!(clean);
+        assert_eq!(cmd, s(&["npm"]));
+    }
+
+    #[test]
+    fn resolve_exe_honors_explicit_paths_but_not_cwd() {
+        // Explicit relative/absolute paths pass through verbatim.
+        assert_eq!(resolve_exe(".\\tool.exe").to_string_lossy(), ".\\tool.exe");
+        // A bare name never resolves to CWD: with an empty PATH it falls
+        // back to the name itself (spawn reports the error, no hijack).
+        let old = std::env::var_os("PATH");
+        std::env::set_var("PATH", "");
+        assert_eq!(resolve_exe("definitely-not-a-real-bin").to_string_lossy(), "definitely-not-a-real-bin");
+        if let Some(p) = old {
+            std::env::set_var("PATH", p);
+        }
     }
 
     #[test]
