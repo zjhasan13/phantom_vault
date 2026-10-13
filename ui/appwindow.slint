@@ -1281,7 +1281,7 @@ export component MainWindow inherits Window {
                     // left-align, no spacers, no zigzag, no binding loop.
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            width: Math.max((hub_scroll.width - 72px) / 3, 230px);
+                            width: (hub_scroll.width - 72px) / 3;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
@@ -1291,7 +1291,7 @@ export component MainWindow inherits Window {
                             // Click-anywhere copies the live code (buttons stay
                             // on top, so ⭐/Copy/🗑️ keep their own clicks).
                             TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_totp_requested(acc.id); } } }
-                            HorizontalLayout { padding: 12px; spacing: 10px;
+                            HorizontalLayout { padding: 10px; spacing: 8px;
                                 VerticalLayout { horizontal-stretch: 1; spacing: 4px;
                                     HorizontalLayout { spacing: 8px;
                                         Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
@@ -1313,14 +1313,14 @@ export component MainWindow inherits Window {
                                     if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; }
                                 }
                                 VerticalLayout { spacing: 4px; alignment: center;
-                                    Rectangle { width: 48px; height: 48px; border-radius: 24px; border-width: 2px;
+                                    Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
                                         border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
                                         Text { text: acc.countdown; color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
                                     if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
                                     if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 32px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
-                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; width: 72px; height: 32px; clicked => { root.copy_totp_requested(acc.id); } }
-                                        AuraButton { label: root.confirm_delete_auth_id == acc.id ? "Sure?" : "🗑️"; width: root.confirm_delete_auth_id == acc.id ? 64px : 40px; height: 32px; danger: true; clicked => { if root.confirm_delete_auth_id == acc.id { root.confirm_delete_auth_id = ""; root.delete_auth_account(acc.id); } else { root.confirm_delete_auth_id = acc.id; } } } }
+                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; width: 56px; height: 32px; clicked => { root.copy_totp_requested(acc.id); } }
+                                        AuraButton { label: root.confirm_delete_auth_id == acc.id ? "Sure?" : "🗑️"; width: root.confirm_delete_auth_id == acc.id ? 64px : 36px; height: 32px; danger: true; clicked => { if root.confirm_delete_auth_id == acc.id { root.confirm_delete_auth_id = ""; root.delete_auth_account(acc.id); } else { root.confirm_delete_auth_id = acc.id; } } } }
                                 }
                             }
                         }
