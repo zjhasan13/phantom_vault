@@ -1284,43 +1284,43 @@ export component MainWindow inherits Window {
                     if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 } }
                 hub_scroll := ScrollView { vertical-stretch: 1; horizontal-stretch: 1; VerticalLayout { spacing: 14px;
-                    // Compact 4-column grid (rows of 4 from Rust). Card width
-                    // derives from the ScrollView VIEWPORT (parent-determined,
-                    // never content) — pixel-identical columns, short rows
-                    // left-align, no spacers, no zigzag, no binding loop.
+                    // Landscape 4-column grid (rows of 4 from Rust). Cards
+                    // stretch-share the row (NO width formula — formulas
+                    // under-constrain and collapse narrow). Short rows
+                    // left-align, no zigzag, no binding loop.
+                    // TEMP DEBUG (remove before release): live widths.
+                    Text { text: "dbg scroll=" + hub_scroll.width / 1px; color: #5b6589; font-size: 11px; }
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            width: (hub_scroll.width - 86px) / 4;
+                            horizontal-stretch: 1;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
                             border-color: #1e293b;
-                            height: 132px;
+                            height: 104px;
                             clip: true;
                             // Click-anywhere copies the live code (buttons stay
                             // on top, so ⭐/Copy/🗑️ keep their own clicks).
                             TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_totp_requested(acc.id); } } }
-                            HorizontalLayout { padding: 10px; spacing: 8px;
-                                VerticalLayout { horizontal-stretch: 1; spacing: 4px;
-                                    HorizontalLayout { spacing: 8px;
-                                        Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
+                            HorizontalLayout { padding: 10px; spacing: 8px; alignment: space-between;
+                                HorizontalLayout { spacing: 8px; horizontal-stretch: 1;
+                                    Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
                                             if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; x: 6px; y: 6px; image-fit: contain; }
                                             if !acc.has_icon : Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                                        VerticalLayout { spacing: 0px; alignment: center;
+                                        VerticalLayout { spacing: 0px; alignment: center; horizontal-stretch: 1;
                                             HorizontalLayout { spacing: 6px; alignment: center;
                                                 Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
                                                 if acc.is_dup : Rectangle { border-radius: 6px; background: #4a2c00; border-width: 1px; border-color: #fbbf24;
                                                     HorizontalLayout { padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px;
                                                         Text { text: "⚠ DUP"; color: #fbbf24; font-size: 11px; font-weight: 800; } } } }
-                                            Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
+                                            Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; }
+                                            Text { text: acc.display; color: #eef1ff; font-size: 20px; font-weight: 900; }
+                                            // Hidden by default. A visible "next" code is a
+                                            // second plausible-looking number on the card and
+                                            // users copy whichever one they read second.
+                                            if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                         AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
-                                    Text { text: acc.display; color: #eef1ff; font-size: 24px; font-weight: 900; }
-                                    // Hidden by default. A visible "next" code is a
-                                    // second plausible-looking number on the card and
-                                    // users copy whichever one they read second.
-                                    if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; }
-                                }
                                 VerticalLayout { spacing: 4px; alignment: center;
                                     Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
                                         border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
