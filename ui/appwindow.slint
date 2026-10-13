@@ -168,6 +168,7 @@ component NavItem inherits Rectangle {
     in-out property <string> icon;
     in-out property <string> label;
     in-out property <bool> active: false;
+    in-out property <bool> collapsed: false;
     callback tapped();
     height: 44px;
     border-radius: 10px;
@@ -179,16 +180,16 @@ component NavItem inherits Rectangle {
         clicked => { root.tapped(); }
     }
     HorizontalLayout {
-        padding-left: 14px;
-        padding-right: 14px;
+        padding-left: root.collapsed ? 0px : 14px;
+        padding-right: root.collapsed ? 0px : 14px;
         spacing: 10px;
-        alignment: start;
+        alignment: root.collapsed ? center : start;
         Text {
             text: root.icon;
             font-size: 15px;
             vertical-alignment: center;
         }
-        Text {
+        if !root.collapsed : Text {
             text: root.label;
             color: root.active ? #ffffff : #8e99c0;
             font-size: 13px;
@@ -460,6 +461,10 @@ export component MainWindow inherits Window {
     // Toast severity: "info" | "success" | "warn" | "error". Banner tints by
     // kind; Rust copy paths set it, everything else defaults to info.
     in-out property <string> notification_kind: "info";
+    // Full coverage without touching 100+ call sites: any toast resets to
+    // info unless Rust sets a kind right AFTER the text (same closure).
+    changed notification_text => { root.notification_kind = "info"; }
+    in-out property <bool> sidebar_collapsed: false;
     in-out property <[CredentialView]> credentials;
     in-out property <string> search_query;
     // Isolated 2FA Hub query — never touches the vault search above.
@@ -748,6 +753,7 @@ export component MainWindow inherits Window {
     // Local Wi-Fi P2P sync (default OFF) + GitHub Releases updater.
     in-out property <bool> p2p_enabled: false;
     in-out property <string> p2p_status: "P2P discovery is OFF — enable to find LAN devices.";
+    in-out property <string> p2p_last_sync: "";
     in-out property <[PeerView]> p2p_peers;
     in-out property <string> p2p_pin: "";
     in-out property <string> p2p_peer_pin: "";
@@ -950,7 +956,7 @@ export component MainWindow inherits Window {
                     spacing: 0px;
                     alignment: center;
                     Text { text: "PHANTOM VAULT"; font-size: 24px; font-weight: 900; color: #eef1ff; }
-                    Text { text: "ZERO-KNOWLEDGE  •  NATIVE  •  QUANTUM-READY"; font-size: 10px; font-weight: 700; color: #5b6589; }
+                    Text { text: "ZERO-KNOWLEDGE  •  NATIVE  •  QUANTUM-READY"; font-size: 11px; font-weight: 700; color: #5b6589; }
                     if root.portable_badge != "" : Text { text: root.portable_badge + " — running from USB/RAM-disk, zero SSD footprint"; font-size: 11px; font-weight: 800; color: #34d399; }
                 }
             }
@@ -1060,11 +1066,11 @@ export component MainWindow inherits Window {
                             clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); }
                         }
                     }
-                    Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 10px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                     if root.has_vault_file : HorizontalLayout { alignment: center;
                         AuraButton { label: "Forgot password? Reset vault…"; width: 220px; height: 28px; clicked => { root.factory_reset_start(); } }
                     }
-                    if root.has_vault_file : Text { text: "Reset shreds everything and cannot be undone."; font-size: 10px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
+                    if root.has_vault_file : Text { text: "Reset shreds everything and cannot be undone."; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                 }
                 }
             }
@@ -1151,56 +1157,58 @@ export component MainWindow inherits Window {
     if root.is_unlocked : HorizontalLayout {
         spacing: 0px;
 
-        // 1. Column 1: Sidebar (220px)
+        // 1. Column 1: Sidebar (220px, 64px collapsed)
         Rectangle {
-            width: 220px;
+            width: root.sidebar_collapsed ? 64px : 220px;
             background: #121927;
             VerticalLayout {
-            padding: 16px;
+            padding: root.sidebar_collapsed ? 8px : 16px;
             spacing: 6px;
             HorizontalLayout {
                 spacing: 10px;
                 padding-bottom: 12px;
+                alignment: root.sidebar_collapsed ? center : start;
                 Rectangle { width: 38px; height: 38px; border-radius: 11px; background: #8b7cf6; Text { text: "P"; color: #ffffff; font-size: 19px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                VerticalLayout { alignment: center; spacing: 0px; Text { text: "PHANTOM"; font-size: 14px; font-weight: 900; color: #eef1ff; } Text { text: "VAULT"; font-size: 10px; font-weight: 700; color: #8b7cf6; } }
+                if !root.sidebar_collapsed : VerticalLayout { alignment: center; spacing: 0px; Text { text: "PHANTOM"; font-size: 14px; font-weight: 900; color: #eef1ff; } Text { text: "VAULT"; font-size: 11px; font-weight: 700; color: #8b7cf6; } }
             }
-            FieldLabel { text: "VAULT"; }
+            AuraButton { label: root.sidebar_collapsed ? "»" : "« Collapse"; height: 28px; clicked => { root.sidebar_collapsed = !root.sidebar_collapsed; } }
+            if !root.sidebar_collapsed : FieldLabel { text: "VAULT"; }
             ScrollView { vertical-stretch: 1;
             VerticalLayout { spacing: 6px;
-            NavItem { icon: "🔍"; label: "All items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
-            NavItem { icon: "⭐"; label: "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
-            NavItem { icon: "🗑️"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🔍"; label: "All items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🗑️"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
             Rectangle { height: 10px; }
-            FieldLabel { text: "TYPES"; }
-            NavItem { icon: "🔑"; label: "Login"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-            NavItem { icon: "💳"; label: "Card"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-            NavItem { icon: "🪪"; label: "Identity"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-            NavItem { icon: "📝"; label: "Note"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-            NavItem { icon: "📜"; label: "License"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
-            NavItem { icon: "🖥️"; label: "SSH Key"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-            FieldLabel { text: "FOLDERS"; }
-            for f in root.filter_folders : NavItem { icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
-            LineEdit { placeholder-text: "+ New folder..."; text <=> root.new_folder_name; height: 32px; accepted(text) => { root.add_folder_requested(text); } }
-            FieldLabel { text: "APP"; }
-            NavItem { icon: "➕"; label: "+ New"; active: root.show_add_form; tapped => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
+            if !root.sidebar_collapsed : FieldLabel { text: "TYPES"; }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; label: "Login"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: "Card"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: "Identity"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: "Note"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: "License"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: "SSH Key"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+            if !root.sidebar_collapsed : FieldLabel { text: "FOLDERS"; }
+            for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
+            if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder..."; text <=> root.new_folder_name; height: 32px; accepted(text) => { root.add_folder_requested(text); } }
+            if !root.sidebar_collapsed : FieldLabel { text: "APP"; }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "➕"; label: "+ New"; active: root.show_add_form; tapped => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
             if root.show_new_menu : VerticalLayout { spacing: 2px;
-                NavItem { icon: "🌐"; label: "Login"; tapped => { root.open_new_form(1); } }
-                NavItem { icon: "💳"; label: "Card"; tapped => { root.open_new_form(4); } }
-                NavItem { icon: "🪪"; label: "Identity"; tapped => { root.open_new_form(5); } }
-                NavItem { icon: "📝"; label: "Note"; tapped => { root.open_new_form(3); } }
-                NavItem { icon: "📜"; label: "License"; tapped => { root.open_new_form(2); } }
-                NavItem { icon: "🖥️"; label: "SSH Key"; tapped => { root.open_new_form(6); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🌐"; label: "Login"; tapped => { root.open_new_form(1); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: "Card"; tapped => { root.open_new_form(4); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: "Identity"; tapped => { root.open_new_form(5); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: "Note"; tapped => { root.open_new_form(3); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: "License"; tapped => { root.open_new_form(2); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: "SSH Key"; tapped => { root.open_new_form(6); } }
             }
-            NavItem { icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
-            NavItem { icon: "🛡️"; label: "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
-            NavItem { icon: "📥"; label: "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
-            NavItem { icon: "⚙️"; label: "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
-            NavItem { icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🛡️"; label: "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
             if root.is_travel_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL ON"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
             }
             }
-            AuraButton { label: root.is_travel_mode ? "✈️ TRAVEL ON" : "VAULT SEALED"; primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
-            if root.portable_badge != "" : Text { text: root.portable_badge; color: #34d399; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
+            AuraButton { label: root.sidebar_collapsed ? "✈️" : (root.is_travel_mode ? "✈️ TRAVEL ON" : "VAULT SEALED"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
+            if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: #34d399; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
             }
         }
 
@@ -1220,7 +1228,7 @@ export component MainWindow inherits Window {
                     AuraButton { label: "⚙"; width: 46px; height: 32px; clicked => { root.active_nav = 3; } }
                 }
                 if root.show_2fa_import : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 14px; spacing: 8px;
-                    Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: #5b6589; font-size: 10px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: #5b6589; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📋 Scan QR"; primary: true; horizontal-stretch: 1; clicked => { root.scan_qr_requested(); } } AuraButton { label: "📷 Scan via Webcam"; horizontal-stretch: 1; clicked => { root.scan_webcam_requested(); } } AuraButton { label: "📁 Browse File"; horizontal-stretch: 1; clicked => { root.import_2fa_file(); } } }
                     TextEdit { placeholder-text: "Paste multi-line otpauth:// links or raw JSON here…"; text <=> root.import_input; height: 72px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } }
@@ -1254,7 +1262,7 @@ export component MainWindow inherits Window {
                                                 Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
                                                 if acc.is_dup : Rectangle { border-radius: 6px; background: #4a2c00; border-width: 1px; border-color: #fbbf24;
                                                     HorizontalLayout { padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px;
-                                                        Text { text: "⚠ DUP"; color: #fbbf24; font-size: 9px; font-weight: 800; } } } }
+                                                        Text { text: "⚠ DUP"; color: #fbbf24; font-size: 11px; font-weight: 800; } } } }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; } }
                                         AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
@@ -1262,13 +1270,13 @@ export component MainWindow inherits Window {
                                     // Hidden by default. A visible "next" code is a
                                     // second plausible-looking number on the card and
                                     // users copy whichever one they read second.
-                                    if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 10px; overflow: elide; }
+                                    if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; }
                                 }
                                 VerticalLayout { spacing: 4px; alignment: center;
                                     Rectangle { width: 48px; height: 48px; border-radius: 24px; border-width: 2px;
                                         border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
                                         Text { text: acc.countdown; color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-                                    if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 9px; font-weight: 700; horizontal-alignment: center; }
+                                    if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
                                     if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 32px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
                                         AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; width: 72px; height: 32px; clicked => { root.copy_totp_requested(acc.id); } }
@@ -1356,7 +1364,7 @@ export component MainWindow inherits Window {
                     Text { text: root.dup_title; color: #eef1ff; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
                     Text { text: root.dup_body; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                     AuraButton { label: "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
-                    Text { text: "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: #5b6589; font-size: 10px; wrap: word-wrap; }
+                    Text { text: "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "♻️ Replace the existing card's secret"; height: 34px; danger: true; clicked => { root.dup_confirm_replace(); } }
                     AuraButton { label: "Cancel — import nothing"; height: 34px; clicked => { root.dup_confirm_cancel(); } }
                 }
@@ -1485,8 +1493,9 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: "Pairing PIN (this device)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: #38e1ff; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New PIN"; width: 100px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
                     Text { text: "Peers with 🔒 need their PIN typed below before Sync."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "🔍 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } LineEdit { placeholder-text: "Peer PIN (if 🔒)"; text <=> root.p2p_peer_pin; height: 36px; horizontal-stretch: 1; } }
-                    for peer in root.p2p_peers : Rectangle { background: #121927; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: #5b6589; font-size: 10px; overflow: elide; } } AuraButton { label: root.confirm_sync_ip == peer.ip ? "Sure?" : "Sync Now"; width: root.confirm_sync_ip == peer.ip ? 90px : 110px; height: 30px; y: 7px; clicked => { if root.confirm_sync_ip == peer.ip { root.confirm_sync_ip = ""; root.sync_peer(peer.ip, root.p2p_peer_pin); } else { root.confirm_sync_ip = peer.ip; } } } } }
+                    for peer in root.p2p_peers : Rectangle { background: #121927; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: #5b6589; font-size: 11px; overflow: elide; } } AuraButton { label: root.confirm_sync_ip == peer.ip ? "Sure?" : "Sync Now"; width: root.confirm_sync_ip == peer.ip ? 90px : 110px; height: 30px; y: 7px; clicked => { if root.confirm_sync_ip == peer.ip { root.confirm_sync_ip = ""; root.sync_peer(peer.ip, root.p2p_peer_pin); } else { root.confirm_sync_ip = peer.ip; } } } } }
                     Text { text: root.p2p_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.p2p_last_sync != "" : Text { text: "✅ Last sync: " + root.p2p_last_sync; color: #34d399; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Browser Bridge (headless)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
@@ -1586,7 +1595,7 @@ export component MainWindow inherits Window {
                         AuraButton { label: "🛡️ Re-Scan Vault"; primary: true; width: 170px; clicked => { root.audit_vault(); } }
                         AuraButton { label: "🧹 Janitor"; primary: root.janitor_active; width: 130px; clicked => { root.open_janitor(); } }
                     }
-                    Text { text: "🔴 breached  🟡 weak  ♻️ reused  🕰️ stale  ✅ verified"; color: #5b6589; font-size: 10px; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: "🔴 breached  🟡 weak  ♻️ reused  🕰️ stale  ✅ verified"; color: #5b6589; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "🚨 " + root.health_breached; primary: root.health_filter == "breached"; width: 110px; clicked => { root.filter_health("breached"); } }
                         AuraButton { label: "🔁 " + root.health_reused; primary: root.health_filter == "reused"; width: 110px; clicked => { root.filter_health("reused"); } }
@@ -1646,7 +1655,7 @@ export component MainWindow inherits Window {
                             AuraButton { label: "SSH Key"; horizontal-stretch: 1; clicked => { root.open_new_form(6); } }
                         }
                     }
-                    search_input := LineEdit { placeholder-text: "🔍 Search vault...  ( / to focus )"; text <=> root.search_query; height: 38px; edited(text) => { root.search_changed(text); } }
+                    search_input := LineEdit { placeholder-text: "🔍 Search vault...  ( / to focus )"; text <=> root.search_query; height: 38px; edited(text) => { col2_scroll.content-y = 0; root.search_changed(text); } }
                     if root.search_query != "" : AuraButton { label: "✕ Clear search"; height: 32px; clicked => { root.search_query = ""; root.search_changed(""); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
                         AuraButton { label: root.select_mode ? "☑️ Selecting…" : "☑️ Select"; width: 130px; height: 32px; primary: root.select_mode; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
@@ -1663,8 +1672,8 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-                    ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
-                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : (touch.has-hover ? #1a2333 : #101834); border-radius: 10px; border-width: 1px; border-color: root.d_id == cred.id ? #38bdf8 : (touch.has-hover ? #38bdf855 : #26315c); height: 62px;
+                    col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
+                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : (touch.has-hover ? #1a2333 : #101834); border-radius: 10px; border-width: root.d_id == cred.id ? 2px : 1px; border-color: root.d_id == cred.id ? #38bdf8 : (touch.has-hover ? #38bdf855 : #26315c); height: 62px;
                             touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
                             if root.d_id == cred.id : Rectangle { width: 3px; height: 40px; x: 0; y: 11px; border-radius: 2px; background: #38bdf8; drop-shadow-blur: 8px; drop-shadow-color: #38bdf888; }
                             HorizontalLayout { padding-left: 14px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 8px; alignment: space-between;
@@ -1678,7 +1687,7 @@ export component MainWindow inherits Window {
                                 if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
-                                if cred.health != "" : TouchArea { mouse-cursor: pointer; clicked => { root.filter_health(cred.health); } Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : cred.health == "reused" ? "♻️" : cred.health == "stale" ? "🕰️" : ""; font-size: 12px; vertical-alignment: center; } }
+                                if cred.health != "" : TouchArea { mouse-cursor: pointer; clicked => { col2_scroll.content-y = 0; root.filter_health(cred.health); } Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : cred.health == "reused" ? "♻️" : cred.health == "stale" ? "🕰️" : ""; font-size: 12px; vertical-alignment: center; } }
                             }
                         }
                         if root.credentials.length == 0 : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
@@ -2251,7 +2260,7 @@ export component MainWindow inherits Window {
                                 Text { text: row.sev == 0 ? "🔴" : (row.sev == 1 ? "🟠" : (row.sev == 2 ? "🟡" : "⚪")); font-size: 12px; vertical-alignment: center; }
                                 VerticalLayout { horizontal-stretch: 1; spacing: 0px;
                                     Text { text: row.title; color: #eef1ff; font-size: 12px; font-weight: 700; vertical-alignment: center; overflow: elide; }
-                                    Text { text: row.flags; color: #8e99c0; font-size: 10px; vertical-alignment: center; overflow: elide; }
+                                    Text { text: row.flags; color: #8e99c0; font-size: 11px; vertical-alignment: center; overflow: elide; }
                                 }
                                 Text { text: "›"; color: #5b6589; font-size: 16px; vertical-alignment: center; }
                             }
@@ -2442,7 +2451,7 @@ export component QuickBarWindow inherits Window {
                         alignment: center;
                         spacing: 0px;
                         Text { text: "Phantom Quick Bar"; color: #eef1ff; font-size: 14px; font-weight: 800; }
-                        Text { text: "Alt+Space  •  instant copy"; color: #5b6589; font-size: 10px; }
+                        Text { text: "Alt+Space  •  instant copy"; color: #5b6589; font-size: 11px; }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.filtered_results.length + " hits"; color: #5b6589; font-size: 11px; vertical-alignment: center; }
@@ -2511,7 +2520,7 @@ export component QuickBarWindow inherits Window {
 
                 HorizontalLayout {
                     alignment: space-between;
-                    Text { text: "↑↓: pick  •  Enter: copy highlighted  •  Esc: dismiss"; color: #8e99c0; font-size: 10px; vertical-alignment: center; }
+                    Text { text: "↑↓: pick  •  Enter: copy highlighted  •  Esc: dismiss"; color: #8e99c0; font-size: 11px; vertical-alignment: center; }
                     AuraButton { label: "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
                 }
             }
@@ -2579,7 +2588,7 @@ export component QuickCaptureWindow inherits Window {
                         alignment: center;
                         spacing: 0px;
                         Text { text: "Quick Capture Login"; color: #eef1ff; font-size: 14px; font-weight: 800; }
-                        Text { text: root.cap_hint == "" ? "Alt+S grabbed this app" : root.cap_hint; color: #5b6589; font-size: 10px; }
+                        Text { text: root.cap_hint == "" ? "Alt+S grabbed this app" : root.cap_hint; color: #5b6589; font-size: 11px; }
                     }
                 }
 

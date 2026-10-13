@@ -448,8 +448,8 @@ fn secure_copy_with_feedback(
     if text.is_empty() {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_ok.upgrade() {
-                ui.set_notification_kind("warn".into());
                 ui.set_notification_text("⚠️ Nothing safe to copy.".into());
+                ui.set_notification_kind("warn".into());
             }
         });
         return;
@@ -458,16 +458,16 @@ fn secure_copy_with_feedback(
     match windows_native::clipboard::copy_sensitive(&text, secs, move || {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_clear.upgrade() {
-                ui.set_notification_kind("info".into());
                 ui.set_notification_text("🧹 Clipboard auto-cleared for security!".into());
+                ui.set_notification_kind("info".into());
             }
         });
     }) {
         Ok(()) => {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak_ok.upgrade() {
-                    ui.set_notification_kind("success".into());
                     ui.set_notification_text(msg.into());
+                    ui.set_notification_kind("success".into());
                 }
             });
         }
@@ -7388,6 +7388,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             qb.set_filtered_results(vault_quickbar(&vv, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_p2p_status(msg.into());
+                        let now_s = std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs())
+                            .unwrap_or(0);
+                        ui.set_p2p_last_sync(
+                            format!("{ip} · {:02}:{:02} UTC", (now_s / 3600) % 24, (now_s / 60) % 60).into(),
+                        );
                         ui.set_notification_text("📡 LAN sync complete.".into());
                     }
                     Err(e) => ui.set_p2p_status(e.into()),
