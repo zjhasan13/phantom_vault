@@ -1284,13 +1284,13 @@ export component MainWindow inherits Window {
                     if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 } }
                 hub_scroll := ScrollView { vertical-stretch: 1; horizontal-stretch: 1; VerticalLayout { spacing: 14px;
-                    // Compact 3-column grid (rows of 3 from Rust). Card width
+                    // Compact 4-column grid (rows of 4 from Rust). Card width
                     // derives from the ScrollView VIEWPORT (parent-determined,
                     // never content) — pixel-identical columns, short rows
                     // left-align, no spacers, no zigzag, no binding loop.
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            width: (hub_scroll.width - 72px) / 3;
+                            width: (hub_scroll.width - 86px) / 4;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;

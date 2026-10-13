@@ -2057,11 +2057,11 @@ fn chunk_rows_of<T: Clone>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
     items.chunks(n).map(|c| c.to_vec()).collect()
 }
 
-/// Authenticator grid stride: 3 compact columns (Google Authenticator /
-/// Aegis density — scan-and-copy wants cards, not billboards).
-const AUTH_GRID_COLS: usize = 3;
+/// Authenticator grid stride: 4 columns — full-bleed on wide screens, no
+/// dead space on the right (compact cards, not billboards).
+const AUTH_GRID_COLS: usize = 4;
 
-/// Grid model for the authenticator page: `[[AuthView]]` rows of 3,
+/// Grid model for the authenticator page: `[[AuthView]]` rows of 4,
 /// filtered by the ISOLATED hub query (never the vault `search_query`).
 /// Park a colliding batch and open the dedup dialog. Returns true when the
 /// caller must STOP — nothing has been written in that case.
