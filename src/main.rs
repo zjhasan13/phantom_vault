@@ -9546,7 +9546,24 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let Some(ui) = shard_weak.upgrade() else {
             return;
         };
+        ui.set_drill_status(String::new().into());
         generate_shards_into(&ui, &shard_master);
+    });
+    // Recovery drill: prove the paper copy works (words #2 + #4 of shard #1).
+    // Success flips the same persistent badge as a PDF export.
+    let drill_weak = main_window.as_weak();
+    main_window.on_verify_shard_drill(move |w2, w4| {
+        let Some(ui) = drill_weak.upgrade() else {
+            return;
+        };
+        if security::shamir::Shamir::check_drill(ui.get_shard_1().as_str(), w2.as_str(), w4.as_str()) {
+            mark_recovery_exported();
+            ui.set_recovery_backed_up(true);
+            ui.set_drill_status("✅ Drill passed — paper copy verified.".into());
+            security::access_log::log_event("export", "recovery-drill ok");
+        } else {
+            ui.set_drill_status("❌ No match — copy words #2 and #4 exactly.".into());
+        }
     });
     // Post-setup nudge actions: Generate runs the same split core (marks the
     // one-shot pref either way — nagged once, never again).

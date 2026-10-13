@@ -295,8 +295,7 @@ impl Shamir {
     }
 
     /// Rebuild the password from any ≥3 word-shards.
-    pub fn combine(shard_texts: &[&str]) -> Result<RecoveredSecret> {
-        if shard_texts.len() < THRESHOLD {
+    pub fn combine(shard_texts: &[&str]) -> Result<RecoveredSecret> {        if shard_texts.len() < THRESHOLD {
             return Err(VaultError::Security("need at least 3 shards".into()));
         }
         let mut shards = Vec::new();
@@ -314,6 +313,16 @@ impl Shamir {
             shards.push(words_decode(&words)?);
         }
         Ok(RecoveredSecret(combine_bytes(&shards)?))
+    }
+
+    /// Recovery drill: shard text is `PHANTOM-n w1 w2 w3 …` — verify the
+    /// 2nd and 4th WORDS (1-indexed past the prefix). Pure — unit tested.
+    pub fn check_drill(shard: &str, w2: &str, w4: &str) -> bool {
+        let words: Vec<&str> = shard.split_whitespace().skip(1).collect();
+        if words.len() < 4 {
+            return false;
+        }
+        words[1].eq_ignore_ascii_case(w2.trim()) && words[3].eq_ignore_ascii_case(w4.trim())
     }
 }
 
@@ -406,5 +415,16 @@ mod tests {
     fn rejects_garbage() {
         assert!(Shamir::combine(&["hello world"]).is_err());
         assert!(Shamir::combine(&["PHANTOM-1 abacus", "PHANTOM-1 abacus", "nope nope"]).is_err());
+    }
+
+    #[test]
+    fn drill_checks_words_two_and_four() {
+        let texts = Shamir::split("secret123").unwrap();
+        let words: Vec<&str> = texts[0].split_whitespace().skip(1).collect();
+        assert!(Shamir::check_drill(&texts[0], words[1], words[3]));
+        assert!(Shamir::check_drill(&texts[0], &words[1].to_uppercase(), words[3]));
+        assert!(!Shamir::check_drill(&texts[0], "nope", words[3]));
+        assert!(!Shamir::check_drill(&texts[0], words[1], ""));
+        assert!(!Shamir::check_drill("PHANTOM-1 only", "a", "b"));
     }
 }
