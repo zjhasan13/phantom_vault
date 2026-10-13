@@ -1635,7 +1635,10 @@ fn unlock_with_password(    pass: SecretString,
                         ui.set_is_unlocked(true);
                         ui.set_show_onboarding(false);
                         ui.set_is_decoy(true);
-                        ui.set_status_text("✅ Vault unlocked".into());
+    ui.set_status_text("✅ Vault unlocked".into());
+    // TEMP DEBUG (2FA width hunt): real window pixels at unlock.
+    let sz = ui.window().size();
+    security::access_log::log_event("dbg", &format!("win {}x{}", sz.width, sz.height));
                         // Deliberately NO access-log line here: writing
                         // "decoy cover" to the real log would blow the cover
                         // for anyone reviewing it under coercion.
