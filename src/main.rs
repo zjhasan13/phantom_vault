@@ -448,6 +448,7 @@ fn secure_copy_with_feedback(
     if text.is_empty() {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_ok.upgrade() {
+                ui.set_notification_kind("warn".into());
                 ui.set_notification_text("⚠️ Nothing safe to copy.".into());
             }
         });
@@ -457,6 +458,7 @@ fn secure_copy_with_feedback(
     match windows_native::clipboard::copy_sensitive(&text, secs, move || {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_clear.upgrade() {
+                ui.set_notification_kind("info".into());
                 ui.set_notification_text("🧹 Clipboard auto-cleared for security!".into());
             }
         });
@@ -464,6 +466,7 @@ fn secure_copy_with_feedback(
         Ok(()) => {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak_ok.upgrade() {
+                    ui.set_notification_kind("success".into());
                     ui.set_notification_text(msg.into());
                 }
             });
