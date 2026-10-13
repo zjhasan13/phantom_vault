@@ -1,10 +1,11 @@
 use crate::core::memory::DpapiGuard;
 use crate::core::pq_hybrid::PqDecapsulationBytes;
 use crate::crypto::{
-    decrypt_vault, decrypt_vault_hybrid_legacy, decrypt_vault_portable, detect_version,
-    encrypt_vault_portable, VaultVersion,
+    decrypt_vault_hybrid_legacy_secret, decrypt_vault_portable_secret, decrypt_vault_secret,
+    detect_version, encrypt_vault_portable_secret, VaultVersion,
 };
 use crate::models::Vault;
+use secrecy::SecretString;
 use std::fs;
 use std::path::Path;
 
@@ -132,13 +133,20 @@ pub fn rotate_backups(path: &Path) -> Result<(), String> {
 /// Inner format is JSON-first: field-name encoding means `#[serde(default)]`
 /// fires reliably, so future appended fields can NEVER break old vaults
 /// again (the bincode-EOF class of bug is retired at the source).
-pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_path: P) -> Result<(), String> {
+///
+/// Secret-owning variant — the password never materializes as `&str`.
+/// Same shape as [`save_vault`]; legacy callers migrate one by one.
+pub fn save_vault_secret<P: AsRef<Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+) -> Result<(), String> {
     // ১. JSON-এ সিরিয়ালাইজ করা (field names + defaults = future-proof)
     let serialized_bytes = serde_json::to_vec(vault)
         .map_err(|e| format!("Serialization error: {}", e))?;
 
     // ২. পোর্টেবল হাইব্রিড এনক্রিপ্ট (Argon2id × ML-KEM-768 → HKDF-SHA256 → XChaCha20)
-    let encrypted_payload = encrypt_vault_portable(master_password, &serialized_bytes)?;
+    let encrypted_payload = encrypt_vault_portable_secret(master_password, &serialized_bytes)?;
 
     // ৩. Cross-process lock, backup rotation, তারপর shredder-guarded রাইট
     let _guard = FileLock::acquire(std::path::Path::new(file_path.as_ref()))?;
@@ -146,6 +154,12 @@ pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_pat
     crate::security::shredder::secure_write(std::path::Path::new(file_path.as_ref()), &encrypted_payload)?;
 
     Ok(())
+}
+
+/// Legacy `&str` entrypoint — prefer [`save_vault_secret`].
+/// (Deprecation deferred to the final migration phase.)
+pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_path: P) -> Result<(), String> {
+    save_vault_secret(vault, &SecretString::new(master_password.to_string()), file_path)
 }
 
 /// Load with 3-way envelope dispatch (unchanged):
@@ -158,8 +172,10 @@ pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_pat
 /// - JSON hit → current vault, `needs_migration = false`.
 /// - Bincode hit (any pre-JSON generation) → `needs_migration = true`, so the
 ///   next unlock transparently re-seals into JSON. No silent dual-format limbo.
-pub fn load_vault_versioned<P: AsRef<Path>>(
-    master_password: &str,
+///
+/// Secret-owning variant — same shape as [`load_vault_versioned`].
+pub fn load_vault_versioned_secret<P: AsRef<Path>>(
+    master_password: &SecretString,
     file_path: P,
 ) -> Result<(Vault, bool), String> {
     // ১. ডিস্ক থেকে বাইনারি পড়া
@@ -170,26 +186,26 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
     // branches before failing — an attacker who can rewrite the file can
     // already delete it; a flipped magic must not brick a good vault.
     let decrypted = match detect_version(&payload) {
-        VaultVersion::V2Portable => decrypt_vault_portable(master_password, &payload)
+        VaultVersion::V2Portable => decrypt_vault_portable_secret(master_password, &payload)
             .or_else(|_| {
                 let dk = load_legacy_pq_dk()?;
-                let out = decrypt_vault_hybrid_legacy(master_password, &payload, dk.expose());
+                let out = decrypt_vault_hybrid_legacy_secret(master_password, &payload, dk.expose());
                 drop(dk);
                 out
             })?,
         VaultVersion::V2Legacy => {
             let primary = (|| {
                 let dk = load_legacy_pq_dk()?;
-                let out = decrypt_vault_hybrid_legacy(master_password, &payload, dk.expose());
+                let out = decrypt_vault_hybrid_legacy_secret(master_password, &payload, dk.expose());
                 drop(dk);
                 out
             })();
             match primary {
                 Ok(d) => d,
-                Err(_) => decrypt_vault_portable(master_password, &payload)?,
+                Err(_) => decrypt_vault_portable_secret(master_password, &payload)?,
             }
         }
-        VaultVersion::V1Classical => decrypt_vault(master_password, &payload)?,
+        VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
     };
     // JSON-first: appended fields resolve via #[serde(default)], and unknown
     // fields are ignored — forward-compatible in both directions.
@@ -245,6 +261,24 @@ pub fn load_vault_versioned<P: AsRef<Path>>(
 }
 
 /// Legacy entrypoint: loads any version (migration flag discarded).
+/// Secret-owning variant — same shape as [`load_vault`].
+pub fn load_vault_secret<P: AsRef<Path>>(
+    master_password: &SecretString,
+    file_path: P,
+) -> Result<Vault, String> {
+    load_vault_versioned_secret(master_password, file_path).map(|(v, _)| v)
+}
+
+/// Legacy `&str` entrypoints — prefer the `_secret` variants.
+/// (Deprecation deferred to the final migration phase.)
+pub fn load_vault_versioned<P: AsRef<Path>>(
+    master_password: &str,
+    file_path: P,
+) -> Result<(Vault, bool), String> {
+    load_vault_versioned_secret(&SecretString::new(master_password.to_string()), file_path)
+}
+
+/// Legacy entrypoint: loads any version (migration flag discarded).
 pub fn load_vault<P: AsRef<Path>>(master_password: &str, file_path: P) -> Result<Vault, String> {
     load_vault_versioned(master_password, file_path).map(|(v, _)| v)
 }
@@ -278,6 +312,41 @@ mod tests {
                     deleted_at: None,
                 });
         v
+    }
+
+    #[test]
+    fn secret_variants_roundtrip_and_cross_compat() {
+        let dir = std::env::temp_dir().join("pv_secret_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("secret-path-pass-1".to_string());
+        // Secret save → legacy (&str) load.
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let (vault, needs_migration) = load_vault_versioned("secret-path-pass-1", &path).unwrap();
+        assert!(!needs_migration);
+        assert_eq!(vault.credentials[0].password, "s3cret!");
+        // Legacy save → secret load.
+        save_vault(&demo_vault(), "secret-path-pass-1", &path).unwrap();
+        let vault2 = load_vault_secret(&pw, &path).unwrap();
+        assert_eq!(vault2.credentials[0].password, "s3cret!");
+        assert!(load_vault_secret(&SecretString::new("wrong-pass!!".to_string()), &path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn secret_save_emits_portable_container() {
+        let dir = std::env::temp_dir().join("pv_secret_ver_test");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        save_vault_secret(
+            &demo_vault(),
+            &SecretString::new("secret-ver-pass-1".to_string()),
+            &path,
+        )
+        .unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert_eq!(crate::crypto::detect_version(&raw), VaultVersion::V2Portable);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
