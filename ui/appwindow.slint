@@ -527,6 +527,7 @@ export component MainWindow inherits Window {
     in-out property <bool> d_reprompt: false;
     in-out property <bool> d_stale: false;
     in-out property <string> d_age_info: "";
+    in-out property <float> d_age_frac: 0.0;
     in-out property <bool> d_fav: false;
     in-out property <bool> d_verified: false;
     in-out property <string> d_fill_info: "";
@@ -922,6 +923,7 @@ export component MainWindow inherits Window {
     callback copy_shell_complete(string);
     callback set_duress_password(string);
     callback plant_canary();
+    in-out property <int> canary_count: 0;
     callback set_travel_mode(bool);
     callback pick_attachment(int, string);
     callback download_attachment(int, string, string);
@@ -1223,6 +1225,7 @@ export component MainWindow inherits Window {
             NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
             if root.is_travel_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL ON"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+            if root.offline_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "📴 OFFLINE — no network"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
             }
             }
             AuraButton { label: root.sidebar_collapsed ? "✈️" : (root.is_travel_mode ? "✈️ TRAVEL ON" : "VAULT SEALED"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
@@ -1567,10 +1570,14 @@ export component MainWindow inherits Window {
                         accepted(text) => { root.set_duress_password(text); }
                     }
                     AuraButton { label: "🕊️  Arm Decoy"; width: 200px; clicked => { root.set_duress_password(root.duress_input); } }
+                    FieldLabel { text: "HONEYTOKENS (CANARY TRAP)"; }
+                    Text { text: root.canary_count > 0 ? "🐤 " + root.canary_count + " planted — touch one and the alarm fires" : "No honeytokens yet — plant one and never touch it yourself"; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: "🐤 Plant Honeytoken"; width: 200px; clicked => { root.plant_canary(); } }
                 }}
                 Rectangle { background: #2a0f1a; border-radius: 12px; border-width: 1px; border-color: #fb7185; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "🔥 DANGER ZONE"; color: #fb7185; font-size: 12px; font-weight: 800; }
                     Text { text: "Factory reset shreds the vault, all backups, and machine seals (DoD 3-pass), then restarts onboarding. Triple-gated: password + DELETE + 5s countdown."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "Tip: Ctrl+Shift+Alt+Q wipes RAM and exits instantly (panic-nuke)."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "🔥 Factory Reset Vault"; danger: true; width: 220px; height: 38px; clicked => { root.factory_reset_start(); } }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
@@ -1893,6 +1900,9 @@ export component MainWindow inherits Window {
                             // "⚠️ Weak password" / "🕰️ Over 6 months old").
                             if root.d_health != "" : Text { text: root.d_health; color: #fbbf24; font-size: 12px; font-weight: 800; wrap: word-wrap; }
                             if root.d_age_info != "" : Text { text: root.d_age_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
+                            if root.d_age_info != "" : Rectangle { background: #1a2450; border-radius: 6px; height: 8px; clip: true;
+                                Rectangle { background: root.d_age_frac >= 1.0 ? #fb7185 : (root.d_age_frac >= 0.66 ? #fbbf24 : #34d399); border-radius: 6px; height: 8px; width: parent.width * Math.min(root.d_age_frac, 1.0); }
+                            }
                             if root.d_fill_info != "" : Text { text: "📊 " + root.d_fill_info; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                             if root.d_kind == 1 && !root.d_trashed : HorizontalLayout { spacing: 8px; alignment: center;
                                 AuraButton { label: root.d_verified ? "✅ Verified working" : "Mark as working ✓"; primary: !root.d_verified; width: 200px; height: 32px; clicked => { root.toggle_verified(root.d_kind, root.d_id); } }
@@ -2581,6 +2591,7 @@ export component QuickCaptureWindow inherits Window {
     in-out property <string> cap_pass;
     in-out property <string> cap_totp;
     in-out property <string> cap_hint: "";
+    in-out property <bool> cap_show_pass: false;
 
     callback capture_save(string, string, string, string);
     callback capture_generate();
@@ -2638,7 +2649,8 @@ export component QuickCaptureWindow inherits Window {
                 FieldLabel { text: "PASSWORD"; }
                 HorizontalLayout {
                     spacing: 8px;
-                    LineEdit { placeholder-text: "Paste, type, or 🎲…"; input-type: password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
+                    LineEdit { placeholder-text: "Paste, type, or 🎲…"; input-type: root.cap_show_pass ? text : password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
+                    AuraButton { label: root.cap_show_pass ? "🙈" : "👁"; width: 52px; height: 36px; clicked => { root.cap_show_pass = !root.cap_show_pass; } }
                     AuraButton { label: "🎲"; width: 56px; clicked => { root.capture_generate(); } }
                 }
                 FieldLabel { text: "2FA SECRET (OPTIONAL)"; }

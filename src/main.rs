@@ -1182,6 +1182,13 @@ fn publish_unlocked_vault(
     // PR-3: persistent badge state, painted every unlock (portable-USB dir
     // without the pref correctly shows "Not Backed Up").
     ui.set_recovery_backed_up(recovery_exported());
+    ui.set_canary_count(
+        lock_vault(&vault_arc)
+            .credentials
+            .iter()
+            .filter(|c| security::canary::is_canary(c))
+            .count() as i32,
+    );
     // Hardware binding (rules Cat 6): warn-only machine check.
     // Registry + DPAPI read is milliseconds — safe inline.
     // PR-1 New-Device Modal (blocking): fires when the vault was bound to a
@@ -7796,9 +7803,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 }
             };
             let saved_ok = saved.is_ok();
+            let canaries = lock_vault(&vault_clone)
+                .credentials
+                .iter()
+                .filter(|c| security::canary::is_canary(c))
+                .count() as i32;
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     if saved_ok {
+                        ui.set_canary_count(canaries);
                         let vault = lock_vault(&vault_clone);
                         let f = search_clone.lock().unwrap().clone();
                         let items = vault_to_items(&vault, &f);
@@ -8997,6 +9010,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // Only logins track rotation age/history; reset for every other kind.
         ui.set_d_stale(false);
         ui.set_d_age_info(String::new().into());
+        ui.set_d_age_frac(0.0);
         ui.set_d_fav(false);
         ui.set_d_trashed(false);
         ui.set_d_has_icon(false);
@@ -9079,6 +9093,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_d_age_info(
                     format!("Last edited {} • Password age: {} days", crate::models::ago(c.last_changed, now), days).into(),
                 );
+                ui.set_d_age_frac((days as f32 / 180.0).min(1.0));
             }
         } else if let Some(l) = vault.licenses.iter().find(|l| l.id == id) {
             ui.set_d_id(l.id.clone().into());
