@@ -611,6 +611,11 @@ export component MainWindow inherits Window {
     // Lock tabs: 0 password · 1 PIN · 2 shards. Slint drives show_pin_pad /
     // show_recover from the tab (Rust only ever hides them).
     in-out property <int> unlock_tab: 0;
+    // Unlock busy: blocks double-Enter double-fire while Argon2id runs.
+    // Set on submit, cleared on next keystroke or error arrival.
+    in-out property <bool> unlock_busy: false;
+    changed unlock_error_message => { root.unlock_busy = false; }
+    changed is_unlocked => { if !root.is_unlocked { root.unlock_busy = false; } }
     // Lock-screen language: static labels only (Rust-driven status stays EN).
     in-out property <string> ui_lang: "en";
     in-out property <string> pin_error: "";
@@ -1017,14 +1022,15 @@ export component MainWindow inherits Window {
                         height: 46px;
                         font-size: 15px;
                         enabled: root.unlock_tab == 0;
-                        accepted(text) => { root.unlock_requested(text); }
+                        edited(text) => { root.unlock_busy = false; }
+                        accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } }
                     }
                     AuraButton {
-                        label: root.ui_lang == "bn" ? "🔓  ভল্ট খুলুন" : "🔓  Unlock Vault";
+                        label: root.unlock_busy ? "⏳ Unlocking…" : (root.ui_lang == "bn" ? "🔓  ভল্ট খুলুন" : "🔓  Unlock Vault");
                         primary: true;
                         height: 46px;
-                        enabled: root.unlock_tab == 0;
-                        clicked => { root.unlock_requested(password_input.text); }
+                        enabled: root.unlock_tab == 0 && !root.unlock_busy;
+                        clicked => { root.unlock_busy = true; root.unlock_requested(password_input.text); }
                     }
                     if root.hello_available : AuraButton {
                         label: root.ui_lang == "bn" ? "🖐  Hello দিয়ে খুলুন" : "🖐  Quick Unlock with Windows Hello";
@@ -1236,7 +1242,7 @@ export component MainWindow inherits Window {
             if root.offline_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "📴 OFFLINE — no network"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
             }
             }
-            AuraButton { label: root.sidebar_collapsed ? "✈️" : (root.is_travel_mode ? "✈️ TRAVEL ON" : "VAULT SEALED"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
+            AuraButton { label: root.sidebar_collapsed ? "✈️" : (root.is_travel_mode ? "✈️ TRAVEL ON" : "🧳 Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
             if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: #34d399; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
             }
         }
@@ -1251,7 +1257,6 @@ export component MainWindow inherits Window {
                     if root.totp_search_query != "" : AuraButton { label: "✕"; width: 44px; height: 38px; clicked => { root.totp_search_query = ""; root.totp_search_changed(""); } }
                 }
                 HorizontalLayout { spacing: 8px;
-                    AuraButton { label: "📲 Import"; width: 110px; height: 32px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
                     AuraButton { label: "📲 Export"; width: 110px; height: 32px; clicked => { root.ga_export_start(); } }
                     AuraButton { label: root.show_totp_next ? "🙈 Hide NEXT" : "👁 Show NEXT"; primary: root.show_totp_next; width: 130px; height: 32px; clicked => { root.toggle_totp_next(); } }
                     AuraButton { label: "⚙"; width: 46px; height: 32px; clicked => { root.active_nav = 3; } }
@@ -1922,7 +1927,12 @@ export component MainWindow inherits Window {
                         if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Shred" : "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
                         if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Delete" : "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
                     }
-                    if root.d_id == "" && !root.show_add_form : Text { text: "🛡️ Select an item from the list to view details"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
+                    if root.d_id == "" && !root.show_add_form : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
+                        Text { text: "🛡️"; font-size: 44px; horizontal-alignment: center; }
+                        Text { text: "Select an item from the list to view details"; color: #5b6589; font-size: 13px; horizontal-alignment: center; }
+                        AuraButton { label: "+ New Item"; primary: true; width: 170px; height: 36px; clicked => { root.open_new_form(1); } }
+                        AuraButton { label: "🎲 Generator"; width: 170px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } }
+                    }
                 }}
                 // Phase 26: moiré veil floats ABOVE the card content when armed.
                 if root.moire_guard_active : MoireVeil {
