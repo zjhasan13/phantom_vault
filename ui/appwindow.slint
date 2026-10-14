@@ -1290,13 +1290,9 @@ export component MainWindow inherits Window {
                     if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: #38e1ff; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 } }
                 hub_scroll := ScrollView { vertical-stretch: 1; horizontal-stretch: 1; VerticalLayout { spacing: 14px;
-                    // Landscape 4-column grid (rows of 4 from Rust). Cards
-                    // stretch-share the row (NO width formula — formulas
-                    // under-constrain and collapse narrow). Short rows
-                    // left-align, no zigzag, no binding loop.
-                    // TEMP DEBUG (remove before release): live widths.
-                    // hub_px_w is Rust-fed from the real window (self-healing every TOTP tick).
-                    Text { text: "dbg scroll=" + hub_scroll.width / 1px + " forced=" + root.hub_px_w; color: #5b6589; font-size: 11px; }
+                    // Landscape grid (rows from Rust, AUTH_GRID_COLS each).
+                    // Card width is Rust-fed (hub_px_w) — viewport-capped,
+                    // short rows left-align, no binding loop.
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; horizontal-stretch: 1; alignment: space-between;
                         for acc in row : Rectangle {
                             // Guaranteed-fit: the SMALLER of Rust-fed window
