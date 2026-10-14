@@ -6330,6 +6330,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         ui.set_ga_image(img);
     }
     ui.set_ga_page(format!("Page {} of {}", idx + 1, pages.len()).into());
+    ui.set_ga_page_at(idx as i32);
+    ui.set_ga_page_total(pages.len() as i32);
     ui.set_ga_show(true);
 }
 
@@ -9817,9 +9819,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         );
                         ui.set_show_import_preview(true);
                         ui.set_import_status("👁️ Preview ready — nothing merged yet.".into());
+                        ui.set_import_kind("success".into());
                     }
                     Err(e) => {
                         ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
+                        ui.set_import_kind("error".into());
                     }
                 }
             });
@@ -9911,6 +9915,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                     Err(e) => {
                         ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
+                        ui.set_import_kind("error".into());
                     }
                 }
             });

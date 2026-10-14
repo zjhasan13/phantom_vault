@@ -595,6 +595,8 @@ export component MainWindow inherits Window {
     in-out property <bool> ga_show: false;
     in-out property <image> ga_image;
     in-out property <string> ga_page: "";
+    in-out property <int> ga_page_at: 0;
+    in-out property <int> ga_page_total: 0;
     in-out property <string> ga_warn: "";
     in-out property <bool> show_webcam_scan: false;
     in-out property <image> webcam_frame;
@@ -737,6 +739,8 @@ export component MainWindow inherits Window {
     callback set_prox_sensitivity(int);
     // Phase 18: Omni-Importer vault view
     in-out property <string> import_status: "No import yet — pick any export file.";
+    in-out property <string> import_kind: "info";
+    changed import_status => { root.import_kind = "info"; }
     // Dry-run preview: staged counts shown BEFORE anything merges.
     in-out property <bool> show_import_preview: false;
     in-out property <string> import_preview_text: "";
@@ -1095,13 +1099,14 @@ export component MainWindow inherits Window {
                     if root.unlock_tab == 2 && root.show_recover : VerticalLayout {
                         spacing: 8px;
                         FieldLabel { text: root.ui_lang == "bn" ? "যেকোনো ৩টি শার্ড বসান" : "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
-                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; }
-                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; }
-                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; }
+                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; horizontal-stretch: 1; }
                         HorizontalLayout { spacing: 8px; alignment: center;
                             AuraButton { label: root.show_recover_shards ? "🙈 Hide" : "👁 Show"; width: 110px; height: 34px; clicked => { root.show_recover_shards = !root.show_recover_shards; } }
+                            AuraButton { label: "✕ Clear"; width: 110px; height: 34px; clicked => { root.recover_1 = ""; root.recover_2 = ""; root.recover_3 = ""; } }
                         }
-                        if root.recover_1 == "" || root.recover_2 == "" || root.recover_3 == "" : Text { text: "Paste all 3 shards — any 3 of your 5."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        if root.recover_1 == "" || root.recover_2 == "" || root.recover_3 == "" : Text { text: root.ui_lang == "bn" ? "৩টি শার্ড বসান — ৫টির যেকোনো ৩টি।" : "Paste all 3 shards — any 3 of your 5."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         AuraButton {
                             label: root.ui_lang == "bn" ? "🔓  পুনর্গঠন ও খুলুন" : "🔓  Rebuild & Unlock";
                             primary: true;
@@ -1112,7 +1117,7 @@ export component MainWindow inherits Window {
                     }
                     Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                     if root.has_vault_file : HorizontalLayout { alignment: center;
-                        AuraButton { label: "Forgot password? Shred & start over…"; width: 280px; height: 28px; clicked => { root.factory_reset_start(); } }
+                        AuraButton { label: "Forgot password? Shred & start over…"; width: 280px; height: 28px; danger: true; clicked => { root.factory_reset_start(); } }
                     }
                     if root.has_vault_file : Text { text: "Reset shreds everything and cannot be undone."; font-size: 11px; color: #5b6589; horizontal-alignment: center; wrap: word-wrap; }
                 }
@@ -1144,9 +1149,12 @@ export component MainWindow inherits Window {
                     drop-shadow-color: #00000088;
                     VerticalLayout { padding: 28px; spacing: 14px;
                         HorizontalLayout { alignment: center; spacing: 8px;
-                            Text { text: root.onboarding_step >= 1 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
-                            Text { text: root.onboarding_step >= 2 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
-                            Text { text: root.onboarding_step >= 3 ? "●" : "○"; color: #8b7cf6; font-size: 12px; }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.ob_error = ""; root.onboarding_step = 1; }
+                                Text { text: root.onboarding_step >= 1 ? "●" : "○"; color: #8b7cf6; font-size: 12px; } }
+                            TouchArea { mouse-cursor: pointer; clicked => { root.ob_error = ""; root.onboarding_step = 2; }
+                                Text { text: root.onboarding_step >= 2 ? "●" : "○"; color: #8b7cf6; font-size: 12px; } }
+                            TouchArea { mouse-cursor: pointer; clicked => { if root.ob_shards_ok { root.ob_error = ""; root.onboarding_step = 3; } else { root.ob_error = "⚠️ Please tick the box on step 2 first."; } }
+                                Text { text: root.onboarding_step >= 3 ? "●" : "○"; color: #8b7cf6; font-size: 12px; } }
                             Text { text: "  Step " + root.onboarding_step + " of 3"; color: #5b6589; font-size: 11px; font-weight: 700; }
                         }
                         if root.onboarding_step == 1 : VerticalLayout { spacing: 10px;
@@ -1159,7 +1167,9 @@ export component MainWindow inherits Window {
                             Text { text: "Your Master Password is your ONLY key"; color: #eef1ff; font-size: 18px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                             Text { text: "We never store or transmit it. If you lose it AND your recovery shards, nobody — not even us — can open your vault."; color: #8e99c0; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { spacing: 8px; alignment: center;
-                                CheckBox { text: "I understand — no password + no shards = no vault"; checked <=> root.ob_shards_ok; }
+                                Rectangle { height: 40px; horizontal-stretch: 1;
+                                    CheckBox { text: "I understand — no password + no shards = no vault"; checked <=> root.ob_shards_ok; y: 8px; x: 12px; }
+                                }
                             }
                             Text { text: "📄 Right after setup you will get ONE prompt to print your 5 recovery shards. Do not skip it."; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         }
@@ -1280,7 +1290,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout { spacing: 8px;
                     AuraButton { label: "📲 Export"; width: 110px; height: 32px; clicked => { root.ga_export_start(); } }
                     AuraButton { label: root.show_totp_next ? "🙈 Hide NEXT" : "👁 Show NEXT"; primary: root.show_totp_next; width: 130px; height: 32px; clicked => { root.toggle_totp_next(); } }
-                    AuraButton { label: "⚙"; width: 46px; height: 32px; clicked => { root.active_nav = 3; } }
+                    AuraButton { label: "⚙ Settings"; width: 110px; height: 32px; clicked => { root.active_nav = 3; } }
                 }
                 if root.show_2fa_import : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 14px; spacing: 8px;
                     Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: #5b6589; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
@@ -1350,12 +1360,12 @@ export component MainWindow inherits Window {
                         AuraButton { label: "+ Add 2FA"; primary: true; width: 150px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
                     }
                     Text { text: "🔑  Resident Passkeys (WebAuthn)"; color: #eef1ff; font-size: 15px; font-weight: 900; }
-                    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Relying party (github.com)"; text <=> root.pk_rp; height: 36px; horizontal-stretch: 1; } LineEdit { placeholder-text: "Username"; text <=> root.pk_user; height: 36px; horizontal-stretch: 1; } AuraButton { label: "+ Register"; primary: true; width: 130px; clicked => { root.register_passkey(root.pk_rp, root.pk_user); } } }
+                    HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Relying party (github.com)"; text <=> root.pk_rp; height: 36px; horizontal-stretch: 1; accepted(text) => { if root.pk_rp != "" && root.pk_user != "" { root.register_passkey(root.pk_rp, root.pk_user); } } } LineEdit { placeholder-text: "Username"; text <=> root.pk_user; height: 36px; horizontal-stretch: 1; accepted(text) => { if root.pk_rp != "" && root.pk_user != "" { root.register_passkey(root.pk_rp, root.pk_user); } } } AuraButton { label: "+ Register"; primary: true; width: 130px; enabled: root.pk_rp != "" && root.pk_user != ""; clicked => { root.register_passkey(root.pk_rp, root.pk_user); } } }
                     VerticalLayout { spacing: 8px;
                         for pk in root.passkeys : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; height: 64px;
                             HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                 VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #eef1ff; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: pk.fav ? "⭐" : "☆"; width: 44px; height: 32px; clicked => { root.toggle_passkey_fav(pk.id); } } AuraButton { label: "📋 Pub"; width: 80px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure?" : "🗑"; width: root.confirm_delete_pk_id == pk.id ? 72px : 44px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
+                                HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: pk.fav ? "⭐" : "☆"; width: 44px; height: 32px; clicked => { root.toggle_passkey_fav(pk.id); } } AuraButton { label: "📋 Copy key"; width: 110px; height: 32px; clicked => { root.copy_passkey_pub(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure?" : "🗑"; width: root.confirm_delete_pk_id == pk.id ? 72px : 44px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
                             }
                         }
                         if root.passkeys.length == 0 : Text { text: "No passkeys yet — register one above."; color: #5b6589; font-size: 12px; horizontal-alignment: center; }
@@ -1395,8 +1405,8 @@ export component MainWindow inherits Window {
                             Text { text: root.ga_page; color: #38e1ff; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
                             if root.ga_warn != "" : Text { text: root.ga_warn; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { spacing: 8px; alignment: center;
-                                AuraButton { label: "◀ Prev"; width: 110px; height: 36px; clicked => { root.ga_export_page(-1); } }
-                                AuraButton { label: "Next ▶"; width: 110px; height: 36px; clicked => { root.ga_export_page(1); } }
+                                AuraButton { label: "◀ Prev"; width: 110px; height: 36px; enabled: root.ga_page_at > 0; clicked => { root.ga_export_page(-1); } }
+                                AuraButton { label: "Next ▶"; width: 110px; height: 36px; enabled: root.ga_page_at + 1 < root.ga_page_total; clicked => { root.ga_export_page(1); } }
                             }
                             HorizontalLayout { spacing: 8px;
                                 AuraButton { label: "📋 Copy URI"; horizontal-stretch: 1; height: 38px; clicked => { root.ga_copy_uri(); } }
@@ -1433,7 +1443,7 @@ export component MainWindow inherits Window {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                 AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; clicked => { root.pick_import_file(); } }
-                Rectangle { background: #121927; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: #38e1ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
+                Rectangle { background: #121927; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? #fb7185 : (root.import_kind == "success" ? #34d399 : #38e1ff); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.show_import_preview : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
                     Text { text: root.import_preview_text; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
@@ -1542,7 +1552,9 @@ export component MainWindow inherits Window {
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "GitHub Sync"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
-                    LineEdit { placeholder-text: "Owner"; text <=> root.sync_owner; height: 36px; } LineEdit { placeholder-text: "Repo"; text <=> root.sync_repo; height: 36px; } LineEdit { placeholder-text: "PAT"; input-type: password; text <=> root.sync_token_input; height: 36px; }
+                    LineEdit { placeholder-text: "Owner (github username)"; text <=> root.sync_owner; height: 36px; }
+                    LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.sync_repo; height: 36px; }
+                    LineEdit { placeholder-text: "PAT (classic token, repo scope)"; input-type: password; text <=> root.sync_token_input; height: 36px; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "Connect"; primary: true; width: 120px; clicked => { root.save_sync_config(root.sync_owner, root.sync_repo, root.sync_token_input); } } AuraButton { label: "Sync Now"; width: 120px; clicked => { root.sync_now(); } } }
                     Text { text: root.sync_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
@@ -1640,7 +1652,8 @@ export component MainWindow inherits Window {
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Health & Dev"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
-                    Text { text: root.health_status; color: #38e1ff; font-size: 12px; wrap: word-wrap; } AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } }
+                    Text { text: root.health_status; color: #38e1ff; font-size: 12px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "SSH Agent"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: #8e99c0; font-size: 11px; vertical-alignment: center; } if root.ssh_agent_running : AuraButton { label: "Stop"; danger: true; width: 90px; clicked => { root.stop_ssh_agent(); } } if !root.ssh_agent_running : AuraButton { label: "Start"; primary: true; width: 90px; clicked => { root.start_ssh_agent(); } } AuraButton { label: "Refresh"; width: 90px; clicked => { root.refresh_ssh_status(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline audit (no network)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_audit ? "ON" : "OFF"; primary: root.offline_audit; width: 90px; clicked => { root.offline_audit = !root.offline_audit; } } }
                     Text { text: "Shell completion (copy, then paste in your shell profile)"; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
@@ -1794,7 +1807,7 @@ export component MainWindow inherits Window {
                         FieldLabel { text: "LOGIN CREDENTIALS"; }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Username / Email" : (root.new_kind == 2 ? "License Key" : (root.new_kind == 4 ? "Cardholder name" : (root.new_kind == 5 ? "Full name" : (root.new_kind == 6 ? "Public Key" : "Note content")))); text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: "🎭 Alias"; width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Password" : (root.new_kind == 2 ? "Expiry (optional)" : (root.new_kind == 4 ? "Card number" : (root.new_kind == 5 ? "NID / Passport" : (root.new_kind == 6 ? "Private Key" : "Field B (secret)")))); input-type: root.new_kind == 1 || root.new_kind == 6 ? password : text; text <=> root.f_b; height: 36px; horizontal-stretch: 1; } AuraButton { label: "🎲"; width: 52px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } } }
-                        Text { text: "Use the generator 🎲 to create a strong unique password"; color: #5b6589; font-size: 11px; }
+                        if root.new_kind == 1 : Text { text: "Use the generator 🎲 to create a strong unique password"; color: #5b6589; font-size: 11px; }
                         // Non-login kinds: Field C/D/E have NO inputs elsewhere
                         // (f_d/f_e were unwritable) — per-kind labels here.
                         if root.new_kind == 4 || root.new_kind == 5 || root.new_kind == 6 : VerticalLayout { spacing: 8px;
@@ -1885,8 +1898,8 @@ export component MainWindow inherits Window {
                             FieldLabel { text: "PASSWORD"; }
                             HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
                             if root.d_kind == 1 && root.d_secret != "" && root.d_pw_strength_label != "" : VerticalLayout { spacing: 4px;
-                                HorizontalLayout { spacing: 8px;
-                                    Rectangle { background: #1e293b; border-radius: 4px; height: 8px; horizontal-stretch: 1; y: 4px;
+                                HorizontalLayout { spacing: 8px; alignment: center;
+                                    Rectangle { background: #1e293b; border-radius: 4px; height: 8px; horizontal-stretch: 1;
                                         Rectangle { background: root.d_pw_strength >= 1.0 ? #34d399 : (root.d_pw_strength >= 0.75 ? #a3e635 : (root.d_pw_strength >= 0.5 ? #fbbf24 : #fb7185)); border-radius: 4px; width: parent.width * root.d_pw_strength; height: 8px; }
                                     }
                                 }
@@ -1949,8 +1962,13 @@ export component MainWindow inherits Window {
                             HorizontalLayout { spacing: 8px; FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? #34d399 : #5b6589; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
                         }}
                         // Bottom action bar
-                        if root.d_trashed : HorizontalLayout { spacing: 8px; AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Shred" : "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
-                        if !root.d_trashed : HorizontalLayout { spacing: 8px; if root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } } AuraButton { label: root.confirm_delete_detail ? "Sure? Delete" : "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } } AuraButton { label: "✕ Close Selection"; width: 140px; height: 36px; clicked => { root.close_detail(); } } }
+                        HorizontalLayout { spacing: 8px;
+                            if root.d_trashed : AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
+                            if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? "Sure? Shred" : "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
+                            if !root.d_trashed && root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
+                            if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? "Sure? Delete" : "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
+                            AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.close_detail(); } }
+                        }
                     }
                     if root.d_id == "" && !root.show_add_form : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
                         Text { text: "🛡️"; font-size: 44px; horizontal-alignment: center; }
@@ -2434,6 +2452,7 @@ export component MainWindow inherits Window {
         width: parent.width;
         height: parent.height;
         background: #04060ecc;
+        TouchArea { clicked => { root.show_shards = false; } }
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
