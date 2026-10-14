@@ -1,14 +1,16 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: SecretString migration done (Phases 1–5).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: v0.2.1 prep (411 tests).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
 - Branch `main`, pushed, working tree clean.
-- Baselines: `cargo test` 409 passed / 1 ignored, `node --test tests/js/` 12/12,
-  `cargo check --all-targets` zero warnings, `cargo clippy --all-targets` 1 pre-existing
-  warning (`tray.rs:381` redundant match, untouched).
+- Baselines: `cargo test` 411 passed / 1 ignored, `node --test tests/js/` 12/12,
+  `cargo check --all-targets` zero warnings, `cargo clippy --all-targets` zero
+  warnings (tray redundant-match fixed via `is_ok()`).
+- v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
+  the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
 - SecretString migration (Phases 1–5) DONE: crypto/storage `_secret` variants live,
   all prod call sites (main unlock/save ×30+, bridge, CLI, decoy, app_pin) ride
   `SecretString`/`Zeroizing`; legacy `&str` wrappers `#[deprecated]` (compat tests
