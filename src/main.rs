@@ -1183,7 +1183,7 @@ fn publish_unlocked_vault(
     // without the pref correctly shows "Not Backed Up").
     ui.set_recovery_backed_up(recovery_exported());
     ui.set_canary_count(
-        lock_vault(&vault_arc)
+        lock_vault(vault_arc)
             .credentials
             .iter()
             .filter(|c| security::canary::is_canary(c))
@@ -2122,7 +2122,33 @@ fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
 /// Grouped health-report rows for the audit dialog: severity-ordered
 /// (breached → reused → weak → stale) with section headers.
 /// Header rows carry id "" (never clickable, never secrets). Pure — tested.
+/// Legacy bare-row contract (test-only hook): production renders through
+/// `health_rows_with_rotation`; this pins the old grouping/order/flags shape.
+#[cfg(test)]
 fn health_rows_for(results: &[security::breach_check::BreachResult]) -> Vec<HealthRow> {
+    build_health_rows(results, None)
+}
+
+/// Rotation-loop progress for one flagged login, derived from vault-side
+/// facts only (the app cannot verify the website-side change — the user
+/// still changes it on the site). Pure — unit tested.
+fn rotation_status(last_changed: u64, has_history: bool, verified: bool, audit_started: u64) -> &'static str {
+    if last_changed >= audit_started && has_history && verified {
+        "✅ Vault updated + verified"
+    } else if last_changed >= audit_started && has_history {
+        "🔁 Vault updated — mark it verified if it works"
+    } else {
+        "⏳ Open site → change it there → update vault here"
+    }
+}
+
+/// Shared health-row builder. `ctx = Some((vault, audit_started))` fills the
+/// additive `rotation` line; `None` keeps the legacy bare rows (existing
+/// callers + tests untouched).
+fn build_health_rows(
+    results: &[security::breach_check::BreachResult],
+    ctx: Option<(&Vault, u64)>,
+) -> Vec<HealthRow> {
     let mut rows: Vec<HealthRow> = Vec::new();
     let mut groups: [Vec<&security::breach_check::BreachResult>; 4] =
         [Vec::new(), Vec::new(), Vec::new(), Vec::new()];
@@ -2152,6 +2178,7 @@ fn health_rows_for(results: &[security::breach_check::BreachResult]) -> Vec<Heal
             title: header.to_string().into(),
             flags: String::new().into(),
             sev: -1,
+            rotation: String::new().into(),
         });
         for r in group {
             let mut flags = Vec::new();
@@ -2167,15 +2194,40 @@ fn health_rows_for(results: &[security::breach_check::BreachResult]) -> Vec<Heal
             if r.stale {
                 flags.push("stale 6m+".to_string());
             }
+            let rotation = match ctx {
+                Some((vault, audit_started)) => {
+                    match vault.credentials.iter().find(|c| c.id == r.credential_id) {
+                        Some(c) => rotation_status(
+                            c.last_changed,
+                            !c.password_history.is_empty(),
+                            vault.is_verified(&r.credential_id),
+                            audit_started,
+                        ),
+                        None => "⏳ Open site → change it there → update vault here",
+                    }
+                }
+                None => "",
+            };
             rows.push(HealthRow {
                 id: r.credential_id.clone().into(),
                 title: r.title.clone().into(),
                 flags: flags.join(" • ").into(),
                 sev: sev as i32,
+                rotation: rotation.into(),
             });
         }
     }
     rows
+}
+
+/// Health rows with the rotation-loop progress line. Same grouping/order as
+/// `health_rows_for`; only the additive `rotation` text differs.
+fn health_rows_with_rotation(
+    results: &[security::breach_check::BreachResult],
+    vault: &Vault,
+    audit_started: u64,
+) -> Vec<HealthRow> {
+    build_health_rows(results, Some((vault, audit_started)))
 }
 
 fn rebuild_history(c: &Credential) -> ModelRc<HistoryView> {
@@ -11354,6 +11406,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let audit_vault_arc = Arc::clone(&active_vault);
     let audit_search = Arc::clone(&search_state);
     main_window.on_audit_vault(move || {
+        // Rotation-loop baseline: vault updates at/after this stamp count as
+        // post-audit rotations (u64 seconds — Copy, safe to move below).
+        let audit_started = crate::models::current_timestamp();
         // Offline mode: local reuse/weakness only — zero packets leave the
         // device. The global kill-switch forces this path unconditionally.
         let offline = audit_weak
@@ -11449,7 +11504,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             // Grouped tappable rows: severity-ordered (breached → reused →
             // weak → stale) with section headers. Header rows carry id "".
-            let rows = health_rows_for(&report.results);
+            // Rotation text needs the live vault, so rows are built on the
+            // event loop after the lock below (same report snapshot).
             let full = format!("{headline}\n\n{detail}");
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
@@ -11463,7 +11519,6 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         reg.extend(kinds);
                     }
                     ui.set_health_report(full.into());
-                    ui.set_health_rows(ModelRc::new(VecModel::from(rows)));
                     ui.set_show_health(true);
                     ui.set_health_status(headline.into());
                     // Scoreboard dashboard props.
@@ -11477,6 +11532,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     security::access_log::log_event("audit", "health scan");
                     let f = search_clone.lock().map(|s| s.clone()).unwrap_or_default();
                     let v = lock_vault(&vault_clone);
+                    ui.set_health_rows(ModelRc::new(VecModel::from(
+                        health_rows_with_rotation(&report.results, &v, audit_started),
+                    )));
                     set_paged_credentials(&ui, vault_to_items(&v, &f));
                 }
             });
@@ -12827,6 +12885,88 @@ mod grid_tests {
         assert!(!rows.iter().any(|r| r.id.as_str() == "ok"));
         // Empty input → no rows (dialog shows the healthy line).
         assert!(health_rows_for(&[]).is_empty());
+        // Legacy path stays bare: the additive rotation line defaults empty.
+        assert!(health_rows_for(&results)
+            .iter()
+            .all(|r| r.rotation.as_str().is_empty()));
+    }
+
+    #[test]
+    fn rotation_status_transitions() {
+        // Stale update or no history → still pending (manual loop open).
+        assert_eq!(
+            rotation_status(999, true, true, 1000),
+            "⏳ Open site → change it there → update vault here"
+        );
+        assert_eq!(
+            rotation_status(1001, false, false, 1000),
+            "⏳ Open site → change it there → update vault here"
+        );
+        // Vault updated post-audit but not yet confirmed working.
+        assert_eq!(
+            rotation_status(1001, true, false, 1000),
+            "🔁 Vault updated — mark it verified if it works"
+        );
+        // Updated post-audit (same-second boundary counts) + verified = done.
+        assert_eq!(
+            rotation_status(1001, true, true, 1000),
+            "✅ Vault updated + verified"
+        );
+        assert_eq!(
+            rotation_status(1000, true, true, 1000),
+            "✅ Vault updated + verified"
+        );
+    }
+
+    #[test]
+    fn health_rows_with_rotation_marks_progress() {
+        use crate::models::PasswordHistoryEntry;
+        use crate::security::breach_check::BreachResult;
+        let mut v = Vault::new();
+        v.credentials.push(Credential {
+            id: "r1".into(),
+            title: "r1".into(),
+            username: "u".into(),
+            password: "fresh".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: "General".into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 1001,
+            password_history: vec![PasswordHistoryEntry {
+                password: "old".into(),
+                changed_at: 1001,
+            }],
+            favorite: false,
+            deleted_at: None,
+        });
+        assert!(v.set_verified("r1", true));
+        let mk = |id: &str| BreachResult {
+            credential_id: id.into(),
+            title: id.into(),
+            breached: None,
+            reused: true,
+            weak: false,
+            stale: false,
+        };
+        let results = vec![mk("r1"), mk("ghost")];
+        let rows = health_rows_with_rotation(&results, &v, 1000);
+        // 1 header + 2 items, same grouping/order contract as the legacy path.
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].sev, -1);
+        let done = rows.iter().find(|r| r.id.as_str() == "r1").unwrap();
+        assert_eq!(done.rotation.as_str(), "✅ Vault updated + verified");
+        // Unknown id: honest pending, never a false "done".
+        let ghost = rows.iter().find(|r| r.id.as_str() == "ghost").unwrap();
+        assert_eq!(
+            ghost.rotation.as_str(),
+            "⏳ Open site → change it there → update vault here"
+        );
     }
 
     #[test]

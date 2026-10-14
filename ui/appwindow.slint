@@ -51,11 +51,13 @@ struct AttachmentView {
 
 // Vault-health audit row. sev: -1 section header (id ""), 0 breached,
 // 1 reused, 2 weak, 3 stale. flags = short chip text, never secrets.
+// rotation = vault-side rotation-loop progress ("", pending, updated, done).
 struct HealthRow {
     id: string,
     title: string,
     flags: string,
     sev: int,
+    rotation: string,
 }
 
 // Authenticator account row. kind: "TOTP" | "HOTP" | "STEAM".
@@ -2368,7 +2370,7 @@ export component MainWindow inherits Window {
                         for row in root.health_rows : Rectangle {
                             background: row.sev == -1 ? transparent : #121927;
                             border-radius: 8px;
-                            height: row.sev == -1 ? 24px : 40px;
+                            height: row.sev == -1 ? 24px : 58px;
                             clip: true;
                             // Row tap FIRST (under content): buttons above keep their own clicks.
                             if row.sev >= 0 : TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(row.id); root.show_health = false; } }
@@ -2378,6 +2380,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout { horizontal-stretch: 1; spacing: 0px;
                                     Text { text: row.title; color: #eef1ff; font-size: 12px; font-weight: 700; vertical-alignment: center; overflow: elide; }
                                     Text { text: row.flags; color: #8e99c0; font-size: 11px; vertical-alignment: center; overflow: elide; }
+                                    if row.rotation != "" : Text { text: row.rotation; color: #38e1ff; font-size: 11px; vertical-alignment: center; overflow: elide; }
                                 }
                                 Text { text: "›"; color: #5b6589; font-size: 16px; vertical-alignment: center; }
                                 AuraButton { label: "↗ Open"; width: 76px; height: 28px; clicked => { root.open_health_url(row.id); } }
