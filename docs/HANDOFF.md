@@ -1,13 +1,13 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: epic roadmap 6→7→2→4→1 shipped (431 tests).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: epic roadmap 9→3→5 shipped, mobile/iOS excluded (446 tests).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
 - Branch `main`, pushed, working tree clean.
-- Baselines: `cargo test` 431 passed / 1 ignored, `node --test
-  tests/js/background.test.mjs` 12/12, `cargo check --all-targets` zero
+- Baselines: `cargo test` 446 passed / 1 ignored, `node --test
+  tests/js/background.test.mjs` 16/16, `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -50,8 +50,27 @@
     (other kinds refuse loud); `Vault.shared_grants` additive
     (`#[serde(default)]`, pre-sharing JSON loads); revoke = mark +
     mandatory password rotation (issued copies can't be un-issued).
-  - Dropped without new cause: #3 passkey ceremony, #5 SSO/admin,
-    #8 mobile/Safari, #9 secure-send.
+- Epic roadmap 9→3→5 SHIPPED (mobile/iOS excluded, per-phase commit + push):
+  - #9 secure-send (`ab909db`): `security/secure_send.rs` — expiring
+    XChaCha notes, link-code = key (id = sha256(key)), relay
+    `send/<id>.json`, read → expiry-check → decrypt → DELETE (burn);
+    delete-fail after good read LOUD; copy-paste offline path included.
+    `delete_file` verified in octocrab 0.41.2 vendored source first.
+  - #3 passkey ceremony relay (`a8750ad` + test-fix `08dd887`):
+    `core/passkey.rs` assertion + fmt-none attestation packaging;
+    `native_host` `assert_full`/`attest` (uv-token OR legacy uv) +
+    `request_uv` (Hello system prompt → single-use rp-bound 120s token);
+    hook 90s hold + timeout fallback; popup approve button; background
+    sender-check + Hello-before-sign. Legacy `PV_ASSERT` fail-closed
+    test untouched. Caught by tests: UV consume was remove-then-check
+    (burned on wrong-rp) → check-then-remove.
+  - #5 business admin (`1343968`): `security/admin.rs` — member CSV
+    roster (machine-local `org_members.json`, factory-reset shredded),
+    deprovision auto-revokes key-bound grants, OIDC userinfo email-verify
+    (no JWT dep), chain-verified audit JSON export. Explicitly NOT:
+    IdP-gated unlock, server SCIM, SAML.
+  - Dropped without new cause: #8 mobile/Safari/iOS app (user-excluded),
+    plus standing drops below.
 
 ## 2. How to resume (new PC / new OpenCode session, any model incl. Muse Spark)
 
@@ -86,8 +105,9 @@
    else request GitHub Support cache purge. Then publish the v0.2.0 Release
    object in web UI (tag pushed; no `gh` CLI on the machine).
 5. **Follow-ups for the other line:** `write_adopted_head` unwired
-   (`src/sync/p2p_local.rs`, `#[allow(dead_code)]` + NOTE); host `assert`
-   unreachable from extension (fails-closed test pinned); `AgentKey` lacks
+   (`src/sync/p2p_local.rs`, `#[allow(dead_code)]` + NOTE); legacy host
+   `assert` unreachable from extension (fails-closed test pinned —
+   relay now uses `assert_full`/`attest`); `AgentKey` lacks
    explicit `Zeroize` derive (relies on dalek drop).
 6. **Standing item (do NOT blind-chase):** `Mutex::lock().unwrap()` pattern in
    `src/main.rs` (panic=abort design). Only touch attacker-influenced paths.
@@ -117,3 +137,11 @@
 - Do NOT "fix" the 2 `manual_clamp` clippy warnings with `.clamp()` — NaN
   propagation semantics differ from `.max().min()`; layout sizing must not
   change silently.
+- Test hygiene (proven twice): env-mutating tests sharing one process-global
+  var MUST serialize via a static `Mutex` (see `browser_direct` ENV_LOCK
+  precedent); single-use token consume MUST check-then-remove (failed
+  attempts never burn); brand-new relay message names keep old fail-closed
+  pins green (`PV_ASSERT` vs `PV_ASSERT_SIGN`).
+- Crate `Result<T>` alias collision: new String-error fns use
+  `std::result::Result` or a local `StdResult<T>` alias — never bare
+  `Result<_, String>` next to `use crate::error::Result`.
