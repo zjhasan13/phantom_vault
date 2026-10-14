@@ -2995,6 +2995,7 @@ fn push_hub_width(ui: &MainWindow) {
     let logical = sz.width as f32 / scale;
     let side: f32 = if ui.get_sidebar_collapsed() { 64.0 } else { 220.0 };
     ui.set_hub_px_w(((logical - side - 44.0).max(320.0)).min(4000.0));
+    ui.set_hub_w(((logical - side).max(340.0)).min(4000.0));
 }
 
 fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {    // The feed must not disturb the main list's total: save/restore it.

@@ -478,6 +478,8 @@ export component MainWindow inherits Window {
     in-out property <string> totp_search_query: "";
     // Rust-fed hub content width (logical px) — self-healing every TOTP tick.
     in-out property <float> hub_px_w: 1200;
+    // Rust-fed hub Rectangle width — explicit beats stretch unconditionally.
+    in-out property <float> hub_w: 1200;
     // Bitwarden-parity item management
     in-out property <int> new_kind: 1;
     in-out property <int> type_filter: 0;
@@ -1267,6 +1269,7 @@ export component MainWindow inherits Window {
 
         // active_nav routing: 0=Vault 3-col, 1=2FA Hub grid, 2=Importer, 3=Settings center
         if root.active_nav == 1 : Rectangle {
+            width: root.hub_w * 1px;
             background: #080c14; horizontal-stretch: 1; vertical-stretch: 1;
             VerticalLayout { padding: 22px; spacing: 14px; horizontal-stretch: 1; vertical-stretch: 1;
                 HorizontalLayout { spacing: 8px;
