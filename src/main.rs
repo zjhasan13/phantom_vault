@@ -554,6 +554,8 @@ fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> 
         HEARTBEAT_FILE,
         // PR-3: a reset vault genuinely has no sheet — warn again.
         RECOVERY_EXPORTED_FILE,
+        // Phase 5: machine-local org roster must not survive a reset.
+        security::admin::ORG_FILE,
     ] {
         let p = dir.join(name);
         if p.is_file() && !out.contains(&p) {
@@ -7939,6 +7941,245 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
     });
 
+    // Phase 5: business admin (desktop-only). Roster is machine-local and
+    // never synced; deprovision auto-revokes key-bound share grants (with
+    // re-seal + rollback armor). All paths refuse decoy (admin metadata
+    // must never mix with cover traffic).
+    let admin_weak = main_window.as_weak();
+    main_window.on_admin_import_members(move |csv_text| {
+        let Some(ui) = admin_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let now = crate::models::current_timestamp();
+        let (mut fresh, skipped) = security::admin::parse_members_csv(csv_text.as_str(), now);
+        let mut roster = security::admin::load_members();
+        let mut added = 0usize;
+        for m in fresh.drain(..) {
+            if !roster.iter().any(|x| x.email == m.email) {
+                roster.push(m);
+                added += 1;
+            }
+        }
+        match security::admin::save_members(&roster) {
+            Ok(()) => {
+                ui.set_admin_status(
+                    format!("👥 Roster: +{added} members, {skipped} lines skipped, {} total.", roster.len()).into(),
+                );
+                security::access_log::log_event("admin", "members imported");
+            }
+            Err(e) => ui.set_admin_status(format!("⚠️ Roster blocked: {e}").into()),
+        }
+    });
+    let deprov_weak = main_window.as_weak();
+    let deprov_vault = Arc::clone(&active_vault);
+    let deprov_master = Arc::clone(&active_master_pw);
+    main_window.on_admin_deprovision(move |email| {
+        let Some(ui) = deprov_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&deprov_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_admin_status("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        ui.set_admin_status("⏳ Deprovisioning…".into());
+        let addr = email.to_string();
+        let weak = deprov_weak.clone();
+        let vault_clone = Arc::clone(&deprov_vault);
+        std::thread::spawn(move || {
+            let done = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_admin_status(msg.into());
+                    }
+                });
+            };
+            let mut roster = security::admin::load_members();
+            if !roster.iter().any(|m| m.email == addr.trim().to_lowercase()) {
+                done("⚠️ No such member.".into());
+                return;
+            }
+            let mut vault = lock_vault(&vault_clone);
+            let snapshot = vault.clone();
+            let revoked = security::admin::deprovision(&mut roster, &mut vault, &addr);
+            if security::admin::save_members(&roster).is_err() {
+                *vault = snapshot;
+                done("⚠️ Roster store failed — nothing changed.".into());
+                return;
+            }
+            match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
+                Ok(()) => {
+                    security::access_log::log_event("admin", "member deprovisioned");
+                    done(format!(
+                        "🚫 Deprovisioned. {} grant(s) auto-revoked — rotated secrets stay rotated.{}{}",
+                        revoked.len(),
+                        if revoked.is_empty() { " No key-bound grants found." } else { "" },
+                        if revoked.is_empty() {
+                            String::new()
+                        } else {
+                            format!("\nRevoked: {}", revoked.join(", "))
+                        }
+                    ));
+                }
+                Err(e) => {
+                    *vault = snapshot;
+                    let _ = security::admin::save_members(&{
+                        let mut r = security::admin::load_members();
+                        for m in r.iter_mut() {
+                            if m.email == addr.trim().to_lowercase() {
+                                m.active = true;
+                            }
+                        }
+                        r
+                    });
+                    done(format!("⚠️ Deprovision blocked: {e}"));
+                }
+            }
+        });
+    });
+    // OIDC email-verify: redeem the pasted access token at the issuer's
+    // userinfo endpoint. Verified email lands in admin output for copy
+    // into the roster (never auto-enrolled — explicit import only).
+    let oidc_weak = main_window.as_weak();
+    main_window.on_admin_oidc_verify(move |issuer, token| {
+        let Some(ui) = oidc_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_admin_status("⏳ Verifying with provider…".into());
+        let iss = issuer.to_string();
+        let tok = token.to_string();
+        let weak = oidc_weak.clone();
+        std::thread::spawn(move || {
+            let done = |status: String, output: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_admin_status(status.into());
+                        ui.set_admin_output(output.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                done("📴 Offline mode — provider unreachable.".into(), String::new());
+                return;
+            }
+            let Some(rt) = tokio_rt() else {
+                done("⚠️ Could not start network runtime.".into(), String::new());
+                return;
+            };
+            match rt.block_on(security::admin::verify_email(&iss, &tok)) {
+                Ok(email) => {
+                    security::access_log::log_event("admin", "oidc email verified");
+                    done(
+                        "✅ Email verified by provider.".into(),
+                        format!("Verified email (paste into the roster CSV):\n{email}"),
+                    );
+                }
+                Err(e) => done(format!("⚠️ Verify refused: {e}"), String::new()),
+            }
+        });
+    });
+    // Bind a grantee key fingerprint to a roster member (enables grant
+    // auto-revoke on deprovision). Pure roster write, re-sealed roster.
+    let bind_weak = main_window.as_weak();
+    main_window.on_admin_bind_key(move |email, fp| {
+        let Some(ui) = bind_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let mut roster = security::admin::load_members();
+        let want = email.to_string();
+        let fp_norm = fp.to_string().trim().to_lowercase();
+        if fp_norm.len() != 64 || !fp_norm.chars().all(|c| c.is_ascii_hexdigit()) {
+            ui.set_admin_status("⚠️ Fingerprint must be 64 hex chars.".into());
+            return;
+        }
+        let mut found = false;
+        for m in roster.iter_mut() {
+            if m.email == want.trim().to_lowercase() {
+                m.grantee_fp = fp_norm.clone();
+                found = true;
+            }
+        }
+        if !found {
+            ui.set_admin_status("⚠️ No such member — import first.".into());
+            return;
+        }
+        match security::admin::save_members(&roster) {
+            Ok(()) => {
+                ui.set_admin_status("🔗 Key bound to member.".into());
+                security::access_log::log_event("admin", "member key bound");
+            }
+            Err(e) => ui.set_admin_status(format!("⚠️ Bind blocked: {e}").into()),
+        }
+    });
+    // Audit export: chain-verified JSON (entries + validity flag) to a
+    // user-picked path. Master-gated by the locked-vault precondition.
+    let audit_weak = main_window.as_weak();
+    let audit_master = Arc::clone(&active_master_pw);
+    main_window.on_admin_export_audit(move || {
+        let Some(ui) = audit_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if lock_master_pw(&audit_master).as_ref().is_none() {
+            ui.set_admin_status("⚠️ Vault not unlocked.".into());
+            return;
+        }
+        ui.set_admin_status("⏳ Pick export path…".into());
+        let weak = audit_weak.clone();
+        std::thread::spawn(move || {
+            let dest = rfd::FileDialog::new()
+                .set_title("Export audit log (chain-verified JSON)")
+                .set_file_name("phantomvault-audit.json")
+                .add_filter("JSON", &["json"])
+                .save_file();
+            let Some(dest) = dest else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_admin_status("Export cancelled.".into());
+                    }
+                });
+                return;
+            };
+            let res = (|| -> Result<String, String> {
+                let bytes = security::admin::export_audit()?;
+                std::fs::write(&dest, &bytes).map_err(|e| format!("write failed: {e}"))?;
+                Ok(format!("📜 Audit exported ({} bytes).", bytes.len()))
+            })();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match res {
+                        Ok(msg) => {
+                            ui.set_admin_status(msg.into());
+                            security::access_log::log_event("admin", "audit exported");
+                        }
+                        Err(e) => ui.set_admin_status(format!("⚠️ Export blocked: {e}").into()),
+                    }
+                }
+            });
+        });
+    });
+
     // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.
     // Listener + beacon + responder threads are detached; the shared stop
     // flag retires them on toggle-off (re-enable flips it back + respawns).
@@ -13645,6 +13886,7 @@ mod grid_tests {
             "blackout.pref",
             "favicons.pref",
             "totp_offset.pref",
+            "org_members.json",
         ] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
@@ -13664,6 +13906,7 @@ mod grid_tests {
             "pin.dpapi",
             "pin_attempts.dpapi",
             "ext_pin.dpapi",
+            "org_members.json",
         ] {
             assert!(got.contains(&want.to_string()), "missing {want}: {got:?}");
         }

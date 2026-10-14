@@ -1,4 +1,5 @@
 pub mod access_log;
+pub mod admin;
 pub mod anti_camera;
 pub mod anti_debug;
 pub mod app_pin;

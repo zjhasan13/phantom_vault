@@ -969,6 +969,19 @@ export component MainWindow inherits Window {
     callback send_create(string, string);
     callback send_open(string);
     callback send_open_pasted(string, string);
+    // Phase 5: business admin (desktop-only). Roster is machine-local.
+    in-out property <string> admin_status: "";
+    in-out property <string> admin_output: "";
+    in-out property <string> admin_csv_input: "";
+    in-out property <string> admin_email_input: "";
+    in-out property <string> admin_issuer_input: "";
+    in-out property <string> admin_token_input: "";
+    in-out property <string> admin_fp_input: "";
+    callback admin_import_members(string);
+    callback admin_deprovision(string);
+    callback admin_oidc_verify(string, string);
+    callback admin_bind_key(string, string);
+    callback admin_export_audit();
     callback set_p2p(bool);
     callback scan_p2p();
     callback sync_peer(string, string);
@@ -1659,6 +1672,28 @@ export component MainWindow inherits Window {
                     LineEdit { placeholder-text: "Key (base64, offline paste)"; text <=> root.send_key_input; height: 36px; }
                     Text { text: root.send_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     if root.send_output != "" : Text { text: root.send_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
+                }}
+                Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "🏢 Business: Members, OIDC, Audit Export"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: "Roster is machine-local (never synced). Deprovision flips the member off and auto-revokes their key-bound share grants."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: "Paste member CSV: email[,name[,grantee_fp]] per line"; text <=> root.admin_csv_input; height: 72px; }
+                    AuraButton { label: "👥 Import Members"; width: 200px; clicked => { root.admin_import_members(root.admin_csv_input); } }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "Member email"; text <=> root.admin_email_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "🚫 Deprovision"; width: 180px; clicked => { root.admin_deprovision(root.admin_email_input); } }
+                    }
+                    LineEdit { placeholder-text: "OIDC issuer (https://…)"; text <=> root.admin_issuer_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "Access token (verified via userinfo)"; text <=> root.admin_token_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "✓ Verify Email"; width: 180px; clicked => { root.admin_oidc_verify(root.admin_issuer_input, root.admin_token_input); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "Grantee key fp (hex, to bind)"; text <=> root.admin_fp_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "🔗 Bind Key"; width: 180px; clicked => { root.admin_bind_key(root.admin_email_input, root.admin_fp_input); } }
+                    }
+                    AuraButton { label: "📜 Export Audit Log"; width: 200px; clicked => { root.admin_export_audit(); } }
+                    Text { text: root.admin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.admin_output != "" : Text { text: root.admin_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
