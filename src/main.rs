@@ -9821,6 +9821,276 @@ fn launch_url(ui: &MainWindow, url: &str) {
         });
     });
 
+    // Phase 2: emergency timed grant. Grantee request → grantor approve →
+    // enforced wait → sealed shard envelope → grantee takeover via the
+    // EXISTING shard-recovery path. Static Shamir/PDF flow untouched.
+    // Grantee keypair (local only — private key shown once, never stored).
+    let emgkey_weak = main_window.as_weak();
+    main_window.on_emg_new_keypair(move || {
+        let Some(ui) = emgkey_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let kp = crate::core::pq_hybrid::PqHybridEngine::generate_keypair();
+        use base64::Engine as _;
+        let eng = base64::engine::general_purpose::STANDARD;
+        ui.set_emg_output(
+            format!(
+                "PUBLIC (send to grantor):\n{}\n\nPRIVATE (save now — shown once, never stored):\n{}",
+                eng.encode(&kp.encapsulation),
+                eng.encode(kp.decapsulation.expose())
+            )
+            .into(),
+        );
+        ui.set_emg_status("🔑 Grantee keypair created in RAM only.".into());
+        security::access_log::log_event("emergency", "keypair created");
+    });
+    // Grantor: approve a pasted grantee public key + publish request+approval.
+    let emgpub_weak = main_window.as_weak();
+    main_window.on_emg_publish_request(move |pubkey_b64, wait_hours_raw| {
+        let Some(ui) = emgpub_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_emg_status("⏳ Publishing grant request…".into());
+        let pk = pubkey_b64.to_string();
+        let wh = wait_hours_raw.to_string();
+        let weak = emgpub_weak.clone();
+        std::thread::spawn(move || {
+            let report = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_emg_status(msg.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — relay skipped.".into());
+                return;
+            }
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                return;
+            };
+            let mut token = token;
+            let run = || -> Result<String, String> {
+                use base64::Engine as _;
+                let pubbytes = base64::engine::general_purpose::STANDARD
+                    .decode(pk.trim())
+                    .map_err(|_| "grantee key is not base64".to_string())?;
+                let hours: u64 = wh.trim().parse().map_err(|_| "wait hours must be a number".to_string())?;
+                let wait_secs = hours.checked_mul(3_600).ok_or("wait overflow".to_string())?;
+                let now = crate::models::current_timestamp();
+                let req = security::emergency::GrantRequest::create(&pubbytes, wait_secs, now)
+                    .map_err(|e| e.to_string())?;
+                let id = req.id().map_err(|e| e.to_string())?;
+                let approval = security::emergency::GrantApproval::approve(&id, wait_secs, now)
+                    .map_err(|e| e.to_string())?;
+                let Some(rt) = tokio_rt() else {
+                    return Err("could not start network runtime".to_string());
+                };
+                let req_path = security::emergency::relay_path(&id, "request").map_err(|e| e.to_string())?;
+                let req_bytes = req.encode().map_err(|e| e.to_string())?;
+                rt.block_on(security::emergency::relay_put(&cfg.owner, &cfg.repo, &token, &req_path, &req_bytes))
+                    .map_err(|e| e.to_string())?;
+                let appr_path = security::emergency::relay_path(&id, "approved").map_err(|e| e.to_string())?;
+                let appr_bytes = approval.encode().map_err(|e| e.to_string())?;
+                rt.block_on(security::emergency::relay_put(&cfg.owner, &cfg.repo, &token, &appr_path, &appr_bytes))
+                    .map_err(|e| e.to_string())?;
+                Ok(format!(
+                    "✅ Request approved + published.\nGrant ID (send to grantee):\n{id}\nRelease after ~{hours}h wait (envelope appears only then)."
+                ))
+            };
+            use zeroize::Zeroize;
+            let msg = run().unwrap_or_else(|e| format!("⚠️ Grant refused: {e}"));
+            token.zeroize();
+            if msg.starts_with("✅") {
+                security::access_log::log_event("emergency", "request published");
+            }
+            report(msg);
+        });
+    });
+    // Grantor: seal the 5 shards (needs unlocked master) + publish envelope.
+    // Maturity is enforced inside `seal_envelope` — early release refuses.
+    let emgrel_weak = main_window.as_weak();
+    let emgrel_master = Arc::clone(&active_master_pw);
+    main_window.on_emg_release_envelope(move |grant_id| {
+        let Some(ui) = emgrel_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&emgrel_master).clone();
+        let Some(master) = master_opt else {
+            ui.set_emg_status("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        ui.set_emg_status("⏳ Sealing envelope…".into());
+        let gid = grant_id.to_string();
+        let weak = emgrel_weak.clone();
+        std::thread::spawn(move || {
+            let report = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_emg_status(msg.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — relay skipped.".into());
+                return;
+            }
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                return;
+            };
+            let mut token = token;
+            let run = || -> Result<String, String> {
+                use secrecy::ExposeSecret;
+                use zeroize::Zeroize;
+                let Some(rt) = tokio_rt() else {
+                    return Err("could not start network runtime".to_string());
+                };
+                let now = crate::models::current_timestamp();
+                let req_bytes = rt
+                    .block_on(security::emergency::relay_get(&cfg.owner, &cfg.repo, &token, gid.trim(), "request"))
+                    .map_err(|e| e.to_string())?
+                    .ok_or("no such grant request on relay".to_string())?;
+                let req = security::emergency::GrantRequest::decode(&req_bytes).map_err(|e| e.to_string())?;
+                let appr_bytes = rt
+                    .block_on(security::emergency::relay_get(&cfg.owner, &cfg.repo, &token, gid.trim(), "approved"))
+                    .map_err(|e| e.to_string())?
+                    .ok_or("no approval on relay".to_string())?;
+                let appr = security::emergency::GrantApproval::decode(&appr_bytes).map_err(|e| e.to_string())?;
+                let mut shards = security::shamir::Shamir::split(master.expose_secret()).map_err(|e| e.to_string())?;
+                let env = security::emergency::seal_envelope(&req, &appr, &shards, now).map_err(|e| e.to_string())?;
+                for s in shards.iter_mut() {
+                    s.zeroize();
+                }
+                let env_bytes = env.encode().map_err(|e| e.to_string())?;
+                let env_path = security::emergency::relay_path(gid.trim(), "envelope").map_err(|e| e.to_string())?;
+                rt.block_on(security::emergency::relay_put(&cfg.owner, &cfg.repo, &token, &env_path, &env_bytes))
+                    .map_err(|e| e.to_string())?;
+                Ok("✅ Envelope released + published. Grantee: Fetch Envelope → Open → shard recovery.".to_string())
+            };
+            let msg = run().unwrap_or_else(|e| format!("⚠️ Release refused: {e}"));
+            use zeroize::Zeroize;
+            token.zeroize();
+            if msg.starts_with("✅") {
+                security::access_log::log_event("emergency", "envelope released");
+            }
+            report(msg);
+        });
+    });
+    // Grantee: fetch the published envelope into the paste field.
+    let emgfetch_weak = main_window.as_weak();
+    main_window.on_emg_fetch_envelope(move |grant_id| {
+        let Some(ui) = emgfetch_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_emg_status("⏳ Fetching envelope…".into());
+        let gid = grant_id.to_string();
+        let weak = emgfetch_weak.clone();
+        std::thread::spawn(move || {
+            let report = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_emg_status(msg.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — relay skipped.".into());
+                return;
+            }
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                return;
+            };
+            let mut token = token;
+            let Some(rt) = tokio_rt() else {
+                use zeroize::Zeroize;
+                token.zeroize();
+                report("⚠️ Could not start network runtime.".into());
+                return;
+            };
+            let res = rt.block_on(security::emergency::relay_get(
+                &cfg.owner,
+                &cfg.repo,
+                &token,
+                gid.trim(),
+                "envelope",
+            ));
+            use zeroize::Zeroize;
+            token.zeroize();
+            match res {
+                Ok(Some(bytes)) => {
+                    use base64::Engine as _;
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_emg_env_input(b64.into());
+                            ui.set_emg_status("📥 Envelope fetched — paste your private key, then Open.".into());
+                        }
+                    });
+                }
+                Ok(None) => report("⚠️ No envelope yet — grant not mature or not released.".into()),
+                Err(e) => report(format!("⚠️ Relay: {e}")),
+            }
+        });
+    });
+    // Grantee: open a pasted envelope with the private key → show shards for
+    // the EXISTING shard-recovery screen. Local only, no vault needed.
+    let emgopen_weak = main_window.as_weak();
+    main_window.on_emg_open_envelope(move |privkey_b64, envelope_b64| {
+        let Some(ui) = emgopen_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        use base64::Engine as _;
+        let res = (|| -> Result<String, String> {
+            let dk = base64::engine::general_purpose::STANDARD
+                .decode(privkey_b64.trim())
+                .map_err(|_| "private key is not base64".to_string())?;
+            let env_bytes = base64::engine::general_purpose::STANDARD
+                .decode(envelope_b64.trim())
+                .map_err(|_| "envelope is not base64".to_string())?;
+            let env = security::emergency::GrantEnvelope::decode(&env_bytes).map_err(|e| e.to_string())?;
+            let shards = security::emergency::open_envelope(&env, &dk).map_err(|e| e.to_string())?;
+            let mut out = "✅ Envelope opened — use these on the lock-screen shard recovery:\n".to_string();
+            for (i, s) in shards.iter().enumerate() {
+                out.push_str(&format!("\nShard {}:\n{}\n", i + 1, s));
+            }
+            Ok(out)
+        })();
+        match res {
+            Ok(text) => {
+                ui.set_emg_output(text.into());
+                ui.set_emg_status("✅ Opened. Store the shards like paper — then shred this view.".into());
+                security::access_log::log_event("emergency", "envelope opened");
+            }
+            Err(e) => ui.set_emg_status(format!("⚠️ Open refused: {e}").into()),
+        }
+    });
+
     // Phase 18: Omni-Importer — file picker + sniff + merge, all off-UI-thread.
     // Dry-run preview: pick → parse → dry-merge on a CLONE for exact counts
     // → user confirms → real merge + re-seal. Nothing touches the live vault

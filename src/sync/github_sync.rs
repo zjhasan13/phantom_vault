@@ -16,7 +16,9 @@ use zeroize::{Zeroize, Zeroizing};
 const REPO_FILE: &str = "sync_repo.txt";
 const TOKEN_FILE: &str = "github_token.dpapi";
 const REMOTE_PATH: &str = "vault.enc";
-const COMMIT_MESSAGE: &str = "chore: vault sync";
+// Crate-visible for the emergency relay (same fixed generic message —
+// no timestamps/counts/names). Vault blob path itself never changes.
+pub(crate) const COMMIT_MESSAGE: &str = "chore: vault sync";
 
 pub const MAX_BLOB_BYTES: usize = 48 * 1024 * 1024;
 
@@ -116,7 +118,7 @@ fn load_token() -> Result<Zeroizing<String>> {
     Ok(token)
 }
 
-fn client(token: &str) -> Result<octocrab::Octocrab> {
+pub(crate) fn client(token: &str) -> Result<octocrab::Octocrab> {
     octocrab::Octocrab::builder()
         .personal_token(token.to_string())
         .build()
@@ -126,7 +128,7 @@ fn client(token: &str) -> Result<octocrab::Octocrab> {
 /// True when an octocrab error is HTTP 404 (missing file/repo path).
 /// Matches the structured variant first, falls back to message sniffing
 /// across octocrab versions.
-fn is_not_found(e: &octocrab::Error) -> bool {
+pub(crate) fn is_not_found(e: &octocrab::Error) -> bool {
     if matches!(
         e,
         octocrab::Error::GitHub { source, .. } if source.status_code == http::StatusCode::NOT_FOUND

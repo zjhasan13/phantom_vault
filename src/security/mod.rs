@@ -6,6 +6,7 @@ pub mod backoff;
 pub mod breach_check;
 pub mod canary;
 pub mod decoy;
+pub mod emergency;
 pub mod ext_pin;
 pub mod integrity;
 pub mod pdf_sheet;

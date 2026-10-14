@@ -723,6 +723,20 @@ export component MainWindow inherits Window {
     callback shard_nudge_later();
     callback generate_shards();
     callback recover_with_shards(string, string, string);
+    // Phase 2: emergency timed grant (request → approve → wait → envelope).
+    // Takeover reuses the lock-screen shard recovery — no new unlock path.
+    in-out property <string> emg_status: "";
+    in-out property <string> emg_output: "";
+    in-out property <string> emg_pubkey_input: "";
+    in-out property <string> emg_wait_input: "";
+    in-out property <string> emg_grant_input: "";
+    in-out property <string> emg_priv_input: "";
+    in-out property <string> emg_env_input: "";
+    callback emg_new_keypair();
+    callback emg_publish_request(string, string);
+    callback emg_release_envelope(string);
+    callback emg_fetch_envelope(string);
+    callback emg_open_envelope(string, string);
     callback stego_hide();
     callback stego_restore();
     // Phase 15 (Option 1): paranoia suite
@@ -1651,6 +1665,24 @@ export component MainWindow inherits Window {
                     FieldLabel { text: "HONEYTOKENS (CANARY TRAP)"; }
                     Text { text: root.canary_count > 0 ? "🐤 " + root.canary_count + " planted — touch one and the alarm fires" : "No honeytokens yet — plant one and never touch it yourself"; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "🐤 Plant Honeytoken"; width: 200px; clicked => { root.plant_canary(); } }
+                    FieldLabel { text: "EMERGENCY TIMED GRANT"; }
+                    Text { text: "Grantee request → grantor approve → wait → sealed envelope. Takeover = the normal lock-screen shard recovery."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: "🔑 New Grantee Keypair"; width: 220px; clicked => { root.emg_new_keypair(); } }
+                    LineEdit { placeholder-text: "Grantee public key (base64, from grantee)"; text <=> root.emg_pubkey_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "Wait hours (1..720)"; text <=> root.emg_wait_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "📤 Approve + Publish"; width: 200px; clicked => { root.emg_publish_request(root.emg_pubkey_input, root.emg_wait_input); } }
+                    }
+                    LineEdit { placeholder-text: "Grant ID (64 hex)"; text <=> root.emg_grant_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "🔓 Release Envelope"; width: 200px; clicked => { root.emg_release_envelope(root.emg_grant_input); } }
+                        AuraButton { label: "📥 Fetch Envelope"; width: 200px; clicked => { root.emg_fetch_envelope(root.emg_grant_input); } }
+                    }
+                    LineEdit { placeholder-text: "Grantee private key (base64, to open)"; text <=> root.emg_priv_input; height: 36px; }
+                    LineEdit { placeholder-text: "Envelope (base64, pasted or fetched)"; text <=> root.emg_env_input; height: 36px; }
+                    AuraButton { label: "🔓 Open Envelope → Show Shards"; width: 280px; clicked => { root.emg_open_envelope(root.emg_priv_input, root.emg_env_input); } }
+                    Text { text: root.emg_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.emg_output != "" : Text { text: root.emg_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #2a0f1a; border-radius: 12px; border-width: 1px; border-color: #fb7185; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "🔥 DANGER ZONE"; color: #fb7185; font-size: 12px; font-weight: 800; }
