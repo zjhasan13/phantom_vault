@@ -8348,6 +8348,17 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         totp_engine::generate_code_for_account(a)
                             .ok()
                     })
+                    .or_else(|| {
+                        // Login-embedded TOTP (detail view + hub login rows):
+                        // same guard below applies to the fresh code.
+                        vault
+                            .credentials
+                            .iter()
+                            .find(|c| c.id == target && !c.totp_secret.trim().is_empty())
+                            .and_then(|c| {
+                                totp_engine::generate_live_code(c.totp_secret.trim()).ok()
+                            })
+                    })
             };
             let Some((code, remaining)) = fresh else {
                 let _ = slint::invoke_from_event_loop(move || {

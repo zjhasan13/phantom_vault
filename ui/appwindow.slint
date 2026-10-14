@@ -338,6 +338,11 @@ component GeneratorPanel inherits Rectangle {
         if root.gen_diceware_mode : VerticalLayout { spacing: 8px;
         HorizontalLayout {
             spacing: 4px;
+            en_keys := FocusScope {
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == " " { root.gen_dice_lang = 0; root.regenerate(); return accept; }
+                    return reject;
+                }
             Rectangle {
                 horizontal-stretch: 1;
                 border-radius: 8px;
@@ -348,6 +353,12 @@ component GeneratorPanel inherits Rectangle {
                 TouchArea { mouse-cursor: pointer; clicked => { root.gen_dice_lang = 0; root.regenerate(); } }
                 Text { text: "English (EFF 7776)"; color: root.gen_dice_lang == 0 ? #ffffff : #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
             }
+            }
+            bn_keys := FocusScope {
+                key-pressed(event) => {
+                    if event.text == Key.Return || event.text == " " { root.gen_dice_lang = 1; root.regenerate(); return accept; }
+                    return reject;
+                }
             Rectangle {
                 horizontal-stretch: 1;
                 border-radius: 8px;
@@ -357,6 +368,7 @@ component GeneratorPanel inherits Rectangle {
                 border-color: root.gen_dice_lang == 1 ? #38e1ff : #26315c;
                 TouchArea { mouse-cursor: pointer; clicked => { root.gen_dice_lang = 1; root.regenerate(); } }
                 Text { text: "বাংলা 🇧🇩"; color: root.gen_dice_lang == 1 ? #ffffff : #8e99c0; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+            }
             }
         }
         HorizontalLayout {
@@ -1869,7 +1881,7 @@ export component MainWindow inherits Window {
                         border-width: 1px;
                         border-color: #8b7cf6;
                         clip: true;
-                        peep_hold_col := TouchArea { }
+                        peep_hold_col := TouchArea { width: parent.width; height: parent.height; mouse-cursor: pointer; }
                         Text { text: peep_hold_col.pressed ? "👁 REVEALING — release to mask" : "👁 HOLD TO PEEK (ephemeral)"; color: #ffffff; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     if root.d_id != "" : VerticalLayout { spacing: 12px;
@@ -1913,7 +1925,7 @@ export component MainWindow inherits Window {
                             }
                         }}
                         // Embedded / standalone 2FA live card
-                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_password_requested(root.live_totp_code); } } } } }
+                        if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: "AUTO-FILL OPTIONS"; }
@@ -1991,9 +2003,9 @@ export component MainWindow inherits Window {
     // ==== Generator floating layer
     if root.show_autofill_pill : Rectangle {
         x: parent.width - 220px; y: parent.height - 70px; width: 200px; height: 44px;
-        background: #8b7cf6; border-radius: 12px;
+        background: #8b7cf6; border-radius: 12px; clip: true;
         TouchArea { mouse-cursor: pointer; clicked => { root.autofill_pill_clicked(); } }
-        Text { text: "🔑 Fill " + root.pill_title; color: #ffffff; font-size: 13px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: "🔑 Fill " + root.pill_title; color: #ffffff; font-size: 13px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
     }
     // ==== Generator floating layer (window-level, never under taskbar) ====
     if root.show_generator : Rectangle {
@@ -2295,7 +2307,6 @@ export component MainWindow inherits Window {
                     Image { source: root.webcam_frame; width: 100%; height: 100%; image-fit: contain; }
                 }
                 if root.webcam_hint != "" : Text { text: root.webcam_hint; color: #fbbf24; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
-                Text { text: root.notification_text; color: #38e1ff; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout {
                     alignment: center;
                     AuraButton { label: "✕  Cancel Scan"; width: 160px; clicked => { root.cancel_webcam_scan(); } }
@@ -2351,6 +2362,8 @@ export component MainWindow inherits Window {
                             border-radius: 8px;
                             height: row.sev == -1 ? 24px : 40px;
                             clip: true;
+                            // Row tap FIRST (under content): buttons above keep their own clicks.
+                            if row.sev >= 0 : TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(row.id); root.show_health = false; } }
                             if row.sev == -1 : Text { text: row.title; color: #8b7cf6; font-size: 11px; font-weight: 800; vertical-alignment: center; }
                             if row.sev >= 0 : HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px;
                                 Text { text: row.sev == 0 ? "🔴" : (row.sev == 1 ? "🟠" : (row.sev == 2 ? "🟡" : "⚪")); font-size: 12px; vertical-alignment: center; }
@@ -2361,7 +2374,6 @@ export component MainWindow inherits Window {
                                 Text { text: "›"; color: #5b6589; font-size: 16px; vertical-alignment: center; }
                                 AuraButton { label: "↗ Open"; width: 76px; height: 28px; clicked => { root.open_health_url(row.id); } }
                             }
-                            if row.sev >= 0 : TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(row.id); root.show_health = false; } }
                         }
                     }
                 }
