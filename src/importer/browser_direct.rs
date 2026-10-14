@@ -94,6 +94,10 @@ pub fn summarize(list: &[DetectedBrowser]) -> String {
 mod tests {
     use super::*;
 
+    // All three tests below mutate the process-global PV_BROWSER_BASE, so
+    // they must never run concurrently (parallel harness races set/remove).
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn fixture_base(tag: &str) -> std::path::PathBuf {
         let mut b = std::env::temp_dir();
         b.push(format!("pv_browser_direct_{tag}"));
@@ -104,6 +108,7 @@ mod tests {
 
     #[test]
     fn empty_base_finds_nothing() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let b = fixture_base("empty");
         std::env::set_var("PV_BROWSER_BASE", &b);
         let found = detect();
@@ -115,6 +120,7 @@ mod tests {
 
     #[test]
     fn detects_chromium_file_and_firefox_dir() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let b = fixture_base("mixed");
         let chrome = b.join("Google/Chrome/User Data/Default");
         std::fs::create_dir_all(&chrome).unwrap();
@@ -138,6 +144,7 @@ mod tests {
 
     #[test]
     fn no_duplicate_when_both_roots_overlap() {
+        let _g = ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let b = fixture_base("dup");
         let edge = b.join("Microsoft/Edge/User Data/Default");
         std::fs::create_dir_all(&edge).unwrap();
