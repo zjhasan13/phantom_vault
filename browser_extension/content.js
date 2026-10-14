@@ -290,7 +290,10 @@
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
       setTimeout(() => {
-        navigator.clipboard.writeText("").catch(() => {});
+        // Only blank what is still ours — never clobber user-copied data.
+        navigator.clipboard.readText().then((cur) => {
+          if (cur === text) navigator.clipboard.writeText("").catch(() => {});
+        }).catch(() => {});
       }, ms);
     }).catch(() => {
       // http://, file://, or denied permission: say so, don't fake success.
@@ -333,6 +336,8 @@
   }
   function pvPickerEsc(e) { if (e.key === "Escape") closeOtpPicker(); }
   function pvPickerOutside(e) {
+    // Left-click only: right-click / long-press preview must not dismiss.
+    if (e.button !== 0) return;
     if (pvPicker && pvPicker.host && !pvPicker.host.contains(e.target)) closeOtpPicker();
   }
 
@@ -349,7 +354,7 @@
     const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     const style = document.createElement("style");
     style.textContent = `
-      .wrap{position:fixed;min-width:250px;max-width:330px;background:#17111f;color:#e9e5f0;
+      .wrap{position:fixed;min-width:min(92vw,250px);max-width:min(92vw,330px);background:#17111f;color:#e9e5f0;
         border:1px solid #3a2c46;border-radius:12px;box-shadow:0 12px 40px #000d;
         font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
       .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
@@ -423,6 +428,9 @@
     for (const c of candidates) {
       const row = document.createElement("div");
       row.className = "row";
+      row.tabIndex = 0;
+      row.setAttribute("role", "option");
+      row.setAttribute("aria-label", c.account || c.issuer || "2FA account");
       const name = c.account || c.issuer || "(unnamed)";
       row.innerHTML =
         `<div class="meta"><div class="name"></div>` +
@@ -555,6 +563,11 @@
         closeOtpPicker();
         fillFromCandidate({ id: c.id, code });
       });
+      row.addEventListener("keydown", (e) => {
+        if (e.key !== "Enter" && e.key !== " ") return;
+        e.preventDefault();
+        row.click();
+      });
       wrap.appendChild(row);
     }
     // A row with no code is a withheld (expiring) one; clicking it says when
@@ -567,10 +580,27 @@
       wrap.appendChild(w);
     }
     root.appendChild(wrap);
+    wrap.setAttribute("role", "listbox");
+    wrap.setAttribute("aria-label", "2FA accounts");
+    wrap.addEventListener("keydown", (e) => {
+      if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+      e.preventDefault();
+      const rows = [...wrap.querySelectorAll(".row")];
+      const i = rows.indexOf(document.activeElement);
+      const n = rows[(i + (e.key === "ArrowDown" ? 1 : rows.length - 1)) % Math.max(rows.length, 1)];
+      if (n) n.focus();
+    });
     document.documentElement.appendChild(host);
     // Anchor under the OTP box; fall back to top-right when it has no box.
+    // RTL: anchor from the right edge instead so the picker never hugs the
+    // wrong side on right-to-left pages.
     const r = anchor ? anchor.getBoundingClientRect() : null;
-    host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
+    const rtl = document.dir === "rtl";
+    if (rtl && r) {
+      host.style.right = `${Math.max(12, Math.min(window.innerWidth - r.right, window.innerWidth - 340))}px`;
+    } else {
+      host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
+    }
     host.style.top = r ? `${Math.min(r.bottom + 6, window.innerHeight - 220)}px` : "80px";
     pvPicker = { host, timer: setInterval(() => { for (const t of ticker) { try { t(); } catch (_) {} } }, 1000) };
     document.addEventListener("keydown", pvPickerEsc, true);
@@ -774,6 +804,9 @@
   function confirmSensitive(entry) {
     return new Promise((resolve) => {
       const ov = document.createElement("div");
+      ov.setAttribute("role", "dialog");
+      ov.setAttribute("aria-modal", "true");
+      ov.setAttribute("aria-label", "Verify before fill");
       ov.style.cssText = "position:fixed;inset:0;z-index:2147483647;background:#000a;" +
         "display:flex;align-items:center;justify-content:center;";
       const box = document.createElement("div");
@@ -797,10 +830,19 @@
       box.append(h, p, row);
       ov.append(box);
       document.documentElement.append(ov);
-      const done = (v) => { ov.remove(); resolve(v); };
+      const done = (v) => { document.removeEventListener("keydown", trap, true); ov.remove(); resolve(v); };
+      // Focus trap: Tab cycles between the two buttons, Escape cancels.
+      // (Keydown on ov alone rarely fires — ov is not focusable.)
+      const trap = (e) => {
+        if (e.key === "Escape") { e.stopPropagation(); done(false); }
+        else if (e.key === "Tab") {
+          e.preventDefault();
+          (document.activeElement === ok ? no : ok).focus();
+        }
+      };
+      document.addEventListener("keydown", trap, true);
       ok.addEventListener("click", () => done(true));
       no.addEventListener("click", () => done(false));
-      ov.addEventListener("keydown", (e) => { if (e.key === "Escape") done(false); });
       ok.focus();
     });
   }
@@ -1096,6 +1138,7 @@
     // never close the dropdown; only real user clicks outside do. Plus a
     // short grace so the opening click's own echoes can't kill it.
     if (!e.isTrusted) return;
+    if (e.button !== 0) return;
     if (Date.now() - dropOpenedAt < 800) return;
     if (dropEl && !dropEl.contains(e.target)) closeDrop("outside-click");
   }
@@ -1171,6 +1214,7 @@
       search.type = "text";
       search.placeholder = `🔍 Filter ${rows.length} accounts…`;
       search.setAttribute("autocomplete", "off");
+      search.setAttribute("aria-label", `Filter ${rows.length} accounts`);
       search.style.cssText = "flex:1;min-width:0;background:#0b1226;color:#eef1ff;" +
         "border:1px solid #26315c;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;";
       // Don't let page shortcuts swallow filter keystrokes (or vice versa).
@@ -1301,7 +1345,13 @@
       const rows = await resolveRows(anchor, findFields());
       if (gen !== suggestGen) return; // picked/closed meanwhile: stale
       if (rows) showDrop(anchor, rows);
-    } catch (_) { /* bridge down: stay silent, popup explains */ }
+    } catch (err) {
+      // Passive path stays quiet, except an explicit timeout (locked vault /
+      // dead host) which gets one discoverable hint — popup explains the rest.
+      if (err && String(err.message || "").includes("timed out")) {
+        toast("🔒 Vault unreachable — open the popup to reconnect.");
+      }
+    }
     finally {
       if (suggestBusy === anchor) suggestBusy = null;
     }
@@ -1316,7 +1366,7 @@
     try {
       const rows = await resolveRows(field, findFields());
       if (gen !== suggestGen) return; // closed meanwhile: stale
-      if (!rows || !rows.length) { toast("🛡️ No matching credential for this site."); return; }
+      if (!rows || !rows.length) { toast("🛡️ No matching credential — open the popup to save this login."); return; }
       if (rows.length === 1) { rows[0].onPick(); return; }
       showDrop(field, rows);
     } catch (_) { /* bridge down: stay silent, popup explains */ }
@@ -1335,7 +1385,7 @@
   // Right-side overlay: position:fixed from the input's viewport rect, so it
   // can never be crushed by inline layout or clipped by a left border.
   // Repositioned on scroll/resize/DOM churn (see scan() tail).
-  const BADGE_SIZE = 24;
+  const BADGE_SIZE = 28;
   const badges = new Map(); // button -> field
   function badgeRightOffset(field) {
     // Native reveal/caps-lock icons, site eye-toggles, sibling manager
@@ -1369,9 +1419,9 @@
     b.type = "button";
     b.title = "Fill with PhantomVault";
     b.textContent = "🛡️";
-    b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
+    b.style.cssText = "position:fixed;z-index:2147483647;width:28px;height:28px;" +
       "display:flex;align-items:center;justify-content:center;" +
-      "border:1px solid #8b7cf6;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
+      "border:1px solid #8b7cf6;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:14px;padding:0;";
     // mousedown first: preventDefault keeps input focus (no blur flicker),
     // then click smart-fills (1 match) or toggles the dropdown (several).
     // pointerdown CAPTURE is the real modal-killer fix: overlay "click
@@ -1675,7 +1725,7 @@
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
       "background:#0d131f;border:1px solid #8b7cf6;border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:300px;";
+      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
     const t = document.createElement("div");
     t.style.cssText = "font-weight:700;margin-bottom:8px;";
     t.textContent = "🛡️ Save to PhantomVault?";
@@ -1693,9 +1743,12 @@
     row.append(save, no);
     box.append(t, sub, row);
     document.documentElement.append(box);
-    const dismiss = () => box.remove();
-    no.addEventListener("click", dismiss);
-    setTimeout(dismiss, 30000);
+    const dismissSave = () => { document.removeEventListener("keydown", escSave, true); box.remove(); };
+    const escSave = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissSave(); } };
+    document.addEventListener("keydown", escSave, true);
+    no.addEventListener("click", dismissSave);
+    setTimeout(dismissSave, 30000);
+    save.focus();
     save.addEventListener("click", async () => {
       save.textContent = "⏳ Saving…";
       try {
@@ -1707,7 +1760,7 @@
         });
         if (res && res.ok) {
           toast(res.updated ? "✅ Login updated in PhantomVault." : "✅ Login saved to PhantomVault.");
-          dismiss();
+          dismissSave();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
         }
@@ -1726,7 +1779,7 @@
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
       "background:#0d131f;border:1px solid #fbbf24;border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:300px;";
+      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
     const t = document.createElement("div");
     t.style.cssText = "font-weight:700;margin-bottom:8px;";
     t.textContent = "🔄 Update existing?";
@@ -1744,9 +1797,12 @@
     row.append(save, no);
     box.append(t, sub, row);
     document.documentElement.append(box);
-    const dismiss = () => box.remove();
-    no.addEventListener("click", dismiss);
-    setTimeout(dismiss, 30000);
+    const dismissUpd = () => { document.removeEventListener("keydown", escUpd, true); box.remove(); };
+    const escUpd = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissUpd(); } };
+    document.addEventListener("keydown", escUpd, true);
+    no.addEventListener("click", dismissUpd);
+    setTimeout(dismissUpd, 30000);
+    save.focus();
     save.addEventListener("click", async () => {
       save.textContent = "⏳ Updating…";
       try {
@@ -1758,7 +1814,7 @@
         });
         if (res && res.ok) {
           toast("✅ Login updated in PhantomVault (old kept in history).");
-          dismiss();
+          dismissUpd();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
         }

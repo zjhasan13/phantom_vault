@@ -57,6 +57,7 @@
       align-items: center; justify-content: center; background: transparent; }
     .brandic img { width: 26px; height: 26px; border-radius: 50%; display: block; }
     .brandtx { flex: 1; min-width: 0; }
+    .brandtx .t, .brandtx .u { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .emptycard { text-align: center; }
     .emptyart { font-size: 30px; margin: 2px 0 4px; }
     .emptycard .t { margin-bottom: 2px; }
@@ -71,6 +72,8 @@
     #langToggle { flex: 0 0 auto; min-width: 64px; min-height: 32px; font-size: 11px; }
     .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
     .topbar h1 { margin: 0; flex: 1; }
+    .tabs button:focus-visible, .btns button:focus-visible, .eye:focus-visible, .wide:focus-visible {
+      outline: 2px solid var(--cyan); outline-offset: 1px; }
     .row.focused { outline: 2px solid var(--cyan); }
     .totp { display: flex; align-items: center; gap: 8px; margin-top: 6px;
       color: var(--cyan-dim); font-size: 10px; font-weight: 800; }
@@ -106,7 +109,8 @@
     .pwline { display: flex; align-items: center; gap: 6px; margin: 6px 0 2px 44px; }
     .pwDots { flex: 1; color: var(--muted); font-size: 12px; letter-spacing: 1px;
       background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
-      padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      padding: 4px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      max-width: 100%; user-select: all; }
     .pwPrev { color: var(--faint); font-size: 10px; letter-spacing: 1px; padding: 0 2px;
       white-space: nowrap; user-select: none; }
     .eye { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
@@ -138,7 +142,7 @@
     <input id="vaultSearch" placeholder="🔍 Search" aria-label="Search vault" />
     <div class="filterrow">
       <select id="folderFilter" aria-label="Filter by folder"><option value="">📁 All folders</option></select>
-      <select id="typeFilter">
+      <select id="typeFilter" aria-label="Filter by type">
         <option value="all">📋 Type: All</option>
         <option value="1">🔑 Logins</option>
         <option value="4">💳 Cards</option>

@@ -44,6 +44,11 @@
       mark_tip_on: "Remove working mark (this one does not work)",
       mark_tip_off: "Mark this credential as working",
       mark_failed: "🛡️ Working mark rejected — vault locked or decoy.",
+      locked_msg: "🔒 Vault is locked. Please unlock PhantomVault desktop app.",
+      otp_filled: "⚡ 2FA code filled.",
+      otp_failed: "OTP fill failed",
+      otp_wait: (w) => `⏳ New code in ${w} — wait a moment.`,
+      bridge_unreachable: "⚠️ Bridge unreachable",
       phishing: "⚠️ Phishing Hazard: Domain mismatch, autofill refused!",
       otp_pick: (n) => `${n} 2FA accounts — pick the working one.`,
       otp_expiring: (w) => `⏳ Code expiring —${w} press again.`,
@@ -96,6 +101,11 @@
       mark_tip_on: "Working mark সরান (এইটা কাজ করে না)",
       mark_tip_off: "এই credential-টা কাজ করেছে — চিহ্নিত করো",
       mark_failed: "🛡️ Working mark বাতিল — vault locked বা decoy।",
+      locked_msg: "🔒 ভল্ট লকড। PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
+      otp_filled: "⚡ 2FA code ভরা হয়েছে।",
+      otp_failed: "OTP পূরণ ব্যর্থ",
+      otp_wait: (w) => `⏳ নতুন code আসতে বাকি ${w}`,
+      bridge_unreachable: "⚠️ ব্রিজে পৌঁছানো যাচ্ছে না",
       phishing: "⚠️ Phishing Hazard: Domain mismatch, autofill refused!",
       otp_pick: (n) => `${n} টি 2FA account — যেটা কাজ করে সেটি বেছে নিন।`,
       otp_expiring: (w) => `⏳ code মেয়াদ শেষ হয়ে যাচ্ছে —${w} আবার চাপুন।`,
@@ -153,6 +163,7 @@
 
   // ---------- tabs ----------
   const panes = { tabVault: "vaultPane", tabStats: "statsPane", tabSettings: "settingsPane" };
+  const paneOrder = ["tabVault", "tabStats", "tabSettings"];
   function selectTab(id) {
     for (const [b, p] of Object.entries(panes)) {
       document.getElementById(b).classList.toggle("active", b === id);
@@ -161,7 +172,16 @@
     if (id === "tabStats") ensureUnlocked().then((ok) => { if (ok) loadStats(); });
   }
   for (const b of Object.keys(panes)) {
-    document.getElementById(b).addEventListener("click", () => selectTab(b));
+    const btn = document.getElementById(b);
+    btn.addEventListener("click", () => selectTab(b));
+    btn.addEventListener("keydown", (ev) => {
+      if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+      ev.preventDefault();
+      const i = paneOrder.indexOf(b);
+      const n = (i + (ev.key === "ArrowRight" ? 1 : paneOrder.length - 1)) % paneOrder.length;
+      document.getElementById(paneOrder[n]).focus();
+      selectTab(paneOrder[n]);
+    });
   }
 
   // ---------- language ----------
@@ -199,8 +219,10 @@
     const lab = document.createElement("label");
     lab.dataset.k = key;
     lab.textContent = fallback;
+    lab.htmlFor = "set_" + key;
     const cb = document.createElement("input");
     cb.type = "checkbox";
+    cb.id = "set_" + key;
     row.append(lab, cb);
     form.append(row);
     inputs[key] = cb;
@@ -261,6 +283,17 @@
       return;
     }
     const total = s.logins + s.cards + s.notes + s.identities + s.ssh_keys + s.licenses + s.passkeys;
+    if (total === 0) {
+      box.innerHTML = "";
+      const t1 = document.createElement("div");
+      t1.className = "t";
+      t1.textContent = t("empty_title");
+      const t2 = document.createElement("div");
+      t2.className = "u";
+      t2.textContent = t("empty_save");
+      box.append(t1, t2);
+      return;
+    }
     const color = s.score >= 80 ? "#10b981" : s.score >= 50 ? "#fbbf24" : "#fb7185";
     box.innerHTML = "";
     const mk = (label, val) => {
@@ -291,7 +324,7 @@
   }
 
   // ---------- vault pane ----------
-  const LOCKED_MSG = "🔒 Vault is locked. Please unlock PhantomVault desktop app.";
+  // NOTE: locked text lives in I18N as locked_msg (used by showLocked).
   const QUERY_TIMEOUT_MS = 10000;
   let lastFilledMap = {};
   try {
@@ -309,7 +342,7 @@
   const folderSel = document.getElementById("folderFilter");
   const typeSel = document.getElementById("typeFilter");
   function showLocked(hint) {
-    status.textContent = LOCKED_MSG + (hint ? " (" + hint + ")" : "");
+    status.textContent = t("locked_msg") + (hint ? " (" + hint + ")" : "");
     const retry = document.createElement("button");
     retry.textContent = t("retry");
     retry.addEventListener("click", () => window.location.reload());
@@ -1022,7 +1055,7 @@
           }
         } catch (_) {
           save.textContent = t("empty_save");
-          msg.textContent = "⚠️ Bridge unreachable";
+          msg.textContent = t("bridge_unreachable");
         }
       });
       card.append(userIn, passIn, save, msg);
@@ -1035,6 +1068,11 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(render, 200);
   });
+  searchBox.addEventListener("keydown", (ev) => {
+    if (ev.key === "Escape") { searchBox.value = ""; render(); searchBox.blur(); }
+  });
+  // Autofocus once on boot (not after every render — keeps typing focus).
+  searchBox.focus();
   // ---------- standalone password generator ----------
   // Same CSPRNG core as the page dice (no ambiguous 0O1lI). Output shown
   // in-popup for registration flows; Copy uses the clipboard (auto-clear
@@ -1138,9 +1176,9 @@
       }
       const out = await withTimeout(
         chrome.tabs.sendMessage(tab.id, { type: "PV_FILL_OTP" }), QUERY_TIMEOUT_MS, "otp fill");
-      status.textContent = out && out.ok ? "⚡ 2FA code filled." : "⚠️ " + ((out && out.error) || "OTP fill failed");
+      status.textContent = out && out.ok ? t("otp_filled") : "⚠️ " + ((out && out.error) || t("otp_failed"));
     } catch (err) {
-      status.textContent = "⚠️ " + ((err && err.message) || "OTP fill failed");
+      status.textContent = "⚠️ " + ((err && err.message) || t("otp_failed"));
     } finally {
       otpFillBtn.textContent = "🔑 Fill 2FA code";
     }
@@ -1175,7 +1213,7 @@
       row.querySelector("code").textContent = c.code || "······";
       row.addEventListener("click", async () => {
         if (!c.code) {
-          status.textContent = `⏳ নতুন code আসতে বাকি ${c.next_in != null ? c.next_in + "s" : "কিছুক্ষণ"}`;
+          status.textContent = t("otp_wait", c.next_in != null ? c.next_in + "s" : "");
           return;
         }
         // The code lives in the trusted host, not here: ask the page to fill
@@ -1184,8 +1222,8 @@
           chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }),
           QUERY_TIMEOUT_MS, "otp fill by id");
         status.textContent = out && out.ok
-          ? "⚡ 2FA code filled."
-          : "⚠️ " + ((out && out.error) || "OTP fill failed");
+          ? t("otp_filled")
+          : "⚠️ " + ((out && out.error) || t("otp_failed"));
         if (out && out.ok) window.close();
       });
       box.appendChild(row);
@@ -1196,12 +1234,13 @@
   if (neverBtn) {
     neverBtn.addEventListener("click", async () => {
       if (!hostBase) return;
+      if (!window.confirm(`Never suggest on ${hostBase}?`)) return;
       try {
         const cur = await chrome.storage.local.get({ blocked_domains: [] });
         const list = new Set((cur.blocked_domains || []).map((d) => String(d).toLowerCase()));
         list.add(hostBase);
         await chrome.storage.local.set({ blocked_domains: [...list] });
-        status.textContent = `🚫 Will never suggest on ${hostBase}.`;
+        status.textContent = `🚫 Will never suggest on ${hostBase}. Re-open settings to undo.`;
         refresh();
       } catch (_) { status.textContent = "⚠️ Could not save setting"; }
     });
@@ -1229,9 +1268,11 @@
     const hd = document.createElement("div");
     hd.className = "t";
     hd.textContent = title;
+    hd.title = title;
     const u = document.createElement("div");
     u.className = "u";
     u.textContent = sub;
+    u.title = sub;
     tx.append(hd, u);
     wrap.append(ic, tx);
     row.append(wrap);

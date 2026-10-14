@@ -424,14 +424,17 @@ function pvEntryMatchesPage(e, pageHost) {
 }
 
 async function refreshBadge(tabId, url) {
+  const setTitle = (t) => chrome.action.setTitle({ title: t, tabId }).catch(() => {});
   try {
     if (!url || !/^https?:\/\//i.test(url)) {
       await chrome.action.setBadgeText({ text: "", tabId });
+      await setTitle("PhantomVault");
       return;
     }
     const base = pvRegistrable(new URL(url).hostname);
     if (!base) {
       await chrome.action.setBadgeText({ text: "", tabId });
+      await setTitle("PhantomVault");
       return;
     }
     const res = await hostRequest({ cmd: "query", app: base });
@@ -440,8 +443,12 @@ async function refreshBadge(tabId, url) {
     const n = entries.filter((e) => pvEntryMatchesPage(e, pageHost)).length;
     await chrome.action.setBadgeBackgroundColor({ color: "#38bdf8", tabId });
     await chrome.action.setBadgeText({ text: n > 0 ? (n > 9 ? "9+" : String(n)) : "", tabId });
+    await setTitle(n > 0 ? `${n} matching logins for this site` : "No matches — open popup to save");
   } catch (_) {
-    try { await chrome.action.setBadgeText({ text: "", tabId }); } catch (_) {}
+    try {
+      await chrome.action.setBadgeText({ text: "?", tabId });
+      await setTitle("Vault locked or unreachable — open popup");
+    } catch (_) {}
   }
 }
 
