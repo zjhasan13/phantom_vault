@@ -1327,12 +1327,14 @@ export component MainWindow inherits Window {
                                             if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; }
                                             if !acc.is_hotp : Rectangle { background: #1a2450; border-radius: 2px; height: 4px; clip: true;
                                                 Rectangle { background: acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185); border-radius: 2px; height: 4px; width: parent.width * acc.secs / 30; } } }
-                                        AuraButton { label: acc.fav ? "⭐" : "☆"; primary: acc.fav; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
                                 VerticalLayout { spacing: 4px; alignment: center;
-                                    Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
-                                        border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
-                                        Text { text: acc.countdown; color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+                                    HorizontalLayout { spacing: 6px; alignment: center;
+                                        Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
+                                            border-color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185));
+                                            Text { text: acc.countdown; color: acc.is_hotp ? #8b7cf6 : (acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+                                        AuraButton { label: acc.fav ? "⭐" : "☆"; primary: acc.fav; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
+                                    }
                                     if acc.is_hotp : Text { text: "🔢 HOTP"; color: #8b7cf6; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
                                     if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 32px; clicked => { root.hotp_next(acc.id); } }
                                     HorizontalLayout { spacing: 4px; alignment: center;
