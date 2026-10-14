@@ -1296,7 +1296,10 @@ export component MainWindow inherits Window {
                     Text { text: "dbg scroll=" + hub_scroll.width / 1px + " forced=" + root.hub_px_w; color: #5b6589; font-size: 11px; }
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; horizontal-stretch: 1; alignment: space-between;
                         for acc in row : Rectangle {
-                            width: (root.hub_px_w * 1px - 72px) / 3;
+                            // Guaranteed-fit: the SMALLER of Rust-fed window
+                            // width and live viewport wins — overflow/clipping
+                            // is impossible under any theory, full-bleed stays.
+                            width: (Math.min(root.hub_px_w, hub_scroll.width / 1px) - 72) / 3 * 1px;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;
