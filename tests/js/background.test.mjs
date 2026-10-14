@@ -219,3 +219,65 @@ test("PV_FAVICON_HARVEST failure leaves no pushed marker (retries later)", async
   assert.equal(r2.ok, true);
   assert.equal(fetched, 1);
 });
+
+test("PV_ASSERT_SIGN: sender mismatch fails closed, zero host spawn", async () => {
+  const { chrome, onMessage } = fresh();
+  const r = await sendMessage(onMessage, chrome,
+    { type: "PV_ASSERT_SIGN", rpId: "github.com", origin: "https://evil.com/",
+      challengeB64: "abc", credentialId: "" },
+    { tab: { url: "https://github.com/login" } });
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /sender tab/i);
+  assert.equal(chrome.__state.ports.length, 0);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("PV_ASSERT_SIGN: hello uv first, then assert_full with the token", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://github.com/login" } };
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_ASSERT_SIGN", rpId: "github.com", origin: "https://github.com/login",
+      challengeB64: "abc", credentialId: "" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  assert.equal(chrome.__state.postedNative[0].cmd, "request_uv");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, uv_token: "tok123" }));
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 2);
+  assert.equal(chrome.__state.postedNative[1].cmd, "assert_full");
+  assert.equal(chrome.__state.postedNative[1].uv_token, "tok123");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, signature: "sig" }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("PV_ASSERT_SIGN: hello denial stops before assert_full", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://github.com/login" } };
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_ASSERT_SIGN", rpId: "github.com", origin: "https://github.com/login",
+      challengeB64: "abc", credentialId: "" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: false, error: "canceled" }));
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(chrome.__state.postedNative.length, 1);
+});
+
+test("PV_ATTEST_SIGN: proxies attest with uv token", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://github.com/" } };
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_ATTEST_SIGN", rpId: "github.com", origin: "https://github.com/",
+      challengeB64: "abc", user: { name: "octo" } }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "request_uv");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, uv_token: "tok9" }));
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[1].cmd, "attest");
+  assert.equal(chrome.__state.postedNative[1].uv_token, "tok9");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});

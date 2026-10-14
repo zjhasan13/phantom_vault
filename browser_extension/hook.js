@@ -71,22 +71,67 @@
     };
   } catch (_) {}
 
-  // WebAuthn observer (passkey discovery v1): notify-only, NEVER touches
-  // the ceremony — the page's promise chain runs byte-identical. The
-  // content script matches the rpId against the vault and toasts.
+  // WebAuthn relay (Phase 3): HOLD get/create briefly so an EXPLICIT user
+  // approval (extension popup button) can fulfill the ceremony from the
+  // vault. No approval in time → original behavior (page promise untouched).
+  // Fulfilled credentials are plain objects (no PublicKeyCredential
+  // constructor exists) — RPs read the response fields, which are exact.
+  const PV_PENDING = new Map();
+  let pvReqSeq = 0;
+  const PV_HOLD_MS = 90000;
+  function pvHold(kind, pk, origin, origFn, options) {
+    let reqId = "";
+    try {
+      reqId = "pv" + (++pvReqSeq) + Date.now().toString(36);
+      window.postMessage(
+        { source: "__pv_hook", type: kind === "create" ? "PV_WEBAUTHN_CREATE" : "PV_WEBAUTHN_GET",
+          reqId, rpId: String((pk && (pk.rpId || (pk.rp && pk.rp.id))) || ""),
+          publicKey: pk, origin: String(origin || "") }, "*");
+    } catch (_) {
+      return origFn(options);
+    }
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        PV_PENDING.delete(reqId);
+        try { resolve(origFn(options)); } catch (e) { reject(e); }
+      }, PV_HOLD_MS);
+      PV_PENDING.set(reqId, { resolve, reject, timer, fallback: () => origFn(options) });
+    });
+  }
   try {
-    if (window.PublicKeyCredential && navigator.credentials && navigator.credentials.get) {
-      const origGet = navigator.credentials.get.bind(navigator.credentials);
-      navigator.credentials.get = function (options) {
-        try {
-          const pk = options && options.publicKey;
-          if (pk) {
-            window.postMessage(
-              { source: "__pv_hook", type: "PV_WEBAUTHN_GET", rpId: String(pk.rpId || "") }, "*");
-          }
-        } catch (_) {}
-        return origGet(options);
-      };
+    if (window.PublicKeyCredential && navigator.credentials) {
+      if (navigator.credentials.get) {
+        const origGet = navigator.credentials.get.bind(navigator.credentials);
+        navigator.credentials.get = function (options) {
+          try {
+            const pk = options && options.publicKey;
+            if (!pk) return origGet(options);
+            return pvHold("get", pk, location.origin, origGet, options);
+          } catch (_) { return origGet(options); }
+        };
+      }
+      if (navigator.credentials.create) {
+        const origCreate = navigator.credentials.create.bind(navigator.credentials);
+        navigator.credentials.create = function (options) {
+          try {
+            const pk = options && options.publicKey;
+            if (!pk) return origCreate(options);
+            return pvHold("create", pk, location.origin, origCreate, options);
+          } catch (_) { return origCreate(options); }
+        };
+      }
     }
   } catch (_) {}
+  window.addEventListener("message", (e) => {
+    try {
+      if (e.source !== window) return;
+      const d = e.data || {};
+      if (d.source !== "__pv_relay" || d.type !== "PV_WEBAUTHN_FULFILL") return;
+      const p = PV_PENDING.get(d.reqId);
+      if (!p) return;
+      PV_PENDING.delete(d.reqId);
+      clearTimeout(p.timer);
+      p.resolve(d.credential);
+    } catch (_) {}
+  });
 })();

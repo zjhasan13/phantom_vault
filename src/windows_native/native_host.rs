@@ -206,6 +206,56 @@ fn assert_rate_ok() -> bool {
     n < 100
 }
 
+/// Phase 3: desktop-minted UV tokens. `request_uv` runs the Windows Hello
+/// system prompt (host process, blocking) and mints a single-use token
+/// bound to one rp_id with a 120s TTL. `assert_full`/`attest` consume it.
+/// The legacy `uv: true` boolean stays accepted (parity with `assert`;
+/// unmintable from the extension — only tests and a future in-app Hello
+/// flow can present it).
+/// token → (bound rp_id, expiry unix secs).
+type UvStore = std::sync::Mutex<std::collections::HashMap<String, (String, u64)>>;
+static UV_TOKENS: std::sync::OnceLock<UvStore> = std::sync::OnceLock::new();
+
+fn uv_store() -> &'static UvStore {
+    UV_TOKENS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Mint a token (Hello already verified by the caller). Pure shape — tested.
+fn mint_uv_token(rp: &str, now: u64) -> String {
+    use rand_core::RngCore as _;
+    let mut raw = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut raw);
+    let mut s = String::with_capacity(64);
+    for b in raw {
+        s.push_str(&format!("{b:02x}"));
+    }
+    if let Ok(mut g) = uv_store().lock() {
+        // Sweep expired so the map cannot grow across sessions.
+        g.retain(|_, (_, exp)| *exp > now);
+        g.insert(s.clone(), (rp.to_string(), now.saturating_add(120)));
+    }
+    s
+}
+
+/// Single-use consume: token must exist, be unexpired, and match rp.
+/// Failed attempts must NOT burn the token (remove only on success).
+/// Pure shape around the store — tested (no Hello involved).
+fn consume_uv_token(token: &str, rp: &str, now: u64) -> bool {
+    let Ok(mut g) = uv_store().lock() else {
+        return false;
+    };
+    let ok = matches!(g.get(token), Some((bound_rp, exp)) if !bound_rp.is_empty() && bound_rp == rp && now <= *exp);
+    if ok {
+        g.remove(token);
+    }
+    ok
+}
+
+#[cfg(test)]
+pub(crate) fn mint_test_uv(rp: &str) -> String {
+    mint_uv_token(rp, crate::models::current_timestamp())
+}
+
 /// M12: fill-event brake (120/min per host process — popup tiles report
 /// per frame; unauthenticated floods must not spin the sidecar).
 /// Counters are module-level (not fn-local) so cfg(test) resets make
@@ -556,6 +606,235 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "credential_id": eng.encode(&vault.passkeys[idx].credential_id),
                         "signature": eng.encode(sig),
                         "sign_count": vault.passkeys[idx].sign_count,
+                    }),
+                    persist: true,
+                }
+            }
+        }
+        // Phase 3: mint a UV token via the Windows Hello system prompt.
+        // Blocking: the host runs this off the stdio pump (same discipline
+        // as other slow host calls). Denied/canceled → no token, fail loud.
+        "request_uv" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let rp = req
+                .get("rp_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if rp.is_empty() {
+                return no("rp_id required");
+            }
+            if !assert_rate_ok() {
+                return no("assert rate limited");
+            }
+            let now = crate::models::current_timestamp();
+            match crate::windows_native::hello::WindowsHello::authenticate_blocking(
+                &format!("Approve passkey signing for {rp}?"),
+            ) {
+                Ok(true) => {
+                    let token = mint_uv_token(&rp, now);
+                    crate::security::access_log::log_event("bridge-uv", &rp);
+                    Answer {
+                        reply: serde_json::json!({"ok": true, "uv_token": token, "expires_in": 120}),
+                        persist: false,
+                    }
+                }
+                Ok(false) => no("hello canceled — no approval minted"),
+                Err(e) => no(&format!("hello unavailable: {e}")),
+            }
+        }
+        // Phase 3: full WebAuthn assertion relay. Same gates as `assert`
+        // (unlocked + UV token or legacy uv + shared rate bucket), but
+        // returns the complete assertion bytes the page's promise needs
+        // (authenticatorData + clientDataJSON + signature + userHandle).
+        // The extension fulfills ONLY after explicit user approval.
+        "assert_full" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let rp = req
+                .get("rp_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            let uv_ok = req.get("uv").and_then(|v| v.as_bool()) == Some(true)
+                || req.get("uv_token").and_then(|v| v.as_str()).is_some_and(|t| {
+                    consume_uv_token(t, &rp, crate::models::current_timestamp())
+                });
+            if !uv_ok {
+                return no("user verification required");
+            }
+            if !assert_rate_ok() {
+                return no("assert rate limited");
+            }
+            let origin = req.get("origin").and_then(|v| v.as_str()).unwrap_or("");
+            let challenge = req.get("challenge").and_then(|v| v.as_str()).unwrap_or("");
+            if rp.is_empty() || challenge.trim().is_empty() || origin.trim().is_empty() {
+                return no("rp_id, challenge and origin required");
+            }
+            let Some(chal) = b64_any(challenge) else {
+                return no("challenge is not base64");
+            };
+            let mut matches: Vec<usize> = vault
+                .passkeys
+                .iter()
+                .enumerate()
+                .filter(|(_, p)| p.deleted_at.is_none() && p.rp_id.to_lowercase() == rp)
+                .map(|(i, _)| i)
+                .collect();
+            if matches.is_empty() {
+                return no("no passkey for rp_id");
+            }
+            let idx = match req.get("credential_id").and_then(|v| v.as_str()) {
+                Some(want) => {
+                    let Some(want_bytes) = b64_any(want) else {
+                        return no("credential_id is not base64");
+                    };
+                    match matches
+                        .iter()
+                        .find(|&&i| vault.passkeys[i].credential_id == want_bytes)
+                    {
+                        Some(&i) => i,
+                        None => return no("credential_id not found for rp_id"),
+                    }
+                }
+                None if matches.len() == 1 => matches.pop().unwrap(),
+                None => {
+                    return no("ambiguous rp_id — pass credential_id");
+                }
+            };
+            let (seed, pubkey) = {
+                let pk = &vault.passkeys[idx];
+                match crate::core::passkey::pkcs8_decode_private(&pk.private_key_pkcs8) {
+                    Ok(v) => v,
+                    Err(e) => return no(&format!("key decode: {e}")),
+                }
+            };
+            let counter = vault.passkeys[idx].sign_count.saturating_add(1);
+            let (auth, client_data, sig) =
+                match crate::core::passkey::assertion_response(&seed, &rp, origin, &chal, counter, true) {
+                    Ok(t) => t,
+                    Err(e) => return no(&format!("assertion build: {e}")),
+                };
+            // Self-check before handing anything out (same discipline as `assert`).
+            {
+                let mut signed = auth.clone();
+                signed.extend_from_slice(&{
+                    use sha2::Digest;
+                    sha2::Sha256::digest(&client_data)
+                });
+                if !crate::core::passkey::verify_bytes(&pubkey, &signed, &sig) {
+                    return no("signature self-check failed");
+                }
+            }
+            vault.passkeys[idx].sign_count = counter;
+            {
+                use base64::Engine as _;
+                let eng = base64::engine::general_purpose::STANDARD;
+                crate::security::access_log::log_event("bridge-assert-full", &rp);
+                Answer {
+                    reply: serde_json::json!({
+                        "ok": true,
+                        "credential_id": eng.encode(&vault.passkeys[idx].credential_id),
+                        "authenticatorData": eng.encode(&auth),
+                        "clientDataJSON": eng.encode(&client_data),
+                        "signature": eng.encode(sig),
+                        "userHandle": eng.encode(&vault.passkeys[idx].user_handle),
+                        "sign_count": vault.passkeys[idx].sign_count,
+                    }),
+                    persist: true,
+                }
+            }
+        }
+        // Phase 3: registration relay. Same gates; mints a FRESH credential
+        // (never reuses), persists it, returns fmt-none attestation bytes.
+        // RPs that reject Ed25519/"none" fail LOUD on their side — relayed
+        // bytes are standard-shaped, never silently downgraded.
+        "attest" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let rp = req
+                .get("rp_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            let uv_ok = req.get("uv").and_then(|v| v.as_bool()) == Some(true)
+                || req.get("uv_token").and_then(|v| v.as_str()).is_some_and(|t| {
+                    consume_uv_token(t, &rp, crate::models::current_timestamp())
+                });
+            if !uv_ok {
+                return no("user verification required");
+            }
+            if !assert_rate_ok() {
+                return no("assert rate limited");
+            }
+            let origin = req.get("origin").and_then(|v| v.as_str()).unwrap_or("");
+            let challenge = req.get("challenge").and_then(|v| v.as_str()).unwrap_or("");
+            if rp.is_empty() || challenge.trim().is_empty() || origin.trim().is_empty() {
+                return no("rp_id, challenge and origin required");
+            }
+            let Some(chal) = b64_any(challenge) else {
+                return no("challenge is not base64");
+            };
+            let user_name: String = req
+                .get("user")
+                .and_then(|v| v.get("name"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(128)
+                .collect();
+            if user_name.is_empty() {
+                return no("user.name required");
+            }
+            let mut item = crate::core::passkey::register(&rp, &user_name, crate::models::current_timestamp());
+            // Honor a caller-supplied user handle when well-formed (≤64B);
+            // otherwise keep the generated one. Bound to the vault record.
+            if let Some(h) = req
+                .get("user")
+                .and_then(|v| v.get("id"))
+                .and_then(|v| v.as_str())
+                .and_then(b64_any)
+            {
+                if !h.is_empty() && h.len() <= 64 {
+                    item.user_handle = h;
+                }
+            }
+            let (_seed, pubkey) =
+                match crate::core::passkey::pkcs8_decode_private(&item.private_key_pkcs8) {
+                    Ok(v) => v,
+                    Err(e) => return no(&format!("key decode: {e}")),
+                };
+            let (obj, client_data) = match crate::core::passkey::attestation_object(
+                &pubkey,
+                &item.credential_id,
+                &rp,
+                origin,
+                &chal,
+                &item.user_handle,
+            ) {
+                Ok(t) => t,
+                Err(e) => return no(&format!("attestation build: {e}")),
+            };
+            vault.passkeys.push(item);
+            let idx = vault.passkeys.len() - 1;
+            {
+                use base64::Engine as _;
+                let eng = base64::engine::general_purpose::STANDARD;
+                crate::security::access_log::log_event("bridge-attest", &rp);
+                Answer {
+                    reply: serde_json::json!({
+                        "ok": true,
+                        "credential_id": eng.encode(&vault.passkeys[idx].credential_id),
+                        "attestationObject": eng.encode(&obj),
+                        "clientDataJSON": eng.encode(&client_data),
                     }),
                     persist: true,
                 }
@@ -3461,6 +3740,124 @@ mod tests {
         )
         .unwrap();
         assert!(crate::core::passkey::verify_bytes(&pubkey, &chal_raw, &sig_arr));
+    }
+
+    #[test]
+    fn assert_full_returns_complete_assertion() {
+        use base64::Engine as _;
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_assert_rate();
+        let mut v = vault_with_passkey();
+        let chal = base64::engine::general_purpose::STANDARD.encode(b"full-ceremony-1");
+        let base = |cmd: &str| {
+            serde_json::json!({"cmd": cmd, "rp_id": "github.com", "challenge": chal,
+                "origin": "https://github.com/login", "uv": true})
+        };
+        // Missing uv / bad origin / unknown rp all fail closed.
+        let mut q = base("assert_full");
+        q.as_object_mut().unwrap().remove("uv");
+        assert_eq!(answer(&mut v, true, &q).reply["ok"], false);
+        let mut q = base("assert_full");
+        q["origin"] = serde_json::json!("https://evil.com/");
+        assert_eq!(answer(&mut v, true, &q).reply["ok"], false);
+        let mut q = base("assert_full");
+        q["rp_id"] = serde_json::json!("evil.com");
+        assert_eq!(answer(&mut v, true, &q).reply["ok"], false);
+        // Happy path: full assertion parts verify end-to-end.
+        let r = answer(&mut v, true, &base("assert_full"));
+        assert_eq!(r.reply["ok"], true);
+        assert!(r.persist);
+        assert_eq!(r.reply["sign_count"], 1);
+        let auth = base64::engine::general_purpose::STANDARD
+            .decode(r.reply["authenticatorData"].as_str().unwrap()).unwrap();
+        let cd = base64::engine::general_purpose::STANDARD
+            .decode(r.reply["clientDataJSON"].as_str().unwrap()).unwrap();
+        let sig: Vec<u8> = base64::engine::general_purpose::STANDARD
+            .decode(r.reply["signature"].as_str().unwrap()).unwrap();
+        assert_eq!(auth.len(), 37);
+        assert_eq!(auth[32], 0x05);
+        let cdv: serde_json::Value = serde_json::from_slice(&cd).unwrap();
+        assert_eq!(cdv["type"], "webauthn.get");
+        let mut signed = auth.clone();
+        signed.extend_from_slice(&{
+            use sha2::Digest;
+            sha2::Sha256::digest(&cd)
+        });
+        let (_, pubkey) = crate::core::passkey::pkcs8_decode_private(
+            &v.passkeys[0].private_key_pkcs8,
+        )
+        .unwrap();
+        let mut sig_arr = [0u8; 64];
+        sig_arr.copy_from_slice(&sig);
+        assert!(crate::core::passkey::verify_bytes(&pubkey, &signed, &sig_arr));
+    }
+
+    #[test]
+    fn attest_mints_persists_and_shapes_attestation() {
+        use base64::Engine as _;
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_assert_rate();
+        let mut v = Vault::new();
+        let chal = base64::engine::general_purpose::STANDARD.encode(b"reg-challenge-1");
+        // Missing uv / bad origin / missing user.name all fail closed.
+        let mut q = serde_json::json!({"cmd": "attest", "rp_id": "github.com",
+            "challenge": chal, "origin": "https://github.com/", "user": {"name": "octo"}});
+        assert_eq!(answer(&mut v, true, &q).reply["ok"], false);
+        q["uv"] = serde_json::json!(true);
+        q["origin"] = serde_json::json!("http://github.com/");
+        assert_eq!(answer(&mut v, true, &q).reply["ok"], false);
+        // Happy path: fresh credential persisted, fmt-none bytes well-formed.
+        q["origin"] = serde_json::json!("https://github.com/");
+        let n_before = v.passkeys.len();
+        let r = answer(&mut v, true, &q);
+        assert_eq!(r.reply["ok"], true);
+        assert!(r.persist);
+        assert_eq!(v.passkeys.len(), n_before + 1);
+        assert_eq!(v.passkeys[n_before].rp_id, "github.com");
+        let obj = base64::engine::general_purpose::STANDARD
+            .decode(r.reply["attestationObject"].as_str().unwrap()).unwrap();
+        assert_eq!(&obj[..8], &[0xA3, 0x63, b'f', b'm', b't', 0x64, b'n', b'o']);
+        let cdv: serde_json::Value = serde_json::from_slice(
+            &base64::engine::general_purpose::STANDARD
+                .decode(r.reply["clientDataJSON"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(cdv["type"], "webauthn.create");
+    }
+
+    #[test]
+    fn uv_tokens_are_single_use_rp_bound_and_expiring() {
+        let now = crate::models::current_timestamp();
+        let t = mint_test_uv("github.com");
+        assert_eq!(t.len(), 64);
+        // Wrong rp never consumes.
+        assert!(!consume_uv_token(&t, "evil.com", now));
+        // Right rp consumes exactly once.
+        assert!(consume_uv_token(&t, "github.com", now));
+        assert!(!consume_uv_token(&t, "github.com", now));
+        // Unknown tokens never pass.
+        assert!(!consume_uv_token("0".repeat(64).as_str(), "github.com", now));
+        // Expired tokens never pass.
+        let old = mint_uv_token("github.com", now.saturating_sub(1_000));
+        assert!(!consume_uv_token(&old, "github.com", now));
+    }
+
+    #[test]
+    fn assert_full_accepts_minted_token() {
+        use base64::Engine as _;
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_assert_rate();
+        let mut v = vault_with_passkey();
+        let chal = base64::engine::general_purpose::STANDARD.encode(b"token-ceremony-1");
+        let token = mint_test_uv("github.com");
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "assert_full", "rp_id": "github.com",
+                "challenge": chal, "origin": "https://github.com/", "uv_token": token}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["sign_count"], 1);
     }
 
     #[test]

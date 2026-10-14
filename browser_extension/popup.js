@@ -900,6 +900,7 @@
       console.log(`PV refresh done: sugg=${suggEntries.length} logins=${allData.logins.length}`);
       updateLockHint();
       checkOtpBanner();
+      checkPkBanner();
     } catch (e) { console.log("PV refresh: bridge unreachable:", (e && e.message) || e); showLocked("bridge unreachable"); }
   }
 
@@ -1184,6 +1185,46 @@
     }
   });
 
+  // Phase 3 relay: when the active tab holds a WebAuthn ceremony, offer a
+  // prominent one-click vault signing. The page promise stays held by the
+  // hook until this approval (or its timeout falls back to native).
+  const pkSignBtn = document.getElementById("pkSignBtn");
+  async function checkPkBanner() {
+    try {
+      pkSignBtn.classList.add("hidden");
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || tab.id == null) return;
+      const res = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }), 3000, "ceremony status");
+      if (res && res.ok && res.pending) {
+        pkSignBtn.textContent = res.pending.kind === "create"
+          ? `🔑 Register passkey for ${res.pending.rpId}`
+          : `🔑 Sign in with vault (${res.pending.rpId})`;
+        pkSignBtn.classList.remove("hidden");
+      }
+    } catch (_) {}
+  }
+  pkSignBtn.addEventListener("click", async () => {
+    pkSignBtn.textContent = "…";
+    try {
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (!tab || tab.id == null) return;
+      const st = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }), 3000, "ceremony status");
+      if (!(st && st.ok && st.pending)) {
+        status.textContent = "⚠️ No held ceremony — the page moved on.";
+        return;
+      }
+      const out = await withTimeout(
+        chrome.tabs.sendMessage(tab.id, { type: st.pending.kind === "create" ? "PV_ATTEST_APPROVE" : "PV_ASSERT_APPROVE" }),
+        120000, "vault signing");
+      status.textContent = out && out.ok ? "✅ Signed with vault." : "⚠️ " + ((out && out.error) || "signing failed");
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || "signing failed");
+    } finally {
+      checkPkBanner();
+    }
+  });
   // Popup-side candidate list for the ambiguous case. Ranking is NOT re-sorted
   // here: the native bridge ordered these, and second-guessing its tie would
   // hide the very ambiguity the user opened the popup to resolve.

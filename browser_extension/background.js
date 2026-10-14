@@ -303,6 +303,41 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }
+    // Phase 3 ceremony relay: content-script approval (popup button) opens
+    // a Hello-gated UV token FIRST, then the full sign/attest call. Sender
+    // check: the ceremony origin must match the sender tab host exactly —
+    // a malicious page must never borrow another tab's ceremony.
+    function ceremonySenderOk() {
+      try {
+        const tabUrl = sender && sender.tab && sender.tab.url;
+        const tabHost = tabUrl ? new URL(tabUrl).hostname.toLowerCase() : "";
+        const orgHost = msg.origin ? new URL(String(msg.origin)).hostname.toLowerCase() : "";
+        if (!tabHost || !orgHost || tabHost !== orgHost) {
+          return "origin does not match sender tab";
+        }
+      } catch (_) {
+        return "sender check failed";
+      }
+      return "";
+    }
+    if (msg.type === "PV_ASSERT_SIGN" || msg.type === "PV_ATTEST_SIGN") {
+      const senderErr = ceremonySenderOk();
+      if (senderErr) return { ok: false, error: senderErr };
+      const rp = String(msg.rpId || "").toLowerCase();
+      const uv = await hostRequest({ cmd: "request_uv", rp_id: rp });
+      if (!(uv && uv.ok && uv.uv_token)) {
+        return { ok: false, error: (uv && uv.error) || "hello approval required" };
+      }
+      touchActivity();
+      if (msg.type === "PV_ASSERT_SIGN") {
+        return await hostRequest({ cmd: "assert_full", rp_id: rp,
+          origin: String(msg.origin || ""), challenge: String(msg.challengeB64 || ""),
+          credential_id: String(msg.credentialId || ""), uv_token: uv.uv_token });
+      }
+      return await hostRequest({ cmd: "attest", rp_id: rp,
+        origin: String(msg.origin || ""), challenge: String(msg.challengeB64 || ""),
+        user: msg.user || {}, uv_token: uv.uv_token });
+    }
     if (msg.type === "PV_FILLED") {
       touchActivity();
       const r = await hostRequest({ cmd: "filled", id: msg.id || "" });

@@ -1914,9 +1914,135 @@
       chrome.runtime.sendMessage({ type: "PV_FAVICON_HARVEST", domain: host, iconUrl }).catch(() => {});
     } catch (_) {}
   }
+  // Phase 3 relay: one held ceremony at a time (newest wins; the older
+  // page promise falls back to native on its own timeout). Fulfillment
+  // happens ONLY through PV_ASSERT_APPROVE / PV_ATTEST_APPROVE (popup
+  // button) after the standard gates — never silently.
+  let pvCeremony = null;
+  function pvBufToB64(buf) {
+    try {
+      const bytes = buf instanceof ArrayBuffer ? new Uint8Array(buf) : new Uint8Array(buf);
+      let s = "";
+      for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    } catch (_) { return ""; }
+  }
+  function pvB64ToBuf(s) {
+    try {
+      const bin = atob(String(s || ""));
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      return bytes.buffer;
+    } catch (_) { return new ArrayBuffer(0); }
+  }
+  function pvB64ToB64Url(s) {
+    return String(s || "").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+  function pvCeremonyHold(d) {
+    try {
+      const kind = d.type === "PV_WEBAUTHN_CREATE" ? "create" : "get";
+      const pk = d.publicKey || {};
+      const allow = [];
+      if (kind === "get" && pk.allowCredentials) {
+        for (const c of pk.allowCredentials) {
+          if (c && (c.id || c.id === 0)) {
+            const b = pvBufToB64(c.id instanceof ArrayBuffer ? c.id : c.id.buffer || c.id);
+            if (b) allow.push(b);
+          }
+        }
+      }
+      let user = null;
+      if (kind === "create" && pk.user) {
+        user = {
+          idB64: pk.user.id ? pvBufToB64(pk.user.id instanceof ArrayBuffer ? pk.user.id : pk.user.id) : "",
+          name: String(pk.user.name || ""),
+          displayName: String(pk.user.displayName || pk.user.name || ""),
+        };
+      }
+      pvCeremony = {
+        reqId: String(d.reqId || ""),
+        kind,
+        rpId: String(d.rpId || "").toLowerCase(),
+        origin: String(d.origin || ""),
+        challengeB64: pk.challenge ? pvBufToB64(pk.challenge instanceof ArrayBuffer ? pk.challenge : pk.challenge) : "",
+        allowCredIds: allow,
+        user,
+      };
+      if (kind === "get") webauthnHint(pvCeremony.rpId);
+      else toast(`🔑 Passkey registration for ${pvCeremony.rpId || "?"} held — approve in the popup to register from the vault.`);
+    } catch (_) {}
+  }
+  function pvFulfill(credential) {
+    try {
+      if (!pvCeremony) return false;
+      window.postMessage({ source: "__pv_relay", type: "PV_WEBAUTHN_FULFILL",
+        reqId: pvCeremony.reqId, credential }, "*");
+      pvCeremony = null;
+      return true;
+    } catch (_) { return false; }
+  }
+  async function pvApproveGet() {
+    if (!pvCeremony || pvCeremony.kind !== "get") return { ok: false, error: "no pending ceremony" };
+    if (isBlocked() || phishingRefuse() || !location.host) return { ok: false, error: "blocked" };
+    if (!(await requireExtPin())) return { ok: false, error: "pin required" };
+    const c = pvCeremony;
+    let credId = "";
+    if (c.allowCredIds && c.allowCredIds.length) {
+      credId = c.allowCredIds[0];
+    } else {
+      const res = await chrome.runtime.sendMessage({ type: "PV_PASSKEY_LOOKUP", rp: c.rpId });
+      const keys = (res && res.ok && res.passkeys) || [];
+      if (keys.length !== 1) {
+        return { ok: false, error: keys.length ? "multiple keys — narrow it in the vault first" : "no vault key for this site" };
+      }
+    }
+    const r = await chrome.runtime.sendMessage({ type: "PV_ASSERT_SIGN",
+      rpId: c.rpId, origin: c.origin, challengeB64: c.challengeB64, credentialId: credId });
+    if (!(r && r.ok)) return { ok: false, error: (r && r.error) || "sign refused" };
+    const rawId = pvB64ToBuf(r.credential_id);
+    const credential = {
+      id: pvB64ToB64Url(r.credential_id),
+      rawId,
+      type: "public-key",
+      response: {
+        authenticatorData: pvB64ToBuf(r.authenticatorData),
+        clientDataJSON: pvB64ToBuf(r.clientDataJSON),
+        signature: pvB64ToBuf(r.signature),
+        userHandle: pvB64ToBuf(r.userHandle),
+      },
+      getClientExtensionResults: () => ({}),
+    };
+    pvFulfill(credential);
+    return { ok: true };
+  }
+  async function pvApproveCreate() {
+    if (!pvCeremony || pvCeremony.kind !== "create") return { ok: false, error: "no pending ceremony" };
+    if (isBlocked() || phishingRefuse() || !location.host) return { ok: false, error: "blocked" };
+    if (!(await requireExtPin())) return { ok: false, error: "pin required" };
+    const c = pvCeremony;
+    const r = await chrome.runtime.sendMessage({ type: "PV_ATTEST_SIGN",
+      rpId: c.rpId, origin: c.origin, challengeB64: c.challengeB64,
+      user: { id: (c.user && c.user.idB64) || "", name: (c.user && c.user.name) || "",
+        displayName: (c.user && c.user.displayName) || "" } });
+    if (!(r && r.ok)) return { ok: false, error: (r && r.error) || "registration refused" };
+    const rawId = pvB64ToBuf(r.credential_id);
+    const credential = {
+      id: pvB64ToB64Url(r.credential_id),
+      rawId,
+      type: "public-key",
+      response: {
+        clientDataJSON: pvB64ToBuf(r.clientDataJSON),
+        attestationObject: pvB64ToBuf(r.attestationObject),
+        getTransports: () => ["internal"],
+      },
+      getClientExtensionResults: () => ({}),
+    };
+    pvFulfill(credential);
+    return { ok: true };
+  }
   // Passkey discovery hint: on a page WebAuthn ceremony, check the vault
   // for this rpId and toast the match (one toast per rp per page). The
-  // ceremony itself is never touched.
+  // ceremony itself is fulfilled ONLY via popup approval (see above).
   let webauthnHintedFor = "";
   async function webauthnHint(rpId) {
     try {
@@ -1956,10 +2082,10 @@
       if (e.source !== window) return;
       const d = e.data || {};
       if (d.source !== "__pv_hook") return;
-      if (d.type === "PV_WEBAUTHN_GET") {
-        // Passkey discovery: does the vault hold this rpId? Toast only —
-        // the ceremony itself is untouched (relay is a follow-up).
-        webauthnHint(String(d.rpId || ""));
+      if (d.type === "PV_WEBAUTHN_GET" || d.type === "PV_WEBAUTHN_CREATE") {
+        // Phase 3 relay: hold the ceremony for explicit popup approval.
+        // No approval in time → the page hook falls back to native behavior.
+        pvCeremonyHold(d);
         return;
       }
       if (d.type !== "PV_SPA_LOGIN") return;
@@ -1984,6 +2110,13 @@
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     (async () => {
       if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
+      // Phase 3 relay: popup approval surface for the held ceremony.
+      if (msg.type === "PV_ASSERT_PENDING") {
+        return { ok: true, pending: pvCeremony ?
+          { kind: pvCeremony.kind, rpId: pvCeremony.rpId, origin: pvCeremony.origin } : null };
+      }
+      if (msg.type === "PV_ASSERT_APPROVE") return await pvApproveGet();
+      if (msg.type === "PV_ATTEST_APPROVE") return await pvApproveCreate();
       if (msg.type === "PV_OTP_STATUS") {
         return { ok: true, otpPage: otpPageMode() };
       }
