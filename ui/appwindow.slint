@@ -1,4 +1,4 @@
-import { Button, CheckBox, ComboBox, LineEdit, ScrollView, TextEdit } from "std-widgets.slint";
+import { Button, CheckBox, ComboBox, LineEdit, ScrollView, TextEdit, FlexboxLayout } from "std-widgets.slint";
 
 // =============================================================================
 // PHANTOM VAULT — "Phantom Aura" design system
@@ -1267,7 +1267,7 @@ export component MainWindow inherits Window {
 
         // active_nav routing: 0=Vault 3-col, 1=2FA Hub grid, 2=Importer, 3=Settings center
         if root.active_nav == 1 : Rectangle {
-            background: #080c14; horizontal-stretch: 1; vertical-stretch: 1; clip: true;
+            background: #080c14; horizontal-stretch: 1; vertical-stretch: 1;
             VerticalLayout { padding: 22px; spacing: 14px; horizontal-stretch: 1; vertical-stretch: 1;
                 HorizontalLayout { spacing: 8px;
                     AuraButton { label: "+ Add 2FA"; primary: true; width: 120px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
@@ -1294,7 +1294,7 @@ export component MainWindow inherits Window {
                     // TEMP DEBUG (remove before release): live widths.
                     // hub_px_w is Rust-fed from the real window (self-healing every TOTP tick).
                     Text { text: "dbg scroll=" + hub_scroll.width / 1px + " forced=" + root.hub_px_w; color: #5b6589; font-size: 11px; }
-                    for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
+                    for row in root.auth_rows : HorizontalLayout { spacing: 14px; horizontal-stretch: 1; alignment: space-between;
                         for acc in row : Rectangle {
                             width: (root.hub_px_w * 1px - 72px) / 3;
                             background: #111827;
