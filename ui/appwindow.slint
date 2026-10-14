@@ -1296,7 +1296,7 @@ export component MainWindow inherits Window {
                     Text { text: "dbg scroll=" + hub_scroll.width / 1px + " forced=" + root.hub_px_w; color: #5b6589; font-size: 11px; }
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; alignment: start;
                         for acc in row : Rectangle {
-                            width: (root.hub_px_w * 1px - 86px) / 4;
+                            width: (root.hub_px_w * 1px - 72px) / 3;
                             background: #111827;
                             border-radius: 10px;
                             border-width: 1px;

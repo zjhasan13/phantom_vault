@@ -2065,9 +2065,9 @@ fn chunk_rows_of<T: Clone>(items: Vec<T>, n: usize) -> Vec<Vec<T>> {
     items.chunks(n).map(|c| c.to_vec()).collect()
 }
 
-/// Authenticator grid stride: 4 columns — full-bleed on wide screens, no
-/// dead space on the right (compact cards, not billboards).
-const AUTH_GRID_COLS: usize = 4;
+/// Authenticator grid stride: 3 landscape columns (reference-authenticator
+/// density — icon + names + big code + ring, breathing room per card).
+const AUTH_GRID_COLS: usize = 3;
 
 /// Grid model for the authenticator page: `[[AuthView]]` rows of 4,
 /// filtered by the ISOLATED hub query (never the vault `search_query`).
