@@ -7585,6 +7585,192 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
     });
 
+    // Phase 1: per-item sharing (login-only MVP). Grantor mints a metadata
+    // grant (persisted + re-sealed) and a sealed envelope for the grantee
+    // key; grantee opens offline. Single-owner default untouched.
+    let share_weak = main_window.as_weak();
+    let share_vault = Arc::clone(&active_vault);
+    let share_master = Arc::clone(&active_master_pw);
+    main_window.on_share_grant_login(move |item_id, pubkey_b64| {
+        let Some(ui) = share_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&share_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_share_status("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        ui.set_share_status("⏳ Sealing envelope…".into());
+        let iid = item_id.to_string();
+        let pk = pubkey_b64.to_string();
+        let weak = share_weak.clone();
+        let vault_clone = Arc::clone(&share_vault);
+        std::thread::spawn(move || {
+            let done = |status: String, output: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_share_status(status.into());
+                        ui.set_share_output(output.into());
+                    }
+                });
+            };
+            let run = || -> Result<(String, String), String> {
+                use base64::Engine as _;
+                let pubbytes = base64::engine::general_purpose::STANDARD
+                    .decode(pk.trim())
+                    .map_err(|_| "grantee key is not base64".to_string())?;
+                let now = crate::models::current_timestamp();
+                let grant = security::sharing::create_grant("login", iid.trim(), &pubbytes, now)
+                    .map_err(|e| e.to_string())?;
+                let mut vault = lock_vault(&vault_clone);
+                let item = vault
+                    .credentials
+                    .iter()
+                    .find(|c| c.id == grant.item_id && c.deleted_at.is_none())
+                    .ok_or("login not found (or trashed)".to_string())?;
+                let urls: Vec<String> = item.urls.iter().map(|u| u.url().to_string()).collect();
+                let payload = security::sharing::login_share_payload(
+                    &item.title,
+                    &item.username,
+                    &item.password,
+                    &urls,
+                )
+                .map_err(|e| e.to_string())?;
+                let env = security::sharing::seal_item_envelope(&grant, &pubbytes, &payload)
+                    .map_err(|e| e.to_string())?;
+                let env_bytes = env.encode().map_err(|e| e.to_string())?;
+                let snapshot = vault.clone();
+                vault.shared_grants.push(grant.clone());
+                if let Err(e) = save_vault_secret(&vault, &master_pw, VAULT_FILE) {
+                    *vault = snapshot;
+                    return Err(e);
+                }
+                let env_b64 = base64::engine::general_purpose::STANDARD.encode(&env_bytes);
+                let ledger = security::sharing::ledger(&vault.shared_grants);
+                Ok((
+                    format!("✅ Granted + sealed. Envelope below — send it to the grantee.\n{ledger}"),
+                    format!("Grant ID:\n{}\n\nENVELOPE (send to grantee):\n{}", grant.grant_id, env_b64),
+                ))
+            };
+            match run() {
+                Ok((status, output)) => {
+                    security::access_log::log_event("share", "grant sealed");
+                    done(status, output);
+                }
+                Err(e) => done(format!("⚠️ Grant refused: {e}"), String::new()),
+            }
+        });
+    });
+    // Revoke: mark the grant + re-seal. Issued copies cannot be un-issued —
+    // the status says so and orders a password rotation.
+    let revoke_weak = main_window.as_weak();
+    let revoke_vault = Arc::clone(&active_vault);
+    let revoke_master = Arc::clone(&active_master_pw);
+    main_window.on_share_revoke(move |grant_id| {
+        let Some(ui) = revoke_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let master_opt = lock_master_pw(&revoke_master).clone();
+        let Some(master_pw) = master_opt else {
+            ui.set_share_status("⚠️ Vault not unlocked.".into());
+            return;
+        };
+        let gid = grant_id.to_string();
+        let weak = revoke_weak.clone();
+        let vault_clone = Arc::clone(&revoke_vault);
+        std::thread::spawn(move || {
+            let done = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_share_status(msg.into());
+                    }
+                });
+            };
+            let mut vault = lock_vault(&vault_clone);
+            let snapshot = vault.clone();
+            let mut found = false;
+            for g in vault.shared_grants.iter_mut() {
+                if g.grant_id == gid.trim() {
+                    g.revoked = true;
+                    found = true;
+                }
+            }
+            if !found {
+                done("⚠️ Grant not found.".into());
+                return;
+            }
+            match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
+                Ok(()) => {
+                    let ledger = security::sharing::ledger(&vault.shared_grants);
+                    security::access_log::log_event("share", "grant revoked");
+                    done(format!(
+                        "🚫 Grant revoked. Issued envelope copies still exist — ROTATE the item password now.\n{ledger}"
+                    ));
+                }
+                Err(e) => {
+                    *vault = snapshot;
+                    done(format!("⚠️ Revoke blocked: {e}"));
+                }
+            }
+        });
+    });
+    // Grantee: open a pasted envelope with the private key. Local only —
+    // shows the shared login for manual save (never auto-imported).
+    let open_weak = main_window.as_weak();
+    main_window.on_share_open_envelope(move |privkey_b64, envelope_b64| {
+        let Some(ui) = open_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        use base64::Engine as _;
+        let res = (|| -> Result<String, String> {
+            let dk = base64::engine::general_purpose::STANDARD
+                .decode(privkey_b64.trim())
+                .map_err(|_| "private key is not base64".to_string())?;
+            let env_bytes = base64::engine::general_purpose::STANDARD
+                .decode(envelope_b64.trim())
+                .map_err(|_| "envelope is not base64".to_string())?;
+            let env = security::sharing::ShareEnvelope::decode(&env_bytes).map_err(|e| e.to_string())?;
+            let plain = security::sharing::open_item_envelope(&env, &dk).map_err(|e| e.to_string())?;
+            let v: serde_json::Value =
+                serde_json::from_slice(&plain).map_err(|_| "payload corrupt".to_string())?;
+            let get = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let urls: Vec<String> = v
+                .get("urls")
+                .and_then(|x| x.as_array())
+                .map(|a| a.iter().filter_map(|x| x.as_str().map(|s| s.to_string())).collect())
+                .unwrap_or_default();
+            Ok(format!(
+                "✅ Shared login (save it by hand — never auto-imported):\nTitle: {}\nUsername: {}\nPassword: {}\nURLs: {}",
+                get("title"),
+                get("username"),
+                get("password"),
+                urls.join(", ")
+            ))
+        })();
+        match res {
+            Ok(text) => {
+                ui.set_share_output(text.into());
+                ui.set_share_status("✅ Opened.".into());
+                security::access_log::log_event("share", "envelope opened");
+            }
+            Err(e) => ui.set_share_status(format!("⚠️ Open refused: {e}").into()),
+        }
+    });
+
     // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.
     // Listener + beacon + responder threads are detached; the shared stop
     // flag retires them on toggle-off (re-enable flips it back + respawns).

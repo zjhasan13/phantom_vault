@@ -532,6 +532,23 @@ pub struct SshKeyItem {
     pub deleted_at: Option<u64>,
 }
 
+/// Phase 1: per-item sharing grant record. Metadata ONLY — the secret
+/// travels exclusively inside the sealed envelope (copy-paste transport).
+/// Revocation marks the record AND requires rotating the item secret
+/// (an issued envelope copy cannot be un-issued — crypto honesty).
+#[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default, PartialEq)]
+pub struct SharedGrant {
+    /// sha256 hex binding kind + item + grantee key + time.
+    pub grant_id: String,
+    /// "login" (MVP — other kinds refuse loud at grant time).
+    pub item_kind: String,
+    pub item_id: String,
+    /// sha256 hex of the grantee PQ encapsulation key (not the key itself).
+    pub grantee_fp: String,
+    pub granted_at: u64,
+    pub revoked: bool,
+}
+
 /// সম্পূর্ণ মূল ভল্ট কন্টেইনার.
 /// C3 Hardening: Zeroize-derived so EVERY heap clone (snapshots, rollback
 /// copies, invoke payloads) is scrubbed on drop — no lingering plaintext.
@@ -567,6 +584,10 @@ pub struct Vault {
     /// Stale ids (deleted/unknown) are ignored by readers and swept on write.
     #[serde(default)]
     pub verified_ids: Vec<String>,
+    /// Phase 1 sharing grants (metadata only). `serde(default)` keeps
+    /// pre-sharing vaults loading — same pattern as verified_ids.
+    #[serde(default)]
+    pub shared_grants: Vec<SharedGrant>,
 }
 
 /// Successful fills that auto-mark a login as working. Equality-crossing
@@ -597,6 +618,7 @@ impl Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         }
     }
 
@@ -1001,6 +1023,7 @@ impl From<VaultLegacy> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1168,6 +1191,7 @@ impl From<VaultGen1> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1388,6 +1412,7 @@ impl From<VaultGen2> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1452,6 +1477,7 @@ impl From<VaultGen3> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         };
         v.ensure_folders();
         v
@@ -1491,6 +1517,7 @@ impl From<VaultGen4> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            shared_grants: Vec::new(),
         };
         v.ensure_folders();
         v

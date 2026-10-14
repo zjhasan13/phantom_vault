@@ -207,6 +207,15 @@ pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String
         }
     }
 
+    // Sharing grants: union by id; revoked wins either side (safe side).
+    let mut shared_grants = local.shared_grants.clone();
+    for g in &remote.shared_grants {
+        match shared_grants.iter_mut().find(|x| x.grant_id == g.grant_id) {
+            Some(cur) => cur.revoked = cur.revoked || g.revoked,
+            None => shared_grants.push(g.clone()),
+        }
+    }
+
     let merged = Vault {
         version: local.version,
         folders,
@@ -222,6 +231,7 @@ pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String
         totp_unlock_enabled: local.totp_unlock_enabled,
         totp_unlock_secret: local.totp_unlock_secret.clone(),
         verified_ids,
+        shared_grants,
     };
     let mut merged = merged;
     {
@@ -416,6 +426,30 @@ mod tests {
         assert_eq!(n1.content, "local");
         assert!(r.conflicts.iter().any(|x| x.kind == "note" && x.reason == "diverged"));
         assert!(r.merged.notes.iter().any(|x| x.id == "n2"));
+    }
+
+    #[test]
+    fn sharing_grants_union_and_revoke_wins() {
+        use crate::models::SharedGrant;
+        let g = |id: &str, revoked: bool| SharedGrant {
+            grant_id: id.into(),
+            item_kind: "login".into(),
+            item_id: "x".into(),
+            grantee_fp: "fp".into(),
+            granted_at: 1,
+            revoked,
+        };
+        let mut a = Vault::new();
+        let mut b = Vault::new();
+        a.shared_grants.push(g("g1", false));
+        b.shared_grants.push(g("g1", true));
+        b.shared_grants.push(g("g2", false));
+        let r = merge_vaults(&a, &b).unwrap();
+        assert_eq!(r.merged.shared_grants.len(), 2);
+        // Revoked wins either side (safe side).
+        assert!(r.merged.shared_grants.iter().find(|x| x.grant_id == "g1").unwrap().revoked);
+        assert!(r.merged.shared_grants.iter().any(|x| x.grant_id == "g2"));
+        assert!(r.conflicts.is_empty());
     }
 
     #[test]
