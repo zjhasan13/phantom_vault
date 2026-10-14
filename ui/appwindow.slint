@@ -958,6 +958,17 @@ export component MainWindow inherits Window {
     callback share_grant_login(string, string);
     callback share_revoke(string);
     callback share_open_envelope(string, string);
+    // Phase 9: secure send (expiring single-view notes, relay + paste).
+    in-out property <string> send_status: "";
+    in-out property <string> send_output: "";
+    in-out property <string> send_note_input: "";
+    in-out property <string> send_ttl_input: "";
+    in-out property <string> send_code_input: "";
+    in-out property <string> send_packet_input: "";
+    in-out property <string> send_key_input: "";
+    callback send_create(string, string);
+    callback send_open(string);
+    callback send_open_pasted(string, string);
     callback set_p2p(bool);
     callback scan_p2p();
     callback sync_peer(string, string);
@@ -1630,6 +1641,24 @@ export component MainWindow inherits Window {
                     AuraButton { label: "🔓 Open Envelope"; width: 200px; clicked => { root.share_open_envelope(root.share_priv, root.share_env); } }
                     Text { text: root.share_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     if root.share_output != "" : Text { text: root.share_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
+                }}
+                Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
+                    Text { text: "✉️ Secure Send (expiring, one-view)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: "Sealed note on the relay, key only in the link-code. Reading deletes it (one view); expiry kills it unread. Relay sees ciphertext + expiry only."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: "Secret note to send (16KB max)"; text <=> root.send_note_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "TTL minutes (5..43200)"; text <=> root.send_ttl_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "✉️ Seal + Publish"; primary: true; width: 180px; clicked => { root.send_create(root.send_note_input, root.send_ttl_input); } }
+                    }
+                    LineEdit { placeholder-text: "Link-code (base64 key, to read)"; text <=> root.send_code_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "📥 Read + Burn"; width: 180px; clicked => { root.send_open(root.send_code_input); } }
+                        AuraButton { label: "📋 Read Pasted"; width: 180px; clicked => { root.send_open_pasted(root.send_packet_input, root.send_key_input); } }
+                    }
+                    LineEdit { placeholder-text: "Packet (base64, offline paste)"; text <=> root.send_packet_input; height: 36px; }
+                    LineEdit { placeholder-text: "Key (base64, offline paste)"; text <=> root.send_key_input; height: 36px; }
+                    Text { text: root.send_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.send_output != "" : Text { text: root.send_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }

@@ -10,6 +10,7 @@ pub mod emergency;
 pub mod ext_pin;
 pub mod integrity;
 pub mod pdf_sheet;
+pub mod secure_send;
 pub mod shamir;
 pub mod sharing;
 pub mod shredder;

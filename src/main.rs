@@ -7771,6 +7771,174 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
     });
 
+    // Phase 9: secure send. Sender seals + publishes; reader fetches,
+    // expiry-checks, decrypts, then BURNS the relay object (one view).
+    // Delete failure after a good read still shows the note but says so
+    // LOUD (sender burns it manually) — never a silent multi-view.
+    let send_weak = main_window.as_weak();
+    main_window.on_send_create(move |note, ttl_minutes_raw| {
+        let Some(ui) = send_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_send_status("⏳ Sealing + publishing…".into());
+        let text = note.to_string();
+        let ttl_raw = ttl_minutes_raw.to_string();
+        let weak = send_weak.clone();
+        std::thread::spawn(move || {
+            let report = |status: String, output: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_send_status(status.into());
+                        ui.set_send_output(output.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — relay skipped.".into(), String::new());
+                return;
+            }
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into(), String::new());
+                return;
+            };
+            let mut token = token;
+            let run = || -> Result<(String, String), String> {
+                let minutes: u64 = ttl_raw.trim().parse().map_err(|_| "TTL minutes must be a number".to_string())?;
+                let ttl = minutes.checked_mul(60).ok_or("TTL overflow".to_string())?;
+                let now = crate::models::current_timestamp();
+                let (packet, code, id) = security::secure_send::create_send(&text, ttl, now)
+                    .map_err(|e| e.to_string())?;
+                let Some(rt) = tokio_rt() else {
+                    return Err("could not start network runtime".to_string());
+                };
+                rt.block_on(security::secure_send::send_publish(&cfg.owner, &cfg.repo, &token, &packet, &id))
+                    .map_err(|e| e.to_string())?;
+                Ok((
+                    "✅ Sealed + published. Send ONLY the link-code (never the note).".into(),
+                    format!("LINK-CODE (send this):\n{code}\n\nPacket ID:\n{id}"),
+                ))
+            };
+            let (status, output) = run().unwrap_or_else(|e| (format!("⚠️ Send refused: {e}"), String::new()));
+            use zeroize::Zeroize;
+            token.zeroize();
+            if status.starts_with("✅") {
+                security::access_log::log_event("send", "published");
+            }
+            report(status, output);
+        });
+    });
+    // Reader (relay path): fetch → expiry → decrypt → burn. Burn failure
+    // after a good read shows the note + orders a manual burn.
+    let read_weak = main_window.as_weak();
+    main_window.on_send_open(move |linkcode| {
+        let Some(ui) = read_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_send_status("⏳ Fetching + opening…".into());
+        let code = linkcode.to_string();
+        let weak = read_weak.clone();
+        std::thread::spawn(move || {
+            let report = |status: String, output: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_send_status(status.into());
+                        ui.set_send_output(output.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — relay skipped.".into(), String::new());
+                return;
+            }
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into(), String::new());
+                return;
+            };
+            let mut token = token;
+            let run = || -> Result<(String, String, bool), String> {
+                use base64::Engine as _;
+                let key_raw = base64::engine::general_purpose::STANDARD
+                    .decode(code.trim())
+                    .map_err(|_| "bad link-code (not base64)".to_string())?;
+                if key_raw.len() != 32 {
+                    return Err("bad link-code (not a 32B key)".to_string());
+                }
+                let now = crate::models::current_timestamp();
+                // Packet id is content-bound (sha256 of key) — derive, never trust input.
+                let mut key_arr = [0u8; 32];
+                key_arr.copy_from_slice(&key_raw);
+                let id = security::secure_send::packet_id(&key_arr);
+                let Some(rt) = tokio_rt() else {
+                    return Err("could not start network runtime".to_string());
+                };
+                let (packet, sha) = rt
+                    .block_on(security::secure_send::send_fetch(&cfg.owner, &cfg.repo, &token, &id))
+                    .map_err(|e| e.to_string())?
+                    .ok_or("nothing there — already read (burned) or never sent".to_string())?;
+                let note = security::secure_send::open_send(&packet, &code, now).map_err(|e| e.to_string())?;
+                // Burn AFTER a good open (a bad open must NOT destroy evidence).
+                let burned = rt
+                    .block_on(security::secure_send::send_delete(&cfg.owner, &cfg.repo, &token, &id, &sha))
+                    .is_ok();
+                Ok((note, id, burned))
+            };
+            let (status, output) = match run() {
+                Ok((note, _id, true)) => {
+                    security::access_log::log_event("send", "read + burned");
+                    ("🔥 Read + burned (one view spent).".to_string(), format!("NOTE:\n{note}"))
+                }
+                Ok((note, _id, false)) => {
+                    security::access_log::log_event("send", "read, burn FAILED");
+                    (
+                        "⚠️ Read OK but BURN FAILED — tell the sender to delete it manually.".to_string(),
+                        format!("NOTE:\n{note}"),
+                    )
+                }
+                Err(e) => (format!("⚠️ Open refused: {e}"), String::new()),
+            };
+            use zeroize::Zeroize;
+            token.zeroize();
+            report(status, output);
+        });
+    });
+    // Reader (offline paste path): packet + key pasted by hand, no network.
+    let paste_weak = main_window.as_weak();
+    main_window.on_send_open_pasted(move |packet_b64, key_b64| {
+        let Some(ui) = paste_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        use base64::Engine as _;
+        let res = (|| -> Result<String, String> {
+            let packet = base64::engine::general_purpose::STANDARD
+                .decode(packet_b64.trim())
+                .map_err(|_| "packet is not base64".to_string())?;
+            let now = crate::models::current_timestamp();
+            security::secure_send::open_send(&packet, key_b64.as_str(), now).map_err(|e| e.to_string())
+        })();
+        match res {
+            Ok(note) => {
+                ui.set_send_output(format!("NOTE:\n{note}").into());
+                ui.set_send_status("✅ Opened (pasted packet — relay untouched).".into());
+                security::access_log::log_event("send", "pasted open");
+            }
+            Err(e) => ui.set_send_status(format!("⚠️ Open refused: {e}").into()),
+        }
+    });
+
     // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.
     // Listener + beacon + responder threads are detached; the shared stop
     // flag retires them on toggle-off (re-enable flips it back + respawns).
