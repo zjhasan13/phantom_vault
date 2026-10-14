@@ -1303,7 +1303,7 @@ export component MainWindow inherits Window {
                             border-radius: 10px;
                             border-width: 1px;
                             border-color: #1e293b;
-                            height: 104px;
+                            height: 112px;
                             clip: true;
                             // Click-anywhere copies the live code (buttons stay
                             // on top, so ⭐/Copy/🗑️ keep their own clicks).
@@ -1314,18 +1314,20 @@ export component MainWindow inherits Window {
                                             if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; x: 6px; y: 6px; image-fit: contain; }
                                             if !acc.has_icon : Text { text: acc.icon; color: #080c14; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                                         VerticalLayout { spacing: 0px; alignment: center; horizontal-stretch: 1;
-                                            HorizontalLayout { spacing: 6px; alignment: center;
-                                                Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; }
+                                            HorizontalLayout { spacing: 6px; alignment: start;
+                                                Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: #eef1ff; font-size: 13px; font-weight: 800; overflow: elide; vertical-alignment: center; }
                                                 if acc.is_dup : Rectangle { border-radius: 6px; background: #4a2c00; border-width: 1px; border-color: #fbbf24;
                                                     HorizontalLayout { padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px;
                                                         Text { text: "⚠ DUP"; color: #fbbf24; font-size: 11px; font-weight: 800; } } } }
                                             Text { text: acc.name; color: #8e99c0; font-size: 11px; overflow: elide; }
-                                            Text { text: acc.display; color: #eef1ff; font-size: 20px; font-weight: 900; }
+                                            Text { text: acc.display; color: !acc.is_hotp && acc.secs <= 5 ? #fb7185 : #eef1ff; font-size: 20px; font-weight: 900; }
                                             // Hidden by default. A visible "next" code is a
                                             // second plausible-looking number on the card and
                                             // users copy whichever one they read second.
-                                            if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; } }
-                                        AuraButton { label: acc.fav ? "⭐" : "☆"; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
+                                            if root.show_totp_next : Text { text: acc.next_label; color: #8e99c0; font-size: 11px; overflow: elide; }
+                                            if !acc.is_hotp : Rectangle { background: #1a2450; border-radius: 2px; height: 4px; clip: true;
+                                                Rectangle { background: acc.secs > 15 ? #8b7cf6 : (acc.secs > 5 ? #fbbf24 : #fb7185); border-radius: 2px; height: 4px; width: parent.width * acc.secs / 30; } } }
+                                        AuraButton { label: acc.fav ? "⭐" : "☆"; primary: acc.fav; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
                                     }
                                 VerticalLayout { spacing: 4px; alignment: center;
                                     Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
