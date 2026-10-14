@@ -817,6 +817,8 @@ export component MainWindow inherits Window {
     in-out property <string> sync_repo;
     in-out property <string> sync_token_input;
     in-out property <string> sync_status: "";
+    // Phase 4: explicit CRDT merge preview → confirm (never automatic).
+    in-out property <string> merge_status: "";
     in-out property <string> bridge_status: "";
     // Local Wi-Fi P2P sync (default OFF) + GitHub Releases updater.
     in-out property <bool> p2p_enabled: false;
@@ -942,6 +944,8 @@ export component MainWindow inherits Window {
     callback type_item_requested(int, string);
     callback save_sync_config(string, string, string);
     callback sync_now();
+    callback merge_preview_remote();
+    callback merge_apply();
     callback set_p2p(bool);
     callback scan_p2p();
     callback sync_peer(string, string);
@@ -1597,7 +1601,9 @@ export component MainWindow inherits Window {
                     LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.sync_repo; height: 36px; }
                     LineEdit { placeholder-text: "PAT (classic token, repo scope)"; input-type: password; text <=> root.sync_token_input; height: 36px; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "Connect"; primary: true; width: 120px; clicked => { root.save_sync_config(root.sync_owner, root.sync_repo, root.sync_token_input); } } AuraButton { label: "Sync Now"; width: 120px; clicked => { root.sync_now(); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "👁 Merge Preview"; width: 150px; clicked => { root.merge_preview_remote(); } } AuraButton { label: "✅ Apply Merge"; primary: true; width: 150px; clicked => { root.merge_apply(); } } }
                     Text { text: root.sync_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.merge_status != "" : Text { text: root.merge_status; color: #8b7cf6; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }

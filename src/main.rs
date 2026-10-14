@@ -2687,6 +2687,19 @@ fn pending_import_store() -> &'static Mutex<Option<PendingImport>> {
     PENDING.get_or_init(|| Mutex::new(None))
 }
 
+/// Staged CRDT merge awaiting user Apply (preview first). RAM-only,
+/// process-global like the import staging. Dropped on apply AND on lock.
+struct PendingMerge {
+    merged: Vault,
+    took_remote: usize,
+    conflicts: usize,
+}
+
+fn pending_merge_store() -> &'static Mutex<Option<PendingMerge>> {
+    static STAGED: std::sync::OnceLock<Mutex<Option<PendingMerge>>> = std::sync::OnceLock::new();
+    STAGED.get_or_init(|| Mutex::new(None))
+}
+
 /// Raw cached favicon PNGs by domain (bytes are Send+Sync; decoding to
 /// `slint::Image` happens ONLY on the event-loop thread — Slint images are
 /// neither Send nor Sync). Filled by the prefetch worker; list/detail builds
@@ -7406,6 +7419,170 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         ui.set_sync_status("⏳ Syncing…".into());
         trigger_sync_push(ui.as_weak());
+    });
+
+    // Phase 4: CRDT merge preview — fetch remote blob, decrypt with the
+    // unlocked master, merge into a CLONE. Live vault untouched until the
+    // user presses Apply. Whole-blob adopt paths are untouched by this.
+    let merge_weak = main_window.as_weak();
+    let merge_vault = Arc::clone(&active_vault);
+    let merge_master = Arc::clone(&active_master_pw);
+    main_window.on_merge_preview_remote(move || {
+        let Some(ui) = merge_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_merge_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_merge_status("⏳ Fetching remote vault…".into());
+        let weak = merge_weak.clone();
+        let vault_clone = Arc::clone(&merge_vault);
+        let master_clone = Arc::clone(&merge_master);
+        std::thread::spawn(move || {
+            let report = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_merge_status(msg.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                report("📴 Offline mode — merge skipped.".into());
+                return;
+            }
+            let master_opt = lock_master_pw(&master_clone).clone();
+            let Some(master) = master_opt else {
+                report("⚠️ Vault not unlocked.".into());
+                return;
+            };
+            let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
+                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                return;
+            };
+            let mut token = token;
+            let Some(rt) = tokio_rt() else {
+                use zeroize::Zeroize;
+                token.zeroize();
+                report("⚠️ Could not start network runtime.".into());
+                return;
+            };
+            let blob = match rt.block_on(sync::github_sync::pull_remote(&cfg.owner, &cfg.repo, &token)) {
+                Ok(Some((b, _))) => b,
+                Ok(None) => {
+                    use zeroize::Zeroize;
+                    token.zeroize();
+                    report("☁️ No remote vault yet — nothing to merge.".into());
+                    return;
+                }
+                Err(e) => {
+                    use zeroize::Zeroize;
+                    token.zeroize();
+                    report(format!("⚠️ Fetch: {e}"));
+                    return;
+                }
+            };
+            use zeroize::Zeroize;
+            token.zeroize();
+            let remote_vault = match sync::crdt_merge::decrypt_blob_to_vault(&master, &blob) {
+                Ok(v) => v,
+                Err(e) => {
+                    report(format!("⚠️ Remote unreadable: {e}"));
+                    return;
+                }
+            };
+            let local = lock_vault(&vault_clone).clone();
+            let rep = match sync::crdt_merge::merge_vaults(&local, &remote_vault) {
+                Ok(r) => r,
+                Err(e) => {
+                    report(format!("⚠️ Merge: {e}"));
+                    return;
+                }
+            };
+            let mut detail = format!(
+                "👁️ Preview: {} item(s) from remote into {} total, {} conflict(s) kept local. Apply to merge, or ignore.",
+                rep.took_remote,
+                rep.took_local_union,
+                rep.conflicts.len()
+            );
+            for c in rep.conflicts.iter().take(5) {
+                detail.push_str(&format!("\n• {} {} ({})", c.kind, c.id, c.reason));
+            }
+            if rep.conflicts.len() > 5 {
+                detail.push_str(&format!("\n… +{} more", rep.conflicts.len() - 5));
+            }
+            *pending_merge_store().lock().unwrap() = Some(PendingMerge {
+                merged: rep.merged,
+                took_remote: rep.took_remote,
+                conflicts: rep.conflicts.len(),
+            });
+            security::access_log::log_event("sync", "merge preview");
+            report(detail);
+        });
+    });
+    // Phase 4: apply the staged merge — snapshot + re-seal + rollback on
+    // disk failure (same armor as import confirm). Then refresh + push.
+    let apply_weak = main_window.as_weak();
+    let apply_vault = Arc::clone(&active_vault);
+    let apply_master = Arc::clone(&active_master_pw);
+    let apply_search = Arc::clone(&search_state);
+    let apply_qb = quick_bar.as_weak();
+    main_window.on_merge_apply(move || {
+        let staged = pending_merge_store().lock().unwrap().take();
+        let Some(staged) = staged else {
+            if let Some(ui) = apply_weak.upgrade() {
+                ui.set_merge_status("⚠️ Nothing staged — preview first.".into());
+            }
+            return;
+        };
+        let master_opt = lock_master_pw(&apply_master).clone();
+        let Some(master_pw) = master_opt else {
+            if let Some(ui) = apply_weak.upgrade() {
+                ui.set_merge_status("⚠️ Vault not unlocked.".into());
+            }
+            *pending_merge_store().lock().unwrap() = Some(staged);
+            return;
+        };
+        let res: Result<String, String> = {
+            let mut vault = lock_vault(&apply_vault);
+            let snapshot = vault.clone();
+            *vault = staged.merged;
+            vault.ensure_folders();
+            match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
+                Ok(()) => Ok(format!(
+                    "✅ Merged: {} from remote, {} conflicts kept local.",
+                    staged.took_remote, staged.conflicts
+                )),
+                Err(e) => {
+                    *vault = snapshot;
+                    Err(e)
+                }
+            }
+        };
+        if let Some(ui) = apply_weak.upgrade() {
+            match res {
+                Ok(msg) => {
+                    {
+                        let v = lock_vault(&apply_vault);
+                        let f = apply_search.lock().unwrap().clone();
+                        set_paged_credentials(&ui, vault_to_items(&v, &f));
+                        sync_folders_to_ui(&v, &ui);
+                        ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
+                        ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
+                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                        if let Some(qb) = apply_qb.upgrade() {
+                            qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
+                        }
+                    }
+                    ui.set_merge_status(msg.into());
+                    ui.set_notification_text("🔀 Remote merged.".into());
+                    security::access_log::log_event("sync", "merge applied");
+                    trigger_sync_push(ui.as_weak());
+                }
+                Err(e) => ui.set_merge_status(format!("⚠️ Merge blocked: {e}").into()),
+            }
+        }
     });
 
     // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.

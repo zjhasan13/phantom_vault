@@ -70,7 +70,7 @@ impl Drop for FileLock {
     }
 }
 
-fn load_legacy_pq_dk() -> Result<PqDecapsulationBytes, String> {
+    pub(crate) fn load_legacy_pq_dk() -> Result<PqDecapsulationBytes, String> {
     let blob = fs::read(PQ_DK_FILE).map_err(|_| {
         "Legacy hybrid vault needs pq_decapsulation.dpapi (restore its backup)".to_string()
     })?;
