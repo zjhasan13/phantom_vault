@@ -1,14 +1,16 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: v0.2.1 prep (411 tests).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: epic roadmap 6→7→2→4→1 shipped (431 tests).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
 - Branch `main`, pushed, working tree clean.
-- Baselines: `cargo test` 411 passed / 1 ignored, `node --test tests/js/` 12/12,
-  `cargo check --all-targets` zero warnings, `cargo clippy --all-targets` zero
-  warnings (tray redundant-match fixed via `is_ok()`).
+- Baselines: `cargo test` 431 passed / 1 ignored, `node --test
+  tests/js/background.test.mjs` 12/12, `cargo check --all-targets` zero
+  warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
+  warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
+  untouched per no-break rule).
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
 - SecretString migration (Phases 1–5) DONE: crypto/storage `_secret` variants live,
@@ -26,6 +28,30 @@
   from fresh clones — never push from a stale pre-purge clone.**
 - Build env: `CARGO_TARGET_DIR=D:\pv-target` (persisted via setx). C: was
   filling up (40 GB target dirs) — all builds go to D: now.
+- Epic roadmap 6→7→2→4→1 SHIPPED (per-phase commit + push, no existing
+  signatures/behavior broken):
+  - #6 breach full-loop checklist (`fe30f10`): vault-side rotation progress
+    per health row (`rotation_status` + `health_rows_with_rotation`);
+    score/flags/order untouched; site auto-change stays manual by design.
+  - #7 limited direct import (`ed10d48`): `importer/browser_direct.rs`
+    read-only profile discovery (Chrome/Brave/Edge/Opera/Firefox) +
+    guided CSV import; direct store decrypt OFF (needs SQLite+AES-GCM /
+    NSS key — refused loud, documented in module header).
+  - #2 emergency timed grant (`402e1df`): `security/emergency.rs`
+    (request→approve→wait→envelope, PQ+XChaCha, maturity enforced in
+    `seal_envelope`) + `emergency/<id>.<kind>.json` relay via existing
+    private repo (fixed generic commit msg) + copy-paste transport;
+    takeover = existing shard recovery. Shamir/PDF untouched.
+  - #4 CRDT merge (`d3c3235`): `sync/crdt_merge.rs` explicit preview →
+    apply only; login LWW on `last_changed`, ties/delete-vs-edit keep
+    local + conflict; device unlock factor never merges; grants union
+    (revoke wins). Whole-blob adopt paths untouched.
+  - #1 per-item sharing (`38ea9cd`): `security/sharing.rs` login-only MVP
+    (other kinds refuse loud); `Vault.shared_grants` additive
+    (`#[serde(default)]`, pre-sharing JSON loads); revoke = mark +
+    mandatory password rotation (issued copies can't be un-issued).
+  - Dropped without new cause: #3 passkey ceremony, #5 SSO/admin,
+    #8 mobile/Safari, #9 secure-send.
 
 ## 2. How to resume (new PC / new OpenCode session, any model incl. Muse Spark)
 
@@ -44,17 +70,15 @@
 
 ## 3. Pending queue (ordered)
 
-1. **Tray X-still-exits (ACTIVE DEBUG, user-reported):** pref ON + new build, yet
-   X fully exits. Evidence so far: process gone (not stranded), Access Log has
-   NO close-path lines (handler seemingly never ran). Just added close-path
-   logging (`tray / minimize accepted`) — next step: user reproduces on the new
-   build and reports Access Log lines + console output from `cargo run`
-   (`System tray icon live.` vs `Tray unavailable (…)`). Suspects in order:
+1. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
+   next physical pass (X → process stays as background tray process; Access
+   Log close-path lines present). If it regresses, suspects in order:
    handler never fires (Slint close-request path) → panic=abort in handler →
    env-specific tray failure.
-2. **Live measurements (needs the user's machine):** Task Manager working set
-   locked+minimized (target ≤30–40 MB), idle CPU 0.00% × 5 min, bridge warm p50
-   ~5 ms. Record in release notes.
+2. **Live measurements (partial, needs the user's machine):** observed
+   minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
+   locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
+   warm p50 ~5 ms. Record in release notes.
 3. **Master Password Rotation — Option A** (user-side, after C1 purge): export
    Bitwarden JSON → fresh vault + new password → import → verify count → export
    Recovery Sheet PDF → shred temp JSON → delete all `*.dpapi` → shred old backup.
@@ -85,3 +109,11 @@
   the app from it (vault/seals accumulate there and could ship by accident).
 - installer.iss references a firefox host JSON that the app button (not the
   installer) actually writes — placeholder pattern, keep in sync.
+- Roadmap no-break contract (6→7→2→4→1 proven): additive model fields only
+  (`#[serde(default)]`), no existing signature/semantics changes, new
+  network/merge paths explicit + preview-first + default-OFF, every new
+  behavior ships with regression tests, decoy refused on all new grantor
+  paths, access log metadata-only.
+- Do NOT "fix" the 2 `manual_clamp` clippy warnings with `.clamp()` — NaN
+  propagation semantics differ from `.max().min()`; layout sizing must not
+  change silently.
