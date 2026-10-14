@@ -10006,6 +10006,22 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
     });
 
+    // Phase 7 (limited): read-only browser-profile discovery. Existence
+    // checks only — credential files are never opened, read, or decrypted.
+    // Synchronous (a few stat calls); decoy refused like every import path.
+    let detect_weak = main_window.as_weak();
+    main_window.on_detect_browsers(move || {
+        let Some(ui) = detect_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_browser_detect_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let found = importer::browser_direct::detect();
+        ui.set_browser_detect_status(importer::browser_direct::summarize(&found).into());
+    });
+
     // Cat 8: shred the plaintext import source (DoD 3-pass) on confirm.
     let shred_weak_yes = main_window.as_weak();
     main_window.on_confirm_shred_source(move || {

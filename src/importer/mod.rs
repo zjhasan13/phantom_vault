@@ -6,6 +6,7 @@
 
 pub mod bitwarden;
 pub mod browser_csv;
+pub mod browser_direct;
 pub mod exporter;
 pub mod fuzzy;
 pub mod keepass;

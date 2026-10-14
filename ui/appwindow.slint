@@ -767,6 +767,10 @@ export component MainWindow inherits Window {
     in-out property <string> import_preview_text: "";
     callback confirm_import_file();
     callback cancel_import_file();
+    // Phase 7 (limited): read-only browser-profile discovery. Direct store
+    // decrypt is NOT attempted — guidance points at file import.
+    in-out property <string> browser_detect_status: "";
+    callback detect_browsers();
     // Cat 8: plaintext import-source shred offer
     in-out property <bool> show_shred_source: false;
     in-out property <string> shred_source_path: "";
@@ -1464,6 +1468,8 @@ export component MainWindow inherits Window {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                 AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; clicked => { root.pick_import_file(); } }
+                AuraButton { label: "🔍 Detect Browsers"; height: 42px; clicked => { root.detect_browsers(); } }
+                if root.browser_detect_status != "" : Rectangle { background: #0d131f; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: #38e1ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 Rectangle { background: #121927; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? #fb7185 : (root.import_kind == "success" ? #34d399 : #38e1ff); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.show_import_preview : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
