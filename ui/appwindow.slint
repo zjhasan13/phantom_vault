@@ -567,6 +567,13 @@ export component MainWindow inherits Window {
     callback load_more_items();
     // Bulk-select mode (Column 2): checkbox per card + bottom action bar.
     in-out property <bool> select_mode: false;
+    // Bulk destructive two-tap (parity with hub/passkey/item deletes).
+    in-out property <bool> confirm_bulk_trash: false;
+    // PIN-removal two-tap (downgrades unlock — confirm like deletes).
+    in-out property <bool> confirm_pin_remove: false;
+    in-out property <bool> confirm_ext_pin_remove: false;
+    // Form draft deletes (custom field / URL) two-tap — no undo there.
+    in-out property <string> confirm_delete_field: "";
     in-out property <int> selected_count: 0;
     in-out property <string> selected_label: "";
     in-out property <string> bulk_folder: "General";
@@ -1180,7 +1187,7 @@ export component MainWindow inherits Window {
                             Text { text: "We never store or transmit it. If you lose it AND your recovery shards, nobody — not even us — can open your vault."; color: #8e99c0; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { spacing: 8px; alignment: center;
                                 Rectangle { height: 40px; horizontal-stretch: 1;
-                                    CheckBox { text: "I understand — no password + no shards = no vault"; checked <=> root.ob_shards_ok; y: 8px; x: 12px; }
+                                    CheckBox { text: "I understand — shards can be re-exported anytime in Settings"; checked <=> root.ob_shards_ok; y: 8px; x: 12px; }
                                 }
                             }
                             Text { text: "📄 Right after setup you will get ONE prompt to print your 5 recovery shards. Do not skip it."; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
@@ -1386,7 +1393,7 @@ export component MainWindow inherits Window {
                             for pk in root.passkeys_trash : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #fb718555; height: 64px;
                                 HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                     VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: #8e99c0; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: #5b6589; font-size: 11px; overflow: elide; } }
-                                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure?" : "🔥"; width: root.confirm_delete_pk_id == pk.id ? 72px : 44px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
+                                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure? Shred" : "🔥 Shred"; width: root.confirm_delete_pk_id == pk.id ? 110px : 72px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
                                 }
                             }
                         }
@@ -1485,7 +1492,7 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "Set PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_app_pin(pin_new.text, pin_confirm.text); pin_new.text = ""; pin_confirm.text = ""; } }
-                        if root.pin_available : AuraButton { label: "Remove PIN"; danger: true; width: 130px; height: 34px; clicked => { root.disable_app_pin(); } }
+                        if root.pin_available : AuraButton { label: root.confirm_pin_remove ? "Sure?" : "Remove PIN"; danger: true; width: root.confirm_pin_remove ? 110px : 130px; height: 34px; clicked => { if root.confirm_pin_remove { root.confirm_pin_remove = false; root.disable_app_pin(); } else { root.confirm_pin_remove = true; } } }
                     }
                     if root.pin_status != "" : Text { text: root.pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
@@ -1495,7 +1502,7 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "Set Ext PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_ext_pin(ext_pin_new.text, ext_pin_confirm.text); ext_pin_new.text = ""; ext_pin_confirm.text = ""; } }
-                        if root.ext_pin_set : AuraButton { label: "Remove Ext PIN"; danger: true; width: 150px; height: 34px; clicked => { root.disable_ext_pin(); } }
+                        if root.ext_pin_set : AuraButton { label: root.confirm_ext_pin_remove ? "Sure?" : "Remove Ext PIN"; danger: true; width: root.confirm_ext_pin_remove ? 110px : 150px; height: 34px; clicked => { if root.confirm_ext_pin_remove { root.confirm_ext_pin_remove = false; root.disable_ext_pin(); } else { root.confirm_ext_pin_remove = true; } } }
                     }
                     if root.ext_pin_status != "" : Text { text: root.ext_pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Two-factor unlock (password + Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.and_mode ? "ON" : "OFF"; primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
@@ -1727,7 +1734,7 @@ export component MainWindow inherits Window {
                     AuraButton { label: "+ New Item"; primary: true; height: 38px; clicked => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
                     if root.show_shard_nudge : Rectangle { background: #2a1f08; border-radius: 10px; border-width: 1px; border-color: #fbbf24; VerticalLayout { padding: 10px; spacing: 6px;
                         Text { text: "📄 Print your recovery sheet?"; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
-                        Text { text: "Lose your password without shards = vault gone forever."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        Text { text: "Lose your password without shards = vault gone forever. Find it later under Settings → Recovery."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout { spacing: 6px; alignment: center;
                             AuraButton { label: "📄 Generate Now"; primary: true; width: 140px; height: 32px; clicked => { root.shard_nudge_generate(); } }
                             AuraButton { label: "Later"; width: 80px; height: 32px; clicked => { root.shard_nudge_later(); } }
@@ -1794,7 +1801,7 @@ export component MainWindow inherits Window {
                         Text { text: root.selected_label; color: #eef1ff; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
                         HorizontalLayout { spacing: 6px;
                             AuraButton { label: "⭐ Favorite All"; horizontal-stretch: 1; height: 34px; clicked => { root.bulk_favorite(); } }
-                            AuraButton { label: "🗑️ Trash"; horizontal-stretch: 1; height: 34px; danger: true; clicked => { root.bulk_trash(); } }
+                            AuraButton { label: root.confirm_bulk_trash ? "Sure? Trash" : "🗑️ Trash"; danger: true; horizontal-stretch: 1; height: 34px; clicked => { if root.confirm_bulk_trash { root.confirm_bulk_trash = false; root.bulk_trash(); } else { root.confirm_bulk_trash = true; } } }
                         }
                         HorizontalLayout { spacing: 6px;
                             ComboBox { model: root.filter_folders; current-value <=> root.bulk_folder; horizontal-stretch: 1; height: 34px; }
@@ -1813,6 +1820,7 @@ export component MainWindow inherits Window {
                     if root.show_add_form : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 14px; spacing: 8px;
                         HorizontalLayout { spacing: 6px; AuraButton { label: "Login"; primary: root.new_kind==1; horizontal-stretch: 1; clicked => { root.new_kind=1; } } AuraButton { label: "Card"; primary: root.new_kind==4; horizontal-stretch: 1; clicked => { root.new_kind=4; } } AuraButton { label: "Note"; primary: root.new_kind==3; horizontal-stretch: 1; clicked => { root.new_kind=3; } } AuraButton { label: "✕ Close"; width: 76px; clicked => { root.cancel_form(); } } }
                         HorizontalLayout { spacing: 6px; AuraButton { label: "Identity"; primary: root.new_kind==5; horizontal-stretch: 1; clicked => { root.new_kind=5; } } AuraButton { label: "License"; primary: root.new_kind==2; horizontal-stretch: 1; clicked => { root.new_kind=2; } } AuraButton { label: "SSH Key"; primary: root.new_kind==6; horizontal-stretch: 1; clicked => { root.new_kind=6; } } }
+                        if root.f_a != "" || root.f_b != "" : Text { text: "⚠️ Typed text stays — check it still means the same fields."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
                         FieldLabel { text: "ITEM DETAILS"; }
                         LineEdit { placeholder-text: "Item name (required)"; text <=> root.f_title; height: 36px; }
                         ComboBox { model: root.folders_list; current-value <=> root.f_folder; }
@@ -1844,13 +1852,13 @@ export component MainWindow inherits Window {
                             TextEdit { placeholder-text: "Paste one-time recovery / backup codes here (one per line)..."; text <=> root.f_backup; height: 56px; wrap: word-wrap; }
                             FieldLabel { text: "AUTOFILL OPTIONS"; }
                             LineEdit { placeholder-text: "Website (URI), e.g. https://example.com/login"; text <=> root.f_c; height: 36px; }
-                            for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: root.f_url_rules[idx] == 0 ? "Auto" : (root.f_url_rules[idx] == 1 ? "Base" : (root.f_url_rules[idx] == 2 ? "Host" : (root.f_url_rules[idx] == 3 ? "Exact" : (root.f_url_rules[idx] == 4 ? "Prefix" : "Never")))); width: 64px; height: 36px; clicked => { root.cycle_url_rule(idx); } } AuraButton { label: "🗑️"; width: 44px; height: 36px; danger: true; clicked => { root.remove_url(idx); } } }
+                            for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: root.f_url_rules[idx] == 0 ? "Auto" : (root.f_url_rules[idx] == 1 ? "Base" : (root.f_url_rules[idx] == 2 ? "Host" : (root.f_url_rules[idx] == 3 ? "Exact" : (root.f_url_rules[idx] == 4 ? "Prefix" : "Never")))); width: 64px; height: 36px; clicked => { root.cycle_url_rule(idx); } } AuraButton { label: root.confirm_delete_field == "u" + idx ? "Sure?" : "🗑️"; width: root.confirm_delete_field == "u" + idx ? 64px : 44px; height: 36px; danger: true; clicked => { if root.confirm_delete_field == "u" + idx { root.confirm_delete_field = ""; root.remove_url(idx); } else { root.confirm_delete_field = "u" + idx; } } } }
                             AuraButton { label: "+ Add website"; height: 34px; clicked => { root.add_url(); } }
                         }
                         // Custom fields ride every item kind (logins/cards/notes/
                         // identities/SSH/licenses) — same pending store, same save.
                         FieldLabel { text: "SECRET KEYS / API TOKENS"; }
-                        for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: "🗑"; width: 40px; height: 24px; y: 6px; danger: true; clicked => { root.delete_custom_field(idx); } } } }
+                        for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: root.confirm_delete_field == "c" + idx ? "Sure?" : "🗑"; width: root.confirm_delete_field == "c" + idx ? 56px : 40px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_field == "c" + idx { root.confirm_delete_field = ""; root.delete_custom_field(idx); } else { root.confirm_delete_field = "c" + idx; } } } } }
                         AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
                         FieldLabel { text: "NOTES"; }
                         TextEdit { text <=> root.f_notes; height: 64px; wrap: word-wrap; }
@@ -2271,7 +2279,7 @@ export component MainWindow inherits Window {
                 Text { text: root.new_device_reason == "hello-token" ? "Windows Hello credential can't be read on this PC. You unlocked with your Master Password. Re-enroll Hello for this machine?" : "This vault was bound to a different machine (normal for portable USB). You unlocked with your Master Password. Re-enroll Windows Hello for this PC?"; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.new_device_error != "" : Text { text: root.new_device_error; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                 AuraButton { label: "🖐 Re-enroll Hello"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.reenroll_hello_requested(); } }
-                AuraButton { label: "Later"; horizontal-stretch: 1; height: 36px; clicked => { root.dismiss_new_device_modal(); } }
+                AuraButton { label: "Later (asks again next unlock)"; horizontal-stretch: 1; height: 36px; clicked => { root.dismiss_new_device_modal(); } }
             }
         }
     }

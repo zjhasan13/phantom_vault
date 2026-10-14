@@ -6062,6 +6062,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let Some(ui) = clr_weak.upgrade() else {
             return;
         };
+        ui.set_confirm_bulk_trash(false);
         selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
         let f = clr_search.lock().unwrap().clone();
         let v = lock_vault(&clr_vault);
@@ -6079,7 +6080,7 @@ fn main() -> Result<(), slint::PlatformError> {
         verb: &'static str,
         // Optional success-note suffix (e.g. rotate's "update each site").
         note: Option<&'static str>,
-        op: impl FnOnce(&mut Vault) -> usize + Send + 'static,
+        op: impl FnOnce(&mut Vault) -> (usize, usize) + Send + 'static,
     ) {
         std::thread::spawn(move || {
             let master_opt = lock_master_pw(&master_clone).clone();
@@ -6091,15 +6092,15 @@ fn main() -> Result<(), slint::PlatformError> {
                 });
                 return;
             };
-            let saved: Result<(Vault, usize), String> = {
+            let saved: Result<(Vault, usize, usize), String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
-                let n = op(&mut vault);
+                let (n, permanent) = op(&mut vault);
                 if n == 0 {
                     Err("No selected items found (already moved?).".to_string())
                 } else {
                     match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
-                        Ok(()) => Ok((vault.clone(), n)),
+                        Ok(()) => Ok((vault.clone(), n, permanent)),
                         Err(e) => {
                             *vault = snapshot;
                             Err(e)
@@ -6112,7 +6113,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     return;
                 };
                 match saved {
-                    Ok((v, n)) => {
+                    Ok((v, n, permanent)) => {
                         selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
                         let f = search_clone.lock().unwrap().clone();
                         refresh_selection_ui(&ui, &v, &f);
@@ -6123,14 +6124,19 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
+                        let perm_note = if permanent > 0 {
+                            format!(" {permanent} standalone 2FA shredded permanently (no trash).")
+                        } else {
+                            String::new()
+                        };
                         ui.set_notification_text(
                             match note {
                                 Some(extra) => format!(
-                                    "✅ Bulk {verb}: {n} item{}. {extra}",
+                                    "✅ Bulk {verb}: {n} item{}. {extra}{perm_note}",
                                     if n == 1 { "" } else { "s" }
                                 ),
                                 None => format!(
-                                    "✅ Bulk {verb}: {n} item{}.",
+                                    "✅ Bulk {verb}: {n} item{}.{perm_note}",
                                     if n == 1 { "" } else { "s" }
                                 ),
                             }
@@ -6186,7 +6192,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                     }
                 }
-                n
+                (n, 0)
             });
         }
     });
@@ -6233,7 +6239,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 if !vault.folders.iter().any(|f| f == &dest) {
                     vault.folders.push(dest);
                 }
-                n
+                (n, 0)
             });
         }
     });
@@ -6253,12 +6259,18 @@ fn main() -> Result<(), slint::PlatformError> {
             let targets = parse_sel();
             run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "trash", None, move |vault| {
                 let mut n = 0;
+                let mut shredded_2fa = 0;
                 let now = crate::models::current_timestamp();
                 for (kind, id) in &targets {
                     let ok = if *kind == 8 {
                         // Standalone 2FA has no trash generation (same as
                         // single delete): permanent remove.
-                        remove_totp_account(vault, id)
+                        if remove_totp_account(vault, id) {
+                            shredded_2fa += 1;
+                            true
+                        } else {
+                            false
+                        }
                     } else if vault.is_trashed(*kind, id).unwrap_or(false) {
                         vault.delete_item(*kind, id)
                     } else {
@@ -6268,7 +6280,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         n += 1;
                     }
                 }
-                n
+                (n, shredded_2fa)
             });
         }
     });
@@ -6290,7 +6302,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             run_bulk_op(weak.clone(), Arc::clone(&vault_clone), Arc::clone(&master_clone), Arc::clone(&search_clone), qb_clone.clone(), "rotate", Some("History kept — now update each password ON ITS WEBSITE."), move |vault| {
-                rotate_reused_passwords(vault)
+                (rotate_reused_passwords(vault), 0)
             });
         }
     });
