@@ -77,20 +77,33 @@ Root: HKCU; \
 // Write a locked-down host manifest (empty allowed_origins = no extension
 // can connect until the user pairs theirs in the app). Returns False only
 // on disk failure — install continues, the app button repairs it later.
+// JSON strings need doubled backslashes (C:\x -> C:\\x). Written with
+// plain Pascal only (no StrUtils dependency quirks across ISCC versions).
+function DoubleBackslashes(const S: String): String;
+var
+  i: Integer;
+begin
+  Result := '';
+  for i := 1 to Length(S) do
+  begin
+    if S[i] = '\' then
+      Result := Result + '\\'
+    else
+      Result := Result + S[i];
+  end;
+end;
+
 function WriteHostManifest(): Boolean;
 var
   ManifestPath, ExePath, Doc: String;
 begin
   ManifestPath := ExpandConstant('{app}\browser_extension\{#HostJsonName}');
-  ExePath := ExpandConstant('{app}\{#MyAppExeName}');
-  { JSON strings need doubled backslashes: C:\x -> C:\\x. }
-  StringChangeEx(ExePath, '\', '\\');
-  Doc :=
-    '{#13#10}' +
-    '{ "name": "com.phantomvault.host",{#13#10}' +
-    '  "description": "PhantomVault native bridge (stdio, vault-gated)",{#13#10}' +
-    '  "path": "' + ExePath + '",{#13#10}' +
-    '  "type": "stdio",{#13#10}' +
+  ExePath := DoubleBackslashes(ExpandConstant('{app}\{#MyAppExeName}'));
+  Doc := #13#10 +
+    '{ "name": "com.phantomvault.host",' + #13#10 +
+    '  "description": "PhantomVault native bridge (stdio, vault-gated)",' + #13#10 +
+    '  "path": "' + ExePath + '",' + #13#10 +
+    '  "type": "stdio",' + #13#10 +
     '  "allowed_origins": [] }';
   Result := SaveStringToFile(ManifestPath, Doc, False);
 end;
