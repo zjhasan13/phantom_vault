@@ -1,4 +1,5 @@
 /target
+/installer-output/
 browser_extension/dist/
 test_vault.enc
 **/*.rs.bk
