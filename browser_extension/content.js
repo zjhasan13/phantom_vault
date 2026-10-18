@@ -361,6 +361,37 @@
     if (pvPicker.host && !pvPicker.host.contains(e.target)) closeOtpPicker(true);
   }
 
+  // The rectangle the picker hangs from. A normal single OTP box is its own
+  // rect; a split code screen (4–12 one-digit boxes) is ONE logical field, so
+  // the picker must sit under the whole strip and span its full width instead
+  // of dangling off box 0. Only siblings that are visible one-char narrow
+  // inputs are united — an unrelated code box elsewhere never widens the anchor
+  // — and anything unexpected falls back to the plain field rect unchanged.
+  function otpAnchorRect(anchor) {
+    if (!anchor) return null;
+    try {
+      const ml = String(anchor.getAttribute("maxlength") || "");
+      const narrow = ml === "1" || (anchor.size === 1 && ml === "");
+      if (narrow && anchor.parentElement) {
+        const boxes = [...anchor.parentElement.children].filter((c) => {
+          if (c.tagName !== "INPUT" || !isVisible(c)) return false;
+          const t = (c.type || "").toLowerCase();
+          if (t === "password" || t === "hidden") return false;
+          const m = String(c.getAttribute("maxlength") || "");
+          return m === "1" || (c.size === 1 && m === "");
+        });
+        if (boxes.length >= 2) {
+          const rects = boxes.map((c) => c.getBoundingClientRect());
+          const left = Math.min(...rects.map((x) => x.left));
+          const right = Math.max(...rects.map((x) => x.right));
+          const bottom = Math.max(...rects.map((x) => x.bottom));
+          return { left, right, bottom, width: Math.max(0, right - left) };
+        }
+      }
+    } catch (_) {}
+    return anchor.getBoundingClientRect();
+  }
+
   // `candidates` come straight from the native ranked payload. We never sort
   // here — the bridge already ordered them, and re-sorting in the client would
   // hide the tie it wants the user to resolve.
@@ -637,7 +668,7 @@
     // Anchor under the OTP box; fall back to top-right when it has no box.
     // RTL: anchor from the right edge instead so the picker never hugs the
     // wrong side on right-to-left pages.
-    const r = anchor ? anchor.getBoundingClientRect() : null;
+    const r = otpAnchorRect(anchor);
     // Login-dropdown parity: as wide as the OTP box it anchors to (clamped to
     // the viewport), so both dropdowns read as the same component.
     const W = r ? Math.max(220, Math.min(r.width, window.innerWidth - 24)) : 300;
