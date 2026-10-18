@@ -374,7 +374,7 @@
     const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     const style = document.createElement("style");
     style.textContent = `
-      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:min(92vw,330px);background:#17111f;color:#e9e5f0;
+      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:92vw;background:#17111f;color:#e9e5f0;
         border:1px solid #3a2c46;border-radius:12px;box-shadow:0 12px 40px #000d;
         font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
       .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
@@ -638,11 +638,15 @@
     // RTL: anchor from the right edge instead so the picker never hugs the
     // wrong side on right-to-left pages.
     const r = anchor ? anchor.getBoundingClientRect() : null;
+    // Login-dropdown parity: as wide as the OTP box it anchors to (clamped to
+    // the viewport), so both dropdowns read as the same component.
+    const W = r ? Math.max(220, Math.min(r.width, window.innerWidth - 24)) : 300;
+    wrap.style.width = `${W}px`;
     const rtl = document.dir === "rtl";
     if (rtl && r) {
-      host.style.right = `${Math.max(12, Math.min(window.innerWidth - r.right, window.innerWidth - 340))}px`;
+      host.style.right = `${Math.max(12, Math.min(window.innerWidth - r.right, window.innerWidth - W - 12))}px`;
     } else {
-      host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
+      host.style.left = r ? `${Math.min(r.left, window.innerWidth - W - 12)}px` : "12px";
     }
     host.style.top = r ? `${Math.min(r.bottom + 6, window.innerHeight - 220)}px` : "80px";
     pvPicker = { host, anchor, timer: setInterval(() => { for (const t of ticker) { try { t(); } catch (_) {} } }, 1000) };
