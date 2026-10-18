@@ -6,6 +6,13 @@
 ## 1. Where we are
 
 - Branch `main`, pushed, working tree clean.
+- Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
+  account picker on OTP-field focus/sight (login-dropdown parity, gated by
+  `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
+  client-side from `PV_QUERY`. Working-badge + recency already native
+  (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
+  via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
+  auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
 - Baselines: `cargo test` 446 passed / 1 ignored, `node --test
   tests/js/background.test.mjs` 16/16, `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
