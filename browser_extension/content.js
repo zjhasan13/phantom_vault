@@ -370,11 +370,11 @@
     const anchor = (fields && fields.otp && fields.otp[0]) || findFields().otp[0];
     const host = document.createElement("div");
     host.id = "__pv_otp_picker";
-    host.style.cssText = "position:absolute;z-index:2147483647;all:initial;";
+    host.style.cssText = "all:initial;position:absolute;z-index:2147483647;";
     const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     const style = document.createElement("style");
     style.textContent = `
-      .wrap{position:fixed;min-width:min(92vw,250px);max-width:min(92vw,330px);background:#17111f;color:#e9e5f0;
+      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:min(92vw,330px);background:#17111f;color:#e9e5f0;
         border:1px solid #3a2c46;border-radius:12px;box-shadow:0 12px 40px #000d;
         font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
       .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
