@@ -432,9 +432,10 @@
       row.setAttribute("role", "option");
       row.setAttribute("aria-label", c.account || c.issuer || "2FA account");
       const name = c.account || c.issuer || "(unnamed)";
+      row.setAttribute("data-pv-id", String(c.id || ""));
       row.innerHTML =
         `<div class="meta"><div class="name"></div>` +
-        `<div class="sub"><span class="iss"></span><span class="used"></span><span class="tags"></span></div></div>` +
+        `<div class="sub"><span class="iss"></span><span class="used"></span><span class="health"></span><span class="tags"></span></div></div>` +
         `<div class="codebox"><div class="code"></div><div class="ttl"></div></div>` +
         `<button class="mark"></button>`;
       row.insertBefore(makeBrand(c.issuer || name), row.firstChild);
@@ -562,6 +563,7 @@
         }
         closeOtpPicker();
         fillFromCandidate({ id: c.id, code });
+        notePicked();
       });
       row.addEventListener("keydown", (e) => {
         if (e.key !== "Enter" && e.key !== " ") return;
@@ -582,6 +584,27 @@
     root.appendChild(wrap);
     wrap.setAttribute("role", "listbox");
     wrap.setAttribute("aria-label", "2FA accounts");
+    // Health icons (♻️/🟡/🕰️) for login-sourced rows — same signal the login
+    // dropdown shows. Joined client-side from PV_QUERY by id: hub cards carry
+    // no password so they stay unmarked; totp_lookup itself is untouched.
+    try {
+      queryHost("PV_QUERY", pageBase()).then((logins) => {
+        if (!pvPicker || pvPicker.host !== host) return; // closed/replaced
+        const health = new Map();
+        for (const e of logins || []) {
+          if (e && e.id && e.health) health.set(String(e.id), e.health);
+        }
+        const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
+        for (const c of candidates) {
+          const icon = hIcon(health.get(String(c && c.id)));
+          if (!icon) continue;
+          const row = [...host.querySelectorAll(".row")].find(
+            (r) => r.getAttribute("data-pv-id") === String(c.id));
+          const el = row && row.querySelector(".health");
+          if (el) { el.textContent = " " + icon; el.title = health.get(String(c.id)); }
+        }
+      }).catch(() => {});
+    } catch (_) {}
     wrap.addEventListener("keydown", (e) => {
       if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
       e.preventDefault();
@@ -1322,6 +1345,31 @@
   function notePicked() {
     suppressDropUntil = Date.now() + 3000;
   }
+  // OTP-field focus parity with the login dropdown: several accounts for
+  // this site ⇒ the same picker opens under the box the user just focused,
+  // instead of the old "open the popup" toast. Gated identically to the
+  // passive login path (`show_suggestions` + not icon-click-only), one query
+  // per field at a time, and the pick cooldown stops SPA refocus storms
+  // from re-opening it right after a fill.
+  let otpSuggestBusy = null;
+  async function suggestOtpFor(field) {
+    if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
+    if (!location.host || !field || !field.isConnected) return;
+    if (settings.show_suggestions_on_icon_click_only) return;
+    if (pvPicker || otpSuggestBusy === field || Date.now() < suppressDropUntil) return;
+    otpSuggestBusy = field;
+    try {
+      if (!(await requireExtPin())) return;
+      const list = await totpCandidates();
+      if (pvPicker || !field.isConnected) return;
+      const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
+      if (ambiguous) openOtpPicker(list, { otp: [field] });
+    } catch (_) {
+      /* bridge down: stay silent, popup explains */
+    } finally {
+      if (otpSuggestBusy === field) otpSuggestBusy = null;
+    }
+  }
   async function suggestFor(anchor) {
     if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
     if (!location.host) return;
@@ -1378,6 +1426,7 @@
     // Bitwarden parity: when icon-click-only mode is on, passive focus NEVER
     // opens the dropdown — the shield badge is the only trigger.
     if (settings.show_suggestions_on_icon_click_only) return;
+    if (isOtpField(el)) { suggestOtpFor(el); return; }
     suggestFor(el);
   });
 
@@ -1590,8 +1639,13 @@
       console.log(`PV OTP field sighted (${f.otp.length}), pinned: ${pinnedId || "none"}`);
       const r = await resolveOtpCode();
       if (r.ambiguous) {
-        // Hands-free means hands-free: a sweep must NOT pop UI the user never
-        // asked for. One hint, then the popup button is the way in.
+        // Several accounts for this site: the picker opens right here under
+        // the OTP box (login-dropdown parity). The popup Fill-2FA path is
+        // unchanged and still works as a fallback.
+        if (!pvPicker && settings.show_suggestions) {
+          openOtpPicker(r.candidates || [], f);
+          return;
+        }
         toast("🔐 একাধিক 2FA account — popup থেকে বেছে নিন।");
         console.log(`PV OTP: ${r.candidates.length} candidates, no blind auto-fill`);
         return;
