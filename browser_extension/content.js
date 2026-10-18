@@ -322,7 +322,12 @@
   // `all: initial` on the host keeps inherited `font-size`/`line-height` from
   // shredding the layout.
   let pvPicker = null;
-  function closeOtpPicker() {
+  // Set only when the USER dismisses the picker (Esc / click-away). A dead
+  // handle from a page re-render is NOT a dismissal — the sweep may re-open
+  // that one, but must not re-pop a picker the user just closed on purpose.
+  let otpPickerUserClosed = false;
+  function closeOtpPicker(userClosed) {
+    if (userClosed) otpPickerUserClosed = true;
     if (pvPicker) {
       // Stop the countdown BEFORE detaching the node: an interval that outlives
       // its host keeps calling the bridge once a second for as long as the tab
@@ -334,11 +339,26 @@
     document.removeEventListener("keydown", pvPickerEsc, true);
     document.removeEventListener("mousedown", pvPickerOutside, true);
   }
-  function pvPickerEsc(e) { if (e.key === "Escape") closeOtpPicker(); }
+  // "Is the picker actually on screen?", not "was it ever opened?". An SPA
+  // re-render can rip our host node out of the DOM while `pvPicker` still
+  // points at the corpse — and then the sweep reads it as "already open",
+  // refuses to re-open, and only ever shows the fallback toast. A dead handle
+  // is closed (which also kills its interval) and reported as not-live.
+  function otpPickerLive() {
+    if (!pvPicker) return false;
+    if (!pvPicker.host || !pvPicker.host.isConnected) { closeOtpPicker(false); return false; }
+    return true;
+  }
+  function pvPickerEsc(e) { if (e.key === "Escape") closeOtpPicker(true); }
   function pvPickerOutside(e) {
     // Left-click only: right-click / long-press preview must not dismiss.
     if (e.button !== 0) return;
-    if (pvPicker && pvPicker.host && !pvPicker.host.contains(e.target)) closeOtpPicker();
+    if (!pvPicker) return;
+    // Clicking the OTP field the picker is anchored to means "fill this one",
+    // not "dismiss" — treat the anchor as inside, like the login dropdown does.
+    const a = pvPicker.anchor;
+    if (a && (a === e.target || a.contains(e.target))) return;
+    if (pvPicker.host && !pvPicker.host.contains(e.target)) closeOtpPicker(true);
   }
 
   // `candidates` come straight from the native ranked payload. We never sort
@@ -625,7 +645,7 @@
       host.style.left = r ? `${Math.min(r.left, window.innerWidth - 340)}px` : "12px";
     }
     host.style.top = r ? `${Math.min(r.bottom + 6, window.innerHeight - 220)}px` : "80px";
-    pvPicker = { host, timer: setInterval(() => { for (const t of ticker) { try { t(); } catch (_) {} } }, 1000) };
+    pvPicker = { host, anchor, timer: setInterval(() => { for (const t of ticker) { try { t(); } catch (_) {} } }, 1000) };
     document.addEventListener("keydown", pvPickerEsc, true);
     document.addEventListener("mousedown", pvPickerOutside, true);
   }
@@ -1062,7 +1082,12 @@
   // never be skipped by a caller that forgot to ping.
   function fillFromCandidate(c) {
     if (!c || !c.code) return false;
-    if (!fillTotpNow(c.code, findFields())) return false;
+    const f = findFields();
+    if (!fillTotpNow(c.code, f)) return false;
+    // Same "already served" stamp the sweep sets: a later page re-render must
+    // not read the (now filled) OTP box as an unfilled one and re-pop the
+    // picker over a login the user already completed.
+    if (f.otp[0]) f.otp[0].dataset.pvOtpFilled = "1";
     if (c.id) pingFilled(c.id);
     toast("⚡ 2FA code filled");
     return true;
@@ -1356,14 +1381,17 @@
     if (!settings.show_suggestions || isBlocked() || phishingRefuse()) return;
     if (!location.host || !field || !field.isConnected) return;
     if (settings.show_suggestions_on_icon_click_only) return;
-    if (pvPicker || otpSuggestBusy === field || Date.now() < suppressDropUntil) return;
+    if (otpPickerLive() || otpSuggestBusy === field || Date.now() < suppressDropUntil) return;
     otpSuggestBusy = field;
     try {
       if (!(await requireExtPin())) return;
       const list = await totpCandidates();
-      if (pvPicker || !field.isConnected) return;
+      if (otpPickerLive() || !field.isConnected) return;
       const ambiguous = list.length > 1 || list.some((c) => c && c.is_dup);
-      if (ambiguous) openOtpPicker(list, { otp: [field] });
+      if (ambiguous) {
+        otpPickerUserClosed = false; // explicit focus = fresh intent
+        openOtpPicker(list, { otp: [field] });
+      }
     } catch (_) {
       /* bridge down: stay silent, popup explains */
     } finally {
@@ -1642,8 +1670,14 @@
         // Several accounts for this site: the picker opens right here under
         // the OTP box (login-dropdown parity). The popup Fill-2FA path is
         // unchanged and still works as a fallback.
-        if (!pvPicker && settings.show_suggestions) {
-          openOtpPicker(r.candidates || [], f);
+        if (settings.show_suggestions) {
+          // Already showing the picker for this site? Say nothing — the sweep
+          // fires on every mutation and a live picker must not re-toast or
+          // rebuild. Re-open a dead handle (page re-render), but never re-pop
+          // one the user just dismissed — focus/badge is the way back.
+          if (!otpPickerLive() && !otpPickerUserClosed) {
+            openOtpPicker(r.candidates || [], f);
+          }
           return;
         }
         toast("🔐 একাধিক 2FA account — popup থেকে বেছে নিন।");
