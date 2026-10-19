@@ -4,7 +4,7 @@
   "description": "Dev-only harness for the browser-extension JS (jsdom). Not shipped.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/js/background.test.mjs tests/js/content.test.mjs"
+    "test": "node --test tests/js/background.test.mjs tests/js/content.test.mjs tests/js/domain.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

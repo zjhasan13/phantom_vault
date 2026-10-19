@@ -83,21 +83,16 @@ fn chain_key_bytes() -> Result<[u8; 32], String> {
 
 /// C8: keyed chain hash. Key lives DPAPI-sealed in KEY_FILE (generated once
 /// on first run). On read/unseal failure the chain key is not rotated
-/// (rotating would irreversibly orphan the existing chain). When that happens,
-/// HMAC falls back to plain SHA-256 to keep truncation-detectable via the
-/// anchor; callers may log the key state separately.
-fn chain_key() -> Vec<u8> {
-    chain_key_bytes().map(|k| k.to_vec()).unwrap_or_else(|_| Vec::new())
-}
-
-fn chain_hash(prev: &str, t: i64, event: &str, detail: &str) -> String {
+/// (rotating would irreversibly orphan the existing chain). An EMPTY `key`
+/// (unkeyed SHA-256) is only reachable from `verify`, never from a write —
+/// see `log_event_at` (D3 fail-closed).
+fn chain_hash(key: &[u8], prev: &str, t: i64, event: &str, detail: &str) -> String {
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
-    let key = chain_key();
     if key.is_empty() {
         return sha256_hex(format!("{prev}{t}{event}{detail}").as_bytes());
     }
-    let mut mac = Hmac::<Sha256>::new_from_slice(&key).expect("hmac key");
+    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("hmac key");
     mac.update(prev.as_bytes());
     mac.update(t.to_string().as_bytes());
     mac.update(event.as_bytes());
@@ -172,6 +167,20 @@ fn cross_process_lock(path: &Path) -> Option<std::fs::File> {
 }
 
 fn log_event_at(path: &Path, event: &str, detail: &str) {
+    log_event_gated(path, event, detail, chain_key_bytes());
+}
+
+/// D3 fail-closed gate: an unreadable chain key refuses the append (loud)
+/// instead of silently writing an unauthenticated SHA-256 line that a forger
+/// could reproduce.
+fn log_event_gated(path: &Path, event: &str, detail: &str, key: Result<[u8; 32], String>) {
+    match key {
+        Ok(k) => log_event_with_key(path, event, detail, &k),
+        Err(why) => eprintln!("access_log: append refused — {why}"),
+    }
+}
+
+fn log_event_with_key(path: &Path, event: &str, detail: &str, key: &[u8]) {
     let clean = |s: &str| {
         s.replace(['\\', '"'], "")
             .replace(['\r', '\n'], " ")
@@ -184,7 +193,7 @@ fn log_event_at(path: &Path, event: &str, detail: &str) {
     let prev = last_hash(path);
     let t = now_unix();
     let (event, detail) = (clean(event), clean(detail));
-    let hash = chain_hash(&prev, t, &event, &detail);
+    let hash = chain_hash(key, &prev, t, &event, &detail);
     let line = format!(
         "{{\"t\":{t},\"event\":\"{event}\",\"detail\":\"{detail}\",\"prev\":\"{prev}\",\"hash\":\"{hash}\"}}\n"
     );
@@ -240,6 +249,13 @@ pub fn verify_at_detailed(path: &Path) -> (usize, bool, Option<usize>) {
     };
     let mut prev = "GENESIS".to_string();
     let mut count = 0;
+    // Read-only probe (no mint): an absent/unreadable key yields an empty key,
+    // which only recomputes unkeyed SHA-256 (legacy lines) — HMAC lines then
+    // mismatch ⇒ fail-closed. Verify must not create a key as a side effect.
+    let key = match read_key_state() {
+        KeyState::Loaded(k) => k.to_vec(),
+        _ => Vec::new(),
+    };
     for (idx, line) in text.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
@@ -261,7 +277,7 @@ pub fn verify_at_detailed(path: &Path) -> (usize, bool, Option<usize>) {
         if t_num < 0 {
             return (count, false, Some(lineno));
         }
-        let recomputed_hmac = chain_hash(&prev, t_num, &event, &detail);
+        let recomputed_hmac = chain_hash(&key, &prev, t_num, &event, &detail);
         if recomputed_hmac == hash {
             prev = hash.clone();
             count += 1;
@@ -440,6 +456,21 @@ mod tests {
         assert!(!text.contains("\nword"), "newlines must not leak structure");
         assert_eq!(text.lines().count(), 1, "one event = exactly one line");
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn unusable_chain_key_refuses_the_append() {
+        // D3: an unreadable chain key must not downgrade to unkeyed SHA-256.
+        let p = tmp("failclosed");
+        let _ = std::fs::remove_file(&p);
+        log_event_gated(&p, "unlock", "ok", Err("key unseal failed".into()));
+        assert!(!p.exists(), "no line may be written without the chain key");
+        // A good key still appends (control).
+        log_event_gated(&p, "unlock", "ok", Ok([7u8; 32]));
+        assert_eq!(std::fs::read_to_string(&p).unwrap().lines().count(), 1);
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_file(head_path_for(&p));
+        let _ = std::fs::remove_file(lock_path_for(&p));
     }
 
     #[test]

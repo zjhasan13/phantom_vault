@@ -6,7 +6,7 @@ param([string]$Browser = "all")
 
 $ErrorActionPreference = "Stop"
 $src = Split-Path -Parent $MyInvocation.MyCommand.Path
-$files = @("background.js", "content.js", "hook.js", "popup.js", "popup.html")
+$files = @("background.js", "content.js", "domain.js", "hook.js", "popup.js", "popup.html")
 
 function Test-Json($p) {
     try { Get-Content $p -Raw | ConvertFrom-Json | Out-Null }

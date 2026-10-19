@@ -256,12 +256,15 @@ pub fn seal_envelope(
     let mut key = envelope_key(ss.expose())?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-    let plain =
+    let mut plain =
         serde_json::to_vec(shards).map_err(|_| VaultError::Security("shard encode failed".into()))?;
     let sealed = cipher
         .encrypt(&nonce, plain.as_slice())
-        .map_err(|_| VaultError::Crypto("grant seal failed".into()))?;
+        .map_err(|_| VaultError::Crypto("grant seal failed".into()));
     key.zeroize();
+    // Shard plaintext lived in this Vec — wipe it even if the seal failed.
+    plain.zeroize();
+    let sealed = sealed?;
     let mut nonce_arr = [0u8; 24];
     nonce_arr.copy_from_slice(nonce.as_slice());
     Ok(GrantEnvelope {
@@ -280,12 +283,15 @@ pub fn open_envelope(env: &GrantEnvelope, decapsulation_key: &[u8]) -> Result<Ve
     let mut key = envelope_key(ss.expose())?;
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
     let nonce = chacha20poly1305::XNonce::from_slice(&env.nonce);
-    let plain = cipher
+    let mut plain = cipher
         .decrypt(nonce, env.sealed.as_slice())
         .map_err(|_| VaultError::Crypto("grant open failed".into()))?;
     key.zeroize();
-    let shards: Vec<String> = serde_json::from_slice(&plain)
-        .map_err(|_| VaultError::Security("grant payload corrupt".into()))?;
+    let parsed = serde_json::from_slice::<Vec<String>>(&plain)
+        .map_err(|_| VaultError::Security("grant payload corrupt".into()));
+    // Decrypted shard JSON lived in this Vec — wipe it before returning.
+    plain.zeroize();
+    let shards: Vec<String> = parsed?;
     if shards.len() != 5 || shards.iter().any(|s| s.trim().is_empty()) {
         return Err(VaultError::Security("grant payload corrupt".into()));
     }

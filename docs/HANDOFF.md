@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 1 data-integrity fixes (audit D5/D6 + Unicode panics + atomic backups).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 2 security fixes (access-log fail-closed, emergency shard zeroize, popup blocked/punycode guards via shared `domain.js`).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -59,6 +59,21 @@
     then renames (crash/full-disk can't leave a truncated `.enc`).
   - Tests: +5 cases (github empty/garbage decode, datetime offsets+unicode,
     scanner unicode, atomic backup). `cargo test` → **451 passed / 1 ignored**.
+- **Phase 2 — security (DONE, uncommitted):**
+  - D3 access log fail-closed: `security/access_log.rs` — an unreadable chain
+    key now REFUSES the append with a loud stderr line instead of falling back
+    to unkeyed SHA-256 (`log_event_gated`). `verify_at_detailed` reads the key
+    read-only (no mint) and can't create one as a side effect.
+  - D4: `security/emergency.rs` zeroizes the plaintext shard `Vec` on both the
+    seal and open paths (was only the HKDF key).
+  - E3: new shared `browser_extension/domain.js` (`pageBase`/`isBlockedHost`/
+    `isPunycodeHost`), loaded by `popup.html` + packaged by `build.ps1`. The
+    popup's direct-inject fill (`fillGuards`, now async) and suggestion list
+    refuse blocked domains and punycode hosts, matching `content.js`.
+  - D2 passkey legacy `uv` boolean: confirmed unreachable from the extension
+    (only `assert_full`/`attest` + `uv_token` are sent); legacy parity kept, no
+    code change.
+  - Tests: `tests/js/domain.test.mjs` added → `npm test` **28/28**.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -66,8 +81,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 451 passed / 1 ignored, `npm test` 25/25 (19
-  background + 6 jsdom content), `cargo check --all-targets` zero
+- Baselines: `cargo test` 451 passed / 1 ignored, `npm test` 28/28 (19
+  background + 6 jsdom content + 3 domain), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

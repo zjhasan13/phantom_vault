@@ -60,7 +60,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 |---|---|---|
 | E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` |
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` |
-| E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` |
+| E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
 | E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` |
 | E5 | `extDeskOkPage` session cache never invalidated | `content.js:843` |
 | E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2383-2384` |
@@ -70,9 +70,9 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | ID | Finding | Location | Sev |
 |---|---|---|---|
 | D1 | "Lock" = process exit (see §0) | `main.rs:11665-11670`, `slint:1349` | High (UX) |
-| D2 | Passkey legacy `uv` boolean trust | `native_host.rs:507` | Low (unreachable) |
-| D3 | Access log HMAC→SHA256 (reported) | `security/access_log.rs:96-99` | High (unverified) |
-| D4 | Emergency shards left in heap (reported) | `security/emergency.rs:259-264` | Med (unverified) |
+| D2 | Passkey legacy `uv` boolean trust | `native_host.rs:507` | Low — **confirmed unreachable** (extension sends `assert_full`/`attest` + `uv_token` only); legacy parity retained by design |
+| D3 | Access log HMAC→SHA256 fallback | `security/access_log.rs:96-99` | High — **FIXED (Phase 2)** fail-closed |
+| D4 | Emergency shards left in heap (reported) | `security/emergency.rs:259-264` | Med — **FIXED (Phase 2)** |
 | D5 | >1 MB vault sync loss (reported) | `sync/github_sync.rs:171-180` | High — **FIXED (Phase 1)** |
 | D6 | `zeroize()` skipped on decrypt error | `crypto.rs:131-136` | Low — **FIXED (Phase 1)** |
 
@@ -101,5 +101,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   (`decode_remote_blob` + adopt gate), D6 zeroize-on-error, Unicode-safe
   `parse_bw_datetime` and `scan_line`, atomic backup write. Baselines moved
   `cargo test` 446 → **451 passed / 1 ignored**, `npm test` **25/25**.
-- Next: Phase 2 (security — D2/D3/D4, E3), Phase 3 (E1/E2 shared `domain.js`),
-  Phase 4 (D1 lock + E4 iframes).
+- **Phase 2 — security (DONE, awaiting commit):** D3 access-log append is now
+  fail-closed (unreadable chain key ⇒ refuse + loud stderr, never unkeyed
+  SHA-256); D4 emergency shard plaintext Vecs zeroized (seal + open); E3 popup
+  fill + suggestions honor blocked domains and punycode via the new shared
+  `browser_extension/domain.js` (loaded by `popup.html`, packaged by
+  `build.ps1`). D2 confirmed dead from the extension — no code change. `npm test`
+  **28/28** (added `tests/js/domain.test.mjs`).
+- Next: Phase 3 (E1/E2 shared `domain.js` registrable + clusters across
+  content/background/popup), Phase 4 (D1 lock + E4 iframes).

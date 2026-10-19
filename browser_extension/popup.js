@@ -359,6 +359,7 @@
   let host = "";
   let hostBase = "";
   let tabUrl = "";
+  let blockedDomains = [];
   try {
     const [tab] = await withTimeout(
       chrome.tabs.query({ active: true, currentWindow: true }),
@@ -503,11 +504,31 @@
     });
     return !!(res && res.result);
   }
-  function fillGuards(entry) {
-    // Popup-side guards (content.js can't interpose here): reprompt needs
-    // explicit presence; mismatched domains refuse like the page path.
+  // Popup-side mirrors of the content.js guards (blocked domains + punycode):
+  // the direct inject path bypasses the content script, so it must not hand
+  // credentials to a blocked or lookalike host (E3). `domain.js` is the shared
+  // source of truth for both.
+  function siteBlocked(list) {
+    return PVDomain.isBlockedHost(host, list || blockedDomains);
+  }
+  async function fillGuards(entry) {
+    // Reprompt needs explicit presence; mismatched domains refuse like the
+    // page path.
     if (entry.reprompt) {
       if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return false;
+    }
+    if (PVDomain.isPunycodeHost(host)) {
+      status.textContent = t("phishing");
+      return false;
+    }
+    let blocked = blockedDomains;
+    try {
+      const s = await chrome.storage.local.get({ blocked_domains: [] });
+      blocked = s.blocked_domains || [];
+    } catch (_) { /* keep the cached list */ }
+    if (siteBlocked(blocked)) {
+      status.textContent = t("blocked_cb");
+      return false;
     }
     if (!entryAllowed(entry)) {
       status.textContent = t("phishing");
@@ -559,7 +580,7 @@
     row.querySelector(".btns").append(btn);
   }
   async function doFill(entry) {
-    if (!fillGuards(entry)) return;
+    if (!(await fillGuards(entry))) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
     let found = { u: false, p: false };
@@ -584,7 +605,7 @@
     window.close();
   }
   async function doFillSubmit(entry) {
-    if (!fillGuards(entry)) return;
+    if (!(await fillGuards(entry))) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
     let found = { u: false, p: false };
@@ -872,6 +893,10 @@
           chrome.runtime.sendMessage({ type: "PV_PING" }), 3000, "ping");
         if (pong && pong.ok && pong.unlocked === false) { console.log("PV refresh: ping says locked"); showLocked(); return; }
       } catch (e) { console.log("PV refresh: ping failed:", (e && e.message) || e); }
+      try {
+        const bs = await chrome.storage.local.get({ blocked_domains: [] });
+        blockedDomains = bs.blocked_domains || [];
+      } catch (_) { /* keep the cached list */ }
       const [q, l] = await Promise.all([
         host ? withTimeout(chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "vault bridge") : Promise.resolve(null),
         withTimeout(chrome.runtime.sendMessage({ type: "PV_LIST" }), QUERY_TIMEOUT_MS, "vault list"),
@@ -960,7 +985,7 @@
     rows.length = 0;
     // --- Tier 1: STRICT domain suggestions (website URLs only — a
     // "@gmail.com" username never promotes an entry to Google) ---
-    const sugg = suggEntries.filter((e) => suggestMatch(e) && matchText(e, f.q) && matchFolder(e, f.folder) && (f.type === "all" || f.type === "1"));
+    const sugg = suggEntries.filter((e) => !siteBlocked() && suggestMatch(e) && matchText(e, f.q) && matchFolder(e, f.folder) && (f.type === "all" || f.type === "1"));
     // Recently-used first (last_filled epoch, missing = 0), then A→Z by
     // username so 20+ same-domain accounts scan effortlessly.
     sugg.sort((a, b) => {
