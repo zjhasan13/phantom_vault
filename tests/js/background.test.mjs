@@ -281,3 +281,44 @@ test("PV_ATTEST_SIGN: proxies attest with uv token", async () => {
   const r = await p;
   assert.equal(r.ok, true);
 });
+
+// ---- Tier 0 extension capture: background-side contract ----
+
+test("K2: SW grants content-script access to chrome.storage.session on load", async () => {
+  // Without this, content.js cannot read the multi-page carry (`pvCaptureCarry`)
+  // or `pvPending` — chrome.storage.session defaults to trusted contexts only.
+  const { chrome } = fresh();
+  assert.equal(
+    chrome.__state.accessLevel && chrome.__state.accessLevel.accessLevel,
+    "TRUSTED_AND_UNTRUSTED_CONTEXTS");
+});
+
+test("PV_SAVE_LOGIN: proxies save_login for a matching sender tab", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://example.com/login" } };
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_SAVE_LOGIN", username: "u", password: "p",
+      url: "https://example.com/login", title: "Example" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  assert.equal(chrome.__state.postedNative[0].cmd, "save_login");
+  assert.equal(chrome.__state.postedNative[0].username, "u");
+  assert.equal(chrome.__state.postedNative[0].password, "p");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("PV_SAVE_LOGIN: cross-site sender URL is refused, zero host spawn", async () => {
+  // A page must never save a credential under another site's URL (poisons that
+  // domain's match). Guard lives in the router, so it holds for every capture
+  // trigger (form submit, SPA ping, multi-page carry).
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://example.com/login" } };
+  const r = await sendMessage(onMessage, chrome,
+    { type: "PV_SAVE_LOGIN", username: "u", password: "p",
+      url: "https://github.com/login", title: "GitHub" }, sender);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /does not match/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});

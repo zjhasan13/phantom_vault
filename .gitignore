@@ -1,6 +1,8 @@
 /target
 /installer-output/
 browser_extension/dist/
+# Dev-only JS test harness (jsdom); never shipped, never committed.
+/node_modules/
 test_vault.enc
 **/*.rs.bk
 # Phase 11-14 local secrets: DPAPI-sealed keys/tokens + vault blobs + crash logs.

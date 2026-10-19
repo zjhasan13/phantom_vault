@@ -75,6 +75,38 @@
     try { sessionStorage.removeItem("__pv_pending"); } catch (_) {}
     try { chrome.storage.session.remove("pvPending").catch(() => {}); } catch (_) {}
   }
+  // K1: non-secret multi-page carry. A signup often splits email (page 1) and
+  // password (page 2); page 2 has no username to pair with the typed password.
+  // We mirror the USERNAME only (never the password — P1-b) into
+  // chrome.storage.session for the tab, keyed by page base, 5-minute TTL. It is
+  // consumed to associate the later password step and never gates a fill.
+  const PV_CARRY_TTL_MS = 5 * 60 * 1000;
+  let pvCarryUser = "";
+  function pvCarrySave(base, username) {
+    const u = (username || "").trim();
+    if (!base || !u) return;
+    pvCarryUser = u;
+    try {
+      chrome.storage.session.set({
+        pvCaptureCarry: { base, username: u, at: Date.now() },
+      }).catch(() => {});
+    } catch (_) {}
+  }
+  function pvCarryLoad(base) {
+    try {
+      chrome.storage.session.get({ pvCaptureCarry: null }).then((s) => {
+        const c = s && s.pvCaptureCarry;
+        if (c && c.base === base && c.username &&
+            Date.now() - (c.at || 0) < PV_CARRY_TTL_MS) {
+          pvCarryUser = c.username;
+        }
+      }).catch(() => {});
+    } catch (_) {}
+  }
+  function pvCarryClear() {
+    pvCarryUser = "";
+    try { chrome.storage.session.remove("pvCaptureCarry").catch(() => {}); } catch (_) {}
+  }
   chrome.storage.local.get(DEFAULTS).then((s) => { settings = { ...DEFAULTS, ...s }; });
   chrome.storage.onChanged.addListener((ch, area) => {
     if (area !== "local") return;
@@ -1888,6 +1920,8 @@
         });
         if (res && res.ok) {
           toast(res.updated ? "✅ Login updated in PhantomVault." : "✅ Login saved to PhantomVault.");
+          pvCarryClear();
+          pvExistingCache = null; // next prompt re-reads the fresh vault
           dismissSave();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
@@ -1942,6 +1976,8 @@
         });
         if (res && res.ok) {
           toast("✅ Login updated in PhantomVault (old kept in history).");
+          pvCarryClear();
+          pvExistingCache = null; // next prompt re-reads the fresh vault
           dismissUpd();
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
@@ -1951,38 +1987,106 @@
       }
     });
   }
+  // C1: a warm credential-list cache lets the submit handler decide + prompt
+  // WITHOUT an await, so a full-page POST navigation can no longer unload the
+  // document before the save banner shows. Warmed at boot; 60s TTL.
+  let pvExistingCache = null;
+  let pvExistingInflight = null;
+  const PV_EXIST_CACHE_MS = 60000;
+  async function getExisting(base) {
+    const now = Date.now();
+    if (pvExistingCache && pvExistingCache.base === base &&
+        now - pvExistingCache.at < PV_EXIST_CACHE_MS) {
+      return pvExistingCache.list;
+    }
+    // Share one in-flight query: boot warms this from both the badge probe and
+    // the explicit warm call, and a duplicate host round-trip is pointless.
+    if (pvExistingInflight && pvExistingInflight.base === base) {
+      return pvExistingInflight.p;
+    }
+    const p = queryHost("PV_QUERY", base).then((list) => {
+      pvExistingCache = { base, list: list || [], at: Date.now() };
+      pvExistingInflight = null;
+      return pvExistingCache.list;
+    }).catch((e) => {
+      pvExistingInflight = null;
+      throw e;
+    });
+    pvExistingInflight = { base, p };
+    return p;
+  }
+  function existingSync(base) {
+    return (pvExistingCache && pvExistingCache.base === base) ? pvExistingCache.list : null;
+  }
+  function offerSave(verdict, username, password) {
+    if (!verdict || verdict === "known") return;
+    if (verdict !== "new") updateToast(username, password);
+    else saverToast(username, password);
+  }
+  // G3: form-scoped credential reader. Distinguishes signup (new-password or a
+  // confirm field) from login, refuses to offer on a confirm-password mismatch
+  // (a typo), and picks the "old" field on a change-password form.
+  function readFormCreds(form) {
+    const cands = [...form.querySelectorAll('input[type="text"], input[type="email"]')]
+      .filter((el) => !isSearchField(el) && isVisible(el));
+    const score = (el) => {
+      const t = (el.type || "").toLowerCase();
+      const ac = (el.autocomplete || "").toLowerCase();
+      const ni = ((el.name || "") + " " + (el.id || "")).toLowerCase();
+      if (t === "email" || ac === "email" || ac === "username") return 3;
+      if (/email|user(name)?|login|account/.test(ni)) return 2;
+      if (/first|last|fname|lname|full.?name|name/.test(ni)) return 0;
+      return 1;
+    };
+    cands.sort((a, b) => score(b) - score(a));
+    const pws = [...form.querySelectorAll('input[type="password"]')].filter(isVisible);
+    let password = "";
+    if (pws.length) {
+      const isNew = (el) => (el.autocomplete || "").toLowerCase() === "new-password";
+      const cur = pws.find((el) => !isNew(el)) || null;
+      // G1/G3: prefer the NEW password field — a signup form's only password is
+      // new-password (the old selector matched nothing and skipped
+      // registration), and a change-password form must save the NEW value, not
+      // the old one. Fall back to the current field (plain login) then the last
+      // password input.
+      let pwEl = pws.find(isNew) || cur || pws[pws.length - 1];
+      if (!cur && pws.length > 1) {
+        const a = pws[0].value || "", b = pws[1].value || "";
+        if (a && b && a !== b) return null; // confirm mismatch → don't offer
+        pwEl = pws[0];
+      }
+      password = pwEl.value || "";
+    }
+    // Username is returned even when no password field exists: a multi-step
+    // signup submits the email on page 1 (no password here) and the caller
+    // carries it to the password step.
+    return {
+      username: (cands[0] && cands[0].value || "").trim(),
+      password,
+    };
+  }
   async function watchSubmit(form) {
     if (!form || form.dataset.pvWatched) return;
     form.dataset.pvWatched = "1";
-    form.addEventListener("submit", async () => {
+    form.addEventListener("submit", () => {
       try {
         if (isBlocked() || phishingRefuse() || !location.host) return;
-        // M15: prefer real identity fields over "First name" — email type,
-        // username/email autocomplete, or email/user/login name-id first;
-        // bare first-text fallback last (was: first text input, so
-        // ["First name","Email","Password"] saved username="Jane").
-        const cands = [...form.querySelectorAll('input[type="text"], input[type="email"]')]
-          .filter((el) => !isSearchField(el) && isVisible(el));
-        const score = (el) => {
-          const t = (el.type || "").toLowerCase();
-          const ac = (el.autocomplete || "").toLowerCase();
-          const ni = ((el.name || "") + " " + (el.id || "")).toLowerCase();
-          if (t === "email" || ac === "email" || ac === "username") return 3;
-          if (/email|user(name)?|login|account/.test(ni)) return 2;
-          if (/first|last|fname|lname|full.?name|name/.test(ni)) return 0;
-          return 1;
-        };
-        cands.sort((a, b) => score(b) - score(a));
-        const user = cands[0];
-        const pw = form.querySelector('input[type="password"]:not([autocomplete="new-password"])');
-        const username = (user && user.value || "").trim();
-        const password = (pw && pw.value || "");
+        const cred = readFormCreds(form);
+        if (!cred) return;
+        const base = pageBase();
+        const username = cred.username || pvCarryUser || "";
+        const password = cred.password || "";
+        // Multi-page signup: page 1 submits an email only → carry the
+        // (non-secret) username so the later password step can pair with it.
+        if (username && !password) { pvCarrySave(base, username); return; }
         if (!username || !password) return;
-        const existing = await queryHost("PV_QUERY", pageBase());
-        const verdict = classifySubmitted(existing, username, password);
-        if (verdict === "known") return;
-        if (verdict !== "new") updateToast(username, password);
-        else saverToast(username, password);
+        // C1: synchronous when the cache is warm (the common case) — the banner
+        // is shown before the navigation commits.
+        const cached = existingSync(base);
+        if (cached) { offerSave(classifySubmitted(cached, username, password), username, password); return; }
+        getExisting(base).then((list) => {
+          offerSave(classifySubmitted(list, username, password), username, password);
+        }).catch(() => {});
       } catch (_) {}
     });
   }
@@ -2186,23 +2290,37 @@
       toast(`🔑 Vault passkey${keys.length > 1 ? "s" : ""} for ${rp}: ${who} — approve on desktop when asked.`);
     } catch (_) {}
   }
-  async function maybeOfferSpaSave() {    try {
+  async function maybeOfferSpaSave() {
+    try {
       if (isBlocked() || phishingRefuse() || !location.host) return;
       const f = findFields();
       const userEl = (f.users[0] && isVisible(f.users[0])) ? f.users[0] : null;
-      const pwEl = (f.pass[0] && isVisible(f.pass[0])) ? f.pass[0] : null;
-      if (!userEl || !pwEl || isSearchField(userEl)) return;
-      const username = (userEl.value || "").trim();
+      if (userEl && isSearchField(userEl)) return;
+      // G2: consume findFields' newPass bucket — a signup page puts the field
+      // in newPass, which the old code ignored (f.pass[0] only). New-password
+      // first so a change-password page saves the NEW value.
+      const passList = [...(f.newPass || []), ...(f.pass || [])].filter(isVisible);
+      const pwEl = passList[0] || null;
+      if (!pwEl) return;
+      // K1: pair the typed password with the carried username when this step
+      // has no username field of its own (multi-page signup step 2).
+      const username = ((userEl && userEl.value) || "").trim() || pvCarryUser || "";
       const password = pwEl.value || "";
       if (!username || !password) return;
+      // Confirm-password typo guard (two new fields that disagree → no offer).
+      if (!(f.pass || []).length && passList.length > 1) {
+        const a = passList[0].value || "", b = passList[1].value || "";
+        if (a && b && a !== b) return;
+      }
+      const base = pageBase();
       const fp = username + "\n" + password;
       if (spaSaveOfferedFor === fp) return; // one prompt per credential
       spaSaveOfferedFor = fp;
-      const existing = await queryHost("PV_QUERY", pageBase());
-      const verdict = classifySubmitted(existing, username, password);
-      if (verdict === "known") return;
-      if (verdict !== "new") updateToast(username, password);
-      else saverToast(username, password);
+      const cached = existingSync(base);
+      if (cached) { offerSave(classifySubmitted(cached, username, password), username, password); return; }
+      getExisting(base).then((list) => {
+        offerSave(classifySubmitted(list, username, password), username, password);
+      }).catch(() => {});
     } catch (_) {}
   }
   window.addEventListener("message", (e) => {
@@ -2218,8 +2336,11 @@
       }
       if (d.type !== "PV_SPA_LOGIN") return;
     } catch (_) { return; }
-    // Let the SPA finish its post-login render before reading the fields.
-    setTimeout(maybeOfferSpaSave, 2500);
+    // C2: read immediately — waiting a flat 2500 ms meant the SPA often
+    // navigated first and the capture was lost. One short retry covers a
+    // still-rendering step; `spaSaveOfferedFor` dedups the second read.
+    maybeOfferSpaSave();
+    setTimeout(maybeOfferSpaSave, 400);
   });
   injectPageHook();
 
@@ -2302,7 +2423,7 @@
       // otherwise there is nothing later steps could use.
       if (msg.type === "PV_STASH_PENDING") {
         try {
-          const logins = await queryHost("PV_QUERY", pageBase());
+        const logins = await getExisting(pageBase());
           const e = (logins || []).find((x) => x && x.id === msg.id);
           if (e && e.totp) {
             // The id is all we keep: it says which account the next OTP step
@@ -2394,6 +2515,10 @@
   window.addEventListener("resize", queueRepos, { passive: true });
   armOtpObserver();
   pvPendingRestore();
+  // C1/K1: warm the credential-list cache (synchronous submit decisions) and
+  // restore the non-secret username carried across a multi-page signup.
+  pvCarryLoad(pageBase());
+  getExisting(pageBase()).catch(() => {});
   if (document.readyState === "complete" || document.readyState === "interactive") {
     autofillOnLoad();
   } else {

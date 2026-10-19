@@ -12,6 +12,16 @@ const HOST_PORT = "com.phantomvault.host";
 // lifetime (harvest is idempotent server-side; this just saves fetches).
 const faviconPushed = new Set();
 
+// K2: chrome.storage.session defaults to TRUSTED_CONTEXTS only, so content
+// scripts CANNOT read the cross-navigation carry (`pvCaptureCarry`,
+// `pvPending`). Grant content-script access once per SW lifetime; missing on
+// older builds → optional-call, carry simply stays in-tab.
+try {
+  if (chrome.storage && chrome.storage.session && chrome.storage.session.setAccessLevel) {
+    chrome.storage.session.setAccessLevel({ accessLevel: "TRUSTED_AND_UNTRUSTED_CONTEXTS" });
+  }
+} catch (_) {}
+
 // ---- Persistent-port session (FIFO, one in-flight frame) ----
 // The host does NOT echo request ids, so multiplexing is by strict
 // request→reply ordering: exactly one frame in flight per port.

@@ -1,0 +1,81 @@
+// content.js capture-engine tests (Tier 0). Run: `node --test tests/js/`
+import test from "node:test";
+import assert from "node:assert/strict";
+import { loadContent, submit, flush } from "./content-harness.mjs";
+
+const saver = (window) => window.document.getElementById("__pv_saver");
+
+// Each jsdom window must be closed or its 30 s toast-dismiss timers keep the
+// test process alive long after the assertions pass.
+function env(t, ...args) {
+  const { dom, window, store } = loadContent(...args);
+  t.after(() => dom.window.close());
+  return { window, store };
+}
+
+test("login form (username+password) offers a save banner", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  assert.ok(banner, "save banner should appear for a new login");
+  assert.match(banner.textContent, /Save to PhantomVault/);
+});
+
+test("G1: signup form with only new-password still offers save (was skipped)", async (t) => {
+  // The old selector `input[type=password]:not([autocomplete=new-password])`
+  // matched nothing here, so registration submits were never captured.
+  const { window } = env(t, `<form>
+    <input type="email" name="email" value="new@user.com">
+    <input type="password" autocomplete="new-password" name="password" value="S3cret!">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.ok(saver(window), "signup must offer save");
+});
+
+test("G3: confirm-password mismatch does not offer", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="email" name="email" value="new@user.com">
+    <input type="password" autocomplete="new-password" name="password" value="aaa111">
+    <input type="password" autocomplete="new-password" name="confirm" value="bbb222">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("K1: page-1 email submit carries the username (no password yet)", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="email" name="email" value="step1@user.com">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const c = store.session.pvCaptureCarry;
+  assert.ok(c, "carry must be written");
+  assert.equal(c.username, "step1@user.com");
+  assert.equal(c.password, undefined, "password must never be carried (P1-b)");
+});
+
+test("known credential is silent (no banner)", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="bob">
+    <input type="password" name="password" value="pw">
+  </form>`, "https://example.com/login", [{ username: "bob", password: "pw" }]);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("search box is never treated as a credential form", async (t) => {
+  const { window, store } = env(t, `<form role="search">
+    <input type="search" name="q" value="hello world">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+  assert.equal(store.session.pvCaptureCarry, undefined);
+});

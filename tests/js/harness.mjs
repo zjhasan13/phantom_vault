@@ -31,6 +31,7 @@ function makeChrome() {
     localStore: { lock_timeout_min: 10 },
     postedNative: [],
     ports: [],
+    accessLevel: null,
   };
   const port = () => {
     const handlers = { message: [], disconnect: [] };
@@ -67,6 +68,9 @@ function makeChrome() {
         },
         remove: async (k) => {
           delete state.sessionStore[k];
+        },
+        setAccessLevel: (opts) => {
+          state.accessLevel = opts;
         },
       },
       local: {

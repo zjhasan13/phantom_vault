@@ -1,11 +1,64 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: epic roadmap 9→3→5 shipped, mobile/iOS excluded (446 tests).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 1 data-integrity fixes (audit D5/D6 + Unicode panics + atomic backups).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`, pushed, working tree clean.
+- Branch `main`. **Uncommitted:** Tier 0 extension capture engine + Phase 1
+  Rust data-integrity fixes (awaiting commit confirmation).
+- **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
+  verification. Verified: "Lock" sidebar item exits the process
+  (`slint:1349`→`main.rs:11665`, Tier 3 target); legacy passkey `uv` boolean
+  trust (`native_host.rs:507`, low reach — relay uses `assert_full`/`uv_token`);
+  `crypto.rs:131-136` skipped `zeroize()` on the decrypt-error branch
+  (FIXED in Phase 1 below).
+  Two agent claims marked FALSE POSITIVE (do not re-chase): `fill_counts`
+  serde panic (`native_host.rs:1670` — same pattern tested at `:2467`);
+  `backup_scheduler` "wrong file" (relative `VAULT_FILE` is a project-wide
+  convention, `main.rs:44`).
+- **Tier 0 — extension capture engine** (`browser_extension/` ONLY, no Rust/exe
+  rebuild; `node --test tests/js/background.test.mjs` **19/19**, `build.ps1`
+  chrome+firefox OK): fixes registration / multi-page credential capture
+  "gives up".
+  - G1/G2/G3: `readFormCreds` replaces the inline submit reader — `new-password`
+    fallback so a pure-signup form (no non-new password input) is no longer
+    skipped; `maybeOfferSpaSave` now consumes `findFields.newPass`; signup vs
+    login classified by field shape; a confirm-password mismatch refuses to
+    offer (typo guard).
+  - C1/C2: `getExisting` is a 60 s in-flight-deduped credential-list cache.
+    The submit verdict is computed **synchronously** off a warm cache (no
+    `await` before the banner → survives a full-page POST nav); invalidated on
+    save. SPA ping reads the DOM immediately + one 400 ms retry (was a flat
+    2500 ms wait). Badge probe (`probePageMatch`) shares the same cache.
+  - K1/K2: non-secret username carry across pages in `chrome.storage.session`
+    (`pvCaptureCarry`, username only — P1-b intact; password never persisted) +
+    one-time `setAccessLevel(TRUSTED_AND_UNTRUSTED_CONTEXTS)` at SW start.
+  - Tests: `npm test` → **25/25** (19 background + 6 jsdom content). Added
+    `package.json` + `jsdom` devDependency (dev-only, `node_modules` ignored);
+    `tests/js/content.test.mjs` loads the REAL `content.js` in jsdom and covers
+    login / signup-new-password / confirm-mismatch / multi-page carry /
+    known-silent / search-immunity. Background-side: K2 accessLevel,
+    `PV_SAVE_LOGIN` proxy, cross-site sender refusal. Manual matrix:
+    `docs/QA_CAPTURE_MATRIX.md` (CAP-01..16 + REG-01..06).
+  - **Untouched by design:** `pvPending`, `chainPendingStep`, `sweepOtpOnce`,
+    `otpObserver`, popup fill path, native host.
+- **Phase 1 — Rust data integrity (DONE, uncommitted):**
+  - D5 (>1 MB sync data loss): `sync/github_sync.rs` gains `decode_remote_blob()`
+    — refuses an empty/whitespace body (GitHub Contents API returns `content:""`
+    for files >1 MB) and bad base64. `main.rs` adopt path independently refuses a
+    zero-byte remote (defense in depth). Was: `""` → empty vault → fresh device
+    wrote 0 bytes.
+  - D6: `crypto.rs` `decrypt_vault_secret` zeroizes the derived key on the error
+    branch too (`?` used to skip it).
+  - Unicode panics: `importer/mod.rs` `parse_bw_datetime` uses `str::get` for the
+    `±hh:mm` suffix (no `split_at`/byte indexing); `developer/secret_scanner.rs`
+    `scan_line` uses `to_ascii_lowercase` + `get` (byte-length-preserving
+    offsets). Multi-byte input can no longer panic.
+  - Atomic backups: `storage/backup_scheduler.rs` writes `.vault_backup_*.tmp`
+    then renames (crash/full-disk can't leave a truncated `.enc`).
+  - Tests: +5 cases (github empty/garbage decode, datetime offsets+unicode,
+    scanner unicode, atomic backup). `cargo test` → **451 passed / 1 ignored**.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -13,8 +66,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 446 passed / 1 ignored, `node --test
-  tests/js/background.test.mjs` 16/16, `cargo check --all-targets` zero
+- Baselines: `cargo test` 451 passed / 1 ignored, `npm test` 25/25 (19
+  background + 6 jsdom content), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -85,7 +138,7 @@
 2. Read `rules.md`, then this file, then ask the user which pending item to start.
 3. Workflow (mandatory): **plan mode first** (spec + file:line touch list, no edits)
    → user approves ("green signal") → **build mode** (implement + `cargo check` +
-   `cargo test` + `node --test tests/js/background.test.mjs`) → commit
+   `cargo test` + `npm test`) → commit
    (`type(scope): subject (test counts)`) → push `main`.
 4. Communication: short, direct, Bengali-mix OK. Every finding cites `file:line`
    + exact code quote. Verify with tools, don't speculate. Never use `bash` to
