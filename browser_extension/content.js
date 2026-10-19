@@ -1687,6 +1687,11 @@
       }
       const f = findFields();
       if (!f.otp.length || f.otp[0].dataset.pvOtpFilled) {
+        // No OTP box on this screen any more (SPA route change, 2FA already
+        // done, or a sighting that turned out false): take the picker down with
+        // it. The host lives on documentElement, not inside the field, so a
+        // bare `return` here would leave it floating over an unrelated page.
+        if (!f.otp.length && pvPicker) closeOtpPicker(false);
         if (!f.otp.length && Date.now() - otpDiagAt > 5000) {
           otpDiagAt = Date.now();
           const all = [...document.querySelectorAll("input")].filter(isVisible);
