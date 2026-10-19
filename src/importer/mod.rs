@@ -607,18 +607,21 @@ pub(crate) fn parse_bw_datetime(raw: &str) -> Option<u64> {
     let (head, off_secs) = if let Some(stripped) = t.strip_suffix(['Z', 'z']) {
         (stripped, 0i64)
     } else if t.len() >= 6 {
-        let (h, tail) = t.split_at(t.len() - 6);
+        // Offset suffix is ASCII (±hh:mm). Use `get` (never `split_at`/byte
+        // indexing) so a malformed multi-byte stamp returns None instead of
+        // panicking on a non-char boundary.
+        let tail = t.get(t.len() - 6..)?;
         let sign = match tail.as_bytes()[0] {
             b'+' => 1i64,
             b'-' => -1i64,
             _ => return None,
         };
-        let hh: i64 = tail[1..3].parse().ok()?;
-        let mm: i64 = tail[4..6].parse().ok()?;
+        let hh: i64 = tail.get(1..3)?.parse().ok()?;
+        let mm: i64 = tail.get(4..6)?.parse().ok()?;
         if tail.as_bytes()[3] != b':' {
             return None;
         }
-        (h, sign * (hh * 3600 + mm * 60))
+        (t.get(..t.len() - 6)?, sign * (hh * 3600 + mm * 60))
     } else {
         return None;
     };
@@ -848,5 +851,21 @@ mod tests {
         let w2 = w2.unwrap();
         assert!(w2.contains("HOTP counter 7"));
         assert!(w2.contains("SHA256"));
+    }
+
+    #[test]
+    fn bw_datetime_offset_parses_and_unicode_never_panics() {
+        // Same instant: Z, +00:00, and +05:30 / -05:30 offsets.
+        let z = parse_bw_datetime("2024-06-01T12:00:00Z").unwrap();
+        assert_eq!(parse_bw_datetime("2024-06-01T12:00:00+00:00"), Some(z));
+        assert_eq!(parse_bw_datetime("2024-06-01T17:30:00+05:30"), Some(z));
+        assert_eq!(parse_bw_datetime("2024-06-01T06:30:00-05:30"), Some(z));
+        // Fractional seconds are dropped.
+        assert_eq!(parse_bw_datetime("2024-06-01T12:00:00.123Z"), Some(z));
+        // Malformed multi-byte stamps must return None, not panic on a
+        // non-char-boundary slice.
+        assert_eq!(parse_bw_datetime("€abcd"), None);
+        assert_eq!(parse_bw_datetime("তাংখ্যা"), None);
+        assert_eq!(parse_bw_datetime("2024-06-01T12:00:00+০৫:৩০"), None);
     }
 }

@@ -94,18 +94,28 @@ fn entropy_per_char(s: &str) -> f64 {
 /// only on assigned values, URL-shaped values skipped).
 fn scan_line(line: &str) -> Vec<&'static str> {
     let mut hits = Vec::new();
-    let lowered = line.to_lowercase();
+    // ASCII-only lowercasing preserves byte length and char boundaries, so
+    // offsets found in `lowered` stay valid in `line`. Full `to_lowercase()`
+    // can change byte length (e.g. 'İ' → "i̇"), which used to make the
+    // `line[abs + prefix.len()..]` slice panic on multi-byte input.
+    let lowered = line.to_ascii_lowercase();
     for rule in RULES {
-        let needle = rule.prefix.to_lowercase();
+        let needle = rule.prefix.to_ascii_lowercase();
+        if needle.is_empty() {
+            continue;
+        }
         let mut start = 0;
-        while let Some(pos) = lowered[start..].find(&needle) {
+        while let Some(pos) = lowered.get(start..).and_then(|s| s.find(&needle)) {
             let abs = start + pos;
             if rule.bare {
                 hits.push(rule.id);
                 break;
             }
             // tail = run of non-space, non-quote, non-comma chars after prefix
-            let tail: String = line[abs + rule.prefix.len()..]
+            let Some(rest) = line.get(abs + rule.prefix.len()..) else {
+                break;
+            };
+            let tail: String = rest
                 .chars()
                 .take_while(|c| !c.is_whitespace() && *c != '"' && *c != '\'' && *c != ',' && *c != ';')
                 .collect();
@@ -257,5 +267,15 @@ mod tests {
         assert!(!f.is_empty());
         let dump = format!("{:?}", f.iter().map(|x| (&x.file, x.line, x.rule)).collect::<Vec<_>>());
         assert!(!dump.contains(secret));
+    }
+
+    #[test]
+    fn unicode_lines_never_panic_and_still_scan() {
+        // Multi-byte chars around a prefix used to break byte-offset slicing
+        // (`to_lowercase()` can change a string's byte length).
+        let f = scan_text("u.py", "মন্তব্য sk-abcdefghij1234567890XYZ+/_-=");
+        assert!(f.iter().any(|x| x.rule == "openai"));
+        let f2 = scan_text("ü.txt", "İİİ password=hunter2");
+        assert!(f2.iter().any(|x| x.rule == "generic-password-assign"));
     }
 }

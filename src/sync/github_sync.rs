@@ -171,14 +171,29 @@ pub async fn pull_remote(
     let decoded = first
         .decoded_content()
         .ok_or_else(|| VaultError::Sync("remote content unreadable".into()))?;
+    let raw = decode_remote_blob(&decoded)?;
+    Ok(Some((raw, sha)))
+}
+
+/// Decode the base64 body returned by the Contents API.
+///
+/// The API omits the inline body for files above ~1 MB (`encoding: "none"`,
+/// `content: ""`). Decoding that yields a zero-byte blob; on a fresh device the
+/// adopt path would then write an empty vault over the local ciphertext. Refuse
+/// empty bodies loudly instead of treating them as a valid vault.
+pub(crate) fn decode_remote_blob(decoded: &str) -> Result<Vec<u8>> {
+    if decoded.trim().is_empty() {
+        return Err(VaultError::Sync(
+            "remote vault body withheld by API (file > 1 MB?) — cannot pull".into(),
+        ));
+    }
     if decoded.len() > MAX_BLOB_BYTES {
         return Err(VaultError::Sync("remote blob suspiciously large".into()));
     }
     // We upload base64(ciphertext); decode one layer to recover raw bytes.
-    let raw = base64::engine::general_purpose::STANDARD
+    base64::engine::general_purpose::STANDARD
         .decode(decoded.trim())
-        .map_err(|e| VaultError::Sync(format!("remote blob corrupt: {e}")))?;
-    Ok(Some((raw, sha)))
+        .map_err(|e| VaultError::Sync(format!("remote blob corrupt: {e}")))
 }
 
 /// Push local ciphertext. `sha` must be the last-seen remote sha (None = create).
@@ -310,5 +325,22 @@ mod tests {
         );
         let empty = HashMap::<String, String>::new();
         assert!(proxy_from_vars(|k| empty.get(k).cloned()).is_none());
+    }
+
+    #[test]
+    fn empty_remote_body_is_refused() {
+        // GitHub withholds inline bodies >1 MB (content=""). Decoding that to a
+        // zero-byte vault would let a fresh device adopt/overwrite 0 bytes.
+        let err = decode_remote_blob("").unwrap_err();
+        assert!(err.to_string().contains("withheld"), "got: {err}");
+        assert!(decode_remote_blob("   \n\t").is_err());
+    }
+
+    #[test]
+    fn valid_base64_roundtrips_and_garbage_is_rejected() {
+        let raw = b"ciphertext-bytes";
+        let b64 = base64::engine::general_purpose::STANDARD.encode(raw);
+        assert_eq!(decode_remote_blob(&format!("{b64}\n")).unwrap(), raw);
+        assert!(decode_remote_blob("!!!not-base64!!!").is_err());
     }
 }

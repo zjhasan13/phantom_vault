@@ -128,14 +128,15 @@ pub fn decrypt_vault_secret(master_password: &SecretString, encrypted_payload: &
     let cipher = XChaCha20Poly1305::new(key);
 
     // ৩. ডিক্রিপ্ট করা
-    let plaintext = cipher
+    let result = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())?;
+        .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string());
 
-    // মেমোরি সিকিউরিটি: মেমোরি থেকে কি মুছে ফেলা
+    // মেমোরি সিকিউরিটি: মেমোরি থেকে কি মুছে ফেলা — the error path included
+    // (`?` used to return above this line, leaving the derived key in the heap).
     key_bytes.zeroize();
 
-    Ok(plaintext)
+    result
 }
 
 /// Legacy `&str` entrypoint — prefer [`decrypt_vault_secret`].

@@ -121,7 +121,7 @@ pub fn run_backup(cfg: &mut BackupScheduleConfig, now: u64) -> Result<BackupOutc
     let dir = std::path::Path::new(&cfg.backup_dir);
     std::fs::create_dir_all(dir).map_err(|e| format!("backup dir: {e}"))?;
     let dest = dir.join(backup_filename(now));
-    std::fs::write(&dest, &bytes).map_err(|e| format!("backup write: {e}"))?;
+    write_backup_atomic(dir, &dest, &bytes)?;
     let pruned = prune(dir, cfg.max_backups_retained.max(1));
     cfg.last_backup_timestamp = now;
     // Persist the bump even if the schedule save fails (caller reports it).
@@ -131,6 +131,24 @@ pub fn run_backup(cfg: &mut BackupScheduleConfig, now: u64) -> Result<BackupOutc
         &format!("scheduled snapshot → {}", dest.to_string_lossy()),
     );
     Ok(BackupOutcome { path: dest.to_string_lossy().into_owned(), pruned })
+}
+
+/// Write the snapshot to a sibling temp file, then rename it into place. A
+/// crash or full-disk mid-write can otherwise leave a truncated `.enc` that
+/// looks like a valid backup on the next restore.
+fn write_backup_atomic(
+    dir: &std::path::Path,
+    dest: &std::path::Path,
+    bytes: &[u8],
+) -> Result<(), String> {
+    let name = dest.file_name().and_then(|n| n.to_str()).unwrap_or("backup.enc");
+    let tmp = dir.join(format!(".{name}.tmp"));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("backup write: {e}"))?;
+    if let Err(e) = std::fs::rename(&tmp, dest) {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(format!("backup finalize: {e}"));
+    }
+    Ok(())
 }
 
 /// Keep the newest `keep` snapshots, 3-pass shred the rest. Returns the
@@ -235,6 +253,24 @@ mod tests {
         assert!(dir.join(format!("{BACKUP_PREFIX}2024-03-01_0000{BACKUP_SUFFIX}")).exists());
         assert!(dir.join("manual_snapshot.enc").exists());
         assert!(dir.join("notes.txt").exists());
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn snapshot_write_is_atomic_and_leaves_no_temp() {
+        let dir = tmp().join("atomic");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let dest = dir.join(backup_filename(1_717_243_200));
+        write_backup_atomic(&dir, &dest, b"ciphertext").unwrap();
+        assert_eq!(std::fs::read(&dest).unwrap(), b"ciphertext");
+        let leftovers: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "temp left behind: {leftovers:?}");
         let _ = std::fs::remove_dir_all(dir);
     }
 

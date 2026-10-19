@@ -1086,6 +1086,18 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         let Some((bytes, sha)) = remote else {
             return;
         };
+        // Defense in depth: never adopt a zero-byte remote. A >1 MB GitHub file
+        // comes back with an empty inline body; `pull_remote` refuses it first,
+        // and this gate protects the write below regardless.
+        if bytes.is_empty() {
+            let w = main_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = w.upgrade() {
+                    ui.set_sync_status("⚠️ Remote vault empty — refusing to adopt.".into());
+                }
+            });
+            return;
+        }
         let local = std::fs::read(VAULT_FILE).unwrap_or_default();
         if local.is_empty() {
             // Fresh device: adopt the remote ciphertext as-is (shred-guarded).
