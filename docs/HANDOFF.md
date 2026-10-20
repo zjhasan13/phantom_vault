@@ -129,7 +129,7 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- **P0 (fill strength) — URL-less web fill hole (DONE):**
+- **P0 (fill strength) — URL-less web fill hole (DONE `6a4b0c6`):**
   - Finding: desktop items carry no URL (`urls: []`), but `content.js` and
     `popup.js` treated an empty URL list as allow (`entryAllowed`), and native
     `query` is substring-based → lookalike domains could autofill desktop
@@ -138,7 +138,7 @@
     "No site URL saved — edit this item and add one."
   - Tests: +4 (url-less hotkey refusal + bound control in jsdom, popup
     gate/source assertions) → `npm test` **41/41**; extension-only.
-- **P1 (fill strength) — capture URL/title quality (DONE):**
+- **P1 (fill strength) — capture URL/title quality (DONE `620bf68`):**
   - `captureUrl()` stores origin+path only (query/hash stripped, trailing
     slashes normalized); `captureTitle()` prefers `og:site_name` /
     `application-name` / `apple-mobile-web-app-title`, else strips title
@@ -147,7 +147,7 @@
     (older clients can't inject query/fragment into the vault).
   - Tests: +2 jsdom save-payload + 1 Rust canonicalization →
     `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
-- **P2 (fill strength) — desktop app binding (DONE):**
+- **P2 (fill strength) — desktop app binding (DONE `ce43147`):**
   - `Credential.apps: Vec<String>` (`#[serde(default)]`, additive/export-safe).
     Smart-Grab stores lowercased exe + pretty name via hidden `cap_app`.
   - QuickBar (`Ctrl+Alt+A`) prefers items bound to the focused app; Auto-Type
@@ -155,7 +155,7 @@
     web items are unaffected.
   - Tests: +2 (serde default, binding helper) → `cargo test` **455 passed /
     1 ignored**; `npm test` 43/43 unchanged.
-- **P3 (fill strength) — popup fill parity (DONE):**
+- **P3 (fill strength) — popup fill parity (DONE `dbd721a`):**
   - Popup fill/fill-submit now delegates to content.js `PV_FILL_ENTRY {id}`;
     content re-queries by domain, re-checks `entryAllowed`, fills through
     `fillLogin()` (React setters, multi-step, TOTP pending) and returns the

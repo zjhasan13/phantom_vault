@@ -152,7 +152,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 
 ## 7. Fill/capture strength pass (P0–P3)
 
-- **P0 — URL-less web fill hole (DONE):** desktop Smart-Grab items store
+- **P0 — URL-less web fill hole (DONE `6a4b0c6`):** desktop Smart-Grab items store
   `urls: Vec::new()`, while both gates treated an empty URL list as "allow"
   (`content.js:197`, `popup.js:422`) and native `query` matches on
   title/username substrings. A lookalike host (`discord-login.com`) could
@@ -163,7 +163,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   items remain reachable via the app-aware QuickBar/Auto-Type. Tests: +4
   (url-less hotkey refusal, bound control, popup gate/source assertions) →
   `npm test` **41/41**; `cargo test` 452 unchanged (extension-only).
-- **P1 — capture URL/title quality (DONE):** save/update previously stored
+- **P1 — capture URL/title quality (DONE `620bf68`):** save/update previously stored
   `location.href` verbatim (query tokens + fragment) and a naive
   `document.title.split("-")[0]`. `content.js` now stores
   `captureUrl()` = origin + path (query/hash stripped, trailing slashes
@@ -174,7 +174,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   normalization in `save_login` (defense in depth for older clients). Tests:
   +2 jsdom save-payload regressions and +1 Rust canonicalization test →
   `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
-- **P2 — desktop app binding (DONE):** `Credential` gained an additive
+- **P2 — desktop app binding (DONE `ce43147`):** `Credential` gained an additive
   `#[serde(default)] apps: Vec<String>` (old vaults load unchanged; disk/export
   round-trips preserve it). Smart-Grab stores the lowercased exe stem + pretty
   app name (`cap_app`, hidden Slint property); `Ctrl+Alt+A` QuickBar shows
@@ -183,7 +183,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   foreground app (`autotype-blocked-app` access-log event) while unbound web
   items stay unrestricted. Tests: +1 serde-default, +1 binding helper →
   `cargo test` **455 passed / 1 ignored**; no extension change.
-- **P3 — popup fill parity (DONE):** popup quick-fill/fill-submit used a naive
+- **P3 — popup fill parity (DONE `dbd721a`):** popup quick-fill/fill-submit used a naive
   `executeScript` injector (first text/email + first password), bypassing the
   content engine's React setters, multi-step chaining and URL gate. Both now
   send `PV_FILL_ENTRY {id}`; content re-queries by domain, re-applies
