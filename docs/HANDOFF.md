@@ -6,7 +6,7 @@
 ## 1. Where we are
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
-  `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, Phase 6).
+  `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
@@ -111,7 +111,7 @@
     `Date.now` → one probe warm, re-probe after 31 s, re-probe after `focus`.
     `npm test` **34/34** (19 background + 8 content + 7 domain). Extension-only;
     no Rust rebuild.
-- **Phase 6 (audit) — E6 observer + lock broadcast (DONE):**
+- **Phase 6 (audit) — E6 observer + lock broadcast (DONE `e6eadf5`):**
   - E6: the two synchronous `documentElement` subtree observers became ONE
     120 ms-debounced observer (`pvScheduleScan`) running `scan()` +
     `scanForms()`; cold-page boot scans stay immediate.

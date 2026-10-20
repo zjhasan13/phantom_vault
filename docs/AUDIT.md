@@ -140,7 +140,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   security hole. Regression test stubs `Date.now` and asserts one probe for
   warm actions, re-probe after 31 s, and re-probe after `focus` →
   `npm test` **34/34**. Extension-only (no Rust rebuild).
-- **Phase 6 — E6 observer + lock broadcast (DONE):** `content.js` replaces the
+- **Phase 6 — E6 observer + lock broadcast (DONE `e6eadf5`):** `content.js` replaces the
   two synchronous `documentElement` subtree observers with ONE 120 ms-debounced
   observer (`pvScheduleScan`) that runs `scan()` + `scanForms()` once per
   mutation storm; boot scans stay immediate. `background.js` now pushes
