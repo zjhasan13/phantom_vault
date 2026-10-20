@@ -191,7 +191,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   inject remains only as a fallback for tabs without content.js; a content
   refusal surfaces its real reason. Tests: +2 jsdom (engine fill, unbound id
   refusal) +1 popup source assertion → `npm test` **46/46**.
-- **P4 — UIA `SetValue` desktop fill (DONE):** Auto-Type now tries
+- **P4 — UIA `SetValue` desktop fill (DONE `6e31196`):** Auto-Type now tries
   `ValuePattern.SetValue` on the focused control before sending keystrokes
   (`desktop_autofill::set_focused_value`, used by both `type_sequence` and
   `type_fields`). Only an enabled, writable Edit qualifies

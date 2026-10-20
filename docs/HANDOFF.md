@@ -162,7 +162,7 @@
     field count. Direct inject is fallback only; refusals keep their reason.
   - Tests: +2 jsdom + 1 popup source → `npm test` **46/46** (20 background +
     16 content + 7 domain + 3 popup).
-- **P4 (fill strength) — UIA `SetValue` desktop fill (DONE):**
+- **P4 (fill strength) — UIA `SetValue` desktop fill (DONE `6e31196`):**
   - `desktop_autofill::set_focused_value()` writes the focused enabled,
     writable Edit via `ValuePattern.SetValue` (no keystrokes/IME/clipboard).
     Both `type_sequence` and `type_fields` try it per field and fall back to
