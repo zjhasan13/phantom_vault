@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P4 fill-strength (desktop Auto-Type tries UIA SetValue, SendInput fallback).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P5 fill-strength (UIA login field-pairing, no Tab dependency; SendInput fallback).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -170,7 +170,15 @@
     keep working. Input still sanitized; focus token re-checked before every
     fill / Tab / Enter.
   - Test: +1 policy gate → `cargo test` **456 passed / 1 ignored**.
-- Baselines: `cargo test` 456 passed / 1 ignored, `npm test` 46/46 (20
+- **P5 (fill strength) — UIA login field-pairing (DONE):**
+  - App-bound desktop logins try `fill_login_pair()`: locate the password Edit
+    (focused if password, else first) + nearest username Edit above it in the
+    foreground window; verify both writable before writing; revert partial
+    writes; refuse when focus is an Edit outside the pair (chat/search box).
+    Success = SetValue both, `autotype/uia-pair` log, Enter — no Tab dependency.
+  - Fallback chain stays: per-field UIA SetValue (P4) → guarded Unicode typing.
+  - Test: +1 `pick_login_pair` matrix → `cargo test` **457 passed / 1 ignored**.
+- Baselines: `cargo test` 457 passed / 1 ignored, `npm test` 46/46 (20
   background + 16 jsdom content + 7 domain + 3 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally

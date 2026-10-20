@@ -294,7 +294,9 @@ fn trigger_autotype(
     ui_visible: Arc<std::sync::atomic::AtomicBool>,
     req: TypeRequest,
 ) {
-    use windows_native::autotype::{type_card, type_fields, type_identity, type_sequence};
+    use windows_native::autotype::{
+        type_card, type_fields, type_identity, type_sequence, type_sequence_paired,
+    };
     // Spoof guard FIRST (before minimizing — minimizing changes foreground).
     // A typosquat/leet executable refuses the keystrokes entirely.
     if let Ok(ctx) = windows_native::desktop_autofill::inspect_active_context() {
@@ -373,7 +375,11 @@ fn trigger_autotype(
                             req.fields[1].clone().into_bytes(),
                         )
                         .map_err(|e| crate::error::VaultError::AutoType(e.to_string()))?;
-                        let out = type_sequence(&req.fields[0], secret.expose_str());
+                        let out = if req.apps.is_empty() {
+                            type_sequence(&req.fields[0], secret.expose_str())
+                        } else {
+                            type_sequence_paired(&req.fields[0], secret.expose_str())
+                        };
                         drop(secret);
                         out
                     } else {

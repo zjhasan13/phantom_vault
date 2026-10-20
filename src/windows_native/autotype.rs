@@ -277,6 +277,17 @@ pub fn type_text_raw(text: &str, press_enter: bool) -> Result<()> {
 /// settle 800ms → hide-delay 600ms → per-char down/hold/up + gap →
 /// Tab guards (100ms pre / 150ms post).
 pub fn type_sequence(username: &str, password: &str) -> Result<()> {
+    type_sequence_inner(username, password, false)
+}
+
+/// P5: desktop login path. App-bound items try UIA pair-fill (username +
+/// password located in the foreground window, no Tab) before keystrokes.
+/// Never used for web items, so browser autofill still rides content.js.
+pub fn type_sequence_paired(username: &str, password: &str) -> Result<()> {
+    type_sequence_inner(username, password, true)
+}
+
+fn type_sequence_inner(username: &str, password: &str, pair_fill: bool) -> Result<()> {
     if sanitize_field(password).is_empty() {
         return Err(VaultError::AutoType("nothing to type".into()));
     }
@@ -287,6 +298,15 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     ensure_focus(target)?;
     let mut rng = OsRng;
+    // 1b. UIA pair-fill: both fields located + written before Enter, so apps
+    // with a broken/wrapping Tab order still fill correctly. Any failure
+    // (read-only password box, no visible pair) falls through to typing.
+    if pair_fill && crate::windows_native::desktop_autofill::fill_login_pair(username, password) {
+        crate::security::access_log::log_event("autotype/uia-pair", "login");
+        ensure_focus(target)?;
+        press_vk(VK_RETURN, &mut rng)?;
+        return Ok(());
+    }
     // 2. Username: UIA SetValue when writable, else char by char (verified
     // UTF-16 units, no translation).
     ensure_focus(target)?;

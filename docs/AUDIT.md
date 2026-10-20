@@ -200,3 +200,13 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   Value is still `sanitize_field()`ed, and the foreground token is re-checked
   before every fill/Tab/Enter. Test: +1 policy gate →
   `cargo test` **456 passed / 1 ignored**.
+- **P5 — UIA login field-pairing (DONE):** app-bound desktop logins try
+  `fill_login_pair()` first: visible Edit controls in the foreground window are
+  enumerated (bounded depth/nodes, offscreen skipped); the focused password wins
+  else the first password, and the username is the nearest non-password Edit
+  above it (fallback: any Edit). Both must be enabled + writable **before** any
+  write; a partial write is reverted, and pairing is refused when focus sits in
+  an Edit outside the pair (chat/search box). Success fills both without Tab,
+  logs `autotype/uia-pair`, then sends Enter. Read-only password boxes / missing
+  pairs fall back to the P4 per-field SetValue → SendInput path. Test: +1 pick
+  heuristic matrix → `cargo test` **457 passed / 1 ignored**.
