@@ -6,7 +6,7 @@
 ## 1. Where we are
 
 - Branch `main`. Tier 0 + audit Phases 1–5 committed (`117e38b`, `96b9330`,
-  `b850ce7`, `05c0a36`, `e06d841`, Phase 5).
+  `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
@@ -101,7 +101,7 @@
     own host.
   - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression →
     `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**.
-- **Phase 5 (audit) — E5 desktop-gate cache (DONE):**
+- **Phase 5 (audit) — E5 desktop-gate cache (DONE `fc36e65`):**
   - `content.js` `extDeskOkPage` is no longer page-lifetime: success is cached
     for at most `EXT_DESK_OK_TTL_MS = 30 s`, and the cache is dropped on
     `window.focus`, tab-visibility return, and bfcache `pageshow`; a

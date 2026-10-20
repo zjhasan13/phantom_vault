@@ -130,7 +130,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   cross-origin/blank subframes return before any observer/capture setup.
   Tests: +1 jsdom/manifest regression (`npm test` **33/33**), `cargo test`
   **452 passed / 1 ignored**. E6 explicitly deferred (perf only).
-- **Phase 5 — E5 gate cache (DONE):** the desktop-presence verdict is no longer
+- **Phase 5 — E5 gate cache (DONE `fc36e65`):** the desktop-presence verdict is no longer
   page-lifetime. `content.js` caches it for at most `EXT_DESK_OK_TTL_MS`
   (30 s) and drops it on window `focus`, tab visibility return, and bfcache
   `pageshow`; a locked `PV_SESSION_STATE` reply clears it immediately. Secrets
