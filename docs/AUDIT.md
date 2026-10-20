@@ -222,3 +222,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   now pass `{frameId:0}` so they can never be answered by an iframe. Tests:
   +4 background (frame save accept/refuse, hotkey routing/fallback), +1 domain
   pick matrix, +2 popup source → `npm test` **53/53**.
+- **Repo follow-ups (DONE `621892c`):** `write_adopted_head` was already wired on both
+  adopt paths (`p2p_local::serve_conn`, `sync_with_peer`); the inline rollback
+  condition is now the pure `adopt_rollback_blocked()` with a unit test
+  (older/equal+different sha refused, same-sha idempotent, fresh head allowed).
+  `ssh_agent::AgentKey` is explicitly `ZeroizeOnDrop`: `Zeroize` wipes comment
+  and pubkey and replaces the dalek `SigningKey` (whose Drop wipes `secret_key`),
+  so session teardown does not rely on implicit field-drop order. Tests: +2 →
+  `cargo test` **459 passed / 1 ignored**; clippy unchanged (2 pre-existing
+  `manual_clamp`).

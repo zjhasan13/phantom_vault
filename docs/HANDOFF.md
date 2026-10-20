@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P6 web fill-strength (cross-origin iframe fill, frame-local origin matching, frame-targeted popup/hotkey/menu).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P6 web fill-strength + repo follow-ups (AgentKey ZeroizeOnDrop, adopt-guard regression test).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -195,7 +195,7 @@
     ceremony/OTP popup messages now pass `{frameId:0}`.
   - Tests: +4 background, +1 domain, +2 popup -> `npm test` **53/53**;
     `browser_extension/build.ps1` builds chrome+firefox.
-- Baselines: `cargo test` 457 passed / 1 ignored, `npm test` 53/53 (24 background + 16 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
+- Baselines: `cargo test` 459 passed / 1 ignored, `npm test` 53/53 (24 background + 16 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -289,14 +289,17 @@
 3. **Master Password Rotation — Option A** (user-side, after C1 purge): export
    Bitwarden JSON → fresh vault + new password → import → verify count → export
    Recovery Sheet PDF → shred temp JSON → delete all `*.dpapi` → shred old backup.
-4. **GitHub cache check:** repo code-search `my_secure_vault` must return zero;
-   else request GitHub Support cache purge. Then publish the v0.2.0 Release
-   object in web UI (tag pushed; no `gh` CLI on the machine).
-5. **Follow-ups for the other line:** `write_adopted_head` unwired
-   (`src/sync/p2p_local.rs`, `#[allow(dead_code)]` + NOTE); legacy host
-   `assert` unreachable from extension (fails-closed test pinned —
-   relay now uses `assert_full`/`attest`); `AgentKey` lacks
-   explicit `Zeroize` derive (relies on dalek drop).
+4. **GitHub cache check:** repo code-search `my_secure_vault` must return
+   zero; else request GitHub Support cache purge. `gh` 2.101 IS installed but
+   not authenticated: run `gh auth login`, then
+   `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
+   works too). Then publish the pending Release object in the web UI.
+5. **Follow-ups for the other line:** legacy host `assert` unreachable from
+   extension (fails-closed test pinned — relay now uses
+   `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH
+   adopt paths (`serve_conn`, `sync_with_peer`) and the guard is now a tested
+   pure function (`adopt_rollback_blocked`); `AgentKey` is explicitly
+   `ZeroizeOnDrop` (vault key wipe on session teardown, not just dalek drop).
 6. **Standing item (do NOT blind-chase):** `Mutex::lock().unwrap()` pattern in
    `src/main.rs` (panic=abort design). Only touch attacker-influenced paths.
 7. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
