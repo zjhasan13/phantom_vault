@@ -6,7 +6,7 @@
 ## 1. Where we are
 
 - Branch `main`. Tier 0 + Phases 1–4 committed (`117e38b`, `96b9330`,
-  `b850ce7`, `05c0a36`, Phase 4).
+  `b850ce7`, `05c0a36`, `e06d841`).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
@@ -87,7 +87,7 @@
     harness evaluates `domain.js` before `content.js`.
   - Tests: +4`domain.test.mjs` cases (registrable ccTLD, pageBase, clusters,
     ccTLD blocked gate) → `npm test` **32/32**; `cargo test` 452 unchanged.
-- **Phase 4 — real lock + iframe capture (DONE):**
+- **Phase 4 — real lock + iframe capture (DONE `e06d841`):**
   - D1: sidebar Lock (`slint:1350` → `main.rs:11677`) and tray Lock
     (`main.rs:3355`) now call the shared `lock_vault_now` pipeline — RAM scrub,
     clipboard flush, access log, lock screen — instead of `process::exit(0)`.

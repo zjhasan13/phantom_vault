@@ -121,7 +121,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   (classic MV3 SW) in `background.js`, `popup.html` already loads it.
   Harnesses updated (background `importScripts` stub, content jsdom loads
   `domain.js` first). `npm test` **32/32**; `cargo test` 452 unchanged.
-- **Phase 4 — UX/lock + iframes (DONE):** D1 sidebar Lock (`slint:1350` →
+- **Phase 4 — UX/lock + iframes (DONE `e06d841`):** D1 sidebar Lock (`slint:1350` →
   `main.rs:11677`) and tray Lock now call the shared `lock_vault_now` pipeline
   (RAM scrub, clipboard flush, access log, lock screen) instead of
   `process::exit(0)`; a new sidebar **Exit** + tray **Exit** are the only quit
