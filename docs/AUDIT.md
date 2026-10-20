@@ -191,3 +191,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   inject remains only as a fallback for tabs without content.js; a content
   refusal surfaces its real reason. Tests: +2 jsdom (engine fill, unbound id
   refusal) +1 popup source assertion → `npm test` **46/46**.
+- **P4 — UIA `SetValue` desktop fill (DONE):** Auto-Type now tries
+  `ValuePattern.SetValue` on the focused control before sending keystrokes
+  (`desktop_autofill::set_focused_value`, used by both `type_sequence` and
+  `type_fields`). Only an enabled, writable Edit qualifies
+  (`uia_value_allowed`); password boxes that report read-only fall back to the
+  existing focus-guarded Unicode SendInput path, so coverage never regresses.
+  Value is still `sanitize_field()`ed, and the foreground token is re-checked
+  before every fill/Tab/Enter. Test: +1 policy gate →
+  `cargo test` **456 passed / 1 ignored**.

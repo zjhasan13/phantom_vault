@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P3 fill-strength (popup fills through the content engine; P0–P3 complete).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P4 fill-strength (desktop Auto-Type tries UIA SetValue, SendInput fallback).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -162,7 +162,15 @@
     field count. Direct inject is fallback only; refusals keep their reason.
   - Tests: +2 jsdom + 1 popup source → `npm test` **46/46** (20 background +
     16 content + 7 domain + 3 popup).
-- Baselines: `cargo test` 455 passed / 1 ignored, `npm test` 46/46 (20
+- **P4 (fill strength) — UIA `SetValue` desktop fill (DONE):**
+  - `desktop_autofill::set_focused_value()` writes the focused enabled,
+    writable Edit via `ValuePattern.SetValue` (no keystrokes/IME/clipboard).
+    Both `type_sequence` and `type_fields` try it per field and fall back to
+    the verified Unicode SendInput path; read-only password boxes therefore
+    keep working. Input still sanitized; focus token re-checked before every
+    fill / Tab / Enter.
+  - Test: +1 policy gate → `cargo test` **456 passed / 1 ignored**.
+- Baselines: `cargo test` 456 passed / 1 ignored, `npm test` 46/46 (20
   background + 16 jsdom content + 7 domain + 3 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally

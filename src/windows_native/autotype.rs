@@ -151,6 +151,13 @@ pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
             std::thread::sleep(Duration::from_millis(TAB_POST_MS));
             ensure_focus(target)?;
         }
+        // UIA fast fill: writable Edit controls take the value directly, so
+        // secrets never ride keystrokes. Read-only password boxes refuse and
+        // fall through to the guarded Unicode typing path.
+        ensure_focus(target)?;
+        if crate::windows_native::desktop_autofill::set_focused_value(f) {
+            continue;
+        }
         for unit in field_units(f) {
             ensure_focus(target)?;
             press_unicode(unit, &mut rng)?;
@@ -280,11 +287,15 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     ensure_focus(target)?;
     let mut rng = OsRng;
-    // 2. Username, char by char (verified UTF-16 units, no translation).
-    for unit in field_units(username) {
-        ensure_focus(target)?;
-        press_unicode(unit, &mut rng)?;
-        sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+    // 2. Username: UIA SetValue when writable, else char by char (verified
+    // UTF-16 units, no translation).
+    ensure_focus(target)?;
+    if !crate::windows_native::desktop_autofill::set_focused_value(username) {
+        for unit in field_units(username) {
+            ensure_focus(target)?;
+            press_unicode(unit, &mut rng)?;
+            sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+        }
     }
     // 3. Tab transition with guards on both sides (focus re-verified:
     // the password must never land in a newly-focused chat box).
@@ -293,11 +304,14 @@ pub fn type_sequence(username: &str, password: &str) -> Result<()> {
     press_vk(VK_TAB, &mut rng)?;
     std::thread::sleep(Duration::from_millis(TAB_POST_MS));
     ensure_focus(target)?;
-    // 4. Password, char by char with per-char re-check.
-    for unit in field_units(password) {
-        ensure_focus(target)?;
-        press_unicode(unit, &mut rng)?;
-        sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+    // 4. Password: UIA SetValue when writable; otherwise char by char with
+    // per-char focus re-check.
+    if !crate::windows_native::desktop_autofill::set_focused_value(password) {
+        for unit in field_units(password) {
+            ensure_focus(target)?;
+            press_unicode(unit, &mut rng)?;
+            sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
+        }
     }
     ensure_focus(target)?;
     press_vk(VK_RETURN, &mut rng)?;

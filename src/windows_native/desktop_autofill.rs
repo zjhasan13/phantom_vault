@@ -152,6 +152,42 @@ fn is_edit(el: &IUIAutomationElement) -> bool {
     }
 }
 
+/// Pure policy gate for UIA `ValuePattern.SetValue` (unit tested): only an
+/// enabled, writable Edit control qualifies. Password boxes usually report
+/// read-only, so the caller falls back to SendInput typing.
+fn uia_value_allowed(is_edit: bool, enabled: bool, read_only: bool) -> bool {
+    is_edit && enabled && !read_only
+}
+
+/// UIA fast fill: write `value` into the currently focused Edit through
+/// `ValuePattern.SetValue` — no keystrokes, no clipboard, no IME. Best-effort:
+/// any missing pattern / read-only / non-edit control returns false and the
+/// caller falls back to the verified Unicode SendInput path.
+pub fn set_focused_value(value: &str) -> bool {
+    let Ok(_com) = ComGuard::enter() else { return false; };
+    let sanitized = crate::windows_native::autotype::sanitize_field(value);
+    if sanitized.is_empty() {
+        return false;
+    }
+    let Ok(auto) = automation() else { return false; };
+    // SAFETY: read-only UIA queries + SetValue on the focused element; all
+    // failures degrade to `false` (fallback), never panic.
+    unsafe {
+        let Ok(el) = auto.GetFocusedElement() else { return false; };
+        let enabled = el.CurrentIsEnabled().map(|b| b.as_bool()).unwrap_or(false);
+        let Ok(pattern) =
+            el.GetCurrentPatternAs::<IUIAutomationValuePattern>(UIA_ValuePatternId)
+        else {
+            return false;
+        };
+        let read_only = pattern.CurrentIsReadOnly().map(|b| b.as_bool()).unwrap_or(true);
+        if !uia_value_allowed(is_edit(&el), enabled, read_only) {
+            return false;
+        }
+        pattern.SetValue(&BSTR::from(sanitized.as_str())).is_ok()
+    }
+}
+
 /// Hunt a neighboring non-password Edit and read its value (the username).
 fn hunt_username(auto: &IUIAutomation, focused: &IUIAutomationElement) -> String {
     // SAFETY: walker navigation; every step is fallible and degrades to "".
@@ -426,6 +462,14 @@ mod tests {
         assert_eq!(pretty_service_name("", "Steam Login | Steam"), "Steam Login");
         assert_eq!(pretty_service_name("spotify", ""), "Spotify");
         assert_eq!(pretty_service_name("", ""), "");
+    }
+
+    #[test]
+    fn uia_setvalue_policy_requires_enabled_writable_edit() {
+        assert!(uia_value_allowed(true, true, false));
+        assert!(!uia_value_allowed(true, true, true), "read-only password box");
+        assert!(!uia_value_allowed(false, true, false), "button/link is not a field");
+        assert!(!uia_value_allowed(true, false, false), "disabled control");
     }
 
     #[test]
