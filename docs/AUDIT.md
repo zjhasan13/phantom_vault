@@ -163,3 +163,14 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   items remain reachable via the app-aware QuickBar/Auto-Type. Tests: +4
   (url-less hotkey refusal, bound control, popup gate/source assertions) →
   `npm test` **41/41**; `cargo test` 452 unchanged (extension-only).
+- **P1 — capture URL/title quality (DONE):** save/update previously stored
+  `location.href` verbatim (query tokens + fragment) and a naive
+  `document.title.split("-")[0]`. `content.js` now stores
+  `captureUrl()` = origin + path (query/hash stripped, trailing slashes
+  normalized, path kept for prefix/exact rules) and `captureTitle()` =
+  `og:site_name` / `application-name` / `apple-mobile-web-app-title`, else a
+  suffix-stripped title with generic segments ("Sign in", "Login", …) skipped,
+  else the registrable host. Native `canonical_login_url()` applies the same
+  normalization in `save_login` (defense in depth for older clients). Tests:
+  +2 jsdom save-payload regressions and +1 Rust canonicalization test →
+  `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.

@@ -1432,7 +1432,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             }
             let username = req.get("username").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let password = req.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let url = req.get("url").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let url = canonical_login_url(req.get("url").and_then(|v| v.as_str()).unwrap_or(""));
             if username.is_empty() || password.is_empty() || url.is_empty() {
                 return no("username, password and url required");
             }
@@ -1709,6 +1709,21 @@ fn login_pw_freq(vault: &Vault) -> std::collections::HashMap<&str, usize> {
 
 /// Lowercased registrable-ish domain of a URL (mirrors the extension's
 /// base-domain matcher closely enough for save dedup).
+/// P1: canonical URL for vault storage — drops the fragment and query (they
+/// carry session tokens / PII) plus trailing slashes, keeping scheme, host and
+/// path. Pure; the extension canonicalizes too, so this is defense in depth for
+/// older clients or hand-written bridge calls.
+pub fn canonical_login_url(raw: &str) -> String {
+    let t = raw.trim();
+    if t.is_empty() {
+        return String::new();
+    }
+    let no_frag = t.split('#').next().unwrap_or(t);
+    let no_query = no_frag.split('?').next().unwrap_or(no_frag);
+    let trimmed = no_query.trim_end_matches('/');
+    if trimmed.is_empty() { no_query.to_string() } else { trimmed.to_string() }
+}
+
 fn url_domain(raw: &str) -> String {
     let h = raw.trim().to_lowercase();
     let h = h.rsplit("://").next().unwrap_or(&h);
@@ -2413,6 +2428,17 @@ mod tests {
     // that touches a limiter (directly or via filled()/assert) serializes
     // here AND resets its budget first. Lock order: sidecar_guard, then this.
     static RATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    #[test]
+    fn canonical_login_url_drops_query_fragment_and_trailing_slash() {
+        assert_eq!(
+            canonical_login_url(" https://Example.com/login?token=s3cret#frag "),
+            "https://Example.com/login"
+        );
+        assert_eq!(canonical_login_url("https://example.com/"), "https://example.com");
+        assert_eq!(canonical_login_url("https://example.com/a/?b=1#c"), "https://example.com/a");
+        assert_eq!(canonical_login_url("   "), "");
+    }
 
     fn vault_with_login() -> Vault {
         let mut v = Vault::new();

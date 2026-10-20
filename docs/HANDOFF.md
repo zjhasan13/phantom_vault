@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P0 fill-strength (URL-less items refused on every web fill surface).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P1 fill-strength (canonical capture URL + site-brand titles).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -138,8 +138,17 @@
     "No site URL saved — edit this item and add one."
   - Tests: +4 (url-less hotkey refusal + bound control in jsdom, popup
     gate/source assertions) → `npm test` **41/41**; extension-only.
-- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 41/41 (20
-  background + 12 jsdom content + 7 domain + 2 popup), `cargo check --all-targets` zero
+- **P1 (fill strength) — capture URL/title quality (DONE):**
+  - `captureUrl()` stores origin+path only (query/hash stripped, trailing
+    slashes normalized); `captureTitle()` prefers `og:site_name` /
+    `application-name` / `apple-mobile-web-app-title`, else strips title
+    suffixes and skips generic segments ("Sign in", "Login", …), else host.
+  - Native `canonical_login_url()` mirrors the normalization in `save_login`
+    (older clients can't inject query/fragment into the vault).
+  - Tests: +2 jsdom save-payload + 1 Rust canonicalization →
+    `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
+- Baselines: `cargo test` 453 passed / 1 ignored, `npm test` 43/43 (20
+  background + 14 jsdom content + 7 domain + 2 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

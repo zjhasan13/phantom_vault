@@ -136,6 +136,41 @@
   // manifest; importScripts() in the background SW). E1/E2: no local copies.
   const registrable = (host) => PVDomain.registrable(host);
   function pageBase() { return registrable(location.hostname); }
+  // P1 capture metadata: strip query + hash (tokens/PII) and trailing slashes
+  // so the vault stores a stable origin+path; the path is kept for prefix/exact
+  // URL rules. Unparseable input falls back to a raw string split.
+  function captureUrl() {
+    try {
+      const u = new URL(location.href);
+      const path = u.pathname && u.pathname !== "/" ? u.pathname.replace(/\/+$/, "") : "";
+      return u.origin + path;
+    } catch (_) {
+      return String(location.href || "").split(/[?#]/)[0].replace(/\/+$/, "");
+    }
+  }
+  // P1 title: prefer the site's own brand declaration over the document title,
+  // then drop "Sign in - X" style suffixes. Generic-only titles fall back to
+  // the registrable host.
+  const TITLE_GENERIC = /^(sign in|signin|log in|login|sign up|signup|register|account|home|welcome|password)$/i;
+  function captureTitle() {
+    const meta = (sel) => {
+      const el = document.querySelector(sel);
+      const c = el && el.getAttribute("content");
+      return c ? c.trim() : "";
+    };
+    const brand = meta('meta[property="og:site_name"]') ||
+      meta('meta[name="application-name"]') ||
+      meta('meta[name="apple-mobile-web-app-title"]');
+    const clean = (s) => String(s || "").replace(/\s+/g, " ").trim().slice(0, 60);
+    if (brand) return clean(brand);
+    const parts = String(document.title || "")
+      .split(/\s+[|·•—–-]\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const pick = parts.find((p) => p.length >= 3 && !TITLE_GENERIC.test(p)) ||
+      parts[0] || pageBase();
+    return clean(pick);
+  }
   const EQUIV_CLUSTERS = PVDomain.EQUIV_CLUSTERS;
   const memberHit = (m, d) => PVDomain.memberHit(m, d);
   const domainsEquiv = (a, b) => PVDomain.domainsEquiv(a, b);
@@ -1905,8 +1940,8 @@
         const res = await chrome.runtime.sendMessage({
           type: "PV_SAVE_LOGIN",
           username, password,
-          url: location.href,
-          title: document.title ? document.title.split(/[-|–]/)[0].trim().slice(0, 60) : pageBase(),
+          url: captureUrl(),
+          title: captureTitle(),
         });
         if (res && res.ok) {
           toast(res.updated ? "✅ Login updated in PhantomVault." : "✅ Login saved to PhantomVault.");
@@ -1961,8 +1996,8 @@
         const res = await chrome.runtime.sendMessage({
           type: "PV_SAVE_LOGIN",
           username, password,
-          url: location.href,
-          title: document.title ? document.title.split(/[-|–]/)[0].trim().slice(0, 60) : pageBase(),
+          url: captureUrl(),
+          title: captureTitle(),
         });
         if (res && res.ok) {
           toast("✅ Login updated in PhantomVault (old kept in history).");

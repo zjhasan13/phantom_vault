@@ -28,6 +28,10 @@ function makeChrome(store) {
       store.pings += 1;
       return { ok: true, unlocked: true };
     }
+    if (msg.type === "PV_SAVE_LOGIN") {
+      store.saves.push(msg);
+      return { ok: true, updated: false };
+    }
     return { ok: true };
   };
   return {
@@ -74,7 +78,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, session: {}, pings: 0, sessionLocked: false };
+  const store = { entries, session: {}, pings: 0, sessionLocked: false, saves: [] };
   window.chrome = makeChrome(store);
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);

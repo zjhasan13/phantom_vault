@@ -161,6 +161,40 @@ test("P0: URL-bound item still autofills (control)", async (t) => {
   assert.equal(window.document.querySelector('input[name="password"]').value, "hunter2");
 });
 
+test("P1: save stores canonical URL + site brand (og:site_name)", async (t) => {
+  const { window, store } = env(t, `<head>
+    <meta property="og:site_name" content="Example">
+    <title>Sign in - Example</title>
+  </head><form>
+    <input type="text" name="username" value="bob">
+    <input type="password" name="password" value="pw">
+  </form>`, "https://example.com/login?token=secret#frag");
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  saver(window).querySelector("button").click();
+  await flush();
+  assert.equal(store.saves.length, 1, "one bridge save");
+  assert.equal(store.saves[0].url, "https://example.com/login",
+    "query + fragment stripped, path kept");
+  assert.equal(store.saves[0].title, "Example", "brand meta wins over title");
+});
+
+test("P1: title suffix heuristic + root URL normalization", async (t) => {
+  const { window, store } = env(t, `<head>
+    <title>Sign in – Example</title>
+  </head><form>
+    <input type="text" name="username" value="bob">
+    <input type="password" name="password" value="pw">
+  </form>`, "https://example.org/?next=%2F#top");
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  saver(window).querySelector("button").click();
+  await flush();
+  assert.equal(store.saves[0].url, "https://example.org");
+  assert.equal(store.saves[0].title, "Example",
+    "generic 'Sign in' segment skipped, brand kept");
+});
+
 test("E6: document scans run through one debounced observer", () => {
   const src = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
   assert.equal((src.match(/new MutationObserver\(pvScheduleScan\)/g) || []).length, 1);
