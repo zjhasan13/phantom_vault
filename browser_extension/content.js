@@ -7,6 +7,22 @@
   if (window.__pvEngine) return;
   window.__pvEngine = true;
 
+  // E4: all_frames:true means this script now boots in every subframe. Only
+  // the top document and SAME-ORIGIN frames may capture/autofill: a
+  // cross-origin iframe (ads, third-party widgets) must never be able to
+  // raise a save prompt for its own host from inside a page the user thinks
+  // they are on. Cross-origin access to top.location throws — treat that as
+  // "not same origin" and stay inert.
+  if (window.top !== window) {
+    let pvSameOrigin = false;
+    try {
+      pvSameOrigin = !!window.top && window.top.location.host === location.host;
+    } catch (_) {
+      pvSameOrigin = false;
+    }
+    if (!pvSameOrigin) return;
+  }
+
   const DEFAULTS = {
     show_suggestions: true,
     show_suggestions_on_icon_click_only: false,

@@ -1,15 +1,15 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 3 shared domain logic (`domain.js` registrable + clusters across content/background/popup).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 4 real lock screen (manual + tray Lock keep the process alive; separate Exit) + same-origin iframe capture.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`. Phases 1–2 + Tier 0 committed; **Phase 3 changes uncommitted**
-  (awaiting commit).
+- Branch `main`. Tier 0 + Phases 1–4 committed (`117e38b`, `96b9330`,
+  `b850ce7`, `05c0a36`, Phase 4).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
-  (`slint:1349`→`main.rs:11665`, Tier 3 target); legacy passkey `uv` boolean
+  (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
   trust (`native_host.rs:507`, low reach — relay uses `assert_full`/`uv_token`);
   `crypto.rs:131-136` skipped `zeroize()` on the decrypt-error branch
   (FIXED in Phase 1 below).
@@ -43,7 +43,7 @@
     `docs/QA_CAPTURE_MATRIX.md` (CAP-01..16 + REG-01..06).
   - **Untouched by design:** `pvPending`, `chainPendingStep`, `sweepOtpOnce`,
     `otpObserver`, popup fill path, native host.
-- **Phase 1 — Rust data integrity (DONE, uncommitted):**
+- **Phase 1 — Rust data integrity (DONE `96b9330`):**
   - D5 (>1 MB sync data loss): `sync/github_sync.rs` gains `decode_remote_blob()`
     — refuses an empty/whitespace body (GitHub Contents API returns `content:""`
     for files >1 MB) and bad base64. `main.rs` adopt path independently refuses a
@@ -59,7 +59,7 @@
     then renames (crash/full-disk can't leave a truncated `.enc`).
   - Tests: +5 cases (github empty/garbage decode, datetime offsets+unicode,
     scanner unicode, atomic backup). `cargo test` → **451 passed / 1 ignored**.
-- **Phase 2 — security (DONE, uncommitted):**
+- **Phase 2 — security (DONE `b850ce7`):**
   - D3 access log fail-closed: `security/access_log.rs` — an unreadable chain
     key now REFUSES the append with a loud stderr line instead of falling back
     to unkeyed SHA-256 (`log_event_gated`). `verify_at_detailed` reads the key
@@ -74,7 +74,7 @@
     (only `assert_full`/`attest` + `uv_token` are sent); legacy parity kept, no
     code change.
   - Tests: `tests/js/domain.test.mjs` added → `npm test` **28/28**.
-- **Phase 3 — shared domain logic (DONE, uncommitted):**
+- **Phase 3 — shared domain logic (DONE `05c0a36`):**
   - E1: `domain.js` `registrable()` now keeps multi-label public suffixes
     (`foo.co.uk` → `foo.co.uk`; `shop.foo.co.uk` → `foo.co.uk`,
     `www.google.co.uk` → `google.co.uk`) using a pragmatic PSL subset.
@@ -87,6 +87,21 @@
     harness evaluates `domain.js` before `content.js`.
   - Tests: +4`domain.test.mjs` cases (registrable ccTLD, pageBase, clusters,
     ccTLD blocked gate) → `npm test` **32/32**; `cargo test` 452 unchanged.
+- **Phase 4 — real lock + iframe capture (DONE):**
+  - D1: sidebar Lock (`slint:1350` → `main.rs:11677`) and tray Lock
+    (`main.rs:3355`) now call the shared `lock_vault_now` pipeline — RAM scrub,
+    clipboard flush, access log, lock screen — instead of `process::exit(0)`.
+    New sidebar **Exit** (`slint:1351`, `on_exit_app`) + tray **Exit** are the
+    only quit paths (clipboard flushed first, log event `exit`). Unlock already
+    existed in the Slint lock screen, so no new screen was added.
+  - E4: both manifests `all_frames:true`; `content.js:9-22` returns before any
+    setup unless the frame is top-level or SAME-ORIGIN (reads `top.location`,
+    throws on cross-origin ⇒ inert). No `match_about_blank` (hostless origin ⇒
+    refused). Prevents a third-party iframe from raising a save prompt for its
+    own host.
+  - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression →
+    `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**. E5/E6 in
+    `AUDIT.md` left as explicitly DEFERRED (low/perf only).
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -94,8 +109,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 32/32 (19
-  background + 6 jsdom content + 7 domain), `cargo check --all-targets` zero
+- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 33/33 (19
+  background + 7 jsdom content + 7 domain), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

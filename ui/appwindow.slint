@@ -1018,6 +1018,7 @@ export component MainWindow inherits Window {
     callback set_autolock_timeout(int);
     callback autofill_pill_clicked();
     callback lock_now();
+    callback exit_app();
     callback scan_secrets();
     callback copy_shell_complete(string);
     callback set_duress_password(string);
@@ -1347,6 +1348,7 @@ export component MainWindow inherits Window {
             NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🚪"; label: "Exit"; tapped => { root.exit_app(); } }
             if root.is_travel_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL ON"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
             if root.offline_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "📴 OFFLINE — no network"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
             }

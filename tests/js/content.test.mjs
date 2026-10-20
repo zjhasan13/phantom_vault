@@ -1,6 +1,7 @@
 // content.js capture-engine tests (Tier 0). Run: `node --test tests/js/`
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { loadContent, submit, flush } from "./content-harness.mjs";
 
 const saver = (window) => window.document.getElementById("__pv_saver");
@@ -78,4 +79,17 @@ test("search box is never treated as a credential form", async (t) => {
   await flush();
   assert.equal(saver(window), null);
   assert.equal(store.session.pvCaptureCarry, undefined);
+});
+
+test("E4: all frames load the script, cross-origin frames stay inert", () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  for (const mf of ["manifest.json", "manifest.firefox.json"]) {
+    const m = JSON.parse(read("../../browser_extension/" + mf));
+    assert.equal(m.content_scripts[0].all_frames, true, mf + " must opt into subframes");
+    assert.deepEqual(m.content_scripts[0].js, ["domain.js", "content.js"]);
+  }
+  const src = read("../../browser_extension/content.js");
+  const guard = src.indexOf("window.top !== window");
+  assert.ok(guard > 0, "same-origin frame guard must exist");
+  assert.ok(guard < src.indexOf("const DEFAULTS"), "frame guard must run before capture setup");
 });

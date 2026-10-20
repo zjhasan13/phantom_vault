@@ -3353,13 +3353,25 @@ fn main() -> Result<(), slint::PlatformError> {
             }) as Arc<dyn Fn() + Send + Sync>
         };
         let lock = {
+            let w_main = main_window.as_weak();
+            let w_cap = capture_window.as_weak();
             let t_vault = Arc::clone(&active_vault);
             let t_master = Arc::clone(&active_master_pw);
+            let t_pending = Arc::clone(&pending_cf);
+            let t_editing = Arc::clone(&editing_item);
             Arc::new(move || {
-                windows_native::clipboard::flush_now();
-                panic_wipe(&t_vault, &t_master);
-                security::access_log::log_event("lock", "tray exit");
-                std::process::exit(0);
+                // D1: tray Lock takes the shared lock pipeline (RAM wipe +
+                // lock screen, process stays alive) — only tray Exit quits.
+                lock_vault_now(
+                    w_main.clone(),
+                    w_cap.clone(),
+                    &t_vault,
+                    &t_master,
+                    &t_pending,
+                    &t_editing,
+                    "Vault is locked. Enter Master Password:",
+                    "tray",
+                );
             }) as Arc<dyn Fn() + Send + Sync>
         };
         let exit = {
@@ -3368,7 +3380,7 @@ fn main() -> Result<(), slint::PlatformError> {
             Arc::new(move || {
                 windows_native::clipboard::flush_now();
                 panic_wipe(&t_vault, &t_master);
-                security::access_log::log_event("lock", "tray exit");
+                security::access_log::log_event("exit", "tray");
                 std::process::exit(0);
             }) as Arc<dyn Fn() + Send + Sync>
         };
@@ -11674,11 +11686,35 @@ fn launch_url(ui: &MainWindow, url: &str) {
         });
     });
 
-    main_window.on_lock_now(move || {
-        // Cat 8: a copied secret must not outlive the session — flush the
-        // clipboard BEFORE the process (and its guarded auto-clear thread) dies.
+    {
+        let lock_weak = main_window.as_weak();
+        let lock_cap = capture_window.as_weak();
+        let lock_vault = Arc::clone(&active_vault);
+        let lock_master = Arc::clone(&active_master_pw);
+        let lock_pending = Arc::clone(&pending_cf);
+        let lock_editing = Arc::clone(&editing_item);
+        main_window.on_lock_now(move || {
+            // D1: manual lock takes the shared wipe pipeline (RAM scrub +
+            // clipboard flush + access log + lock screen) instead of killing
+            // the process. The Slint lock screen already existed; unlocking
+            // repopulates from disk. Exit is a separate, explicit action.
+            lock_vault_now(
+                lock_weak.clone(),
+                lock_cap.clone(),
+                &lock_vault,
+                &lock_master,
+                &lock_pending,
+                &lock_editing,
+                "Vault is locked. Enter Master Password:",
+                "manual",
+            );
+        });
+    }
+    main_window.on_exit_app(move || {
+        // D1: the only foreground path that terminates the process. Flush the
+        // clipboard first so a copied secret cannot outlive the session.
         windows_native::clipboard::flush_now();
-        security::access_log::log_event("lock", "manual exit");
+        security::access_log::log_event("exit", "manual");
         std::process::exit(0);
     });
     // Close-to-tray preference toggle (persisted, default ON).

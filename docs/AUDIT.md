@@ -61,15 +61,15 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` — **FIXED (Phase 3)**: `domain.js` PSL-subset `registrable()` |
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
-| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` |
-| E5 | `extDeskOkPage` session cache never invalidated | `content.js:843` |
-| E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2383-2384` |
+| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` — **FIXED (Phase 4)**: `all_frames:true` + same-origin frame guard in `content.js:9-22`; cross-origin and `about:blank` frames stay inert by design (no `match_about_blank`) |
+| E5 | `extDeskOkPage` session cache never invalidated | `content.js:826-846` — **DEFERRED (low)**: page-lifetime cache; worst case a disabled desktop bridge is retried only after reload, and every fill still goes through the native host |
+| E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2461-2462` — **DEFERRED (perf only)**: no correctness/security impact; revisit if profiling shows jank |
 
 ## 3. Desktop findings (separate line — not Tier 0)
 
 | ID | Finding | Location | Sev |
 |---|---|---|---|
-| D1 | "Lock" = process exit (see §0) | `main.rs:11665-11670`, `slint:1349` | High (UX) |
+| D1 | "Lock" = process exit (see §0) | `main.rs:11677`, `slint:1350` | High (UX) — **FIXED (Phase 4)**: manual Lock + tray Lock ride `lock_vault_now` (RAM wipe + lock screen, process alive); separate Exit nav item + tray Exit are the only `process::exit` paths |
 | D2 | Passkey legacy `uv` boolean trust | `native_host.rs:507` | Low — **confirmed unreachable** (extension sends `assert_full`/`attest` + `uv_token` only); legacy parity retained by design |
 | D3 | Access log HMAC→SHA256 fallback | `security/access_log.rs:96-99` | High — **FIXED (Phase 2)** fail-closed |
 | D4 | Emergency shards left in heap (reported) | `security/emergency.rs:259-264` | Med — **FIXED (Phase 2)** |
@@ -84,16 +84,21 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 - **Tier 1 (security):** D2/D3/D4, E3, plus `setAccessLevel` hardening.
 - **Tier 2 (correctness/data):** D5/D6, E1/E2, importer/scanner panics.
 - **Tier 3 (UX):** D1 real lock screen (process stays), app-shell toasts, E4 iframe.
+  D1 + E4 **DONE (Phase 4)**; app-shell toasts remain out of scope.
 - **Tier 4 (tests):** content-script harness coverage.
 
 ## 5. Accepted decisions
 
-- **Lock semantics:** intended = real lock screen with the process alive, plus a
-  separate Exit. (Deferred to Tier 3.)
+- **Lock semantics:** real lock screen with the process alive, plus a separate
+  Exit. (Implemented in Phase 4: sidebar + tray Lock vs sidebar + tray Exit.)
 - **Tier 0 scope:** extension capture engine only.
 - **Multi-page carry:** username only (non-secret). Password is **never**
   persisted to `storage.session`/`local` (P1-b policy intact).
-- **iframe capture:** deferred to a later phase.
+- **iframe capture:** same-origin subframes only. `all_frames:true` injects
+  everywhere, but `content.js` self-disables in cross-origin frames (top
+  `location` read throws) so a third-party iframe can never raise a save
+  prompt for its own host. `match_about_blank` stays off (blank frames inherit
+  a hostless origin and are refused).
 
 ## 6. Phase log
 
@@ -108,7 +113,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   `browser_extension/domain.js` (loaded by `popup.html`, packaged by
   `build.ps1`). D2 confirmed dead from the extension — no code change. `npm test`
   **28/28** (added `tests/js/domain.test.mjs`).
-- **Phase 3 — shared domain logic (DONE, awaiting commit):** E1 `registrable()`
+- **Phase 3 — shared domain logic (DONE `05c0a36`):** E1 `registrable()`
   now keeps multi-label public suffixes (`foo.co.uk` → `foo.co.uk`, not
   `co.uk`) via a pragmatic PSL subset; E2 `EQUIV_CLUSTERS` / `memberHit` /
   `domainsEquiv` live only in `domain.js`. Wiring: manifest `js` order
@@ -116,4 +121,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   (classic MV3 SW) in `background.js`, `popup.html` already loads it.
   Harnesses updated (background `importScripts` stub, content jsdom loads
   `domain.js` first). `npm test` **32/32**; `cargo test` 452 unchanged.
-- Next: Phase 4 (D1 lock + E4 iframes).
+- **Phase 4 — UX/lock + iframes (DONE):** D1 sidebar Lock (`slint:1350` →
+  `main.rs:11677`) and tray Lock now call the shared `lock_vault_now` pipeline
+  (RAM scrub, clipboard flush, access log, lock screen) instead of
+  `process::exit(0)`; a new sidebar **Exit** + tray **Exit** are the only quit
+  paths (clipboard flushed first, access log `exit`). E4 `all_frames:true` in
+  both manifests with a same-origin-only boot guard (`content.js:9-22`):
+  cross-origin/blank subframes return before any observer/capture setup.
+  Tests: +1 jsdom/manifest regression (`npm test` **33/33**), `cargo test`
+  **452 passed / 1 ignored**. E5/E6 explicitly deferred (low/perf only).
