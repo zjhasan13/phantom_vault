@@ -170,7 +170,7 @@
     keep working. Input still sanitized; focus token re-checked before every
     fill / Tab / Enter.
   - Test: +1 policy gate → `cargo test` **456 passed / 1 ignored**.
-- **P5 (fill strength) — UIA login field-pairing (DONE):**
+- **P5 (fill strength) — UIA login field-pairing (DONE `9f7c298`):**
   - App-bound desktop logins try `fill_login_pair()`: locate the password Edit
     (focused if password, else first) + nearest username Edit above it in the
     foreground window; verify both writable before writing; revert partial
