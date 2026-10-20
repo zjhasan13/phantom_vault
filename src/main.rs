@@ -144,6 +144,8 @@ struct TypeRequest {
     item_title: String,
     last_changed: u64,
     totp_secret: String,
+    /// P2: app binding copied from the login. Empty = unbound (web item).
+    apps: Vec<String>,
 }
 
 /// Build a TypeRequest from the vault by (kind, id). Returns None for
@@ -158,6 +160,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: c.title.clone(),
             last_changed: c.last_changed,
             totp_secret: c.totp_secret.clone(),
+            apps: c.apps.clone(),
         }),
         2 => vault.licenses.iter().find(|l| l.id == id && l.deleted_at.is_none()).map(|l| TypeRequest {
             kind,
@@ -167,6 +170,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: l.app_name.clone(),
             last_changed: 0,
             totp_secret: String::new(),
+            apps: Vec::new(),
         }),
         3 => vault.notes.iter().find(|n| n.id == id && n.deleted_at.is_none()).map(|n| TypeRequest {
             kind,
@@ -176,6 +180,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: n.title.clone(),
             last_changed: 0,
             totp_secret: String::new(),
+            apps: Vec::new(),
         }),
         // Card: separate MM / YY boxes are the checkout norm — 4 TAB stops.
         4 => vault.cards.iter().find(|k| k.id == id && k.deleted_at.is_none()).map(|k| TypeRequest {
@@ -191,6 +196,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: k.title.clone(),
             last_changed: 0,
             totp_secret: String::new(),
+            apps: Vec::new(),
         }),
         5 => vault.identities.iter().find(|i| i.id == id && i.deleted_at.is_none()).map(|i| TypeRequest {
             kind,
@@ -200,6 +206,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: i.title.clone(),
             last_changed: 0,
             totp_secret: String::new(),
+            apps: Vec::new(),
         }),
         6 => vault.ssh_keys.iter().find(|s| s.id == id && s.deleted_at.is_none()).map(|s| TypeRequest {
             kind,
@@ -209,6 +216,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             item_title: s.title.clone(),
             last_changed: 0,
             totp_secret: String::new(),
+            apps: Vec::new(),
         }),
         // Standalone 2FA (kind 8): Fill types the FRESH live code (no Enter).
         // Computed at request time so it never goes stale like a list snapshot.
@@ -224,6 +232,7 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
                 item_title: if a.issuer.is_empty() { a.account_name.clone() } else { a.issuer.clone() },
                 last_changed: 0,
                 totp_secret: String::new(),
+                apps: Vec::new(),
             }
         }),
         _ => None,
@@ -252,6 +261,7 @@ fn login_type_request(
         item_title: String::new(),
         last_changed: 0,
         totp_secret: totp.to_string(),
+        apps: Vec::new(),
     }
 }
 
@@ -261,6 +271,20 @@ fn chain_2fa_enabled() -> bool {
     std::fs::read_to_string("chain_2fa.pref")
         .map(|s| s.trim() != "0")
         .unwrap_or(true)
+}
+
+/// P2: app binding gate for Auto-Type. Empty `apps` = unbound web item (allow).
+/// Case-insensitive match against the executable stem OR the pretty app name.
+fn app_binding_matches(apps: &[String], exe: &str, app_name: &str) -> bool {
+    if apps.is_empty() {
+        return true;
+    }
+    let exe = exe.trim().to_lowercase();
+    let app = app_name.trim().to_lowercase();
+    apps.iter().any(|a| {
+        let a = a.trim().to_lowercase();
+        !a.is_empty() && (a == exe || a == app)
+    })
 }
 
 fn trigger_autotype(
@@ -283,6 +307,26 @@ fn trigger_autotype(
                 brand
             );
             crate::security::access_log::log_event("autotype-blocked-spoof", &ctx.exe_name);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = main_weak.upgrade() {
+                    ui.set_notification_text(msg.into());
+                }
+            });
+            return;
+        }
+        // P2: app-bound items only type into their own app. Without this a
+        // Discord password could be typed into Notepad (or a lookalike app the
+        // user Alt+Tabbed into). Web items carry an empty list and are exempt.
+        if !req.apps.is_empty()
+            && !app_binding_matches(&req.apps, &ctx.exe_name, &ctx.app_name)
+        {
+            let active = if ctx.app_name.trim().is_empty() { ctx.exe_name.as_str() } else { ctx.app_name.as_str() };
+            let msg = format!(
+                "🚫 App mismatch: this item is bound to {} — active app is '{}'. Auto-type blocked.",
+                req.apps.join(", "),
+                active
+            );
+            crate::security::access_log::log_event("autotype-blocked-app", &ctx.exe_name);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = main_weak.upgrade() {
                     ui.set_notification_text(msg.into());
@@ -1439,6 +1483,7 @@ fn unlock_with_password(    pass: SecretString,
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 urls: vec!["https://github.com".into()],
+                apps: Vec::new(),
                 notes: "Primary Token".into(),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
@@ -3071,18 +3116,58 @@ fn push_hub_width(ui: &MainWindow) {
     ui.set_hub_w(((logical - side).max(340.0)).min(4000.0));
 }
 
-fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {    // The feed must not disturb the main list's total: save/restore it.
+fn vault_quickbar(vault: &Vault, query: &str, travel_only: bool) -> ModelRc<CredentialView> {
+    vault_quickbar_app(vault, query, travel_only, "")
+}
+
+/// P2: Ctrl+Alt+A opens pre-filtered by the focused app. When the vault holds
+/// items bound to that app (`Credential.apps` from Smart-Grab), show exactly
+/// those regardless of title; otherwise fall back to the text query (legacy
+/// behavior). Web fills never consult `apps` — the URL gates stay authoritative.
+fn vault_quickbar_app(
+    vault: &Vault,
+    query: &str,
+    travel_only: bool,
+    app: &str,
+) -> ModelRc<CredentialView> {
+    // The feed must not disturb the main list's total: save/restore it.
     let prev = total_matches();
-    let model = vault_to_items(
-        vault,
-        &FilterState { query: query.to_string(), kind: 0, folder: "All".to_string(), travel_only, fav_only: false, show_trash: false, health: String::new(), janitor: false, limit: LIST_CAP },
-    );
+    let app = app.trim().to_lowercase();
+    let bound: std::collections::HashSet<String> = if app.is_empty() {
+        std::collections::HashSet::new()
+    } else {
+        vault
+            .credentials
+            .iter()
+            .filter(|c| {
+                c.deleted_at.is_none()
+                    && c.apps.iter().any(|a| a.trim().to_lowercase() == app)
+            })
+            .map(|c| c.id.clone())
+            .collect()
+    };
+    let state = |q: &str| FilterState {
+        query: q.to_string(),
+        kind: 0,
+        folder: "All".to_string(),
+        travel_only,
+        fav_only: false,
+        show_trash: false,
+        health: String::new(),
+        janitor: false,
+        limit: LIST_CAP,
+    };
+    let text_query = if bound.is_empty() { query } else { "" };
+    let model = vault_to_items(vault, &state(text_query));
     restore_total(prev);
     // Standalone 2FA stays out of the QuickBar: its copy/type flows dispatch
     // on secrets stored in the row, and kind-8 rows deliberately carry none
     // (fresh codes resolve by id in the main window only).
     let q = query.trim().to_lowercase();
-    let mut rows: Vec<CredentialView> = model.iter().filter(|r| r.kind != 8).collect();
+    let mut rows: Vec<CredentialView> = model
+        .iter()
+        .filter(|r| r.kind != 8 && (bound.is_empty() || bound.contains(&r.id.to_string())))
+        .collect();
     // Stable: equal scores keep vault order (no reshuffle surprises).
     rows.sort_by(|a, b| {
         qb_rank_score(&q, &b.title, &b.username, b.fav)
@@ -4158,6 +4243,9 @@ fn main() -> Result<(), slint::PlatformError> {
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(cap) = cap_weak.upgrade() {
                                     cap.set_cap_title(ctx.app_name.clone().into());
+                                    cap.set_cap_app(
+                                        format!("{}|{}", ctx.exe_name, ctx.app_name).into(),
+                                    );
                                     cap.set_cap_user(ctx.detected_username.clone().into());
                                     cap.set_cap_pass("".into());
                                     cap.set_cap_totp("".into());
@@ -4224,7 +4312,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Some(qb) = qb_weak.upgrade() {
                             let vault = lock_vault(&vault_clone);
                             let travel = *travel_clone.lock().unwrap();
-                            let filtered = vault_quickbar(&vault, &app_prefilter, travel);
+                            let filtered = vault_quickbar_app(&vault, &app_prefilter, travel, &app_prefilter);
                             qb.set_quick_query(app_prefilter.into());
                             qb.set_filtered_results(filtered);
                             qb.show().ok();
@@ -4272,6 +4360,16 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             return;
         }
+        let mut apps: Vec<String> = cap_weak_save
+            .upgrade()
+            .map(|cap| cap.get_cap_app().to_string())
+            .unwrap_or_default()
+            .split('|')
+            .map(|a| a.trim().to_lowercase())
+            .filter(|a| !a.is_empty() && a != "phantom_vault")
+            .collect();
+        apps.sort();
+        apps.dedup();
         if let Some(cap) = cap_weak_save.upgrade() {
             cap.hide().ok();
         }
@@ -4299,6 +4397,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     password: pass.clone(),
                     totp_secret: totp.clone(),
                     urls: Vec::new(),
+                    apps,
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: String::new(),
@@ -4347,6 +4446,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let cap_weak_cancel = capture_window.as_weak();
     capture_window.on_capture_cancel(move || {
         if let Some(cap) = cap_weak_cancel.upgrade() {
+            cap.set_cap_app("".into());
             cap.hide().ok();
         }
     });
@@ -7077,6 +7177,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     item_title: String::new(),
                     last_changed: 0,
                     totp_secret: totp.as_str().to_string(),
+                    apps: Vec::new(),
                 }),
                 None => TypeRequest {
                     kind: 1,
@@ -7086,6 +7187,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     item_title: String::new(),
                     last_changed: 0,
                     totp_secret: totp.as_str().to_string(),
+                    apps: Vec::new(),
                 },
             }
         };
@@ -12806,6 +12908,7 @@ fn push_new_item(
             password: b.to_string(),
             totp_secret: totp.to_string(),
             urls,
+            apps: Vec::new(),
             backup_codes: backup,
             custom_fields: custom,
             notes: notes.to_string(),
@@ -13101,6 +13204,16 @@ mod grid_tests {
     use super::*;
 
     #[test]
+    fn app_binding_matches_exe_pretty_name_and_unbound() {
+        let apps = vec!["discord".to_string(), "Discord".to_string()];
+        assert!(app_binding_matches(&apps, "discord", "Discord"));
+        assert!(app_binding_matches(&apps, "Discord", ""));
+        assert!(!app_binding_matches(&apps, "notepad", "Notepad"));
+        assert!(app_binding_matches(&[], "notepad", "Notepad"),
+            "web items (no binding) type anywhere");
+    }
+
+    #[test]
     fn qb_rank_prefers_prefix_then_fav() {
         assert!(qb_rank_score("git", "GitHub", "u", false) > qb_rank_score("git", "My Github", "u", false));
         assert!(qb_rank_score("git", "My Github", "u", false) > qb_rank_score("git", "Other", "u", false));
@@ -13389,6 +13502,7 @@ mod grid_tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -13408,6 +13522,7 @@ mod grid_tests {
             password: "p2".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -13441,6 +13556,7 @@ mod grid_tests {
                 password: "p".into(),
                 totp_secret: String::new(),
                 urls: Vec::new(),
+                apps: Vec::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 notes: String::new(),
@@ -13478,6 +13594,7 @@ mod grid_tests {
                 password: "p".into(),
                 totp_secret: String::new(),
                 urls: Vec::new(),
+                apps: Vec::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 notes: String::new(),
@@ -13514,6 +13631,7 @@ mod grid_tests {
                 password: pw.into(),
                 totp_secret: String::new(),
                 urls: Vec::new(),
+                apps: Vec::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 notes: String::new(),
@@ -13563,6 +13681,7 @@ mod grid_tests {
                 password: "p".into(),
                 totp_secret: String::new(),
                 urls: Vec::new(),
+                apps: Vec::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 notes: String::new(),
@@ -13821,6 +13940,7 @@ mod grid_tests {
                 password: "p".into(),
                 totp_secret: String::new(),
                 urls: Vec::new(),
+                apps: Vec::new(),
                 backup_codes: Vec::new(),
                 custom_fields: Vec::new(),
                 notes: String::new(),
@@ -14038,6 +14158,7 @@ mod grid_tests {
             password: "fresh".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -14104,6 +14225,7 @@ mod grid_tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: vec!["https://login.acme.example.com".into()],
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),

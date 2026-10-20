@@ -248,6 +248,10 @@ pub struct Credential {
     pub totp_secret: String,
     #[serde(default)]
     pub urls: Vec<LoginUrl>,
+    /// P2: desktop app binding (lowercased exe stem / pretty name). Web fills
+    /// ignore these; QuickBar app-prefilter and Auto-Type guard use them.
+    #[serde(default)]
+    pub apps: Vec<String>,
     #[serde(default)]
     pub backup_codes: Vec<String>,
     #[serde(default)]
@@ -968,6 +972,7 @@ impl From<VaultLegacy> for Vault {
                     password: c.password,
                     totp_secret: String::new(),
                     urls: Vec::new(),
+                    apps: Vec::new(),
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: c.notes,
@@ -1105,6 +1110,7 @@ impl From<VaultGen1> for Vault {
                     password: c.password,
                     totp_secret: String::new(),
                     urls: Vec::new(),
+                    apps: Vec::new(),
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: c.notes,
@@ -1298,6 +1304,7 @@ impl From<VaultGen2> for Vault {
                     password: c.password,
                     totp_secret: c.totp_secret,
                     urls: LoginUrl::plain_vec(c.urls),
+                    apps: Vec::new(),
                     backup_codes: c.backup_codes,
                     custom_fields: c.custom_fields,
                     notes: c.notes,
@@ -1583,6 +1590,7 @@ mod tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -1678,6 +1686,7 @@ mod tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -1727,6 +1736,7 @@ mod tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),
@@ -1797,6 +1807,35 @@ mod tests {
     }
 
     #[test]
+    fn credential_apps_are_optional_on_disk() {
+        let c = Credential {
+            id: "app1".into(),
+            title: "Discord".into(),
+            username: "u".into(),
+            password: "p".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            apps: vec!["discord".into()],
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: DEFAULT_FOLDER.into(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: 0,
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        };
+        let mut j = serde_json::to_value(&c).unwrap();
+        assert_eq!(j["apps"], serde_json::json!(["discord"]));
+        j.as_object_mut().unwrap().remove("apps");
+        let back: Credential = serde_json::from_value(j).unwrap();
+        assert!(back.apps.is_empty(), "old vaults load with no app binding");
+    }
+
+    #[test]
     fn ensure_folders_heals_references() {
         let mut v = Vault::new();
         v.folders.clear();
@@ -1807,6 +1846,7 @@ mod tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),

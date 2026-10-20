@@ -303,6 +303,7 @@ mod tests {
             password: pw.into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),

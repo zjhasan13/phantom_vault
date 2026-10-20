@@ -332,6 +332,7 @@ mod tests {
             password: "pw".into(),
             totp_secret: "ABC".into(),
             urls: vec!["https://github.com".into()],
+            apps: Vec::new(),
             backup_codes: vec!["zzz".into()],
             custom_fields: vec![crate::models::CustomField {
                 name: "PIN".into(),

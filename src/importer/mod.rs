@@ -407,6 +407,7 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     password: r.b,
                     totp_secret: r.totp,
                     urls,
+                    apps: Vec::new(),
                     // Backup auto-sort: named fields + notes sniff, capped/deduped.
                     backup_codes,
                     custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
@@ -663,6 +664,7 @@ mod tests {
             password: "oldpw".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: String::new(),

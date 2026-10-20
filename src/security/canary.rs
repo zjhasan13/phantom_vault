@@ -38,6 +38,7 @@ pub fn plant_canary(vault: &mut Vault) -> String {
         backup_codes: Vec::new(),
         custom_fields: Vec::new(),
         urls: vec![crate::models::LoginUrl::from("https://console.aws.amazon.com")],
+        apps: Vec::new(),
         notes: format!("{CANARY_MARKER} billing alerts — do not rotate without infra team"),
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                 
@@ -93,6 +94,7 @@ mod tests {
             password: "p".into(),
             totp_secret: String::new(),
             urls: Vec::new(),
+            apps: Vec::new(),
             backup_codes: Vec::new(),
             custom_fields: Vec::new(),
             notes: "my token".into(),
