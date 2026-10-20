@@ -334,14 +334,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_SAVE_LOGIN") {
       // Sender check (MISSING-HIGH): a malicious page must not save under
       // another site's URL (github.com) to poison that credential via the
-      // host's domain match. Refuse when sender.tab.url disagrees.
+      // host's domain match. P6: validate against the SENDER FRAME's URL, not
+      // the tab URL, so a login submitted inside a cross-origin iframe is
+      // saved under the iframe's origin — never under the embedding page.
       try {
         const tabUrl = sender && sender.tab && sender.tab.url;
-        if (tabUrl && /^https?:/i.test(tabUrl) && msg.url) {
-          const tabBase = pvRegistrable(new URL(tabUrl).hostname);
+        const frameUrl = sender && sender.url;
+        const srcUrl = (frameUrl && /^https?:/i.test(frameUrl)) ? frameUrl : tabUrl;
+        if (srcUrl && /^https?:/i.test(srcUrl) && msg.url) {
+          const srcBase = pvRegistrable(new URL(srcUrl).hostname);
           const msgBase = pvRegistrable(new URL(String(msg.url).includes("://") ? msg.url : "https://" + msg.url).hostname);
-          if (tabBase && msgBase && tabBase !== msgBase) {
-            return { ok: false, error: "save url does not match sender tab" };
+          if (srcBase && msgBase && srcBase !== msgBase) {
+            return { ok: false, error: "save url does not match sender frame" };
           }
         }
       } catch (_) {}
@@ -417,6 +421,43 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---- Smart-autofill: context menus + keyboard shortcut dispatcher ----
 const PV_MENU_ROOT = "pv_root";
 
+// P6: the login form may live in a cross-origin iframe. Probe every frame and
+// route the action to the frame that owns a visible password/text field.
+// Pick priority lives in domain.js (shared with the popup).
+const PV_FRAME_PROBE = () => {
+  const vis = (el) => {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width < 12 || r.height < 8) return false;
+    const st = getComputedStyle(el);
+    return st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05;
+  };
+  const pass = Array.from(document.querySelectorAll('input[type="password"]')).some(vis);
+  const text = Array.from(document.querySelectorAll(
+    'input[type="text"],input[type="email"],input[type="tel"],input:not([type])')).some(vis);
+  return { pass, text, focused: document.hasFocus(), top: window.top === window };
+};
+
+async function pvTargetFrame(tabId) {
+  try {
+    if (!chrome.scripting || typeof chrome.scripting.executeScript !== "function") return null;
+    const probes = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: PV_FRAME_PROBE,
+    });
+    return PVDomain.pickActionFrame(probes);
+  } catch (_) {
+    return null; // restricted page / no host permission — top frame fallback
+  }
+}
+
+async function pvSendToActionFrame(tabId, msg) {
+  const frameId = await pvTargetFrame(tabId);
+  // frameId 0 is explicit: never fan out to every iframe, where a hidden
+  // third-party widget could answer (or fill) first.
+  await chrome.tabs.sendMessage(tabId, msg, { frameId: frameId == null ? 0 : frameId });
+}
+
 async function refreshContextMenus() {
   try {
     await chrome.contextMenus.removeAll();
@@ -446,7 +487,13 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab || tab.id == null) return;
   try {
-    await chrome.tabs.sendMessage(tab.id, { type: "PV_MENU", menu: info.menuItemId });
+    // P6: the click already knows its frame (info.frameId); use it instead of
+    // guessing. Probe only when the browser did not supply one.
+    const frameId = (info && info.frameId != null)
+      ? info.frameId
+      : await pvTargetFrame(tab.id);
+    await chrome.tabs.sendMessage(tab.id, { type: "PV_MENU", menu: info.menuItemId },
+      { frameId: frameId == null ? 0 : frameId });
   } catch (_) { /* no content script on this page */ }
 });
 
@@ -455,7 +502,7 @@ chrome.commands.onCommand.addListener(async (command) => {
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
-    await chrome.tabs.sendMessage(tab.id, { type: "PV_HOTKEY_FILL" });
+    await pvSendToActionFrame(tab.id, { type: "PV_HOTKEY_FILL" });
   } catch (_) { /* unsupported page */ }
 });
 

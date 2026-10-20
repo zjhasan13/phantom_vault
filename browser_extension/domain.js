@@ -155,6 +155,34 @@
     return String(host || "").toLowerCase().includes("xn--");
   }
 
+  // P6: pick the frame that should receive a fill/hotkey action. Probes come
+  // from scripting.executeScript({allFrames:true}) as [{frameId, result:
+  // {pass, text, focused}}]. Embedded login widgets (Stripe, Okta, SSO) live
+  // in cross-origin iframes; the visible+password frame wins over the top
+  // document, and focus breaks ties. The top frame is the last resort so old
+  // single-frame behavior never regresses.
+  function pickActionFrame(probes) {
+    const rows = (probes || []).map((p) => ({
+      frameId: p && p.frameId != null ? p.frameId : 0,
+      pass: !!(p && p.result && p.result.pass),
+      text: !!(p && p.result && p.result.text),
+      focused: !!(p && p.result && p.result.focused),
+      top: !!(p && p.result && p.result.top),
+    }));
+    const hit =
+      // Focused embedded form first: a parent's hasFocus() can be true while
+      // the user is typing in a child, so a focused non-top password frame is
+      // the strongest signal.
+      rows.find((r) => r.focused && r.pass && !r.top) ||
+      rows.find((r) => r.focused && r.pass) ||
+      rows.find((r) => r.pass) ||
+      rows.find((r) => r.focused && r.text) ||
+      rows.find((r) => r.text) ||
+      rows.find((r) => r.top) ||
+      rows.find((r) => r.frameId === 0);
+    return hit ? hit.frameId : null;
+  }
+
   return {
     registrable,
     pageBase,
@@ -166,5 +194,6 @@
     domainsEquiv,
     isBlockedHost,
     isPunycodeHost,
+    pickActionFrame,
   };
 });

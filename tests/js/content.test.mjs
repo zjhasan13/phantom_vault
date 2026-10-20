@@ -81,7 +81,7 @@ test("search box is never treated as a credential form", async (t) => {
   assert.equal(store.session.pvCaptureCarry, undefined);
 });
 
-test("E4: all frames load the script, cross-origin frames stay inert", () => {
+test("E4/P6: all frames load the engine, domain decisions use the frame origin", () => {
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
   for (const mf of ["manifest.json", "manifest.firefox.json"]) {
     const m = JSON.parse(read("../../browser_extension/" + mf));
@@ -89,9 +89,14 @@ test("E4: all frames load the script, cross-origin frames stay inert", () => {
     assert.deepEqual(m.content_scripts[0].js, ["domain.js", "content.js"]);
   }
   const src = read("../../browser_extension/content.js");
-  const guard = src.indexOf("window.top !== window");
-  assert.ok(guard > 0, "same-origin frame guard must exist");
-  assert.ok(guard < src.indexOf("const DEFAULTS"), "frame guard must run before capture setup");
+  // P6: cross-origin frames are no longer inert — an embedded login widget is
+  // filled by the frame that owns it, using its own origin for every match.
+  assert.ok(!/if \(window\.top !== window\)/.test(src),
+    "no early return for cross-origin frames");
+  assert.ok(!src.includes("window.top.location"),
+    "must never read the top document's location");
+  assert.ok(src.includes("function pageBase() { return registrable(location.hostname); }"),
+    "frame-local origin is the matching source");
 });
 
 test("E5: desktop gate is bounded by TTL and dropped on focus", async (t) => {

@@ -33,3 +33,34 @@ test("P3: popup quick-fill delegates to the content engine first", () => {
   assert.ok(body.indexOf("PV_FILL_ENTRY") < body.indexOf("injectFill"),
     "content engine tried before direct inject");
 });
+test("P6: fill targets the frame that owns the login form", () => {
+  const fill = SRC.match(/async function fillEntry\(tabId, entry\) \{([\s\S]*?)\n  \}/);
+  assert.ok(fill, "fillEntry present");
+  assert.match(fill[1], /\{ frameId: target \}/, "content message carries frameId");
+  assert.match(fill[1], /injectFill\(tabId, entry, target\)/, "fallback inject uses the same frame");
+  assert.match(fill[1], /entryMatchesHost\(entry, pick\.host\)/,
+    "fallback inject refuses when the picked frame does not match the entry origin");
+  assert.match(SRC, /frameIds: \[frameId\]/, "executeScript targets a single frame");
+  assert.match(SRC, /async function fillTargetFrame\(tabId\)/, "frame picker present");
+  assert.match(SRC, /PVDomain\.pickActionFrame\(rows\)/, "shared pick priority");
+});
+
+test("P6: popup gates and suggestions include embedded frame origins", () => {
+  const match = SRC.match(/function hostMatchesPage\(h\) \{([\s\S]*?)\n  \}/);
+  assert.ok(match, "hostMatchesPage present");
+  assert.match(match[1], /frameHosts\.some/, "frame origins participate in matching");
+  const blocked = SRC.match(/function siteBlocked\(entry, list\) \{([\s\S]*?)\n  \}/);
+  assert.ok(blocked, "siteBlocked present");
+  assert.match(blocked[1], /entryMatchesHost\(entry, fh\)/,
+    "a blocked frame vetoes only credentials that belong to it");
+  const puny = SRC.match(/function punycodeTarget\(entry\) \{([\s\S]*?)\n  \}/);
+  assert.ok(puny, "punycodeTarget present");
+  assert.match(puny[1], /entryMatchesHost\(entry, fh\)/,
+    "a punycode frame vetoes only credentials that belong to it");
+  const refresh = SRC.match(/const queryApps = \[\];([\s\S]*?)const \[q, l, \.\.\.extraQs\]/);
+  assert.ok(refresh, "frame query fan-out present");
+  assert.match(SRC, /extraQs/, "iframe suggestions merge into suggEntries");
+  const decl = SRC.indexOf("let frameHosts = [];");
+  const assign = SRC.indexOf("frameHosts = await loadFrameHosts");
+  assert.ok(decl > 0 && decl < assign, "frameHosts declared before the init assignment (no TDZ)");
+});

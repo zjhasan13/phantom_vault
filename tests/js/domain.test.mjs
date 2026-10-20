@@ -86,3 +86,26 @@ test("blocked gate is ccTLD-safe", () => {
   assert.equal(isBlockedHost("login.example.co.uk", ["example.co.uk"]), true);
   assert.equal(isBlockedHost("other.co.uk", ["example.co.uk"]), false);
 });
+test("P6: pickActionFrame prefers a visible password frame, then focus, then top", () => {
+  const { pickActionFrame } = load();
+  const topOnly = [{ frameId: 0, result: { pass: false, text: true, focused: true, top: true } }];
+  assert.equal(pickActionFrame(topOnly), 0);
+  const embedded = [
+    { frameId: 0, result: { pass: false, text: true, focused: false, top: true } },
+    { frameId: 4, result: { pass: true, text: true, focused: false, top: false } },
+    { frameId: 9, result: { pass: true, text: true, focused: true, top: false } },
+  ];
+  assert.equal(pickActionFrame(embedded), 9, "focused password frame wins");
+  embedded[2].result.focused = false;
+  assert.equal(pickActionFrame(embedded), 4, "first password frame when none focused");
+  assert.equal(pickActionFrame([
+    { frameId: 0, result: { pass: true, text: true, focused: true, top: true } },
+    { frameId: 5, result: { pass: true, text: true, focused: true, top: false } },
+  ]), 5, "focused embedded password frame beats a focused top form");
+  assert.equal(pickActionFrame([
+    { frameId: 0, result: { pass: false, text: false, focused: false, top: true } },
+    { frameId: 2, result: { pass: false, text: true, focused: false, top: false } },
+  ]), 2, "text-only embedded form beats an empty top document");
+  assert.equal(pickActionFrame([]), null, "no probes → caller falls back to top");
+  assert.equal(pickActionFrame(null), null);
+});

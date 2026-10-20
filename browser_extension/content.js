@@ -7,21 +7,14 @@
   if (window.__pvEngine) return;
   window.__pvEngine = true;
 
-  // E4: all_frames:true means this script now boots in every subframe. Only
-  // the top document and SAME-ORIGIN frames may capture/autofill: a
-  // cross-origin iframe (ads, third-party widgets) must never be able to
-  // raise a save prompt for its own host from inside a page the user thinks
-  // they are on. Cross-origin access to top.location throws — treat that as
-  // "not same origin" and stay inert.
-  if (window.top !== window) {
-    let pvSameOrigin = false;
-    try {
-      pvSameOrigin = !!window.top && window.top.location.host === location.host;
-    } catch (_) {
-      pvSameOrigin = false;
-    }
-    if (!pvSameOrigin) return;
-  }
+  // P6: this engine boots in every frame (all_frames:true), including
+  // cross-origin login widgets (Stripe/Okta/SSO). Every domain decision below
+  // derives from THIS frame's own location; the top document's origin is
+  // never read. An embedded frame can therefore only ever see/fill
+  // credentials saved for its OWN origin. The embedding page cannot smuggle
+  // another site's password into a third-party iframe, and a malicious iframe
+  // cannot borrow the top page's match. Popup/hotkey route explicitly to the
+  // frame that owns the form.
 
   const DEFAULTS = {
     show_suggestions: true,

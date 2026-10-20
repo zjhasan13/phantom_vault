@@ -359,11 +359,15 @@
   let host = "";
   let hostBase = "";
   let tabUrl = "";
+  let tab = null;
   let blockedDomains = [];
+  // P6: hosts of all frames in the active tab (filled after the tab lookup).
+  let frameHosts = [];
   try {
-    const [tab] = await withTimeout(
+    const [activeTab] = await withTimeout(
       chrome.tabs.query({ active: true, currentWindow: true }),
       QUERY_TIMEOUT_MS, "tab lookup");
+    tab = activeTab || null;
     // Bulletproof extraction: missing/blocked urls (chrome://, web store,
     // redacted without permissions) yield "" — suggestions stay empty, but
     // the full vault browser below remains usable.
@@ -377,11 +381,32 @@
   // No host (chrome://, new-tab): suggestions stay empty, but the full
   // vault browser below remains usable.
   const noHost = !host;
+  frameHosts = await loadFrameHosts(tab && tab.id);
   console.log("PV tab host:", host ? `${host} (base: ${hostBase})` : "(none — suggestions off)");
 
   // Domain helpers live in domain.js (loaded before popup.js) — E1/E2.
   function pageBase(h) { return PVDomain.registrable(h); }
   function domainsEquiv(a, b) { return PVDomain.domainsEquiv(a, b); }
+  // P6: embedded login widgets (Stripe/Okta/SSO) run in cross-origin
+  // iframes. Collect every frame's host so suggestions and the fill gate use
+  // the frame the credential actually belongs to. The top-level host remains
+  // the primary page signal; iframes only ADD matching origins, never bypass
+  // the per-entry URL binding.
+  async function loadFrameHosts(tabId) {
+    if (tabId == null) return [];
+    try {
+      const rows = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => {
+          try { return location.hostname ? location.hostname.toLowerCase() : ""; } catch (_) { return ""; }
+        },
+      });
+      return Array.from(new Set((rows || []).map((r) => (r && r.result) || "").filter(Boolean)));
+    } catch (_) {
+      return []; // restricted page / no host permission
+    }
+  }
+
   // Strict WEBSITE-domain extraction: username/email NEVER participate.
   // A "@gmail.com" username must not turn the whole vault into "Google".
   // Host may send strings (legacy/default) or {url, rule} objects.
@@ -397,10 +422,13 @@
       } catch (_) { return ""; }
     }).filter(Boolean);
   }
+  function hostMatchesPage(h) {
+    if (!h) return false;
+    if (host && (pageBase(h) === pageBase(host) || domainsEquiv(h, host))) return true;
+    return frameHosts.some((fh) => pageBase(h) === pageBase(fh) || domainsEquiv(h, fh));
+  }
   function domainMatchesPage(d) {
-    if (!host) return false;
-    if (pageBase(d) === pageBase(host)) return true;
-    return domainsEquiv(d, host);
+    return hostMatchesPage(String(d || "").toLowerCase());
   }
   // P0: suggestions require a stored URL. A URL-less item cannot be verified
   // against the current page (native matching is substring based), so it must
@@ -425,9 +453,12 @@
   }
   // Shared injectors: fill returns which fields landed; submit clicks the
   // form's own submit path (requestSubmit → submit → submit-button click).
-  async function injectFill(tabId, entry) {
+  // P6: inject into the frame that owns the form, not blindly into the top
+  // document (embedded checkout/SSO forms live in cross-origin iframes).
+  async function injectFill(tabId, entry, frameId) {
+    const target = frameId == null ? { tabId } : { tabId, frameIds: [frameId] };
     const [res] = await chrome.scripting.executeScript({
-      target: { tabId },
+      target,
       func: (e) => {
         const set = (el, v) => {
           if (!el) return false;
@@ -444,9 +475,10 @@
     });
     return (res && res.result) || { u: false, p: false };
   }
-  async function injectSubmit(tabId) {
+  async function injectSubmit(tabId, frameId) {
+    const target = frameId == null ? { tabId } : { tabId, frameIds: [frameId] };
     const [res] = await chrome.scripting.executeScript({
-      target: { tabId },
+      target,
       func: () => {
         const pw = document.querySelector('input[type="password"]');
         const form = (pw && pw.form) || document.querySelector("form");
@@ -469,8 +501,22 @@
   // the direct inject path bypasses the content script, so it must not hand
   // credentials to a blocked or lookalike host (E3). `domain.js` is the shared
   // source of truth for both.
-  function siteBlocked(list) {
-    return PVDomain.isBlockedHost(host, list || blockedDomains);
+  // A blocked/punycode FRAME only vetoes credentials that belong to it; an ad
+  // iframe must not disable fills for the legitimate top page.
+  function entryMatchesHost(entry, fh) {
+    if (!entry) return false;
+    return itemDomains(entry).some((h) => pageBase(h) === pageBase(fh) || domainsEquiv(h, fh));
+  }
+  function siteBlocked(entry, list) {
+    const rules = list || blockedDomains;
+    if (PVDomain.isBlockedHost(host, rules)) return true;
+    if (!entry) return false;
+    return frameHosts.some((fh) => PVDomain.isBlockedHost(fh, rules) && entryMatchesHost(entry, fh));
+  }
+  function punycodeTarget(entry) {
+    if (PVDomain.isPunycodeHost(host)) return true;
+    if (!entry) return false;
+    return frameHosts.some((fh) => PVDomain.isPunycodeHost(fh) && entryMatchesHost(entry, fh));
   }
   async function fillGuards(entry) {
     // Reprompt needs explicit presence; mismatched domains refuse like the
@@ -478,7 +524,7 @@
     if (entry.reprompt) {
       if (!window.confirm(`🔒 "${entry.title || "Sensitive credential"}" needs verification before fill. Fill now?`)) return false;
     }
-    if (PVDomain.isPunycodeHost(host)) {
+    if (punycodeTarget(entry)) {
       status.textContent = t("phishing");
       return false;
     }
@@ -487,7 +533,7 @@
       const s = await chrome.storage.local.get({ blocked_domains: [] });
       blocked = s.blocked_domains || [];
     } catch (_) { /* keep the cached list */ }
-    if (siteBlocked(blocked)) {
+    if (siteBlocked(entry, blocked)) {
       status.textContent = t("blocked_cb");
       return false;
     }
@@ -545,14 +591,55 @@
   // P3: prefer the content engine (React setters, multi-step chaining, TOTP
   // pending, URL gate). Direct inject is a fallback for tabs where content.js
   // is absent (restricted pages / not yet injected).
-  async function fillEntry(tabId, entry) {
+  // P6: target the frame holding the form; the content script re-queries by
+  // ITS OWN origin, so an iframe entry can never borrow the top page's match.
+  const P6_FRAME_PROBE = () => {
+    const vis = (el) => {
+      if (!el) return false;
+      const r = el.getBoundingClientRect();
+      if (r.width < 12 || r.height < 8) return false;
+      const st = getComputedStyle(el);
+      return st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05;
+    };
+    const pass = Array.from(document.querySelectorAll('input[type="password"]')).some(vis);
+    const text = Array.from(document.querySelectorAll(
+      'input[type="text"],input[type="email"],input[type="tel"],input:not([type])')).some(vis);
+    let fh = ""; try { fh = location.hostname ? location.hostname.toLowerCase() : ""; } catch (_) {}
+    return { pass, text, focused: document.hasFocus(), top: window.top === window, host: fh };
+  };
+  async function fillTargetFrame(tabId) {
     try {
-      const res = await chrome.tabs.sendMessage(tabId, { type: "PV_FILL_ENTRY", id: entry.id });
-      if (res && res.ok) return { filled: (res.filled || 0) > 0 };
-      if (res && res.error) return { filled: false, error: res.error };
+      const rows = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: P6_FRAME_PROBE,
+      });
+      const frameId = PVDomain.pickActionFrame(rows);
+      if (frameId == null && !(rows || []).length) return null;
+      const row = (rows || []).find((r) => r && r.frameId === frameId);
+      return { frameId: frameId == null ? 0 : frameId, host: (row && row.result && row.result.host) || "" };
+    } catch (_) {
+      return null;
+    }
+  }
+  async function fillEntry(tabId, entry) {
+    const pick = await fillTargetFrame(tabId);
+    const target = pick ? pick.frameId : 0;
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: "PV_FILL_ENTRY", id: entry.id }, { frameId: target });
+      if (res && res.ok) return { filled: (res.filled || 0) > 0, frameId: target };
+      if (res && res.error) return { filled: false, error: res.error, frameId: target };
     } catch (_) {}
-    const f = await injectFill(tabId, entry);
-    return { filled: !!(f.u || f.p) };
+    // Direct inject bypasses the content URL gate. Only inject into a frame
+    // whose origin the entry actually claims; otherwise refuse instead of
+    // handing a credential to an unrelated iframe.
+    if (pick && pick.host && !entryMatchesHost(entry, pick.host)) {
+      return { filled: false, error: "not for this site", frameId: target };
+    }
+    if (!pick && !entryMatchesHost(entry, host)) {
+      return { filled: false, error: "not for this site", frameId: target };
+    }
+    const f = await injectFill(tabId, entry, target);
+    return { filled: !!(f.u || f.p), frameId: target };
   }
   async function doFill(entry) {
     if (!(await fillGuards(entry))) return;
@@ -597,7 +684,7 @@
     }
     let submitted = false;
     try {
-      submitted = await injectSubmit(tab.id);
+      submitted = await injectSubmit(tab.id, found.frameId);
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || "submit failed");
       return;
@@ -869,9 +956,24 @@
         const bs = await chrome.storage.local.get({ blocked_domains: [] });
         blockedDomains = bs.blocked_domains || [];
       } catch (_) { /* keep the cached list */ }
-      const [q, l] = await Promise.all([
+      // P6: also query origins of embedded frames (SSO/checkout widgets). Cap
+      // the fan-out so ad-heavy pages can't turn one popup open into dozens
+      // of native queries; the top page stays the primary source.
+      const queryApps = [];
+      const seenBases = new Set(host ? [pageBase(host)] : []);
+      for (const fh of frameHosts) {
+        const b = pageBase(fh);
+        if (!b || seenBases.has(b)) continue;
+        seenBases.add(b);
+        queryApps.push(fh);
+        if (queryApps.length >= 5) break;
+      }
+      const [q, l, ...extraQs] = await Promise.all([
         host ? withTimeout(chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "vault bridge") : Promise.resolve(null),
         withTimeout(chrome.runtime.sendMessage({ type: "PV_LIST" }), QUERY_TIMEOUT_MS, "vault list"),
+        ...queryApps.map((app) => withTimeout(
+          chrome.runtime.sendMessage({ type: "PV_QUERY", app }), QUERY_TIMEOUT_MS, "frame bridge")
+          .catch(() => null)),
       ]);
       if (q && !q.ok) {
         const err = q.error || "";
@@ -885,6 +987,14 @@
         if (/lock/i.test(err)) { showLocked(); return; }
       }
       suggEntries = (q && q.ok && q.entries) || [];
+      for (const r of extraQs) {
+        if (!r || !r.ok) continue;
+        for (const e of r.entries || []) {
+          if (!e || suggIds.has(e.id)) continue;
+          suggIds.add(e.id);
+          suggEntries.push(e);
+        }
+      }
       suggEntries.forEach((e) => suggIds.add(e.id));
       if (l && l.ok) {
         allData.logins = l.logins || [];
@@ -1136,7 +1246,7 @@
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || tab.id == null) return;
       const res = await withTimeout(
-        chrome.tabs.sendMessage(tab.id, { type: "PV_OTP_STATUS" }), 3000, "otp status");
+        chrome.tabs.sendMessage(tab.id, { type: "PV_OTP_STATUS" }, { frameId: 0 }), 3000, "otp status");
       if (res && res.ok && res.otpPage) otpFillBtn.classList.remove("hidden");
     } catch (_) {}
   }
@@ -1173,7 +1283,7 @@
         return;
       }
       const out = await withTimeout(
-        chrome.tabs.sendMessage(tab.id, { type: "PV_FILL_OTP" }), QUERY_TIMEOUT_MS, "otp fill");
+        chrome.tabs.sendMessage(tab.id, { type: "PV_FILL_OTP" }, { frameId: 0 }), QUERY_TIMEOUT_MS, "otp fill");
       status.textContent = out && out.ok ? t("otp_filled") : "⚠️ " + ((out && out.error) || t("otp_failed"));
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || t("otp_failed"));
@@ -1192,7 +1302,7 @@
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || tab.id == null) return;
       const res = await withTimeout(
-        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }), 3000, "ceremony status");
+        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }, { frameId: 0 }), 3000, "ceremony status");
       if (res && res.ok && res.pending) {
         pkSignBtn.textContent = res.pending.kind === "create"
           ? `🔑 Register passkey for ${res.pending.rpId}`
@@ -1207,13 +1317,13 @@
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab || tab.id == null) return;
       const st = await withTimeout(
-        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }), 3000, "ceremony status");
+        chrome.tabs.sendMessage(tab.id, { type: "PV_ASSERT_PENDING" }, { frameId: 0 }), 3000, "ceremony status");
       if (!(st && st.ok && st.pending)) {
         status.textContent = "⚠️ No held ceremony — the page moved on.";
         return;
       }
       const out = await withTimeout(
-        chrome.tabs.sendMessage(tab.id, { type: st.pending.kind === "create" ? "PV_ATTEST_APPROVE" : "PV_ASSERT_APPROVE" }),
+        chrome.tabs.sendMessage(tab.id, { type: st.pending.kind === "create" ? "PV_ATTEST_APPROVE" : "PV_ASSERT_APPROVE" }, { frameId: 0 }),
         120000, "vault signing");
       status.textContent = out && out.ok ? "✅ Signed with vault." : "⚠️ " + ((out && out.error) || "signing failed");
     } catch (err) {
@@ -1257,7 +1367,7 @@
         // The code lives in the trusted host, not here: ask the page to fill
         // by ACCOUNT, so a code typed into the DOM is never our copy.
         const out = await withTimeout(
-          chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }),
+          chrome.tabs.sendMessage(tabId, { type: "PV_FILL_OTP_ID", id: c.id }, { frameId: 0 }),
           QUERY_TIMEOUT_MS, "otp fill by id");
         status.textContent = out && out.ok
           ? t("otp_filled")

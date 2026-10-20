@@ -334,3 +334,56 @@ test("E5: a locked session broadcasts PV_GATE_LOCKED to every tab", async () => 
   const hits = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_GATE_LOCKED");
   assert.deepEqual(hits.map((x) => x.id).sort(), [7, 8]);
 });
+test("P6: PV_SAVE_LOGIN validates the sender FRAME, not the top tab", async () => {
+  // Embedded login: top page shop.example.net, form in auth.example.com.
+  // The credential belongs to the frame that submitted it.
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://auth.example.com/login", tab: { url: "https://shop.example.net/checkout" } };
+  const p = sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_LOGIN", username: "u", password: "p",
+    url: "https://auth.example.com/login", title: "Auth",
+  }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  assert.equal(chrome.__state.postedNative[0].cmd, "save_login");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("P6: a frame may not save under a third site even when the tab matches", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://evil.example.net/frame", tab: { url: "https://github.com/" } };
+  const r = await sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_LOGIN", username: "u", password: "p",
+    url: "https://github.com/login", title: "GitHub",
+  }, sender);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /does not match/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("P6: hotkey routes to the frame with the embedded login form", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [{ id: 7, url: "https://shop.example.net/" }];
+  chrome.scripting = {
+    executeScript: async () => [
+      { frameId: 0, result: { pass: false, text: true, focused: false, top: true } },
+      { frameId: 4, result: { pass: true, text: true, focused: true, top: false } },
+    ],
+  };
+  await chrome.__listeners.onCommand[0]("autofill_active_tab");
+  const hit = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_HOTKEY_FILL");
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].opts.frameId, 4);
+});
+
+test("P6: hotkey falls back to the top frame on restricted pages", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [{ id: 8, url: "https://shop.example.net/" }];
+  chrome.scripting = { executeScript: async () => { throw new Error("no access"); } };
+  await chrome.__listeners.onCommand[0]("autofill_active_tab");
+  const hit = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_HOTKEY_FILL");
+  assert.equal(hit.length, 1);
+  assert.equal(hit[0].opts.frameId, 0);
+});

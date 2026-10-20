@@ -86,8 +86,8 @@ function makeChrome() {
     },
     tabs: {
       query: async () => state.tabList,
-      sendMessage: async (id, msg) => {
-        state.sentToTabs.push({ id, msg });
+      sendMessage: async (id, msg, opts) => {
+        state.sentToTabs.push({ id, msg, opts });
         return { ok: true };
       },
       get: async () => ({ id: 1, url: "https://example.com/" }),
