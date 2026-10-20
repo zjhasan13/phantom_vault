@@ -62,7 +62,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
 | E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` — **FIXED (Phase 4)**: `all_frames:true` + same-origin frame guard in `content.js:9-22`; cross-origin and `about:blank` frames stay inert by design (no `match_about_blank`) |
-| E5 | `extDeskOkPage` session cache never invalidated | `content.js:826-846` — **DEFERRED (low)**: page-lifetime cache; worst case a disabled desktop bridge is retried only after reload, and every fill still goes through the native host |
+| E5 | `extDeskOkPage` session cache never invalidated | `content.js:824-873` — **FIXED (Phase 5)**: 30 s TTL + cache drop on `focus` / `visibilitychange`(visible) / bfcache `pageshow`; a `PV_SESSION_STATE` locked reply also clears it. Staleness is bounded to 30 s and every secret still rides the native bridge gate |
 | E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2461-2462` — **DEFERRED (perf only)**: no correctness/security impact; revisit if profiling shows jank |
 
 ## 3. Desktop findings (separate line — not Tier 0)
@@ -129,4 +129,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   both manifests with a same-origin-only boot guard (`content.js:9-22`):
   cross-origin/blank subframes return before any observer/capture setup.
   Tests: +1 jsdom/manifest regression (`npm test` **33/33**), `cargo test`
-  **452 passed / 1 ignored**. E5/E6 explicitly deferred (low/perf only).
+  **452 passed / 1 ignored**. E6 explicitly deferred (perf only).
+- **Phase 5 — E5 gate cache (DONE):** the desktop-presence verdict is no longer
+  page-lifetime. `content.js` caches it for at most `EXT_DESK_OK_TTL_MS`
+  (30 s) and drops it on window `focus`, tab visibility return, and bfcache
+  `pageshow`; a locked `PV_SESSION_STATE` reply clears it immediately. Secrets
+  were already bridge-gated, so this closes the stale-UX window rather than a
+  security hole. Regression test stubs `Date.now` and asserts one probe for
+  warm actions, re-probe after 31 s, and re-probe after `focus` →
+  `npm test` **34/34**. Extension-only (no Rust rebuild).

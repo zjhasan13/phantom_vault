@@ -1,12 +1,12 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 4 real lock screen (manual + tray Lock keep the process alive; separate Exit) + same-origin iframe capture.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 5 audit E5 (desktop-gate cache bounded by 30 s TTL + focus/visibility/bfcache invalidation).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`. Tier 0 + Phases 1–4 committed (`117e38b`, `96b9330`,
-  `b850ce7`, `05c0a36`, `e06d841`).
+- Branch `main`. Tier 0 + audit Phases 1–5 committed (`117e38b`, `96b9330`,
+  `b850ce7`, `05c0a36`, `e06d841`, Phase 5).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
@@ -100,8 +100,17 @@
     refused). Prevents a third-party iframe from raising a save prompt for its
     own host.
   - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression →
-    `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**. E5/E6 in
-    `AUDIT.md` left as explicitly DEFERRED (low/perf only).
+    `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**.
+- **Phase 5 (audit) — E5 desktop-gate cache (DONE):**
+  - `content.js` `extDeskOkPage` is no longer page-lifetime: success is cached
+    for at most `EXT_DESK_OK_TTL_MS = 30 s`, and the cache is dropped on
+    `window.focus`, tab-visibility return, and bfcache `pageshow`; a
+    `PV_SESSION_STATE` locked reply clears it immediately. Worst-case staleness
+    is 30 s, and every secret still rides the native bridge gate (UX-only fix).
+  - Test: `E5: desktop gate is bounded by TTL and dropped on focus` stubs
+    `Date.now` → one probe warm, re-probe after 31 s, re-probe after `focus`.
+    `npm test` **34/34** (19 background + 8 content + 7 domain). Extension-only;
+    no Rust rebuild.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -109,8 +118,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 33/33 (19
-  background + 7 jsdom content + 7 domain), `cargo check --all-targets` zero
+- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 34/34 (19
+  background + 8 jsdom content + 7 domain), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

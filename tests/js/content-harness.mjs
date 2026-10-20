@@ -22,6 +22,10 @@ function makeChrome(store) {
     }
     if (msg.type === "PV_EXT_PIN") return { ok: true, hash: "a".repeat(64) };
     if (msg.type === "PV_SESSION_STATE") return { ok: true, locked: false };
+    if (msg.type === "PV_PING") {
+      store.pings += 1;
+      return { ok: true, unlocked: true };
+    }
     return { ok: true };
   };
   return {
@@ -68,7 +72,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, session: {} };
+  const store = { entries, session: {}, pings: 0 };
   window.chrome = makeChrome(store);
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);
@@ -78,6 +82,20 @@ export function loadContent(html, url = "https://example.com/login", entries = [
 
 export function submit(window, form) {
   form.dispatchEvent(new window.Event("submit", { bubbles: true, cancelable: true }));
+}
+
+export function runtimeMessage(window, msg) {
+  const listeners = window.chrome.__listeners.onMessage;
+  return new Promise((resolve) => {
+    let done = false;
+    const finish = (v) => {
+      if (done) return;
+      done = true;
+      resolve(v);
+    };
+    for (const fn of listeners) fn(msg, {}, finish);
+    setTimeout(() => finish(undefined), 1000);
+  });
 }
 
 export async function flush(ms = 25) {

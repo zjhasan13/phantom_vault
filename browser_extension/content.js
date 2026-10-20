@@ -823,19 +823,32 @@
 
   // ---------- desktop-synced gate (in-page actions, no PIN) ----------
   // Allowed when the desktop vault is reachable AND the background session
-  // is not inactivity-locked. Verified once per page into `extDeskOkPage`.
-  // A locked desktop (or idle timeout) refuses with a toast pointing at the
-  // popup Retry — the bridge itself still gates every secret below.
+  // is not inactivity-locked. A successful probe is cached briefly so a
+  // multi-field fill does not re-probe per field — but the cache EXPIRES (E5):
+  // it is bounded by EXT_DESK_OK_TTL_MS and dropped on tab refocus / bfcache
+  // restore, so a vault locked mid-page cannot keep authorizing page actions
+  // until reload. UX-only either way — the native bridge still gates every
+  // secret.
+  const EXT_DESK_OK_TTL_MS = 30 * 1000;
   let extDeskOkPage = false;
+  let extDeskOkAt = 0;
   let extDeskPending = null;
+  function extDeskCacheFresh() {
+    return extDeskOkPage && Date.now() - extDeskOkAt < EXT_DESK_OK_TTL_MS;
+  }
+  function extDeskInvalidate() {
+    extDeskOkPage = false;
+    extDeskOkAt = 0;
+  }
   async function requireExtPin() {
-    if (extDeskOkPage) return true;
+    if (extDeskCacheFresh()) return true;
     if (extDeskPending) return extDeskPending;
     extDeskPending = (async () => {
       try {
         let sess = null;
         try { sess = await chrome.runtime.sendMessage({ type: "PV_SESSION_STATE" }); } catch (_) {}
         if (sess && sess.ok && sess.locked) {
+          extDeskInvalidate();
           console.log("PV gate: session inactive — refusing page action");
           toast("🔒 Session auto-locked — open the PhantomVault popup and press Retry.");
           return false;
@@ -844,9 +857,11 @@
         try { pong = await chrome.runtime.sendMessage({ type: "PV_PING" }); } catch (_) {}
         if (pong && pong.ok && pong.unlocked !== false) {
           extDeskOkPage = true;
+          extDeskOkAt = Date.now();
           console.log("PV gate: desktop present — page action allowed");
           return true;
         }
+        extDeskInvalidate();
         console.log("PV gate: desktop unreachable — refusing page action");
         toast("🔒 Vault is locked. Unlock PhantomVault desktop app.");
         return false;
@@ -856,6 +871,15 @@
     })();
     return extDeskPending;
   }
+  // E5: returning to the tab must re-verify, and a bfcache restore must not
+  // inherit a pre-lock "ok" verdict.
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) extDeskInvalidate();
+  });
+  window.addEventListener("focus", extDeskInvalidate);
+  window.addEventListener("pageshow", (e) => {
+    if (e.persisted) extDeskInvalidate();
+  });
 
   // ---------- fill primitives ----------
   // Tabnabbing guard: links that open new tabs must not keep an opener handle.

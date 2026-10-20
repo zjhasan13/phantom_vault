@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadContent, submit, flush } from "./content-harness.mjs";
+import { loadContent, submit, flush, runtimeMessage } from "./content-harness.mjs";
 
 const saver = (window) => window.document.getElementById("__pv_saver");
 
@@ -92,4 +92,30 @@ test("E4: all frames load the script, cross-origin frames stay inert", () => {
   const guard = src.indexOf("window.top !== window");
   assert.ok(guard > 0, "same-origin frame guard must exist");
   assert.ok(guard < src.indexOf("const DEFAULTS"), "frame guard must run before capture setup");
+});
+
+test("E5: desktop gate is bounded by TTL and dropped on focus", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw">
+  </form>`);
+  const realNow = window.Date.now.bind(window.Date);
+  let now = realNow();
+  window.Date.now = () => now;
+  t.after(() => { window.Date.now = realNow; });
+  const fill = () => runtimeMessage(window, { type: "PV_HOTKEY_FILL" });
+
+  await fill();
+  assert.equal(store.pings, 1, "first action probes the desktop");
+  await fill();
+  assert.equal(store.pings, 1, "second action reuses the warm cache");
+
+  now += 31 * 1000;
+  await fill();
+  assert.equal(store.pings, 2, "cache must expire after 30 s");
+
+  window.dispatchEvent(new window.Event("focus"));
+  now += 1;
+  await fill();
+  assert.equal(store.pings, 3, "returning to the tab forces re-verification");
 });
