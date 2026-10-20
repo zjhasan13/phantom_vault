@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { JSDOM, VirtualConsole } from "jsdom";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
+const DOMAIN = fs.readFileSync(
+  path.join(ROOT, "..", "..", "browser_extension", "domain.js"), "utf8");
 const CONTENT = fs.readFileSync(
   path.join(ROOT, "..", "..", "browser_extension", "content.js"), "utf8");
 
@@ -68,6 +70,8 @@ export function loadContent(html, url = "https://example.com/login", entries = [
   }
   const store = { entries, session: {} };
   window.chrome = makeChrome(store);
+  // Manifest order: domain.js before content.js (same isolated world).
+  window.eval(DOMAIN);
   window.eval(CONTENT);
   return { dom, window, store };
 }

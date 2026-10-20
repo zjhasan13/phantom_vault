@@ -116,72 +116,13 @@
   });
 
   // ---------- domain utils ----------
-  function registrable(host) {
-    const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
-    if (parts.length <= 2) return parts.join(".");
-    return parts.slice(-2).join("."); // pragmatic; multi-label PSL TLDs are edge cases
-  }
+  // Single implementation lives in domain.js (loaded before content.js by the
+  // manifest; importScripts() in the background SW). E1/E2: no local copies.
+  const registrable = (host) => PVDomain.registrable(host);
   function pageBase() { return registrable(location.hostname); }
-  // Equivalent-domain clusters (mirrors native_host.rs — keep in sync).
-  const EQUIV_CLUSTERS = [
-    ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
-    ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
-    ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
-    ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
-    ["apple.com", "icloud.com"],
-    ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
-    ["sony.com", "playstation.com", "playstationnetwork.com"],
-    ["yahoo.com", "aol.com"],
-  ];
-  const SUB_PREFIXES = ["account", "accounts", "login", "auth", "myaccount", "my", "app", "www", "signin", "sso", "secure", "id", "mail"];
-  function stripSubs(host) {
-    const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
-    while (parts.length > 2 && SUB_PREFIXES.includes(parts[0])) parts.shift();
-    return parts.join(".");
-  }
-  function memberHit(member, domain) {
-    if (member.endsWith(".*")) {
-      const p = member.slice(0, -2);
-      return domain === p || domain.startsWith(p + ".");
-    }
-    return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
-  }
-  function clusterStem(members) {
-    const labels = members.map((m) => m.replace(/\.\*$/, "").split(".")[0] || "");
-    let len = (labels[0] || "").length;
-    for (const l of labels.slice(1)) {
-      let i = 0;
-      while (i < len && (labels[0][i] === l[i])) i++;
-      len = Math.min(len, i);
-    }
-    return len >= 5 ? labels[0].slice(0, len) : null;
-  }
-  // Candidate domains for a host: stripped full host + multi-label suffixes.
-  function domainCands(host) {
-    const full = stripSubs(host);
-    const parts = full.split(".").filter(Boolean);
-    const out = [full];
-    for (let i = 1; i < parts.length; i++) {
-      if (parts.length - i >= 2) out.push(parts.slice(i).join("."));
-    }
-    return out;
-  }
-  // True when two domains are equivalent siblings (cluster or brand-stem).
-  function domainsEquiv(a, b) {
-    const ca = domainCands(a), cb = domainCands(b);
-    for (const cluster of EQUIV_CLUSTERS) {
-      const hitA = ca.some((d) => cluster.some((m) => memberHit(m, d)));
-      if (!hitA) continue;
-      if (cb.some((d) => cluster.some((m) => memberHit(m, d)))) return true;
-      // Brand-stem fallback: distinctive shared root (>= 5 chars).
-      const stem = clusterStem(cluster);
-      if (stem) {
-        const tok = (full => full.split(".")[0] || "")(stripSubs(b));
-        if (tok && (tok === stem || tok.startsWith(stem) || stem.startsWith(tok))) return true;
-      }
-    }
-    return false;
-  }
+  const EQUIV_CLUSTERS = PVDomain.EQUIV_CLUSTERS;
+  const memberHit = (m, d) => PVDomain.memberHit(m, d);
+  const domainsEquiv = (a, b) => PVDomain.domainsEquiv(a, b);
   // Brand letter for inline rows (mirrors desktop brand_of tints loosely).
   // Subdomain prefixes (www., m., accountscenter., login., …) are stripped
   // first — "www.facebook.com" and "accountscenter.facebook.com" both yield

@@ -379,43 +379,9 @@
   const noHost = !host;
   console.log("PV tab host:", host ? `${host} (base: ${hostBase})` : "(none — suggestions off)");
 
-  function pageBase(h) {
-    const parts = String(h || "").toLowerCase().split(".").filter(Boolean);
-    return parts.length <= 2 ? parts.join(".") : parts.slice(-2).join(".");
-  }
-  // Equivalent-domain clusters (mirrors content.js/host — keep in sync).
-  const EQUIV_CLUSTERS = [
-    ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
-    ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
-    ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
-    ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
-    ["apple.com", "icloud.com"],
-    ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
-    ["sony.com", "playstation.com", "playstationnetwork.com"],
-    ["yahoo.com", "aol.com"],
-  ];
-  function memberHit(member, domain) {
-    if (member.endsWith(".*")) {
-      const p = member.slice(0, -2);
-      return domain === p || domain.startsWith(p + ".");
-    }
-    return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
-  }
-  function domainsEquiv(a, b) {
-    const cn = (h) => {
-      const full = String(h || "").toLowerCase();
-      const parts = full.split(".").filter(Boolean);
-      const out = [full];
-      for (let i = 1; i < parts.length; i++) {
-        if (parts.length - i >= 2) out.push(parts.slice(i).join("."));
-      }
-      return out;
-    };
-    const ca = cn(a), cb = cn(b);
-    return EQUIV_CLUSTERS.some((cluster) =>
-      cluster.some((m) => ca.some((d) => memberHit(m, d))) &&
-      cluster.some((m) => cb.some((d) => memberHit(m, d))));
-  }
+  // Domain helpers live in domain.js (loaded before popup.js) — E1/E2.
+  function pageBase(h) { return PVDomain.registrable(h); }
+  function domainsEquiv(a, b) { return PVDomain.domainsEquiv(a, b); }
   // Strict WEBSITE-domain extraction: username/email NEVER participate.
   // A "@gmail.com" username must not turn the whole vault into "Google".
   // Host may send strings (legacy/default) or {url, rule} objects.
@@ -444,8 +410,8 @@
     if (!hostBase) return false;
     const t = (e.title || "").toLowerCase();
     if (t.includes(hostBase)) return true;
-    return EQUIV_CLUSTERS.some((cluster) => {
-      const pageHit = cluster.some((m) => memberHit(m, host));
+    return PVDomain.EQUIV_CLUSTERS.some((cluster) => {
+      const pageHit = cluster.some((m) => PVDomain.memberHit(m, host));
       return pageHit && cluster.some((m) => t.includes(m.replace(/\.\*$/, "")));
     });
   }

@@ -58,8 +58,8 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 
 | ID | Finding | Location |
 |---|---|---|
-| E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` |
-| E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` |
+| E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` — **FIXED (Phase 3)**: `domain.js` PSL-subset `registrable()` |
+| E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
 | E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` |
 | E5 | `extDeskOkPage` session cache never invalidated | `content.js:843` |
@@ -97,16 +97,23 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 
 ## 6. Phase log
 
-- **Phase 1 — data integrity (DONE, awaiting commit):** D5 empty-body guards
+- **Phase 1 — data integrity (DONE `96b9330`):** D5 empty-body guards
   (`decode_remote_blob` + adopt gate), D6 zeroize-on-error, Unicode-safe
   `parse_bw_datetime` and `scan_line`, atomic backup write. Baselines moved
   `cargo test` 446 → **451 passed / 1 ignored**, `npm test` **25/25**.
-- **Phase 2 — security (DONE, awaiting commit):** D3 access-log append is now
+- **Phase 2 — security (DONE `b850ce7`):** D3 access-log append is now
   fail-closed (unreadable chain key ⇒ refuse + loud stderr, never unkeyed
   SHA-256); D4 emergency shard plaintext Vecs zeroized (seal + open); E3 popup
   fill + suggestions honor blocked domains and punycode via the new shared
   `browser_extension/domain.js` (loaded by `popup.html`, packaged by
   `build.ps1`). D2 confirmed dead from the extension — no code change. `npm test`
   **28/28** (added `tests/js/domain.test.mjs`).
-- Next: Phase 3 (E1/E2 shared `domain.js` registrable + clusters across
-  content/background/popup), Phase 4 (D1 lock + E4 iframes).
+- **Phase 3 — shared domain logic (DONE, awaiting commit):** E1 `registrable()`
+  now keeps multi-label public suffixes (`foo.co.uk` → `foo.co.uk`, not
+  `co.uk`) via a pragmatic PSL subset; E2 `EQUIV_CLUSTERS` / `memberHit` /
+  `domainsEquiv` live only in `domain.js`. Wiring: manifest `js` order
+  (`domain.js` before `content.js`) in both manifests, `importScripts()`
+  (classic MV3 SW) in `background.js`, `popup.html` already loads it.
+  Harnesses updated (background `importScripts` stub, content jsdom loads
+  `domain.js` first). `npm test` **32/32**; `cargo test` 452 unchanged.
+- Next: Phase 4 (D1 lock + E4 iframes).

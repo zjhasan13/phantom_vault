@@ -8,6 +8,10 @@
 // mutations land on the bridge after the TTL window (documented, not a bug).
 const HOST_PORT = "com.phantomvault.host";
 
+// E1/E2: shared registrable-domain + equivalent-cluster helpers. A classic
+// MV3 service worker, so importScripts() runs synchronously before any use.
+importScripts("domain.js");
+
 // Base-domains already pushed to the desktop favicon cache this SW
 // lifetime (harvest is idempotent server-side; this just saves fetches).
 const faviconPushed = new Set();
@@ -426,27 +430,13 @@ chrome.commands.onCommand.addListener(async (command) => {
 // ---- Toolbar badge: STRICT domain match count per tab ----
 // The host matches usernames too ("@gmail.com" would inflate every page),
 // so the badge re-filters to website domains only — same rule as popup.
+// E1/E2: implementations live in domain.js (single source).
 function pvRegistrable(host) {
-  const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
-  if (parts.length <= 2) return parts.join(".");
-  return parts.slice(-2).join(".");
+  return PVDomain.registrable(host);
 }
-const PV_EQUIV = [
-  ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
-  ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
-  ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
-  ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
-  ["apple.com", "icloud.com"],
-  ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
-  ["sony.com", "playstation.com", "playstationnetwork.com"],
-  ["yahoo.com", "aol.com"],
-];
+const PV_EQUIV = PVDomain.EQUIV_CLUSTERS;
 function pvMemberHit(member, domain) {
-  if (member.endsWith(".*")) {
-    const p = member.slice(0, -2);
-    return domain === p || domain.startsWith(p + ".");
-  }
-  return domain === member || domain.endsWith("." + member) || member.endsWith("." + domain);
+  return PVDomain.memberHit(member, domain);
 }
 function pvEntryMatchesPage(e, pageHost) {
   const urls = (e && e.urls) || [];

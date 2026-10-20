@@ -19,7 +19,8 @@ import vm from "node:vm";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url));
-const BG = fs.readFileSync(path.join(ROOT, "..", "..", "browser_extension", "background.js"), "utf8");
+const EXT = path.join(ROOT, "..", "..", "browser_extension");
+const BG = fs.readFileSync(path.join(EXT, "background.js"), "utf8");
 
 // --- minimal chrome stub -------------------------------------------------
 // Records what the router asked for; tests answer native-host frames by
@@ -120,6 +121,13 @@ function loadBackground(chrome) {
   };
   sandbox.__fetch = () => {
     throw new Error("fetch stub not installed for this test");
+  };
+  // background.js starts with importScripts("domain.js") (MV3 classic SW).
+  sandbox.importScripts = (...files) => {
+    for (const f of files) {
+      const src = fs.readFileSync(path.join(EXT, f), "utf8");
+      vm.runInContext(src, sandbox, { filename: f });
+    }
   };
   sandbox.globalThis = sandbox;
   vm.createContext(sandbox);

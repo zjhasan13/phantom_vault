@@ -1,12 +1,12 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 2 security fixes (access-log fail-closed, emergency shard zeroize, popup blocked/punycode guards via shared `domain.js`).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 3 shared domain logic (`domain.js` registrable + clusters across content/background/popup).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`. **Uncommitted:** Tier 0 extension capture engine + Phase 1
-  Rust data-integrity fixes (awaiting commit confirmation).
+- Branch `main`. Phases 1–2 + Tier 0 committed; **Phase 3 changes uncommitted**
+  (awaiting commit).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`, Tier 3 target); legacy passkey `uv` boolean
@@ -74,6 +74,19 @@
     (only `assert_full`/`attest` + `uv_token` are sent); legacy parity kept, no
     code change.
   - Tests: `tests/js/domain.test.mjs` added → `npm test` **28/28**.
+- **Phase 3 — shared domain logic (DONE, uncommitted):**
+  - E1: `domain.js` `registrable()` now keeps multi-label public suffixes
+    (`foo.co.uk` → `foo.co.uk`; `shop.foo.co.uk` → `foo.co.uk`,
+    `www.google.co.uk` → `google.co.uk`) using a pragmatic PSL subset.
+  - E2: `EQUIV_CLUSTERS`/`memberHit`/`domainCands`/`domainsEquiv` exist only in
+    `domain.js`; `content.js`, `background.js`, `popup.js` are thin wrappers.
+  - Wiring: both manifests `"js": ["domain.js", "content.js"]` (order matters);
+    `background.js` starts with `importScripts("domain.js")` (classic MV3 SW);
+    `popup.html` loads it before `popup.js`; `build.ps1` already packages it.
+  - Harnesses: background sandbox stubs `importScripts`; the jsdom content
+    harness evaluates `domain.js` before `content.js`.
+  - Tests: +4`domain.test.mjs` cases (registrable ccTLD, pageBase, clusters,
+    ccTLD blocked gate) → `npm test` **32/32**; `cargo test` 452 unchanged.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -81,8 +94,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 451 passed / 1 ignored, `npm test` 28/28 (19
-  background + 6 jsdom content + 3 domain), `cargo check --all-targets` zero
+- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 32/32 (19
+  background + 6 jsdom content + 7 domain), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

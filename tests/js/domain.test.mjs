@@ -51,3 +51,38 @@ test("isPunycodeHost flags IDN lookalikes only", () => {
   assert.equal(isPunycodeHost("example.com"), false);
   assert.equal(isPunycodeHost(""), false);
 });
+
+test("registrable keeps multi-label ccTLD suffixes (E1)", () => {
+  const { registrable } = load();
+  assert.equal(registrable("example.com"), "example.com");
+  assert.equal(registrable("a.b.example.com"), "example.com");
+  assert.equal(registrable("foo.co.uk"), "foo.co.uk");
+  assert.equal(registrable("shop.foo.co.uk"), "foo.co.uk");
+  assert.equal(registrable("www.google.co.uk"), "google.co.uk");
+  assert.equal(registrable("example.com.au"), "example.com.au");
+  assert.equal(registrable("co.uk"), "co.uk");
+  assert.equal(registrable(""), "");
+});
+
+test("pageBase is registrable-aware (was last-two-labels)", () => {
+  const { pageBase } = load();
+  assert.equal(pageBase("foo.bar.co.uk"), "bar.co.uk");
+  assert.equal(pageBase("login.example.co.uk"), "example.co.uk");
+});
+
+test("shared clusters + domain equivalence (E2)", () => {
+  const { EQUIV_CLUSTERS, domainsEquiv, memberHit } = load();
+  assert.equal(EQUIV_CLUSTERS.length, 8);
+  assert.equal(memberHit("google.co.*", "google.co.uk"), true);
+  assert.equal(memberHit("google.co.*", "google.com"), false);
+  assert.equal(domainsEquiv("mail.google.com", "www.youtube.com"), true);
+  assert.equal(domainsEquiv("google.co.uk", "google.com"), true);
+  assert.equal(domainsEquiv("login.microsoftonline.com", "outlook.com"), true);
+  assert.equal(domainsEquiv("example.com", "example.net"), false);
+});
+
+test("blocked gate is ccTLD-safe", () => {
+  const { isBlockedHost } = load();
+  assert.equal(isBlockedHost("login.example.co.uk", ["example.co.uk"]), true);
+  assert.equal(isBlockedHost("other.co.uk", ["example.co.uk"]), false);
+});
