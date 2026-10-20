@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P1 fill-strength (canonical capture URL + site-brand titles).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P3 fill-strength (popup fills through the content engine; P0–P3 complete).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -147,8 +147,23 @@
     (older clients can't inject query/fragment into the vault).
   - Tests: +2 jsdom save-payload + 1 Rust canonicalization →
     `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
-- Baselines: `cargo test` 453 passed / 1 ignored, `npm test` 43/43 (20
-  background + 14 jsdom content + 7 domain + 2 popup), `cargo check --all-targets` zero
+- **P2 (fill strength) — desktop app binding (DONE):**
+  - `Credential.apps: Vec<String>` (`#[serde(default)]`, additive/export-safe).
+    Smart-Grab stores lowercased exe + pretty name via hidden `cap_app`.
+  - QuickBar (`Ctrl+Alt+A`) prefers items bound to the focused app; Auto-Type
+    refuses bound items in any other app (`autotype-blocked-app` log). Unbound
+    web items are unaffected.
+  - Tests: +2 (serde default, binding helper) → `cargo test` **455 passed /
+    1 ignored**; `npm test` 43/43 unchanged.
+- **P3 (fill strength) — popup fill parity (DONE):**
+  - Popup fill/fill-submit now delegates to content.js `PV_FILL_ENTRY {id}`;
+    content re-queries by domain, re-checks `entryAllowed`, fills through
+    `fillLogin()` (React setters, multi-step, TOTP pending) and returns the
+    field count. Direct inject is fallback only; refusals keep their reason.
+  - Tests: +2 jsdom + 1 popup source → `npm test` **46/46** (20 background +
+    16 content + 7 domain + 3 popup).
+- Baselines: `cargo test` 455 passed / 1 ignored, `npm test` 46/46 (20
+  background + 16 jsdom content + 7 domain + 3 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

@@ -195,6 +195,33 @@ test("P1: title suffix heuristic + root URL normalization", async (t) => {
     "generic 'Sign in' segment skipped, brand kept");
 });
 
+test("P3: PV_FILL_ENTRY fills through the content engine", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="">
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/login",
+    [{ id: "e1", title: "Example", username: "alice", password: "hunter2", urls: ["example.com"] }]);
+  const res = await runtimeMessage(window, { type: "PV_FILL_ENTRY", id: "e1" });
+  await flush();
+  assert.ok(res && res.ok, "content accepted the fill");
+  assert.equal(res.filled, 2, "username + password counted");
+  assert.equal(window.document.querySelector('input[name="username"]').value, "alice");
+  assert.equal(window.document.querySelector('input[name="password"]').value, "hunter2");
+});
+
+test("P3: PV_FILL_ENTRY refuses ids the page domain cannot claim", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="keep">
+    <input type="password" name="password" value="keep">
+  </form>`, "https://discord-login.com/login",
+    [{ id: "desk1", title: "Discord", username: "alice", password: "hunter2" }]);
+  const res = await runtimeMessage(window, { type: "PV_FILL_ENTRY", id: "desk1" });
+  await flush();
+  assert.equal(res.ok, false);
+  assert.equal(res.error, "not for this site");
+  assert.equal(window.document.querySelector('input[name="password"]').value, "keep");
+});
+
 test("E6: document scans run through one debounced observer", () => {
   const src = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
   assert.equal((src.match(/new MutationObserver\(pvScheduleScan\)/g) || []).length, 1);

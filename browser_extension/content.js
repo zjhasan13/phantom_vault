@@ -2386,7 +2386,23 @@
       // E5: background saw a lock/timeout (own probe, popup, or another tab) —
       // drop the desktop gate cache before the next page action.
       if (msg.type === "PV_GATE_LOCKED") { extDeskInvalidate(); return { ok: true }; }
-      if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
+        if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
+        // P3: popup quick-fill delegates here so React setters, multi-step
+        // chaining and the URL gate are shared with hotkey/autofill. The
+        // content script re-queries by domain (never trusts the popup's copy).
+        if (msg.type === "PV_FILL_ENTRY") {
+          if (isBlocked() || phishingRefuse() || !location.host) return { ok: false };
+          if (!(await requireExtPin())) return { ok: false };
+          const id = String(msg.id || "");
+          if (!id) return { ok: false, error: "missing id" };
+          const list = await queryHost("PV_QUERY", pageBase());
+          const entry = list.find((e) => e.id === id);
+          if (!entry) return { ok: false, error: "not for this site" };
+          const fields = findFields();
+          const filled = (fields.users.length ? 1 : 0) + (fields.pass.length ? 1 : 0);
+          await fillLogin(entry, fields);
+          return { ok: true, filled };
+        }
       // Phase 3 relay: popup approval surface for the held ceremony.
       if (msg.type === "PV_ASSERT_PENDING") {
         return { ok: true, pending: pvCeremony ?

@@ -542,28 +542,37 @@
     });
     row.querySelector(".btns").append(btn);
   }
+  // P3: prefer the content engine (React setters, multi-step chaining, TOTP
+  // pending, URL gate). Direct inject is a fallback for tabs where content.js
+  // is absent (restricted pages / not yet injected).
+  async function fillEntry(tabId, entry) {
+    try {
+      const res = await chrome.tabs.sendMessage(tabId, { type: "PV_FILL_ENTRY", id: entry.id });
+      if (res && res.ok) return { filled: (res.filled || 0) > 0 };
+      if (res && res.error) return { filled: false, error: res.error };
+    } catch (_) {}
+    const f = await injectFill(tabId, entry);
+    return { filled: !!(f.u || f.p) };
+  }
   async function doFill(entry) {
     if (!(await fillGuards(entry))) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
-    let found = { u: false, p: false };
+    let found;
     try {
-      found = await injectFill(tab.id, entry);
+      found = await fillEntry(tab.id, entry);
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || "inject failed");
       return;
     }
-    if (!found.u && !found.p) {
+    if (found.error) {
+      status.textContent = "⚠️ " + found.error;
+      return;
+    }
+    if (!found.filled) {
       status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
       return;
     }
-    // Step-1 handoff: the content script never saw this fill (direct
-    // inject), so hand it the entry id — it re-queries and stashes pending
-    // secrets itself for password/OTP step chaining. Best-effort.
-    try {
-      const p = chrome.tabs.sendMessage(tab.id, { type: "PV_STASH_PENDING", id: entry.id });
-      if (p && p.catch) p.catch(() => {});
-    } catch (_) {}
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }
@@ -571,14 +580,18 @@
     if (!(await fillGuards(entry))) return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
     if (!tab || tab.id == null) return;
-    let found = { u: false, p: false };
+    let found;
     try {
-      found = await injectFill(tab.id, entry);
+      found = await fillEntry(tab.id, entry);
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || "inject failed");
       return;
     }
-    if (!found.u && !found.p) {
+    if (found.error) {
+      status.textContent = "⚠️ " + found.error;
+      return;
+    }
+    if (!found.filled) {
       status.textContent = "⚠️ No login fields on this page — open the site's sign-in form first.";
       return;
     }
@@ -590,10 +603,6 @@
       return;
     }
     if (!submitted) status.textContent = "⚠️ Filled, but no submittable form found.";
-    try {
-      const p = chrome.tabs.sendMessage(tab.id, { type: "PV_STASH_PENDING", id: entry.id });
-      if (p && p.catch) p.catch(() => {});
-    } catch (_) {}
     try { await chrome.runtime.sendMessage({ type: "PV_FILLED", id: entry.id }); } catch (_) {}
     window.close();
   }

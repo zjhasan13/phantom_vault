@@ -24,3 +24,12 @@ test("P0: popup fill + suggestion gates refuse URL-less items", () => {
 test("P0: popup explains the unbound refusal instead of a phishing warning", () => {
   assert.match(SRC, /No site URL saved — edit this item and add one\./);
 });
+
+test("P3: popup quick-fill delegates to the content engine first", () => {
+  const fill = SRC.match(/async function fillEntry\(tabId, entry\) \{([\s\S]*?)\n  \}/);
+  assert.ok(fill, "fillEntry present");
+  const body = fill[1];
+  assert.ok(body.includes('type: "PV_FILL_ENTRY"'), "content engine message sent");
+  assert.ok(body.indexOf("PV_FILL_ENTRY") < body.indexOf("injectFill"),
+    "content engine tried before direct inject");
+});

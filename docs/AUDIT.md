@@ -174,3 +174,20 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   normalization in `save_login` (defense in depth for older clients). Tests:
   +2 jsdom save-payload regressions and +1 Rust canonicalization test →
   `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
+- **P2 — desktop app binding (DONE):** `Credential` gained an additive
+  `#[serde(default)] apps: Vec<String>` (old vaults load unchanged; disk/export
+  round-trips preserve it). Smart-Grab stores the lowercased exe stem + pretty
+  app name (`cap_app`, hidden Slint property); `Ctrl+Alt+A` QuickBar shows
+  items bound to the focused app regardless of title (text fallback when no
+  binding exists). Auto-Type now refuses app-bound items in any other
+  foreground app (`autotype-blocked-app` access-log event) while unbound web
+  items stay unrestricted. Tests: +1 serde-default, +1 binding helper →
+  `cargo test` **455 passed / 1 ignored**; no extension change.
+- **P3 — popup fill parity (DONE):** popup quick-fill/fill-submit used a naive
+  `executeScript` injector (first text/email + first password), bypassing the
+  content engine's React setters, multi-step chaining and URL gate. Both now
+  send `PV_FILL_ENTRY {id}`; content re-queries by domain, re-applies
+  `entryAllowed`, fills with `fillLogin()` and reports the field count. Direct
+  inject remains only as a fallback for tabs without content.js; a content
+  refusal surfaces its real reason. Tests: +2 jsdom (engine fill, unbound id
+  refusal) +1 popup source assertion → `npm test` **46/46**.
