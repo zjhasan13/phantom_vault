@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P5 fill-strength (UIA login field-pairing, no Tab dependency; SendInput fallback).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P6 web fill-strength (cross-origin iframe fill, frame-local origin matching, frame-targeted popup/hotkey/menu).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -94,11 +94,11 @@
     New sidebar **Exit** (`slint:1351`, `on_exit_app`) + tray **Exit** are the
     only quit paths (clipboard flushed first, log event `exit`). Unlock already
     existed in the Slint lock screen, so no new screen was added.
-  - E4: both manifests `all_frames:true`; `content.js:9-22` returns before any
+  - E4: both manifests `all_frames:true`; the original same-origin guard (removed in P6) returned before any
     setup unless the frame is top-level or SAME-ORIGIN (reads `top.location`,
     throws on cross-origin ⇒ inert). No `match_about_blank` (hostless origin ⇒
     refused). Prevents a third-party iframe from raising a save prompt for its
-    own host.
+    own host. (P6 later superseded this with frame-local-origin matching.)
   - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression →
     `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**.
 - **Phase 5 (audit) — E5 desktop-gate cache (DONE `fc36e65`):**
@@ -176,10 +176,26 @@
     foreground window; verify both writable before writing; revert partial
     writes; refuse when focus is an Edit outside the pair (chat/search box).
     Success = SetValue both, `autotype/uia-pair` log, Enter — no Tab dependency.
-  - Fallback chain stays: per-field UIA SetValue (P4) → guarded Unicode typing.
-  - Test: +1 `pick_login_pair` matrix → `cargo test` **457 passed / 1 ignored**.
-- Baselines: `cargo test` 457 passed / 1 ignored, `npm test` 46/46 (20
-  background + 16 jsdom content + 7 domain + 3 popup), `cargo check --all-targets` zero
+  - Fallback chain stays: per-field UIA SetValue (P4) -> guarded Unicode typing.
+  - Test: +1 `pick_login_pair` matrix -> `cargo test` **457 passed / 1 ignored**.
+- **P6 (web fill strength) - cross-origin iframe fill (DONE `7e6da61`):**
+  - `content.js` boots in cross-origin frames instead of self-disabling; badges,
+    autofill, save prompts and TOTP use the FRAME's own origin for every match
+    (top location is never read). A credential can therefore only land in the
+    origin it was saved for.
+  - Background `PV_SAVE_LOGIN` validates `sender.url` (frame) before
+    `sender.tab.url`, so an embedded login is stored under the iframe domain -
+    never under the embedding page's domain.
+  - `PVDomain.pickActionFrame()` probes all frames (visible password/text field,
+    focus, top flag) and picks the form frame; hotkey uses it, context menu uses
+    `info.frameId`, both send with an explicit `{frameId}` (fallback 0, never a
+    broadcast). Popup gathers frame hosts, merges iframe-domain suggestions
+    (max 5 extra origins), applies blocked/punycode/mismatch gates to them, and
+    targets `PV_FILL_ENTRY` + direct inject + submit at the same frame. Top-only
+    ceremony/OTP popup messages now pass `{frameId:0}`.
+  - Tests: +4 background, +1 domain, +2 popup -> `npm test` **53/53**;
+    `browser_extension/build.ps1` builds chrome+firefox.
+- Baselines: `cargo test` 457 passed / 1 ignored, `npm test` 53/53 (24 background + 16 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

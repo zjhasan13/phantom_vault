@@ -63,7 +63,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` — **FIXED (Phase 3)**: `domain.js` PSL-subset `registrable()` |
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
-| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` — **FIXED (Phase 4)**: `all_frames:true` + same-origin frame guard in `content.js:9-22`; cross-origin and `about:blank` frames stay inert by design (no `match_about_blank`) |
+| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` - **FIXED (Phase 4)**: `all_frames:true`; **P6** removes the inert cross-origin guard - every frame matches/fills with its OWN origin, save sender is validated by `sender.url`, and popup/hotkey/menu route to the frame that owns the form. No `match_about_blank` (hostless origin still refused) |
 | E5 | `extDeskOkPage` session cache never invalidated | `content.js:824-873` — **FIXED (Phase 5)**: 30 s TTL + cache drop on `focus` / `visibilitychange`(visible) / bfcache `pageshow`; a `PV_SESSION_STATE` locked reply clears it, and the background broadcasts `PV_GATE_LOCKED` to every tab the moment any caller detects a lock/idle timeout (Phase 6). Staleness is bounded to 30 s and every secret still rides the native bridge gate |
 | E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2468-2480` — **FIXED (Phase 6)**: the two synchronous subtree observers became ONE 120 ms-debounced observer (`pvScheduleScan`) that coalesces re-render storms into a single `scan()`+`scanForms()` pass; cold pages still scan immediately |
 
@@ -96,11 +96,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 - **Tier 0 scope:** extension capture engine only.
 - **Multi-page carry:** username only (non-secret). Password is **never**
   persisted to `storage.session`/`local` (P1-b policy intact).
-- **iframe capture:** same-origin subframes only. `all_frames:true` injects
-  everywhere, but `content.js` self-disables in cross-origin frames (top
-  `location` read throws) so a third-party iframe can never raise a save
-  prompt for its own host. `match_about_blank` stays off (blank frames inherit
-  a hostless origin and are refused).
+- **iframe capture:** every frame, by its own origin (P6). `all_frames:true` injects everywhere; a cross-origin frame matches/fills only credentials saved for that frame's own URL, and `PV_SAVE_LOGIN` is validated against `sender.url` (never the top tab), so an embedded login is stored under the iframe origin. Popup, hotkey and context menu pick the frame with the visible form (`PVDomain.pickActionFrame`, `info.frameId` for menus). `match_about_blank` stays off (blank frames inherit a hostless origin and are refused).
 
 ## 6. Phase log
 
@@ -210,3 +206,19 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   logs `autotype/uia-pair`, then sends Enter. Read-only password boxes / missing
   pairs fall back to the P4 per-field SetValue → SendInput path. Test: +1 pick
   heuristic matrix → `cargo test` **457 passed / 1 ignored**.
+
+- **P6 — cross-origin iframe fill (DONE `7e6da61`):** `content.js` no longer disables
+  itself in cross-origin frames: embedded SSO/checkout logins now get badges,
+  autofill and save prompts, and every domain decision uses the frame's own
+  origin (the top document is never read). Background `PV_SAVE_LOGIN` validates
+  `sender.url`, so an iframe credential is saved under the iframe's domain, not
+  the embedding page. `PVDomain.pickActionFrame()` (shared) probes all frames
+  via `chrome.scripting.executeScript({allFrames:true})` and routes hotkey/menu
+  to the frame with the focused/visible password form (menu uses `info.frameId`;
+  fallback = explicit top frame, never a broadcast). Popup collects frame hosts,
+  merges iframe-domain suggestions (capped at 5 extra origins), extends the
+  blocked/punycode/mismatch gates to them, and sends `PV_FILL_ENTRY` + direct
+  inject + submit to the same picked frame. Top-only ceremony/OTP popup calls
+  now pass `{frameId:0}` so they can never be answered by an iframe. Tests:
+  +4 background (frame save accept/refuse, hotkey routing/fallback), +1 domain
+  pick matrix, +2 popup source → `npm test` **53/53**.
