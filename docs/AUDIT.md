@@ -18,10 +18,12 @@
 | `st["fill_counts"][id]` serde_json IndexMut panic | **FALSE POSITIVE** | Same pattern already ships at `native_host.rs:1313` and is exercised by `native_host.rs:2467` (`fill_counts_and_verified_propagate`). No panic. |
 | `backup_scheduler` backs up the wrong file | **FALSE POSITIVE (project-wide note)** | `storage/backup_scheduler.rs:100` reads `developer::vault_run::VAULT_FILE`; the entire app uses the same relative `my_secure_vault.enc` (`main.rs:44`). CWD-relative is a project-wide convention, not a scheduler bug. |
 
-Unverified agent reports (kept for a later pass, **not** reproduced here):
-`security/access_log.rs:96-99` (HMAC→SHA256), `security/emergency.rs:259-264`
-(shards in heap), `main.rs:2011` toast scope, `content.js:843` session-cache
-invalidation.
+Unverified agent reports — all closed since: `security/access_log.rs:96-99`
+(HMAC→SHA256) = D3 fixed; `security/emergency.rs:259-264` (shards in heap) =
+D4 fixed; `content.js:843` session-cache invalidation = E5 fixed; the
+`main.rs:2011` "toast scope" claim is **unreproducible** (baseline line 2011 is
+`AuthView { … group_code(&next) … }`, no toast) and is closed as a false
+attribution.
 
 ### Verified in the Phase 1 pass (previously "unverified")
 
@@ -62,8 +64,8 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
 | E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` — **FIXED (Phase 4)**: `all_frames:true` + same-origin frame guard in `content.js:9-22`; cross-origin and `about:blank` frames stay inert by design (no `match_about_blank`) |
-| E5 | `extDeskOkPage` session cache never invalidated | `content.js:824-873` — **FIXED (Phase 5)**: 30 s TTL + cache drop on `focus` / `visibilitychange`(visible) / bfcache `pageshow`; a `PV_SESSION_STATE` locked reply also clears it. Staleness is bounded to 30 s and every secret still rides the native bridge gate |
-| E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2461-2462` — **DEFERRED (perf only)**: no correctness/security impact; revisit if profiling shows jank |
+| E5 | `extDeskOkPage` session cache never invalidated | `content.js:824-873` — **FIXED (Phase 5)**: 30 s TTL + cache drop on `focus` / `visibilitychange`(visible) / bfcache `pageshow`; a `PV_SESSION_STATE` locked reply clears it, and the background broadcasts `PV_GATE_LOCKED` to every tab the moment any caller detects a lock/idle timeout (Phase 6). Staleness is bounded to 30 s and every secret still rides the native bridge gate |
+| E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2468-2480` — **FIXED (Phase 6)**: the two synchronous subtree observers became ONE 120 ms-debounced observer (`pvScheduleScan`) that coalesces re-render storms into a single `scan()`+`scanForms()` pass; cold pages still scan immediately |
 
 ## 3. Desktop findings (separate line — not Tier 0)
 
@@ -138,3 +140,12 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   security hole. Regression test stubs `Date.now` and asserts one probe for
   warm actions, re-probe after 31 s, and re-probe after `focus` →
   `npm test` **34/34**. Extension-only (no Rust rebuild).
+- **Phase 6 — E6 observer + lock broadcast (DONE):** `content.js` replaces the
+  two synchronous `documentElement` subtree observers with ONE 120 ms-debounced
+  observer (`pvScheduleScan`) that runs `scan()` + `scanForms()` once per
+  mutation storm; boot scans stay immediate. `background.js` now pushes
+  `PV_GATE_LOCKED` to every tab whenever a `PV_SESSION_STATE` reply is locked or
+  a `PV_PING` fails/reports `unlocked:false`, so E5's cache drops on lock/idle
+  timeout across all tabs, not just the probing one. Tests: +3 (background
+  broadcast, content broadcast invalidation, E6 static guard) →
+  `npm test` **37/37**. Extension-only (no Rust rebuild).

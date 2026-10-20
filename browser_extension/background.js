@@ -188,6 +188,29 @@ async function sessionState() {
   }
 }
 
+// E5: a lock/timeout verdict discovered by ANY caller (popup, another tab,
+// native PING) must drop every content-script gate cache immediately — a warm
+// 30 s cache in a background tab must not keep authorizing page actions after
+// the vault locked. Content treats this as "re-probe on next action".
+function broadcastGateLocked() {
+  try {
+    if (!chrome.tabs || typeof chrome.tabs.sendMessage !== "function") return;
+    const send = (tabs) => {
+      for (const t of tabs || []) {
+        if (!t || t.id == null) continue;
+        try {
+          Promise.resolve(chrome.tabs.sendMessage(t.id, { type: "PV_GATE_LOCKED" })).catch(() => {});
+        } catch (_) {}
+      }
+    };
+    let handled = false;
+    const ret = chrome.tabs.query({}, (tabs) => { handled = true; send(tabs); });
+    if (ret && typeof ret.then === "function") {
+      ret.then((tabs) => { if (!handled) send(tabs); }).catch(() => {});
+    }
+  } catch (_) {}
+}
+
 // Content scripts + popup talk to us here; we only proxy to the vault.
 // After mutating calls (save/fill) the toolbar count may change, so the
 // originating tab's badge refreshes on the next tick.
@@ -236,7 +259,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return await hostRequest({ cmd: "identities", app: msg.app || msg.url || "" });
     }
     if (msg.type === "PV_PING") {
-      return await hostRequest({ cmd: "ping" });
+      try {
+        const r = await hostRequest({ cmd: "ping" });
+        if (!r || r.ok === false || r.unlocked === false) broadcastGateLocked();
+        return r;
+      } catch (e) {
+        broadcastGateLocked();
+        throw e;
+      }
     }
     // Session state for the desktop-synced lock (no PIN anywhere).
     if (msg.type === "PV_ACTIVITY") {
@@ -244,7 +274,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return { ok: true };
     }
     if (msg.type === "PV_SESSION_STATE") {
-      return await sessionState();
+      const st = await sessionState();
+      if (st && st.ok && st.locked) broadcastGateLocked();
+      return st;
     }
     if (msg.type === "PV_UNLOCKED_TOUCH") {
       // Popup Retry confirmed desktop presence — restart the idle clock.

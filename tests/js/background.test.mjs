@@ -322,3 +322,15 @@ test("PV_SAVE_LOGIN: cross-site sender URL is refused, zero host spawn", async (
   assert.match(r.error || "", /does not match/i);
   assert.equal(chrome.__state.postedNative.length, 0);
 });
+
+test("E5: a locked session broadcasts PV_GATE_LOCKED to every tab", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.tabList = [{ id: 7 }, { id: 8 }];
+  chrome.__state.sessionStore.pv_last_active = Date.now() - 11 * 60 * 1000;
+  chrome.__state.localStore.lock_timeout_min = 10;
+  const r = await sendMessage(onMessage, chrome, { type: "PV_SESSION_STATE" });
+  assert.equal(r.locked, true);
+  await flushTicks();
+  const hits = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_GATE_LOCKED");
+  assert.deepEqual(hits.map((x) => x.id).sort(), [7, 8]);
+});

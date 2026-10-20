@@ -33,6 +33,8 @@ function makeChrome() {
     postedNative: [],
     ports: [],
     accessLevel: null,
+    tabList: [],
+    sentToTabs: [],
   };
   const port = () => {
     const handlers = { message: [], disconnect: [] };
@@ -83,7 +85,11 @@ function makeChrome() {
       onChanged: { addListener: (fn) => listeners.onChanged.push(fn) },
     },
     tabs: {
-      query: async () => [],
+      query: async () => state.tabList,
+      sendMessage: async (id, msg) => {
+        state.sentToTabs.push({ id, msg });
+        return { ok: true };
+      },
       get: async () => ({ id: 1, url: "https://example.com/" }),
       onActivated: { addListener: (fn) => listeners.onActivated.push(fn) },
       onUpdated: { addListener: (fn) => listeners.onUpdated.push(fn) },

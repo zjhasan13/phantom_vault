@@ -1,12 +1,12 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 5 audit E5 (desktop-gate cache bounded by 30 s TTL + focus/visibility/bfcache invalidation).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 6 audit (E6 debounced document observer + background `PV_GATE_LOCKED` broadcast on lock/timeout).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
 
-- Branch `main`. Tier 0 + audit Phases 1–5 committed (`117e38b`, `96b9330`,
-  `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`).
+- Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
+  `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, Phase 6).
 - **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
   (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
@@ -111,6 +111,17 @@
     `Date.now` → one probe warm, re-probe after 31 s, re-probe after `focus`.
     `npm test` **34/34** (19 background + 8 content + 7 domain). Extension-only;
     no Rust rebuild.
+- **Phase 6 (audit) — E6 observer + lock broadcast (DONE):**
+  - E6: the two synchronous `documentElement` subtree observers became ONE
+    120 ms-debounced observer (`pvScheduleScan`) running `scan()` +
+    `scanForms()`; cold-page boot scans stay immediate.
+  - E5 follow-up: `background.js` `broadcastGateLocked()` pushes
+    `PV_GATE_LOCKED` to every tab when a `PV_SESSION_STATE` reply is locked or
+    a `PV_PING` fails / reports `unlocked:false`; content drops its gate cache
+    on receipt. Lock/timeout now invalidates all tabs immediately.
+  - Tests: +3 (background broadcast fan-out, content broadcast invalidation,
+    E6 static guard) → `npm test` **37/37** (20 background + 10 content +
+    7 domain). Extension-only; no Rust rebuild.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
   `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
@@ -118,8 +129,8 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 34/34 (19
-  background + 8 jsdom content + 7 domain), `cargo check --all-targets` zero
+- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 37/37 (20
+  background + 10 jsdom content + 7 domain), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

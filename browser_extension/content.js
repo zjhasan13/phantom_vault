@@ -872,7 +872,9 @@
     return extDeskPending;
   }
   // E5: returning to the tab must re-verify, and a bfcache restore must not
-  // inherit a pre-lock "ok" verdict.
+  // inherit a pre-lock "ok" verdict. `PV_GATE_LOCKED` is pushed by the
+  // background the moment ANY surface discovers a desktop lock / idle timeout,
+  // so every tab drops its warm cache immediately (not just after 30 s).
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) extDeskInvalidate();
   });
@@ -2339,6 +2341,9 @@
   // ---------- messages from popup / menus / hotkey ----------
   chrome.runtime.onMessage.addListener((msg, _s, sendResponse) => {
     (async () => {
+      // E5: background saw a lock/timeout (own probe, popup, or another tab) —
+      // drop the desktop gate cache before the next page action.
+      if (msg.type === "PV_GATE_LOCKED") { extDeskInvalidate(); return { ok: true }; }
       if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
       // Phase 3 relay: popup approval surface for the held ceremony.
       if (msg.type === "PV_ASSERT_PENDING") {
@@ -2482,8 +2487,23 @@
   scanForms();
   console.log("PV content boot:", location.host || "(no host)");
   try { harvestFavicon(); } catch (_) {}
-  new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
-  new MutationObserver(scanForms).observe(document.documentElement, { childList: true, subtree: true });
+  // E6: ONE debounced observer replaces two synchronous document-wide ones.
+  // Framework re-render storms now coalesce into a single scan per 120 ms
+  // instead of running both passes for every mutation batch. The immediate
+  // scan()/scanForms() calls above still handle the cold page without delay.
+  let pvScanTimer = 0;
+  const pvScheduleScan = () => {
+    if (pvScanTimer) return;
+    pvScanTimer = setTimeout(() => {
+      pvScanTimer = 0;
+      scan();
+      scanForms();
+    }, 120);
+  };
+  new MutationObserver(pvScheduleScan).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
   // Fixed overlays must track the viewport (passive listeners, no jank).
   let reposT = 0;
   const queueRepos = () => {

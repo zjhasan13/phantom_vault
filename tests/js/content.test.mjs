@@ -119,3 +119,26 @@ test("E5: desktop gate is bounded by TTL and dropped on focus", async (t) => {
   await fill();
   assert.equal(store.pings, 3, "returning to the tab forces re-verification");
 });
+
+test("E5: PV_GATE_LOCKED drops a warm desktop-gate cache", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw">
+  </form>`);
+  const fill = () => runtimeMessage(window, { type: "PV_HOTKEY_FILL" });
+  await fill();
+  assert.equal(store.pings, 1);
+  await fill();
+  assert.equal(store.pings, 1, "warm cache avoids a second probe");
+  await runtimeMessage(window, { type: "PV_GATE_LOCKED" });
+  await fill();
+  assert.equal(store.pings, 2, "a lock broadcast forces the next action to re-probe");
+});
+
+test("E6: document scans run through one debounced observer", () => {
+  const src = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
+  assert.equal((src.match(/new MutationObserver\(pvScheduleScan\)/g) || []).length, 1);
+  assert.ok(!/new MutationObserver\(scan\)/.test(src), "no undebounced scan observer");
+  assert.ok(!/new MutationObserver\(scanForms\)/.test(src), "no undebounced scanForms observer");
+  assert.match(src, /pvScanTimer = setTimeout\(\(\) => \{[\s\S]{0,120}scan\(\);[\s\S]{0,80}scanForms\(\);[\s\S]{0,40}\}, 120\)/);
+});

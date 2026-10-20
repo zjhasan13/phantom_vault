@@ -21,7 +21,9 @@ function makeChrome(store) {
       return { ok: true, entries: store.entries };
     }
     if (msg.type === "PV_EXT_PIN") return { ok: true, hash: "a".repeat(64) };
-    if (msg.type === "PV_SESSION_STATE") return { ok: true, locked: false };
+    if (msg.type === "PV_SESSION_STATE") {
+      return { ok: true, locked: !!store.sessionLocked, reason: store.sessionLocked ? "inactive" : "active" };
+    }
     if (msg.type === "PV_PING") {
       store.pings += 1;
       return { ok: true, unlocked: true };
@@ -72,7 +74,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, session: {}, pings: 0 };
+  const store = { entries, session: {}, pings: 0, sessionLocked: false };
   window.chrome = makeChrome(store);
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);
