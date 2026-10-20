@@ -61,6 +61,28 @@ pub struct AgentKey {
     signing: ed25519_dalek::SigningKey,
 }
 
+// Explicit wipe: dalek zeroizes `secret_key` in its own Drop, but that only
+// fires when the SigningKey itself is dropped. ZeroizeOnDrop makes the intent
+// part of the type contract (Arc<Vec<AgentKey>> drop, session teardown).
+impl zeroize::Zeroize for AgentKey {
+    fn zeroize(&mut self) {
+        self.comment.zeroize();
+        self.pubkey.zeroize();
+        // No Zeroize impl on SigningKey 2.x: replace it so the old key's Drop
+        // runs now and wipes secret_key, instead of lingering until struct drop.
+        self.signing = ed25519_dalek::SigningKey::from_bytes(&[0u8; 32]);
+    }
+}
+
+impl Drop for AgentKey {
+    fn drop(&mut self) {
+        use zeroize::Zeroize as _;
+        self.zeroize();
+    }
+}
+
+impl zeroize::ZeroizeOnDrop for AgentKey {}
+
 // Manual Debug: never leak key material into logs.
 impl std::fmt::Debug for AgentKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -392,6 +414,15 @@ pub fn serve_cli() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_zeroize_on_drop<T: zeroize::ZeroizeOnDrop>() {}
+
+    #[test]
+    fn agent_key_wipes_on_drop() {
+        // Compile-time contract: explicit wipe instead of relying on dalek's
+        // internal drop order (the Arc<Vec<AgentKey>> outlives individual ops).
+        assert_zeroize_on_drop::<AgentKey>();
+    }
 
     fn test_keys() -> Vec<AgentKey> {
         // Deterministic test key (NOT a real secret — committed fixture).

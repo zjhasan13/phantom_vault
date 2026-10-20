@@ -497,7 +497,7 @@ pub fn route(
         // failures when the local state is reset between runs (ephemeral
         // sandbox), so tests keep passing; in production this is a guardrail.
         let last = read_adopted_head();
-        if !p2p_test_mode() && remote_mtime <= last.mtime && !last.sha.is_empty() && last.sha != sha {
+        if !p2p_test_mode() && adopt_rollback_blocked(last.mtime, &last.sha, remote_mtime, &sha) {
             return (409, r#"{"ok":false,"error":"replay or rollback attempted — local kept"}"#.into(), None);
         }
         return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, remote_mtime, blob)));
@@ -543,6 +543,13 @@ fn adopted_head_path() -> std::path::PathBuf {
 struct AdoptedHead {
     mtime: u64,
     sha: String,
+}
+
+/// Replay/rollback guard: a push at or below the last adopted mtime with a
+/// DIFFERENT sha is refused. Same sha at the same mtime is just idempotent.
+/// Extracted so the guard is unit-tested without the test-mode bypass.
+fn adopt_rollback_blocked(last_mtime: u64, last_sha: &str, remote_mtime: u64, sha: &str) -> bool {
+    remote_mtime <= last_mtime && !last_sha.is_empty() && last_sha != sha
 }
 
 fn read_adopted_head() -> AdoptedHead {
@@ -1098,6 +1105,19 @@ mod tests {
         assert!(adopt.is_some());
         clear_pin_file();
         let _ = std::fs::remove_dir_all(&sandbox);
+    }
+
+    #[test]
+    fn adopt_rollback_guard_is_monotonic_and_idempotent() {
+        // Older head with a different blob = rollback/replay.
+        assert!(adopt_rollback_blocked(10, "abc", 9, "def"));
+        assert!(adopt_rollback_blocked(10, "abc", 10, "def"));
+        // Same blob at the same age is idempotent, not an attack.
+        assert!(!adopt_rollback_blocked(10, "abc", 10, "abc"));
+        // Never adopted anything yet → guard must not block.
+        assert!(!adopt_rollback_blocked(0, "", 1, "abc"));
+        // Strictly newer head always wins.
+        assert!(!adopt_rollback_blocked(10, "abc", 11, "def"));
     }
 
     #[test]
