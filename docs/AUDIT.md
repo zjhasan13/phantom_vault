@@ -149,3 +149,17 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   timeout across all tabs, not just the probing one. Tests: +3 (background
   broadcast, content broadcast invalidation, E6 static guard) →
   `npm test` **37/37**. Extension-only (no Rust rebuild).
+
+## 7. Fill/capture strength pass (P0–P3)
+
+- **P0 — URL-less web fill hole (DONE):** desktop Smart-Grab items store
+  `urls: Vec::new()`, while both gates treated an empty URL list as "allow"
+  (`content.js:197`, `popup.js:422`) and native `query` matches on
+  title/username substrings. A lookalike host (`discord-login.com`) could
+  therefore pull a desktop-captured "Discord" item and autofill it. Both gates
+  now **refuse** entries without a stored URL; `filterEntries` skips them
+  silently (phishing toast reserved for real stored-URL mismatches) and the
+  popup explains "No site URL saved — edit this item and add one." Desktop
+  items remain reachable via the app-aware QuickBar/Auto-Type. Tests: +4
+  (url-less hotkey refusal, bound control, popup gate/source assertions) →
+  `npm test` **41/41**; `cargo test` 452 unchanged (extension-only).

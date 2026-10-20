@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Phase 6 audit (E6 debounced document observer + background `PV_GATE_LOCKED` broadcast on lock/timeout).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: P0 fill-strength (URL-less items refused on every web fill surface).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -129,8 +129,17 @@
   (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
   auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 37/37 (20
-  background + 10 jsdom content + 7 domain), `cargo check --all-targets` zero
+- **P0 (fill strength) — URL-less web fill hole (DONE):**
+  - Finding: desktop items carry no URL (`urls: []`), but `content.js` and
+    `popup.js` treated an empty URL list as allow (`entryAllowed`), and native
+    `query` is substring-based → lookalike domains could autofill desktop
+    items. Fixed both gates to refuse URL-less entries; content skips them
+    silently (phishing toast only for stored-URL mismatches), popup shows
+    "No site URL saved — edit this item and add one."
+  - Tests: +4 (url-less hotkey refusal + bound control in jsdom, popup
+    gate/source assertions) → `npm test` **41/41**; extension-only.
+- Baselines: `cargo test` 452 passed / 1 ignored, `npm test` 41/41 (20
+  background + 12 jsdom content + 7 domain + 2 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

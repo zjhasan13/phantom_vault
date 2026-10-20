@@ -187,14 +187,18 @@
     }
     return false;
   }
-  // Entry allow-list by match mode. Entries WITHOUT stored urls pass through
-  // (legacy titles) — only entries WITH urls are strictly verified.
+  // Entry allow-list by match mode. P0: entries WITHOUT a stored URL have no
+  // domain binding, so they can NEVER be verified against the page — refuse
+  // them on every web surface. Native query matching is title/username
+  // substring based, so a lookalike host could otherwise pull a desktop-
+  // captured item ("Discord") for "discord-login.com". App/desktop items stay
+  // usable through the app-aware QuickBar + Auto-Type instead.
   // Per-URL rule override (0 Default → global match_mode; 1 base, 2 host,
   // 3 exact, 4 prefix, 5 never). Host may send strings (legacy/default)
   // or {url, rule} objects — both shapes accepted.
   function entryAllowed(entry) {
     const urls = entry.urls || [];
-    if (!urls.length) return true;
+    if (!urls.length) return false;
     const pageHost = location.hostname.toLowerCase();
     const pageHref = location.href.split("#")[0].replace(/\/$/, "");
     const normHref = (h) => h.split("#")[0].replace(/\/$/, "");
@@ -228,6 +232,9 @@
     const ok = [];
     let refused = false;
     for (const e of entries || []) {
+      // Unbound (no URL) entries cannot be site-verified — skip silently.
+      // Only a real stored-URL domain mismatch is a phishing signal.
+      if (!(e.urls && e.urls.length)) continue;
       if (entryAllowed(e)) ok.push(e);
       else refused = true;
     }

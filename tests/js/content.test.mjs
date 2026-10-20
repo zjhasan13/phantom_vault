@@ -65,7 +65,7 @@ test("known credential is silent (no banner)", async (t) => {
   const { window } = env(t, `<form>
     <input type="text" name="username" value="bob">
     <input type="password" name="password" value="pw">
-  </form>`, "https://example.com/login", [{ username: "bob", password: "pw" }]);
+  </form>`, "https://example.com/login", [{ username: "bob", password: "pw", urls: ["example.com"] }]);
   submit(window, window.document.querySelector("form"));
   await flush();
   assert.equal(saver(window), null);
@@ -133,6 +133,32 @@ test("E5: PV_GATE_LOCKED drops a warm desktop-gate cache", async (t) => {
   await runtimeMessage(window, { type: "PV_GATE_LOCKED" });
   await fill();
   assert.equal(store.pings, 2, "a lock broadcast forces the next action to re-probe");
+});
+
+test("P0: URL-less items never autofill on the web", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="keep">
+    <input type="password" name="password" value="keep">
+  </form>`, "https://discord-login.com/login",
+    [{ id: "desk1", title: "Discord", username: "alice", password: "hunter2" }]);
+  await runtimeMessage(window, { type: "PV_HOTKEY_FILL" });
+  await flush();
+  assert.equal(window.document.querySelector('input[name="username"]').value, "keep",
+    "unbound item must not touch the username field");
+  assert.equal(window.document.querySelector('input[name="password"]').value, "keep",
+    "unbound item must not touch the password field");
+});
+
+test("P0: URL-bound item still autofills (control)", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="">
+    <input type="password" name="password" value="">
+  </form>`, "https://discord.com/login",
+    [{ id: "web1", title: "Discord", username: "alice", password: "hunter2", urls: ["discord.com"] }]);
+  await runtimeMessage(window, { type: "PV_HOTKEY_FILL" });
+  await flush();
+  assert.equal(window.document.querySelector('input[name="username"]').value, "alice");
+  assert.equal(window.document.querySelector('input[name="password"]').value, "hunter2");
 });
 
 test("E6: document scans run through one debounced observer", () => {

@@ -402,24 +402,19 @@
     if (pageBase(d) === pageBase(host)) return true;
     return domainsEquiv(d, host);
   }
-  // Suggestion gate: stored-URL domains decide; url-less legacy entries
-  // fall back to TITLE text only (never username/email).
+  // P0: suggestions require a stored URL. A URL-less item cannot be verified
+  // against the current page (native matching is substring based), so it must
+  // never be offered or filled on the web. Desktop items stay usable through
+  // the app-aware QuickBar/Auto-Type.
   function suggestMatch(e) {
     const domains = itemDomains(e);
-    if (domains.length) return domains.some(domainMatchesPage);
-    if (!hostBase) return false;
-    const t = (e.title || "").toLowerCase();
-    if (t.includes(hostBase)) return true;
-    return PVDomain.EQUIV_CLUSTERS.some((cluster) => {
-      const pageHit = cluster.some((m) => PVDomain.memberHit(m, host));
-      return pageHit && cluster.some((m) => t.includes(m.replace(/\.\*$/, "")));
-    });
+    if (!domains.length) return false;
+    return domains.some(domainMatchesPage);
   }
   function entryAllowed(e) {
     // Fill gate mirrors the suggestion gate (strict domains + clusters).
-    // Url-less legacy entries pass through (nothing to verify against).
     const urls = e.urls || [];
-    if (!urls.length) return true;
+    if (!urls.length) return false;
     return urls.some((raw) => {
       try {
         const t = urlText(raw);
@@ -497,7 +492,9 @@
       return false;
     }
     if (!entryAllowed(entry)) {
-      status.textContent = t("phishing");
+      status.textContent = (entry.urls && entry.urls.length)
+        ? t("phishing")
+        : "⚠️ No site URL saved — edit this item and add one.";
       return false;
     }
     return true;
