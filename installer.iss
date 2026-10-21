@@ -41,7 +41,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
 Source: "target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\app.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "browser_extension\*"; DestDir: "{app}\browser_extension"; \
-  Flags: ignoreversion recursesubdirs createallsubdirs
+  Excludes: "dist\*"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
