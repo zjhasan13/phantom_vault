@@ -376,6 +376,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }
+    // Smart-autofill: save an identity typed into a profile/address form.
+    // Identities are global (like cards), but the sender check still blocks a
+    // hostile frame from filing one under another site's URL (audit only).
+    if (msg.type === "PV_SAVE_IDENTITY") {
+      if (!msg.url) return { ok: false, error: "url required" };
+      if (!saveSenderOk(msg.url)) {
+        return { ok: false, error: "save url does not match sender frame" };
+      }
+      const r = await hostRequest({
+        cmd: "save_identity",
+        full_name: msg.full_name || "",
+        email: msg.email || "",
+        phone: msg.phone || "",
+        address: msg.address || "",
+        url: msg.url || "",
+        title: msg.title || "",
+      });
+      if (r && r.ok) { touchActivity(); retouchBadge(); }
+      return r;
+    }
     // Phase 3 ceremony relay: content-script approval (popup button) opens
     // a Hello-gated UV token FIRST, then the full sign/attest call. Sender
     // check: the ceremony origin must match the sender tab host exactly —

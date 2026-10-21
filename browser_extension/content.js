@@ -841,6 +841,22 @@
       cvv,
     };
   }
+  // Identity reader for the save prompt. Requires a real full name plus at
+  // least one contact field (phone OR street address) — name+email alone is a
+  // signup/newsletter shape, not a profile worth capturing.
+  function readFormIdentity(form) {
+    const scope = form || document;
+    const pick = (sel) => {
+      const el = [...scope.querySelectorAll(sel)].find((e) => isVisible(e) && !isSearchField(e));
+      return el ? String(el.value || "").trim() : "";
+    };
+    const full_name = pick('input[autocomplete="name"], input[name*="fullname" i], input[name*="full_name" i], input[name="name" i]');
+    const email = pick('input[autocomplete="email"], input[type="email"]');
+    const phone = pick('input[autocomplete="tel"], input[type="tel"], input[name*="phone" i]');
+    const address = pick('input[autocomplete="street-address"], input[name*="address" i], input[name*="street" i]');
+    if (!full_name || (!phone && !address)) return null;
+    return { full_name, email, phone, address };
+  }
   function cardBrand(num) {
     const d = digitsOf(num);
     if (/^4/.test(d)) return "Visa";
@@ -1018,6 +1034,21 @@
   // the whole active card list.
   function queryCards() {
     const req = chrome.runtime.sendMessage({ type: "PV_CARDS", app: pageBase(), all: true })
+      .then((res) => {
+        if (!res || !res.ok) throw new Error((res && res.error) || "bridge failed");
+        return Array.isArray(res.entries) ? res.entries : [];
+      });
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("vault bridge timed out")), 10000);
+    });
+    return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
+  }
+  // Identities are not URL-bound either, but filterEntries() drops every row
+  // without `urls` — which silently killed identity suggestions. Bypass it,
+  // exactly like cards.
+  function queryIdentities() {
+    const req = chrome.runtime.sendMessage({ type: "PV_IDENTITIES", app: pageBase() })
       .then((res) => {
         if (!res || !res.ok) throw new Error((res && res.error) || "bridge failed");
         return Array.isArray(res.entries) ? res.entries : [];
@@ -2442,6 +2473,116 @@
       }
     });
   }
+  // ---------- identity save: prompt + dedup ----------
+  // Identities are global (like cards) but they are PII, so the list is only
+  // fetched when an identity dropdown opens or a form is submitted — never
+  // pre-warmed on every page.
+  let pvIdentityCache = null;
+  let pvIdentityInflight = null;
+  let identityOfferedFor = "";
+  async function getIdentities() {
+    if (pvIdentityCache) return pvIdentityCache;
+    if (pvIdentityInflight) return pvIdentityInflight;
+    const p = queryIdentities().then((list) => {
+      pvIdentityCache = list || [];
+      pvIdentityInflight = null;
+      return pvIdentityCache;
+    }).catch((e) => {
+      pvIdentityInflight = null;
+      throw e;
+    });
+    pvIdentityInflight = p;
+    return p;
+  }
+  function identitiesSync() { return pvIdentityCache; }
+  const idNorm = (s) => String(s == null ? "" : s).trim().toLowerCase();
+  function sameIdentity(a, b) {
+    if (!a) return false;
+    if (idNorm(b.email)) return idNorm(a.email) === idNorm(b.email);
+    if (idNorm(b.address)) {
+      return idNorm(a.full_name) === idNorm(b.full_name) && idNorm(a.address) === idNorm(b.address);
+    }
+    return idNorm(a.full_name) === idNorm(b.full_name) && idNorm(a.phone) === idNorm(b.phone);
+  }
+  function identityChanged(a, b) {
+    return (!!b.full_name && idNorm(a.full_name) !== idNorm(b.full_name))
+      || (!!b.email && idNorm(a.email) !== idNorm(b.email))
+      || (!!b.phone && idNorm(a.phone) !== idNorm(b.phone))
+      || (!!b.address && idNorm(a.address) !== idNorm(b.address));
+  }
+  function offerIdentitySave(idf) {
+    if (!idf) return;
+    const fp = [idf.full_name, idf.email, idf.phone, idf.address].join("|").toLowerCase();
+    if (identityOfferedFor === fp) return;
+    identityOfferedFor = fp;
+    const cached = identitiesSync();
+    if (cached) {
+      const existing = cached.find((i) => sameIdentity(i, idf));
+      if (existing && !identityChanged(existing, idf)) return;
+      identitySaverToast(idf, !!existing);
+      return;
+    }
+    getIdentities().then((list) => {
+      const existing = (list || []).find((i) => sameIdentity(i, idf));
+      if (existing && !identityChanged(existing, idf)) return;
+      identitySaverToast(idf, !!existing);
+    }).catch(() => {}); // locked/bridge down: a save click would fail anyway
+  }
+  function identitySaverToast(idf, updated) {
+    if (document.getElementById("__pv_saver")) return;
+    const box = document.createElement("div");
+    box.id = "__pv_saver";
+    box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
+      "background:#0d131f;border:1px solid #38e1ff;border-radius:12px;padding:12px 14px;" +
+      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
+    const t = document.createElement("div");
+    t.style.cssText = "font-weight:700;margin-bottom:8px;";
+    t.textContent = updated ? "🔄 Update identity in PhantomVault?" : "🛡️ Save identity to PhantomVault?";
+    const sub = document.createElement("div");
+    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.textContent = [idf.full_name, idf.email || idf.phone || idf.address]
+      .filter(Boolean).join(" · ") + " — store it encrypted.";
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;";
+    const save = document.createElement("button");
+    save.textContent = updated ? "🔄 Update" : "💾 Save";
+    save.style.cssText = "flex:1;background:#38e1ff;color:#02131a;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    const no = document.createElement("button");
+    no.textContent = "✕ Not Now";
+    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    row.append(save, no);
+    box.append(t, sub, row);
+    document.documentElement.append(box);
+    const dismissId = () => { document.removeEventListener("keydown", escId, true); box.remove(); };
+    const escId = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissId(); } };
+    document.addEventListener("keydown", escId, true);
+    no.addEventListener("click", dismissId);
+    setTimeout(dismissId, 30000);
+    save.focus();
+    save.addEventListener("click", async () => {
+      save.textContent = "⏳ Saving…";
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: "PV_SAVE_IDENTITY",
+          full_name: idf.full_name || "",
+          email: idf.email || "",
+          phone: idf.phone || "",
+          address: idf.address || "",
+          url: captureUrl(),
+          title: captureTitle(),
+        });
+        if (res && res.ok) {
+          toast(res.updated ? "✅ Identity updated in PhantomVault." : "✅ Identity saved to PhantomVault.");
+          pvIdentityCache = null; // next prompt re-reads the fresh identity list
+          dismissId();
+        } else {
+          save.textContent = "⚠️ " + ((res && res.error) || "failed");
+        }
+      } catch (_) {
+        save.textContent = "⚠️ Bridge unreachable";
+      }
+    });
+  }
   // G3: form-scoped credential reader. Distinguishes signup (new-password or a
   // confirm field) from login, refuses to offer on a confirm-password mismatch
   // (a typo), and picks the "old" field on a change-password form.
@@ -2494,6 +2635,13 @@
         // a checkout's billing name/email can never look like a login.
         const card = readFormCard(form);
         if (card) { offerCardSave(card); return; }
+        // Identity: never on a credential form (a signup's name/email is a
+        // login acquisition, not a profile) and only with a real contact
+        // field — otherwise a newsletter/contact form gets a false prompt.
+        if (!form.querySelector('input[type="password"]')) {
+          const idf = readFormIdentity(form);
+          if (idf) { offerIdentitySave(idf); return; }
+        }
         const cred = readFormCreds(form);
         if (!cred) return;
         const base = pageBase();
@@ -2923,7 +3071,7 @@
           const c = await queryCards();
           if (c[0]) fillCard(c[0]);
         } else if (msg.menu === "pv_fill_identity") {
-          const ids = await queryHost("PV_IDENTITIES", pageBase());
+      const ids = await getIdentities();
           if (ids[0]) fillIdentity(ids[0]);
         } else if (msg.menu === "pv_copy_password") {
           const l = await queryHost("PV_QUERY", pageBase());

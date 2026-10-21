@@ -1617,6 +1617,123 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: true,
             }
         }
+        // Smart-autofill: save an identity typed into a profile/address form.
+        // Identities are global (like cards), so dedupe is by lowercase email
+        // when one is present, else by full name + address (or phone). The
+        // bridge never trusts the extension: a name AND at least one contact
+        // field are required, and every field is length-capped so a hostile
+        // page cannot post an unbounded blob into the vault.
+        "save_identity" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let clip = |key: &str, max: usize| -> String {
+                req.get(key)
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(max)
+                    .collect()
+            };
+            let full_name = clip("full_name", 128);
+            let email = clip("email", 254);
+            let phone = clip("phone", 40);
+            let address = clip("address", 512);
+            if full_name.is_empty() {
+                return no("full name required");
+            }
+            if email.is_empty() && phone.is_empty() && address.is_empty() {
+                return no("a contact field is required");
+            }
+            let url = canonical_login_url(req.get("url").and_then(|v| v.as_str()).unwrap_or(""));
+            let dom = url_domain(&url);
+            let title_in = clip("title", 128);
+            let email_key = email.to_lowercase();
+            let name_key = full_name.to_lowercase();
+            let addr_key = address.to_lowercase();
+            let phone_key = phone.to_lowercase();
+            let existing = vault.identities.iter_mut().find(|i| {
+                if i.deleted_at.is_some() {
+                    return false;
+                }
+                if !email_key.is_empty() {
+                    return !i.email.is_empty() && i.email.to_lowercase() == email_key;
+                }
+                if !addr_key.is_empty() {
+                    return i.full_name.to_lowercase() == name_key
+                        && !i.address.is_empty()
+                        && i.address.to_lowercase() == addr_key;
+                }
+                i.full_name.to_lowercase() == name_key
+                    && !i.phone.is_empty()
+                    && i.phone.to_lowercase() == phone_key
+            });
+            let updated;
+            if let Some(i) = existing {
+                if !full_name.is_empty() {
+                    i.full_name = full_name;
+                }
+                if !email.is_empty() {
+                    i.email = email;
+                }
+                if !phone.is_empty() {
+                    i.phone = phone;
+                }
+                if !address.is_empty() {
+                    i.address = address;
+                }
+                updated = true;
+            } else {
+                let id = format!(
+                    "exti{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let title = if !title_in.is_empty() {
+                    title_in
+                } else if !dom.is_empty() {
+                    dom.clone()
+                } else {
+                    String::from("Identity")
+                };
+                let notes = if dom.is_empty() {
+                    String::from("Saved via browser extension")
+                } else {
+                    format!("Saved via browser extension from {dom}")
+                };
+                vault.identities.push(crate::models::IdentityItem {
+                    id,
+                    title,
+                    full_name,
+                    nid_or_passport: String::new(),
+                    email,
+                    phone,
+                    address,
+                    company: String::new(),
+                    city: String::new(),
+                    state: String::new(),
+                    zip: String::new(),
+                    country: String::new(),
+                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    notes,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
+                });
+                updated = false;
+            }
+            let log_domain = if dom.is_empty() { "identity" } else { dom.as_str() };
+            crate::security::access_log::log_event("bridge-save-identity", log_domain);
+            Answer {
+                reply: serde_json::json!({"ok": true, "updated": updated}),
+                persist: true,
+            }
+        }
         other => no(&format!("unknown cmd: {other}")),
     }
 }
@@ -3852,6 +3969,52 @@ mod tests {
         assert_eq!(v.cards[0].exp_month, "02");
         assert_eq!(v.cards[0].exp_year, "31");
         assert_eq!(v.cards[0].cvv, "456");
+    }
+
+    #[test]
+    fn save_identity_appends_updates_and_validates() {
+        let mut v = Vault::new();
+        // Locked, empty name, and name-without-contact → refused, no persist.
+        for (unlocked, body) in [
+            (false, serde_json::json!({"cmd": "save_identity", "full_name": "Ada", "email": "a@b.c"})),
+            (true, serde_json::json!({"cmd": "save_identity", "full_name": "  "})),
+            (true, serde_json::json!({"cmd": "save_identity", "full_name": "Ada"})),
+        ] {
+            let r = answer(&mut v, unlocked, &body);
+            assert_eq!(r.reply["ok"], false, "{body}");
+            assert!(!r.persist);
+        }
+        assert!(v.identities.is_empty());
+        // Name + email → append, extension marker + site note, no junk fields.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "save_identity", "full_name": "Ada Lovelace",
+            "email": "ada@example.com", "phone": "+1 555 0100",
+            "url": "https://shop.example/checkout"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["updated"], false);
+        assert!(r.persist);
+        assert_eq!(v.identities.len(), 1);
+        assert_eq!(v.identities[0].email, "ada@example.com");
+        assert!(v.identities[0].notes.contains("shop.example"));
+        assert!(v.identities[0].nid_or_passport.is_empty());
+        // Same email (case-insensitive) → in-place update, never duplicate.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "save_identity", "full_name": "Ada L",
+            "email": "ADA@example.com", "phone": "+1 555 0199"}));
+        assert_eq!(r.reply["updated"], true);
+        assert_eq!(v.identities.len(), 1);
+        assert_eq!(v.identities[0].full_name, "Ada L");
+        assert_eq!(v.identities[0].phone, "+1 555 0199");
+        // No email → dedupe by name + address: append once, then update.
+        let ship = serde_json::json!({
+            "cmd": "save_identity", "full_name": "Ada L", "address": "1 Analytic Way"});
+        let r = answer(&mut v, true, &ship);
+        assert_eq!(r.reply["updated"], false);
+        assert_eq!(v.identities.len(), 2);
+        let r = answer(&mut v, true, &ship);
+        assert_eq!(r.reply["updated"], true);
+        assert_eq!(v.identities.len(), 2);
+        assert_eq!(v.identities[1].address, "1 Analytic Way");
     }
 
     #[test]

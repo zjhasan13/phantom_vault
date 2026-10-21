@@ -394,6 +394,48 @@ test("PV_SAVE_CARD: cross-site sender URL is refused, zero host spawn", async ()
   assert.equal(chrome.__state.postedNative.length, 0);
 });
 
+test("PV_SAVE_IDENTITY: proxies save_identity after the sender-frame check", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://shop.example/checkout", tab: { url: "https://shop.example/cart" } };
+  const p = sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_IDENTITY", full_name: "Ada Lovelace", email: "ada@example.com",
+    phone: "+1 555 0100", address: "1 Analytic Way",
+    url: "https://shop.example/checkout", title: "Shop",
+  }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "save_identity");
+  assert.equal(sent.full_name, "Ada Lovelace");
+  assert.equal(sent.email, "ada@example.com");
+  assert.equal(sent.address, "1 Analytic Way");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, updated: false }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("PV_SAVE_IDENTITY: cross-site sender URL is refused, zero host spawn", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://shop.example/checkout" } };
+  const r = await sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_IDENTITY", full_name: "Ada", email: "ada@example.com",
+    url: "https://evil.example/checkout",
+  }, sender);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /does not match/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("PV_SAVE_IDENTITY: a missing url is refused", async () => {
+  const { chrome, onMessage } = fresh();
+  const r = await sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_IDENTITY", full_name: "Ada", email: "ada@example.com",
+  }, { tab: { url: "https://shop.example/" } });
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /url required/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
 test("PV_CARDS: forwards the checkout `all` flag", async () => {
   const { chrome, onMessage } = fresh();
   const p = sendMessage(onMessage, chrome, { type: "PV_CARDS", app: "shop.example", all: true });
