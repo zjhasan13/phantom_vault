@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: web 0.3.2 (unified login ranking, SPA identifier carry, per-tab carry, identity suggestions).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: import/export upgrade (native .pvx, previews, merge modes, undo; 0.4.0) after web 0.3.2.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -12,6 +12,14 @@
   per-tab carry (`pvCaptureCarry:<tabId>` via background `PV_TAB_ID`); SPA
   identifier-only step 1 carries the username via a data-free `PV_SPA_IDENT`
   tripwire; popup mirrors the trust rank; carry clears only on a full fill.
+
+- **Import/export 0.4.0:** lossless native
+  `.pvx` backup (same master-password hybrid envelope; passkeys, 2FA hub,
+  SSH keys, attachment bytes), row-level preview with Skip / Update existing /
+  Import all, URL-aware login dedupe, session-only undo guarded by a vault
+  fingerprint, and an all-kinds "Full CSV" export. Importer decrypts `.pvx`
+  with the live master and refuses a foreign one. Rebuild installer + zips
+  (bump to 0.4.0) before shipping.
   Tests `npm test` **79/79**, `cargo test` **461 passed / 1 ignored**.
   Installer `installer-output/PhantomVault-Setup-0.3.2.exe` (excludes
   `browser_extension/dist`). Release upload is user-side (`gh` unauthenticated).

@@ -878,6 +878,8 @@ fn lock_vault_now(
     // P1 fix: stop the bridge beats too — a stale heartbeat refuses serves.
     stop_bridge_heartbeat();
     panic_wipe(vault_arc, master_arc);
+    // Session undo holds a full pre-import vault copy - wipe it with the rest.
+    *undo_import_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
     // SSH agent session dies with unlock: signing keys must never outlive
     // the vault (the serving thread exits at its next 1s accept tick).
     developer::ssh_agent::stop_agent();
@@ -2741,8 +2743,16 @@ fn selection_count() -> usize {
 /// Staged import rows awaiting user Confirm (dry-run preview). RAM-only,
 /// process-global like the selection registry so pick/confirm/cancel/lock
 /// all reach it without threading handles. Dropped on cancel AND on lock.
+/// Staged import payload: vendor rows (lossy by nature) or a full native
+/// vault snapshot (lossless: passkeys, 2FA accounts, attachment bytes).
+#[derive(Clone)]
+enum StagedImport {
+    Rows(Vec<importer::RawItem>),
+    Native(Box<Vault>),
+}
+
 struct PendingImport {
-    raws: Vec<importer::RawItem>,
+    staged: StagedImport,
     source: String,
     path_str: String,
 }
@@ -2750,6 +2760,132 @@ struct PendingImport {
 fn pending_import_store() -> &'static Mutex<Option<PendingImport>> {
     static PENDING: std::sync::OnceLock<Mutex<Option<PendingImport>>> = std::sync::OnceLock::new();
     PENDING.get_or_init(|| Mutex::new(None))
+}
+
+/// Session-only "Undo last import": a fingerprint-guarded pre-import
+/// snapshot. Never persisted; wiped on lock and on the next import.
+struct UndoImport {
+    snapshot: Vault,
+    fingerprint: [u8; 32],
+}
+
+fn undo_import_store() -> &'static Mutex<Option<UndoImport>> {
+    static UNDO: std::sync::OnceLock<Mutex<Option<UndoImport>>> = std::sync::OnceLock::new();
+    UNDO.get_or_init(|| Mutex::new(None))
+}
+
+/// Cheap change detector for the undo guard: hashes the serialized vault and
+/// zeroizes the transient buffer immediately.
+fn vault_fingerprint(v: &Vault) -> [u8; 32] {
+    use sha2::Digest;
+    use zeroize::Zeroize;
+    let mut h = sha2::Sha256::new();
+    let mut buf = serde_json::to_vec(v).unwrap_or_default();
+    h.update(&buf);
+    buf.zeroize();
+    h.finalize().into()
+}
+
+fn import_kind_label(kind: i32) -> &'static str {
+    match kind {
+        2 => "license",
+        3 => "note",
+        4 => "card",
+        5 => "identity",
+        6 => "ssh",
+        _ => "login",
+    }
+}
+
+/// Row-level preview built ONLY from non-secret fields (title/user/folder).
+fn import_preview_rows(staged: &StagedImport, cap: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut push = |kind: &str, title: &str, user: &str, folder: &str| {
+        if out.len() >= cap {
+            return;
+        }
+        let user = if user.trim().is_empty() {
+            String::new()
+        } else {
+            format!(" - {}", user.trim())
+        };
+        let folder = if folder.trim().is_empty() {
+            String::new()
+        } else {
+            format!("  [{}]", folder.trim())
+        };
+        out.push(format!("{kind:<8} {}{user}{folder}", title.trim()));
+    };
+    match staged {
+        StagedImport::Rows(raws) => {
+            for r in raws {
+                // Never surface secrets: `a` is a license key for kind 2,
+                // note content for kind 3 and a private key for kind 6.
+                let detail = if matches!(r.kind, 2 | 3 | 6) { "" } else { &r.a };
+                push(import_kind_label(r.kind), &r.title, detail, &r.folder);
+            }
+        }
+        StagedImport::Native(v) => {
+            for c in v.credentials.iter().filter(|c| c.deleted_at.is_none()) {
+                push("login", &c.title, &c.username, &c.folder);
+            }
+            for l in v.licenses.iter().filter(|l| l.deleted_at.is_none()) {
+                push("license", &l.app_name, "", &l.folder);
+            }
+            for n in v.notes.iter().filter(|n| n.deleted_at.is_none()) {
+                push("note", &n.title, "", &n.folder);
+            }
+            for k in v.cards.iter().filter(|k| k.deleted_at.is_none()) {
+                push("card", &k.title, "", &k.folder);
+            }
+            for i in v.identities.iter().filter(|i| i.deleted_at.is_none()) {
+                push("identity", &i.title, "", &i.folder);
+            }
+            for s in v.ssh_keys.iter().filter(|s| s.deleted_at.is_none()) {
+                push("ssh", &s.title, "", &s.folder);
+            }
+            for p in v.passkeys.iter().filter(|p| p.deleted_at.is_none()) {
+                push("passkey", &p.rp_id, &p.user_name, "");
+            }
+            for t in &v.totp_accounts {
+                push("2fa", &t.issuer, &t.account_name, "");
+            }
+        }
+    }
+    out
+}
+
+fn import_rows_model(rows: Vec<String>) -> ModelRc<slint::SharedString> {
+    ModelRc::new(VecModel::from(
+        rows.into_iter()
+            .map(slint::SharedString::from)
+            .collect::<Vec<_>>(),
+    ))
+}
+
+/// Dry-run on a CLONE: exact counts + preview rows for the chosen mode.
+fn dry_run_import(
+    staged: &StagedImport,
+    vault: &Vault,
+    source: &str,
+    mode: importer::MergeMode,
+) -> (importer::ImportSummary, Vec<String>) {
+    let mut probe = vault.clone();
+    let mut summary = importer::ImportSummary {
+        source: source.to_string(),
+        ..Default::default()
+    };
+    match staged {
+        StagedImport::Rows(raws) => {
+            importer::merge_with(&mut probe, raws.clone(), &mut summary, mode)
+        }
+        StagedImport::Native(src) => {
+            importer::merge_native(&mut probe, (**src).clone(), &mut summary, mode)
+        }
+    }
+    probe.ensure_folders();
+    summary.folders = probe.folders.len();
+    (summary, import_preview_rows(staged, 200))
 }
 
 /// Staged CRDT merge awaiting user Apply (preview first). RAM-only,
@@ -10548,6 +10684,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_export_status("⚠️ Plaintext export — pick a destination…".into());
                 let weak = rp_main.clone();
                 let vault_clone = Arc::clone(&rp_del_vault);
+                let export_master = secrecy::SecretString::new(password.to_string());
                 std::thread::spawn(move || {
                     // Snapshot under lock, then release before the dialog blocks.
                     // M5: decoy already refused on the event-loop thread
@@ -10555,7 +10692,44 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     // again loud if that ever regresses.
                     let (payload, filename, filters, summary) = {
                         let v = lock_vault(&vault_clone);
-                        if fmt == 2 {
+                        if fmt == 3 {
+                            let bytes = match importer::exporter::export_native_gated(
+                                &v,
+                                false,
+                                &export_master,
+                            ) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    eprintln!("export refused: {e}");
+                                    return;
+                                }
+                            };
+                            let (items, atts, atts_bytes) = importer::exporter::native_stats(&v);
+                            (
+                                bytes,
+                                "phantom-vault-export.pvx".to_string(),
+                                vec![("PhantomVault backup", vec!["pvx"])],
+                                format!(
+                                    "{items} items, {atts} attachments ({atts_bytes} bytes) - encrypted"
+                                ),
+                            )
+                        } else if fmt == 4 {
+                            let csv =
+                                match importer::exporter::export_csv_full_gated(&v, false) {
+                                    Ok(s) => s,
+                                    Err(e) => {
+                                        eprintln!("export refused: {e}");
+                                        return;
+                                    }
+                                };
+                            let (n, _, _) = importer::exporter::native_stats(&v);
+                            (
+                                csv.into_bytes(),
+                                "phantom-vault-export-full.csv".to_string(),
+                                vec![("Full CSV", vec!["csv"])],
+                                format!("{n} items across all kinds"),
+                            )
+                        } else if fmt == 2 {
                             let csv = match importer::exporter::export_csv_gated(&v, false) {
                                 Ok(s) => s,
                                 Err(e) => {
@@ -10591,7 +10765,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     };
                     let mut dlg = rfd::FileDialog::new()
                         .set_title("Export PLAINTEXT vault — anyone with this file reads everything")
-                        .set_file_name(&filename);
+                        .set_file_name(&filename)
+                        .set_title(if fmt == 3 {
+                            "Export ENCRYPTED backup - master password required to open"
+                        } else {
+                            "Export PLAINTEXT vault - anyone with this file reads everything"
+                        });
                     for (label, exts) in &filters {
                         dlg = dlg.add_filter(*label, exts);
                     }
@@ -10617,6 +10796,27 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                     ui.set_notification_text(
                                         "✅ Vault exported (plaintext!). Shred the file after moving it.".into(),
                                     );
+                                    if fmt == 3 {
+                                        ui.set_export_status(
+                                            format!(
+                                                "Exported encrypted backup -> {path_str} (master password opens it)."
+                                            )
+                                            .into(),
+                                        );
+                                        ui.set_notification_text(
+                                            "Vault exported (encrypted .pvx).".into(),
+                                        );
+                                    } else if fmt == 4 {
+                                        ui.set_export_status(
+                                            format!(
+                                                "Exported FULL CSV (plaintext!) -> {path_str}. Shred it after moving."
+                                            )
+                                            .into(),
+                                        );
+                                        ui.set_notification_text(
+                                            "Vault exported (full CSV, plaintext!).".into(),
+                                        );
+                                    }
                                     security::access_log::log_event("export", "file");
                                 }
                                 Err(e) => {
@@ -11017,7 +11217,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             // Native dialog blocks this worker only — UI stays at 60 FPS.
             let picked = rfd::FileDialog::new()
                 .set_title("Import ANY vault export")
-                .add_filter("vault exports", &["json", "csv", "xml", "tsv", "txt"])
+                .add_filter("vault exports", &["json", "csv", "xml", "tsv", "txt", "pvx"])
                 .add_filter("all files", &["*"])
                 .pick_file();
             let Some(path) = picked else {
@@ -11029,7 +11229,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             };
             let master_opt = lock_master_pw(&master_clone).clone();
-            let Some(_) = master_opt else {
+            let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_import_status("⚠️ Vault not unlocked.".into());
@@ -11039,30 +11239,33 @@ fn launch_url(ui: &MainWindow, url: &str) {
             };
             // Parse only; dry-merge into a CLONE for exact counts; stash the
             // rows for the Confirm step. Live vault untouched.
-            let res: Result<(importer::ImportSummary, Vec<importer::RawItem>, String), String> = {
+            let res: Result<
+                (StagedImport, importer::ImportSummary, Vec<String>, String),
+                String,
+            > = (|| {
                 let vault = lock_vault(&vault_clone);
-                match importer::parse_import_file(&path) {
-                    Ok((raws, mut summary)) => {
-                        let mut probe = vault.clone();
-                        importer::merge(&mut probe, raws.clone(), &mut summary);
-                        probe.ensure_folders();
-                        summary.folders = probe.folders.len();
-                        Ok((summary, raws, path.to_string_lossy().into_owned()))
-                    }
-                    Err(e) => Err(e.to_string()),
-                }
-            };
+                let (staged, source) = match importer::parse_import_any(&path, Some(&master_pw)) {
+                    Ok(importer::ParsedImport::Rows(raws, s)) => (StagedImport::Rows(raws), s.source),
+                    Ok(importer::ParsedImport::Native(v, s)) => (StagedImport::Native(v), s.source),
+                    Err(e) => return Err(e.to_string()),
+                };
+                let (summary, rows) =
+                    dry_run_import(&staged, &vault, &source, importer::MergeMode::SkipDupes);
+                Ok((staged, summary, rows, path.to_string_lossy().into_owned()))
+            })();
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else {
                     return;
                 };
                 match res {
-                    Ok((summary, raws, path_str)) => {
+                    Ok((staged, summary, rows, path_str)) => {
                         *pending_import_store().lock().unwrap() = Some(PendingImport {
-                            raws,
+                            staged,
                             source: summary.source.clone(),
                             path_str,
                         });
+                        ui.set_import_merge_mode(0);
+                        ui.set_import_preview_rows(import_rows_model(rows));
                         ui.set_import_preview_text(
                             format!("👁️ Preview — {} — review, then Confirm to merge.", summary.headline()).into(),
                         );
@@ -11091,6 +11294,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             return;
         };
+        let mode = importer::MergeMode::from_int(
+            confirm_weak
+                .upgrade()
+                .map(|ui| ui.get_import_merge_mode())
+                .unwrap_or(0),
+        );
         if let Some(ui) = confirm_weak.upgrade() {
             ui.set_show_import_preview(false);
             ui.set_import_status("⏳ Merging…".into());
@@ -11120,11 +11329,24 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     source: staged.source.clone(),
                     ..Default::default()
                 };
-                importer::merge(&mut vault, staged.raws, &mut summary);
+                match &staged.staged {
+                    StagedImport::Rows(raws) => {
+                        importer::merge_with(&mut vault, raws.clone(), &mut summary, mode)
+                    }
+                    StagedImport::Native(src) => {
+                        importer::merge_native(&mut vault, (**src).clone(), &mut summary, mode)
+                    }
+                }
                 vault.ensure_folders();
                 summary.folders = vault.folders.len();
                 match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
-                    Ok(()) => Ok(summary),
+                    Ok(()) => {
+                        *undo_import_store().lock().unwrap() = Some(UndoImport {
+                            snapshot,
+                            fingerprint: vault_fingerprint(&vault),
+                        });
+                        Ok(summary)
+                    }
                     Err(e) => {
                         *vault = snapshot;
                         Err(e)
@@ -11151,6 +11373,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             }
                         }
                         ui.set_import_status(summary.headline().into());
+                        ui.set_import_undo_available(true);
+                        ui.set_import_merge_mode(0);
+                        ui.set_import_preview_rows(import_rows_model(Vec::new()));
                         ui.set_notification_text(
                             format!("📥 Imported {} items.", summary.total()).into(),
                         );
@@ -11171,6 +11396,106 @@ fn launch_url(ui: &MainWindow, url: &str) {
         });
     });
 
+    let mode_weak = main_window.as_weak();
+    let mode_vault = Arc::clone(&active_vault);
+    main_window.on_import_mode_changed(move |m| {
+        let Some(ui) = mode_weak.upgrade() else {
+            return;
+        };
+        ui.set_import_merge_mode(m);
+        let staged = pending_import_store()
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|p| (p.staged.clone(), p.source.clone()));
+        let Some((staged, source)) = staged else {
+            return;
+        };
+        let (summary, rows) = {
+            let vault = lock_vault(&mode_vault);
+            dry_run_import(&staged, &vault, &source, importer::MergeMode::from_int(m))
+        };
+        ui.set_import_preview_rows(import_rows_model(rows));
+        let warn = match m {
+            1 => " Matching items will be OVERWRITTEN (undo available after import).",
+            2 => " Duplicates will be imported too.",
+            _ => "",
+        };
+        ui.set_import_preview_text(
+            format!(
+                "Preview - {} - review, then Confirm to merge.{warn}",
+                summary.headline()
+            )
+            .into(),
+        );
+    });
+
+    let undo_weak = main_window.as_weak();
+    let undo_vault = Arc::clone(&active_vault);
+    let undo_master = Arc::clone(&active_master_pw);
+    let undo_search = Arc::clone(&search_state);
+    let undo_qb = quick_bar.as_weak();
+    main_window.on_undo_import(move || {
+        let Some(ui) = undo_weak.upgrade() else {
+            return;
+        };
+        ui.set_import_status("Restoring the pre-import vault...".into());
+        let weak = undo_weak.clone();
+        let vault_arc = Arc::clone(&undo_vault);
+        let master_arc = Arc::clone(&undo_master);
+        let search = Arc::clone(&undo_search);
+        let qb = undo_qb.clone();
+        std::thread::spawn(move || {
+            let Some(master) = lock_master_pw(&master_arc).clone() else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_import_status("Vault not unlocked.".into());
+                    }
+                });
+                return;
+            };
+            let res: Result<Vault, String> = {
+                let mut vault = lock_vault(&vault_arc);
+                match undo_import_store().lock().unwrap().take() {
+                    None => Err("Nothing to undo (snapshot gone).".to_string()),
+                    Some(slot) => {
+                        if vault_fingerprint(&vault) != slot.fingerprint {
+                            Err("Vault changed since the import - undo is no longer safe."
+                                .to_string())
+                        } else {
+                            match save_vault_secret(&slot.snapshot, &master, VAULT_FILE) {
+                                Ok(()) => {
+                                    *vault = slot.snapshot;
+                                    Ok(vault.clone())
+                                }
+                                Err(e) => Err(e),
+                            }
+                        }
+                    }
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match res {
+                    Ok(v) => {
+                        let f = search.lock().unwrap().clone();
+                        set_paged_credentials(&ui, vault_to_items(&v, &f));
+                        sync_folders_to_ui(&v, &ui);
+                        if let Some(qb) = qb.upgrade() {
+                            qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
+                        }
+                        ui.set_import_undo_available(false);
+                        ui.set_import_status("Import undone - vault restored.".into());
+                        ui.set_notification_text("Import undone (session snapshot).".into());
+                        trigger_sync_push(ui.as_weak());
+                    }
+                    Err(e) => ui.set_import_status(format!("Undo failed: {e}").into()),
+                }
+            });
+        });
+    });
     let cancel_weak = main_window.as_weak();
     main_window.on_cancel_import_file(move || {
         *pending_import_store().lock().unwrap() = None;

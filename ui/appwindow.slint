@@ -779,8 +779,13 @@ export component MainWindow inherits Window {
     // Dry-run preview: staged counts shown BEFORE anything merges.
     in-out property <bool> show_import_preview: false;
     in-out property <string> import_preview_text: "";
+    in-out property <[string]> import_preview_rows: [];
+    in-out property <int> import_merge_mode: 0;
+    in-out property <bool> import_undo_available: false;
     callback confirm_import_file();
     callback cancel_import_file();
+    callback import_mode_changed(int);
+    callback undo_import();
     // Phase 7 (limited): read-only browser-profile discovery. Direct store
     // decrypt is NOT attempted — guidance points at file import.
     in-out property <string> browser_detect_status: "";
@@ -1530,6 +1535,13 @@ export component MainWindow inherits Window {
                 if root.show_import_preview : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
                     Text { text: root.import_preview_text; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                    ScrollView { height: 150px; VerticalLayout { spacing: 2px; for r in root.import_preview_rows : Text { text: r; color: #8e99c0; font-size: 11px; overflow: elide; } } }
+                    HorizontalLayout { spacing: 6px; alignment: center;
+                        AuraButton { label: "Skip dupes"; primary: root.import_merge_mode == 0; width: 118px; height: 30px; clicked => { root.import_mode_changed(0); } }
+                        AuraButton { label: "Update existing"; primary: root.import_merge_mode == 1; width: 138px; height: 30px; clicked => { root.import_mode_changed(1); } }
+                        AuraButton { label: "Import all"; primary: root.import_merge_mode == 2; width: 118px; height: 30px; clicked => { root.import_mode_changed(2); } }
+                    }
+                    if root.import_undo_available : AuraButton { label: "Undo last import"; width: 160px; height: 30px; clicked => { root.undo_import(); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
                         AuraButton { label: "✅ Confirm Import"; primary: true; width: 170px; height: 38px; clicked => { root.confirm_import_file(); } }
                         AuraButton { label: "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
@@ -1721,7 +1733,7 @@ export component MainWindow inherits Window {
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. Shred the file after moving it."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: "Encrypted (.pvx)"; width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: "Full CSV (all kinds)"; width: 170px; clicked => { root.export_vault(4); } } }
                     Text { text: "JSON keeps everything (TOTP, history, custom fields). CSV keeps basics only."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.export_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
@@ -2280,7 +2292,7 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         spacing: 2px;
                         Text { text: "Master Reprompt"; font-size: 16px; font-weight: 800; color: #eef1ff; }
-                        Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? "Export vault PLAINTEXT" : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
+                        Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : "Export vault PLAINTEXT") : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
                     }
                 }
                 Text { text: "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }

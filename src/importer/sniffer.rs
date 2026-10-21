@@ -13,6 +13,8 @@ pub enum Format {
     ChromeCsv,
     SafariCsv,
     LastPassCsv,
+    PhantomNative,
+    PhantomNativeEncrypted,
     GenericJson,
     FuzzyCsv(u8), // delimiter byte
 }
@@ -29,6 +31,8 @@ impl Format {
             Format::ChromeCsv => "Chrome/Brave/Edge CSV".to_string(),
             Format::SafariCsv => "Safari CSV".to_string(),
             Format::LastPassCsv => "LastPass CSV".to_string(),
+            Format::PhantomNative => "PhantomVault backup".to_string(),
+            Format::PhantomNativeEncrypted => "PhantomVault encrypted backup".to_string(),
             Format::GenericJson => "Generic JSON".to_string(),
             Format::FuzzyCsv(_) => "Universal CSV".to_string(),
         }
@@ -103,6 +107,11 @@ pub fn sniff(bytes: &[u8]) -> Result<Format> {
     if bytes.is_empty() {
         return Err(VaultError::Sync("import file is empty".into()));
     }
+    // Native `.pvx`: the portable envelope is BINARY, so the magic check must
+    // run before text decoding (lossy UTF-8 would shred it into CSV noise).
+    if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V2_PORTABLE_MAGIC {
+        return Ok(Format::PhantomNativeEncrypted);
+    }
     let text = decode_text(bytes);
     let trimmed = text.trim_start().to_lowercase();
 
@@ -133,6 +142,12 @@ pub fn sniff(bytes: &[u8]) -> Result<Format> {
 
 fn sniff_json(v: &serde_json::Value) -> Result<Format> {
     if let Some(obj) = v.as_object() {
+        // Native marker wins over every heuristic (it is unambiguous).
+        if obj.get("format").and_then(|f| f.as_str())
+            == Some(crate::importer::exporter::NATIVE_FORMAT)
+        {
+            return Ok(Format::PhantomNative);
+        }
         if obj.get("encrypted").and_then(|e| e.as_bool()) == Some(true) {
             return Err(VaultError::Sync(
                 "Encrypted Bitwarden export detected. Please export as unencrypted JSON.".into(),

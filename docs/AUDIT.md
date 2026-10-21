@@ -279,3 +279,35 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   `npm test` **79/79**; `cargo test` unchanged **461 passed / 1 ignored**
   (Rust untouched). The jsdom harness now honours `storage.session` reads and
   stubs `PV_IDENTITIES`.
+
+## Import/export upgrade: native lossless backup, row previews, merge modes, undo
+
+- New native document `phantomvault-backup` v1: the full `Vault` (logins,
+  cards, identities, notes, licenses, SSH keys, passkeys, 2FA hub accounts,
+  attachment bytes, URL match rules). Trash, sharing grants and verification
+  ids are machine-local and stay behind. Exported only as `.pvx` - the same
+  portable hybrid envelope as the vault file (Argon2id + ML-KEM +
+  XChaCha20Poly1305), sealed with the master password, so there is no second
+  secret to lose. Decoy refused; the plaintext JSON serializer is internal.
+- Sniffer learns two formats: the `PV2\0` magic is checked BEFORE text
+  decoding (binary container) and the `"format":"phantomvault-backup"`
+  marker before every vendor heuristic. Encrypted backups are decrypted with
+  the live master; a foreign/wrong master fails loudly instead of partially
+  importing.
+- Dry-run preview is row-level now: kind + title + username/full name +
+  folder, secrets never rendered, capped at 200 rows. Three merge modes:
+  Skip dupes (default), Update existing (in place; id preserved so
+  `verified_ids` still point at the item; retired password pushed to
+  history), Import all. Switching modes recomputes counts on a clone.
+- Login dedupe includes the normalized URL set: the same title/user/password
+  on two different sites imports twice (rotation + decoy safety intact).
+- Session-only "Undo last import": pre-import snapshot + post-import vault
+  fingerprint; refuses when anything changed since the import. RAM only,
+  wiped on lock and replaced by the next import.
+- "Full CSV" export (all kinds, `data_json` per row) for spreadsheets;
+  plaintext and gated/decoy-refused like the other file exporters.
+- Tests: +7 Rust (native encrypted round-trip incl. passkey seed + attachment
+  bytes, trash/local-state exclusion, real-sniffer parse + native merge,
+  full-CSV coverage, URL-aware dedupe, update-in-place with history, ImportAll)
+  -> `cargo test` **468 passed / 1 ignored**. JS untouched (`npm test` 79/79).
+  Release bump: 0.4.0 (Cargo.toml, Cargo.lock, installer.iss, both extension manifests).

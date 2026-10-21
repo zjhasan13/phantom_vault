@@ -15,9 +15,38 @@ pub mod sniffer;
 
 use crate::error::{Result, VaultError};
 use crate::models::{
-    Credential, IdentityItem, PaymentCard, SecureNote, SoftwareLicense, SshKeyItem, Vault,
-    DEFAULT_FOLDER,
+    Credential, IdentityItem, PaymentCard, SecureNote, SoftwareLicense, SshKeyItem,
+    TotpAccount, Vault, DEFAULT_FOLDER,
 };
+
+/// How a re-import treats items already in the vault.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum MergeMode {
+    /// Import only what is new (password-aware duplicate probe).
+    #[default]
+    SkipDupes,
+    /// Overwrite matching items in place (explicitly confirmed in the UI).
+    UpdateExisting,
+    /// Import every row, duplicates included.
+    ImportAll,
+}
+
+impl MergeMode {
+    pub fn from_int(n: i32) -> Self {
+        match n {
+            1 => Self::UpdateExisting,
+            2 => Self::ImportAll,
+            _ => Self::SkipDupes,
+        }
+    }
+}
+
+/// Sniff+parse result: vendor rows, or a full native vault snapshot
+/// (passkeys/attachments/2FA accounts cannot be expressed as `RawItem`).
+pub enum ParsedImport {
+    Rows(Vec<RawItem>, ImportSummary),
+    Native(Box<Vault>, ImportSummary),
+}
 
 /// One normalized row from any engine. Unused kinds stay empty.
 #[derive(Debug, Default, Clone)]
@@ -64,6 +93,9 @@ pub struct ImportSummary {
     pub cards: usize,
     pub identities: usize,
     pub ssh_keys: usize,
+    pub passkeys: usize,
+    pub totp_accounts: usize,
+    pub updated: usize,
     pub folders: usize,
     pub duplicates_skipped: usize,
     pub rows_failed: usize,
@@ -72,11 +104,21 @@ pub struct ImportSummary {
 
 impl ImportSummary {
     pub fn total(&self) -> usize {
-        self.logins + self.licenses + self.notes + self.cards + self.identities + self.ssh_keys
+        self.logins
+            + self.licenses
+            + self.notes
+            + self.cards
+            + self.identities
+            + self.ssh_keys
+            + self.passkeys
+            + self.totp_accounts
     }
 
     pub fn headline(&self) -> String {
         let mut extra = String::new();
+        if self.updated > 0 {
+            extra.push_str(&format!(", {} updated in place", self.updated));
+        }
         if self.rows_failed > 0 {
             extra.push_str(&format!(", ⚠️ {} bad rows skipped", self.rows_failed));
         }
@@ -151,16 +193,49 @@ fn to_custom(
 /// Parse-only half of the import pipeline (sniff → parse, NO merge).
 /// Powers the dry-run preview: the caller dry-merges the returned rows into
 /// a CLONED vault for exact counts, then merges for real only on confirm.
-pub fn parse_import_file(
+pub fn parse_import_file(path: &std::path::Path) -> Result<(Vec<RawItem>, ImportSummary)> {
+    match parse_import_any(path, None)? {
+        ParsedImport::Rows(raws, summary) => Ok((raws, summary)),
+        ParsedImport::Native(..) => Err(VaultError::Sync(
+            "PhantomVault backups must be imported through the GUI".into(),
+        )),
+    }
+}
+
+/// GUI entrypoint: vendor ROWS or a native vault snapshot. `master` is
+/// required only for encrypted `.pvx` backups (sealed with this vault's
+/// master password, so no extra prompt is needed).
+pub fn parse_import_any(
     path: &std::path::Path,
-) -> Result<(Vec<RawItem>, ImportSummary)> {
+    master: Option<&secrecy::SecretString>,
+) -> Result<ParsedImport> {
     let bytes = std::fs::read(path)
         .map_err(|e| VaultError::Sync(format!("cannot read import file: {e}")))?;
-    if bytes.len() > 64 * 1024 * 1024 {
-        return Err(VaultError::Sync("import file too large (64MB cap)".into()));
+    // Native backups legitimately embed attachment bytes; 256MB keeps the
+    // RAM ceiling bounded while letting a real vault fit.
+    if bytes.len() > 256 * 1024 * 1024 {
+        return Err(VaultError::Sync("import file too large (256MB cap)".into()));
     }
     let format = sniffer::sniff(&bytes)?;
     let mut summary = ImportSummary { source: format.label(), ..Default::default() };
+    if format == sniffer::Format::PhantomNativeEncrypted {
+        let Some(pw) = master else {
+            return Err(VaultError::Sync(
+                "encrypted PhantomVault backup needs the vault master password".into(),
+            ));
+        };
+        let plain = crate::crypto::decrypt_vault_portable_secret(pw, &bytes).map_err(|_| {
+            VaultError::Sync(
+                "cannot open backup: it was not sealed with this vault's master password".into(),
+            )
+        })?;
+        let vault = native_vault_from_bytes(&plain)?;
+        return Ok(ParsedImport::Native(Box::new(vault), summary));
+    }
+    if format == sniffer::Format::PhantomNative {
+        let vault = native_vault_from_bytes(&bytes)?;
+        return Ok(ParsedImport::Native(Box::new(vault), summary));
+    }
     let raws = match format {
         sniffer::Format::BitwardenJson => bitwarden::parse_json(&bytes, &mut summary)?,
         sniffer::Format::BitwardenCsv => bitwarden::parse_csv(&bytes, &mut summary)?,
@@ -173,8 +248,38 @@ pub fn parse_import_file(
         | sniffer::Format::LastPassCsv => browser_csv::parse(&bytes, &format, &mut summary)?,
         sniffer::Format::GenericJson => bitwarden::parse_generic_json(&bytes, &mut summary)?,
         sniffer::Format::FuzzyCsv(delim) => fuzzy::parse(&bytes, delim, &mut summary)?,
+        sniffer::Format::PhantomNative | sniffer::Format::PhantomNativeEncrypted => {
+            unreachable!("handled above")
+        }
     };
-    Ok((raws, summary))
+    Ok(ParsedImport::Rows(raws, summary))
+}
+
+/// Decode a native document (or a raw vault container, which is the same
+/// JSON shape and a legitimate source for recovery).
+fn native_vault_from_bytes(bytes: &[u8]) -> Result<Vault> {
+    #[derive(serde::Deserialize)]
+    struct Doc {
+        format: String,
+        version: u32,
+        vault: Vault,
+    }
+    let text = sniffer::decode_text(bytes);
+    match serde_json::from_str::<Doc>(&text) {
+        Ok(doc) => {
+            if doc.format != exporter::NATIVE_FORMAT {
+                return Err(VaultError::Sync("unrecognized PhantomVault backup".into()));
+            }
+            if doc.version > exporter::NATIVE_VERSION {
+                return Err(VaultError::Sync(
+                    "backup was written by a newer PhantomVault version".into(),
+                ));
+            }
+            Ok(doc.vault)
+        }
+        Err(_) => serde_json::from_str::<Vault>(&text)
+            .map_err(|e| VaultError::Sync(format!("not a PhantomVault backup: {e}"))),
+    }
 }
 
 /// Master entrypoint: sniff → parse → dedup → merge → persist-ready summary.
@@ -195,45 +300,109 @@ pub fn import_any_file(
 }
 
 /// Login dedup key: title + username (case-insensitive, trimmed) + EXACT
-/// password (case-sensitive — passwords are). Two rows sharing title/user
-/// but different passwords are NEVER the same item (decoy vs real password,
-/// rotation) and must both import.
-fn dedup_key(title: &str, username: &str, password: &str) -> String {
+/// password + normalized URL set. A different password or URL means a
+/// different item (rotation, decoy, same title on two sites).
+fn dedup_key(title: &str, username: &str, password: &str, urls: &str) -> String {
     format!(
-        "{}:{}:{}",
+        "{}:{}:{}:{}",
         title.trim().to_lowercase(),
         username.trim().to_lowercase(),
-        password
+        password,
+        urls
     )
 }
 
-/// Duplicate probe for the login dedup path. Trashed items never block:
-/// the user may re-add (or re-import) a credential whose older copy sits in
-/// Trash awaiting its 30-day shred. An item is ONLY a duplicate when title,
-/// username, AND password are all identical — a different password (rotation,
-/// decoy/fake entry alongside the real one) ALWAYS imports visibly instead
-/// of vanishing as a "duplicate". Pure — unit tested.
-fn dup_login(vault: &Vault, title: &str, user: &str, password: &str) -> bool {
-    let want = dedup_key(title, user, password);
+/// Order/case-insensitive URL set used by the duplicate probe.
+fn urls_key(urls: &[crate::models::LoginUrl]) -> String {
+    let mut v: Vec<String> = urls
+        .iter()
+        .map(|u| u.url().trim().to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    v.sort();
+    v.dedup();
+    v.join("\n")
+}
+
+fn urls_from_raw(c: &str, rules: &[u8]) -> Vec<crate::models::LoginUrl> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut urls = Vec::new();
+    for (i, line) in c.lines().enumerate() {
+        let t = line.trim();
+        if t.is_empty() || !seen.insert(t.to_lowercase()) {
+            continue;
+        }
+        let rule = rules.get(i).copied().unwrap_or(0);
+        urls.push(crate::models::LoginUrl::new(t.to_string(), rule));
+    }
+    urls
+}
+
+/// Duplicate probe for the SkipDupes path. Trashed items never block, and
+/// title+user+password+URLs must ALL match to count as a duplicate.
+fn dup_login(vault: &Vault, title: &str, user: &str, password: &str, urls: &str) -> bool {
+    let want = dedup_key(title, user, password, urls);
     vault.credentials.iter().any(|c| {
-        c.deleted_at.is_none() && dedup_key(&c.title, &c.username, &c.password) == want
+        c.deleted_at.is_none()
+            && dedup_key(&c.title, &c.username, &c.password, &urls_key(&c.urls)) == want
     })
 }
 
+/// Overwrite an existing login in place: id stays (verified_ids keep
+/// pointing at it), retired password moves to history, attachments merge.
+fn update_login(dst: &mut Credential, mut src: Credential, now: u64) {
+    let password_changed = dst.password != src.password;
+    // Keep the destination's binaries + history, add the incoming ones.
+    let mut attachments = std::mem::take(&mut dst.attachments);
+    for a in std::mem::take(&mut src.attachments) {
+        if !attachments.iter().any(|x| x.id == a.id) {
+            attachments.push(a);
+        }
+    }
+    let mut history = std::mem::take(&mut src.password_history);
+    if password_changed {
+        crate::models::push_history(&mut history, &dst.password, now);
+    }
+    let id = std::mem::take(&mut dst.id);
+    // `Credential` owns `Drop`; swap rather than field-move, then drop the
+    // old value through `src` (zeroized on scope exit).
+    std::mem::swap(dst, &mut src);
+    dst.id = id;
+    dst.attachments = attachments;
+    dst.password_history = history;
+    if password_changed {
+        dst.last_changed = now;
+    }
+}
+
 pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportSummary) {
-    // Intra-batch fingerprints: the same row twice in ONE file imports once.
+    merge_with(vault, raws, summary, MergeMode::SkipDupes)
+}
+
+pub(crate) fn merge_with(
+    vault: &mut Vault,
+    raws: Vec<RawItem>,
+    summary: &mut ImportSummary,
+    mode: MergeMode,
+) {
+    // Intra-batch fingerprints: the same row twice in ONE file imports once
+    // (ImportAll deliberately keeps both).
     let mut seen_batch: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let now = crate::models::current_timestamp();
     for r in raws {
         let title = if r.title.trim().is_empty() { "(untitled)" } else { r.title.trim() }.to_string();
         let folder = folder_of(&r.folder);
         if !vault.folders.iter().any(|f| f == &folder) {
             vault.folders.push(folder.clone());
         }
-        // Login-shaped rows (kind 1 + fallback arm) dedup within the batch.
-        // Password-aware: identical rows collapse, but a second row with a
-        // different password (or URL) imports instead of vanishing.
-        if r.kind != 2 && r.kind != 3 && r.kind != 4 && r.kind != 5 && r.kind != 6 {
-            let fp = format!("L\x00{}\x00{}", dedup_key(&title, &r.a, &r.b), r.c);
+        let is_login = r.kind != 2 && r.kind != 3 && r.kind != 4 && r.kind != 5 && r.kind != 6;
+        if is_login && mode != MergeMode::ImportAll {
+            let fp = dedup_key(
+                &title,
+                &r.a,
+                &r.b,
+                &urls_key(&urls_from_raw(&r.c, &r.url_rules)),
+            );
             if !seen_batch.insert(fp) {
                 summary.duplicates_skipped += 1;
                 continue;
@@ -241,16 +410,23 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
         }
         match r.kind {
             2 => {
-                if vault.licenses.iter().any(|l| {
+                let dup = vault.licenses.iter().any(|l| {
                     l.deleted_at.is_none()
                         && l.app_name.to_lowercase() == title.to_lowercase()
                         && l.license_key == r.a
-                }) {
-                    summary.duplicates_skipped += 1;
-                    continue;
-                }
-                vault.licenses.push(SoftwareLicense {
-                    id: new_id(),
+                });
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup => {
+                        summary.duplicates_skipped += 1;
+                        continue;
+                    }
+                    MergeMode::UpdateExisting => vault.licenses.iter().position(|l| {
+                        l.deleted_at.is_none() && l.app_name.to_lowercase() == title.to_lowercase()
+                    }),
+                    _ => None,
+                };
+                let item = SoftwareLicense {
+                    id: String::new(),
                     app_name: title,
                     license_key: r.a,
                     expiry_date: (!r.b.trim().is_empty()).then(|| r.b.clone()),
@@ -260,37 +436,87 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
-                });
-                summary.licenses += 1;
+                };
+                match idx {
+                    Some(i) => {
+                        let mut item = item;
+                        item.id = vault.licenses[i].id.clone();
+                        vault.licenses[i] = item;
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.licenses.push(item);
+                        summary.licenses += 1;
+                    }
+                }
             }
             3 => {
-                // Notes: same title AND same content (retitled edits re-import).
-                if vault.notes.iter().any(|n| {
+                let dup = vault.notes.iter().any(|n| {
                     n.deleted_at.is_none()
                         && n.title.to_lowercase() == title.to_lowercase()
                         && n.content == r.a
-                }) {
-                    summary.duplicates_skipped += 1;
-                    continue;
+                });
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup => {
+                        summary.duplicates_skipped += 1;
+                        continue;
+                    }
+                    MergeMode::UpdateExisting => vault.notes.iter().position(|n| {
+                        n.deleted_at.is_none() && n.title.to_lowercase() == title.to_lowercase()
+                    }),
+                    _ => None,
+                };
+                let item = SecureNote {
+                    id: String::new(),
+                    title,
+                    content: r.a,
+                    folder,
+                    custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
+                };
+                match idx {
+                    Some(i) => {
+                        let mut item = item;
+                        item.id = vault.notes[i].id.clone();
+                        vault.notes[i] = item;
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.notes.push(item);
+                        summary.notes += 1;
+                    }
                 }
-                vault.notes.push(SecureNote { id: new_id(), title, content: r.a, folder, custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked), attachments: Vec::new(), travel_safe: false, favorite: false, deleted_at: None });
-                summary.notes += 1;
             }
             4 => {
-                // Cards: same number AND same expiry (renewals re-import).
                 let (em, ey) = split_expiry(&r.c);
-                if vault.cards.iter().any(|k| {
+                let dup = vault.cards.iter().any(|k| {
                     k.deleted_at.is_none()
                         && k.title.to_lowercase() == title.to_lowercase()
                         && k.card_number == r.b
                         && k.exp_month == em
                         && k.exp_year == ey
-                }) {
-                    summary.duplicates_skipped += 1;
-                    continue;
-                }
-                vault.cards.push(PaymentCard {
-                    id: new_id(),
+                });
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup => {
+                        summary.duplicates_skipped += 1;
+                        continue;
+                    }
+                    MergeMode::UpdateExisting => vault.cards.iter().position(|k| {
+                        k.deleted_at.is_none()
+                            && k.title.to_lowercase() == title.to_lowercase()
+                            && k.card_number == r.b
+                    }),
+                    _ => None,
+                };
+                let item = PaymentCard {
+                    id: String::new(),
                     title,
                     cardholder_name: r.a,
                     card_number: r.b,
@@ -304,22 +530,43 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
-                });
-                summary.cards += 1;
+                };
+                match idx {
+                    Some(i) => {
+                        let mut item = item;
+                        item.id = vault.cards[i].id.clone();
+                        vault.cards[i] = item;
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.cards.push(item);
+                        summary.cards += 1;
+                    }
+                }
             }
             5 => {
-                // Identities: same name AND same email (changed email re-imports).
-                if vault.identities.iter().any(|i| {
+                let dup = vault.identities.iter().any(|i| {
                     i.deleted_at.is_none()
                         && i.title.to_lowercase() == title.to_lowercase()
                         && i.full_name.to_lowercase() == r.a.to_lowercase()
                         && i.email.to_lowercase() == r.c.to_lowercase()
-                }) {
-                    summary.duplicates_skipped += 1;
-                    continue;
-                }
-                vault.identities.push(IdentityItem {
-                    id: new_id(),
+                });
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup => {
+                        summary.duplicates_skipped += 1;
+                        continue;
+                    }
+                    MergeMode::UpdateExisting => vault.identities.iter().position(|i| {
+                        i.deleted_at.is_none()
+                            && i.title.to_lowercase() == title.to_lowercase()
+                            && i.full_name.to_lowercase() == r.a.to_lowercase()
+                    }),
+                    _ => None,
+                };
+                let item = IdentityItem {
+                    id: String::new(),
                     title,
                     full_name: r.a,
                     nid_or_passport: r.b,
@@ -338,21 +585,40 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
-                });
-                summary.identities += 1;
+                };
+                match idx {
+                    Some(i) => {
+                        let mut item = item;
+                        item.id = vault.identities[i].id.clone();
+                        vault.identities[i] = item;
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.identities.push(item);
+                        summary.identities += 1;
+                    }
+                }
             }
             6 => {
-                // SSH: same title AND same private key (re-keys re-import).
-                if vault.ssh_keys.iter().any(|s| {
+                let dup = vault.ssh_keys.iter().any(|s| {
                     s.deleted_at.is_none()
                         && s.title.to_lowercase() == title.to_lowercase()
                         && s.private_key == r.b
-                }) {
-                    summary.duplicates_skipped += 1;
-                    continue;
-                }
-                vault.ssh_keys.push(SshKeyItem {
-                    id: new_id(),
+                });
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup => {
+                        summary.duplicates_skipped += 1;
+                        continue;
+                    }
+                    MergeMode::UpdateExisting => vault.ssh_keys.iter().position(|s| {
+                        s.deleted_at.is_none() && s.title.to_lowercase() == title.to_lowercase()
+                    }),
+                    _ => None,
+                };
+                let item = SshKeyItem {
+                    id: String::new(),
                     title,
                     public_key: r.a,
                     private_key: r.b,
@@ -364,51 +630,55 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     travel_safe: false,
                     favorite: false,
                     deleted_at: None,
-                });
-                summary.ssh_keys += 1;
+                };
+                match idx {
+                    Some(i) => {
+                        let mut item = item;
+                        item.id = vault.ssh_keys[i].id.clone();
+                        vault.ssh_keys[i] = item;
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.ssh_keys.push(item);
+                        summary.ssh_keys += 1;
+                    }
+                }
             }
             _ => {
                 if r.a.trim().is_empty() && r.b.trim().is_empty() {
                     summary.rows_failed += 1;
                     continue;
                 }
-                // URLs carry their match rules (index-aligned url_rules from
-                // Bitwarden `match`; other engines leave it empty = Default).
-                // Order-preserving dedup on the URL string; first rule wins.
-                let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
-                let mut urls: Vec<crate::models::LoginUrl> = Vec::new();
-                for (i, line) in r.c.lines().enumerate() {
-                    let t = line.trim();
-                    if t.is_empty() {
+                let urls = urls_from_raw(&r.c, &r.url_rules);
+                let key = urls_key(&urls);
+                let idx = match mode {
+                    MergeMode::SkipDupes if dup_login(vault, &title, &r.a, &r.b, &key) => {
+                        summary.duplicates_skipped += 1;
                         continue;
                     }
-                    if !seen.insert(t.to_lowercase()) {
-                        continue;
-                    }
-                    let rule = r.url_rules.get(i).copied().unwrap_or(0);
-                    urls.push(crate::models::LoginUrl::new(t.to_string(), rule));
-                }
-                if dup_login(vault, &title, &r.a, &r.b) {
-                    summary.duplicates_skipped += 1;
-                    continue;
-                }
-                // Backup auto-sort + history are computed BEFORE the struct
-                // move (both borrow `r` while other fields move out of it).
+                    MergeMode::UpdateExisting => vault.credentials.iter().position(|c| {
+                        c.deleted_at.is_none()
+                            && c.title.to_lowercase() == title.to_lowercase()
+                            && c.username.to_lowercase() == r.a.to_lowercase()
+                    }),
+                    _ => None,
+                };
                 let backup_codes = collect_backup(&r);
                 let history: Vec<crate::models::PasswordHistoryEntry> = r
                     .history
                     .into_iter()
                     .take(crate::models::PASSWORD_HISTORY_KEEP)
                     .collect();
-                vault.credentials.push(Credential {
-                    id: new_id(),
+                let item = Credential {
+                    id: String::new(),
                     title,
                     username: r.a,
                     password: r.b,
                     totp_secret: r.totp,
                     urls,
                     apps: Vec::new(),
-                    // Backup auto-sort: named fields + notes sniff, capped/deduped.
                     backup_codes,
                     custom_fields: to_custom(&r.custom_text, &r.custom_hidden, &r.custom_check, &r.custom_linked),
                     notes: r.notes,
@@ -416,13 +686,23 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
                     reprompt: false,
                     attachments: Vec::new(),
                     travel_safe: false,
-                    // Imported now: rotation clock starts at import.
-                    last_changed: crate::models::current_timestamp(),
+                    last_changed: now,
                     password_history: history,
                     favorite: false,
                     deleted_at: None,
-                });
-                summary.logins += 1;
+                };
+                match idx {
+                    Some(i) => {
+                        update_login(&mut vault.credentials[i], item, now);
+                        summary.updated += 1;
+                    }
+                    None => {
+                        let mut item = item;
+                        item.id = new_id();
+                        vault.credentials.push(item);
+                        summary.logins += 1;
+                    }
+                }
             }
         }
     }
@@ -430,6 +710,302 @@ pub(crate) fn merge(vault: &mut Vault, raws: Vec<RawItem>, summary: &mut ImportS
     vault.folders.dedup();
 }
 
+/// Native merge: full-fidelity items (passkeys, 2FA accounts, attachment
+/// bytes, URL rules) with the same three modes. Ids are always re-issued so
+/// a backup can be restored into any vault without collisions.
+pub(crate) fn merge_native(
+    vault: &mut Vault,
+    mut src: Vault,
+    summary: &mut ImportSummary,
+    mode: MergeMode,
+) {
+    // `Vault` owns `Drop` (zeroize-on-drop), so fields are taken rather than
+    // moved; the emptied shell still wipes on scope exit.
+    let folders = std::mem::take(&mut src.folders);
+    let credentials = std::mem::take(&mut src.credentials);
+    let licenses = std::mem::take(&mut src.licenses);
+    let notes = std::mem::take(&mut src.notes);
+    let cards = std::mem::take(&mut src.cards);
+    let identities = std::mem::take(&mut src.identities);
+    let ssh_keys = std::mem::take(&mut src.ssh_keys);
+    let passkeys = std::mem::take(&mut src.passkeys);
+    let totp_accounts = std::mem::take(&mut src.totp_accounts);
+    for f in folders {
+        if !vault.folders.contains(&f) {
+            vault.folders.push(f);
+        }
+    }
+    for c in credentials.into_iter().filter(|c| c.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if dup_login(vault, &c.title, &c.username, &c.password, &urls_key(&c.urls)) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.credentials.iter().position(|x| {
+                x.deleted_at.is_none()
+                    && x.title.to_lowercase() == c.title.to_lowercase()
+                    && x.username.to_lowercase() == c.username.to_lowercase()
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let now = crate::models::current_timestamp();
+                update_login(&mut vault.credentials[i], c, now);
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = c;
+                item.id = new_id();
+                vault.credentials.push(item);
+                summary.logins += 1;
+            }
+        }
+    }
+    for l in licenses.into_iter().filter(|l| l.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.licenses.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.app_name.to_lowercase() == l.app_name.to_lowercase()
+                        && x.license_key == l.license_key
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.licenses.iter().position(|x| {
+                x.deleted_at.is_none() && x.app_name.to_lowercase() == l.app_name.to_lowercase()
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item = l;
+                item.id = vault.licenses[i].id.clone();
+                vault.licenses[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = l;
+                item.id = new_id();
+                vault.licenses.push(item);
+                summary.licenses += 1;
+            }
+        }
+    }
+    for n in notes.into_iter().filter(|n| n.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.notes.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.title.to_lowercase() == n.title.to_lowercase()
+                        && x.content == n.content
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.notes.iter().position(|x| {
+                x.deleted_at.is_none() && x.title.to_lowercase() == n.title.to_lowercase()
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item = n;
+                item.id = vault.notes[i].id.clone();
+                vault.notes[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = n;
+                item.id = new_id();
+                vault.notes.push(item);
+                summary.notes += 1;
+            }
+        }
+    }
+    for k in cards.into_iter().filter(|k| k.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.cards.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.title.to_lowercase() == k.title.to_lowercase()
+                        && x.card_number == k.card_number
+                        && x.exp_month == k.exp_month
+                        && x.exp_year == k.exp_year
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.cards.iter().position(|x| {
+                x.deleted_at.is_none()
+                    && x.title.to_lowercase() == k.title.to_lowercase()
+                    && x.card_number == k.card_number
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item = k;
+                item.id = vault.cards[i].id.clone();
+                vault.cards[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = k;
+                item.id = new_id();
+                vault.cards.push(item);
+                summary.cards += 1;
+            }
+        }
+    }
+    for i in identities.into_iter().filter(|i| i.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.identities.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.title.to_lowercase() == i.title.to_lowercase()
+                        && x.full_name.to_lowercase() == i.full_name.to_lowercase()
+                        && x.email.to_lowercase() == i.email.to_lowercase()
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.identities.iter().position(|x| {
+                x.deleted_at.is_none()
+                    && x.title.to_lowercase() == i.title.to_lowercase()
+                    && x.full_name.to_lowercase() == i.full_name.to_lowercase()
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(j) => {
+                let mut item = i;
+                item.id = vault.identities[j].id.clone();
+                vault.identities[j] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = i;
+                item.id = new_id();
+                vault.identities.push(item);
+                summary.identities += 1;
+            }
+        }
+    }
+    for s in ssh_keys.into_iter().filter(|s| s.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.ssh_keys.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.title.to_lowercase() == s.title.to_lowercase()
+                        && x.private_key == s.private_key
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.ssh_keys.iter().position(|x| {
+                x.deleted_at.is_none() && x.title.to_lowercase() == s.title.to_lowercase()
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item = s;
+                item.id = vault.ssh_keys[i].id.clone();
+                vault.ssh_keys[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = s;
+                item.id = new_id();
+                vault.ssh_keys.push(item);
+                summary.ssh_keys += 1;
+            }
+        }
+    }
+    for p in passkeys.into_iter().filter(|p| p.deleted_at.is_none()) {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.passkeys.iter().any(|x| {
+                    x.deleted_at.is_none()
+                        && x.rp_id == p.rp_id
+                        && x.user_name == p.user_name
+                        && x.credential_id == p.credential_id
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault.passkeys.iter().position(|x| {
+                x.deleted_at.is_none() && x.rp_id == p.rp_id && x.user_name == p.user_name
+            }),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item = p;
+                item.id = vault.passkeys[i].id.clone();
+                vault.passkeys[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item = p;
+                item.id = new_id();
+                vault.passkeys.push(item);
+                summary.passkeys += 1;
+            }
+        }
+    }
+    for t in totp_accounts {
+        let idx = match mode {
+            MergeMode::SkipDupes => {
+                if vault.totp_accounts.iter().any(|x| {
+                    x.issuer == t.issuer && x.account_name == t.account_name && x.secret == t.secret
+                }) {
+                    summary.duplicates_skipped += 1;
+                    continue;
+                }
+                None
+            }
+            MergeMode::UpdateExisting => vault
+                .totp_accounts
+                .iter()
+                .position(|x| x.issuer == t.issuer && x.account_name == t.account_name),
+            MergeMode::ImportAll => None,
+        };
+        match idx {
+            Some(i) => {
+                let mut item: TotpAccount = t;
+                item.id = vault.totp_accounts[i].id.clone();
+                vault.totp_accounts[i] = item;
+                summary.updated += 1;
+            }
+            None => {
+                let mut item: TotpAccount = t;
+                item.id = new_id();
+                vault.totp_accounts.push(item);
+                summary.totp_accounts += 1;
+            }
+        }
+    }
+    vault.folders.sort();
+    vault.folders.dedup();
+}
 fn split_expiry(raw: &str) -> (String, String) {
     let t = raw.trim().replace([' ', '-', '.'], "/");
     let mut parts = t.split('/');
@@ -869,5 +1445,59 @@ mod tests {
         assert_eq!(parse_bw_datetime("€abcd"), None);
         assert_eq!(parse_bw_datetime("তাংখ্যা"), None);
         assert_eq!(parse_bw_datetime("2024-06-01T12:00:00+০৫:৩০"), None);
+    }
+    #[test]
+    fn url_aware_dedupe_keeps_same_login_on_two_sites() {
+        let mut v = Vault::new();
+        let mut s = ImportSummary::default();
+        let mut a = login_raw("GitHub", "me");
+        a.c = "https://github.com".into();
+        merge(&mut v, vec![a], &mut s);
+        let mut b = login_raw("GitHub", "me");
+        b.c = "https://github.company.com".into();
+        merge(&mut v, vec![b], &mut s);
+        assert_eq!(v.credentials.len(), 2, "different URL = different item");
+        // Exact same row again (URL included) is still skipped.
+        let mut c = login_raw("GitHub", "me");
+        c.c = "https://github.com".into();
+        merge(&mut v, vec![c], &mut s);
+        assert_eq!(v.credentials.len(), 2);
+        assert_eq!(s.duplicates_skipped, 1);
+    }
+
+    #[test]
+    fn update_mode_overwrites_in_place_and_keeps_history() {
+        let mut v = Vault::new();
+        let mut s = ImportSummary::default();
+        merge(&mut v, vec![login_raw("GitHub", "me")], &mut s);
+        let id = v.credentials[0].id.clone();
+        let mut rotated = login_raw("GitHub", "me");
+        rotated.b = "rotated".into();
+        rotated.totp = "NEWTOTP".into();
+        let mut s2 = ImportSummary::default();
+        merge_with(&mut v, vec![rotated], &mut s2, MergeMode::UpdateExisting);
+        assert_eq!(v.credentials.len(), 1, "updated, not duplicated");
+        assert_eq!(v.credentials[0].id, id, "id must survive for verified_ids");
+        assert_eq!(v.credentials[0].password, "rotated");
+        assert_eq!(v.credentials[0].totp_secret, "NEWTOTP");
+        assert_eq!(v.credentials[0].password_history[0].password, "newpw");
+        assert_eq!(s2.updated, 1);
+        assert_eq!(s2.logins, 0);
+    }
+
+    #[test]
+    fn import_all_keeps_every_duplicate() {
+        let mut v = Vault::new();
+        let mut s = ImportSummary::default();
+        merge(&mut v, vec![login_raw("GitHub", "me")], &mut s);
+        let mut s2 = ImportSummary::default();
+        merge_with(
+            &mut v,
+            vec![login_raw("GitHub", "me"), login_raw("GitHub", "me")],
+            &mut s2,
+            MergeMode::ImportAll,
+        );
+        assert_eq!(v.credentials.len(), 3);
+        assert_eq!(s2.logins, 2);
     }
 }

@@ -317,6 +317,150 @@ pub fn export_csv_result(vault: &Vault) -> Result<String, String> {
     String::from_utf8(bytes).map_err(|e| format!("csv utf8 failed: {e}"))
 }
 
+/// Marker written into every native PhantomVault backup document. The
+/// sniffer keys on it, so a hand-edited `format` string is a loud refusal
+/// rather than a silent partial import.
+pub const NATIVE_FORMAT: &str = "phantomvault-backup";
+/// Native backup schema version (bump only on a breaking field change).
+pub const NATIVE_VERSION: u32 = 1;
+
+/// Active-only deep copy for native export: trash stays behind and
+/// machine-local state (sharing grants, verified ids) never travels.
+fn active_copy(vault: &Vault) -> Vault {
+    let mut out = vault.clone();
+    out.credentials.retain(|c| c.deleted_at.is_none());
+    out.licenses.retain(|l| l.deleted_at.is_none());
+    out.notes.retain(|n| n.deleted_at.is_none());
+    out.cards.retain(|k| k.deleted_at.is_none());
+    out.identities.retain(|i| i.deleted_at.is_none());
+    out.ssh_keys.retain(|s| s.deleted_at.is_none());
+    out.passkeys.retain(|p| p.deleted_at.is_none());
+    out.shared_grants.clear();
+    out.verified_ids.clear();
+    out
+}
+
+/// Lossless native backup document (PLAINTEXT �?" never write this directly;
+/// use [`export_native_encrypted`]). Passkeys, SSH keys, 2FA accounts and
+/// attachment bytes all survive a round-trip.
+pub fn export_native_json(vault: &Vault) -> serde_json::Value {
+    serde_json::json!({
+        "format": NATIVE_FORMAT,
+        "version": NATIVE_VERSION,
+        "exported_at": crate::models::current_timestamp(),
+        "vault": active_copy(vault),
+    })
+}
+
+/// Item + attachment footprint for the export summary line.
+pub fn native_stats(vault: &Vault) -> (usize, usize, u64) {
+    let v = active_copy(vault);
+    let items = v.credentials.len()
+        + v.licenses.len()
+        + v.notes.len()
+        + v.cards.len()
+        + v.identities.len()
+        + v.ssh_keys.len()
+        + v.passkeys.len()
+        + v.totp_accounts.len();
+    let atts: Vec<&crate::models::EncryptedAttachment> = v
+        .credentials
+        .iter()
+        .flat_map(|c| c.attachments.iter())
+        .chain(v.licenses.iter().flat_map(|l| l.attachments.iter()))
+        .chain(v.notes.iter().flat_map(|n| n.attachments.iter()))
+        .chain(v.cards.iter().flat_map(|k| k.attachments.iter()))
+        .chain(v.identities.iter().flat_map(|i| i.attachments.iter()))
+        .chain(v.ssh_keys.iter().flat_map(|s| s.attachments.iter()))
+        .collect();
+    let bytes: u64 = atts.iter().map(|a| a.size_bytes as u64).sum();
+    (items, atts.len(), bytes)
+}
+
+/// `.pvx` container: the native JSON sealed with the portable hybrid
+/// envelope (same Argon2id + ML-KEM + XChaCha20Poly1305 as the vault file).
+pub fn export_native_encrypted(
+    vault: &Vault,
+    master_password: &secrecy::SecretString,
+) -> Result<Vec<u8>, String> {
+    let doc = export_native_json(vault);
+    let plain = serde_json::to_vec(&doc).map_err(|e| format!("native encode failed: {e}"))?;
+    crate::crypto::encrypt_vault_portable_secret(master_password, &plain)
+}
+
+pub fn export_native_gated(
+    vault: &Vault,
+    is_decoy: bool,
+    master_password: &secrecy::SecretString,
+) -> Result<Vec<u8>, String> {
+    if is_decoy {
+        return Err("decoy mode is read-only".to_string());
+    }
+    export_native_encrypted(vault, master_password)
+}
+
+/// Full-fidelity CSV for spreadsheets: EVERY item kind, one row each, with
+/// the complete item JSON in `data_json`. PLAINTEXT (secrets included) �?"
+/// use only through the gated UI path, never for vendor interop.
+pub fn export_csv_full_gated(vault: &Vault, is_decoy: bool) -> Result<String, String> {
+    if is_decoy {
+        return Err("decoy mode is read-only".to_string());
+    }
+    export_csv_full_result(vault)
+}
+
+pub fn export_csv_full_result(vault: &Vault) -> Result<String, String> {
+    let mut w = csv::WriterBuilder::new().from_writer(Vec::new());
+    w.write_record(["kind", "folder", "favorite", "title", "notes", "data_json"])
+        .map_err(|e| format!("csv header failed: {e}"))?;
+    fn row(
+        w: &mut csv::Writer<Vec<u8>>,
+        kind: &str,
+        folder: &str,
+        favorite: bool,
+        title: &str,
+        notes: &str,
+        data: serde_json::Value,
+    ) -> Result<(), String> {
+        w.write_record([
+            kind.to_string(),
+            csv_safe(folder),
+            if favorite { "1" } else { "0" }.to_string(),
+            csv_safe(title),
+            csv_safe(notes),
+            csv_safe(&data.to_string()),
+        ])
+        .map_err(|e| format!("csv {kind} row failed: {e}"))
+    }
+    for c in vault.credentials.iter().filter(|c| c.deleted_at.is_none()) {
+        row(&mut w, "login", &c.folder, c.favorite, &c.title, &c.notes, serde_json::to_value(c).unwrap_or(serde_json::Value::Null))?;
+    }
+    for l in vault.licenses.iter().filter(|l| l.deleted_at.is_none()) {
+        row(&mut w, "license", &l.folder, l.favorite, &l.app_name, "", serde_json::to_value(l).unwrap_or(serde_json::Value::Null))?;
+    }
+    for n in vault.notes.iter().filter(|n| n.deleted_at.is_none()) {
+        row(&mut w, "note", &n.folder, n.favorite, &n.title, "", serde_json::to_value(n).unwrap_or(serde_json::Value::Null))?;
+    }
+    for k in vault.cards.iter().filter(|k| k.deleted_at.is_none()) {
+        row(&mut w, "card", &k.folder, k.favorite, &k.title, &k.notes, serde_json::to_value(k).unwrap_or(serde_json::Value::Null))?;
+    }
+    for i in vault.identities.iter().filter(|i| i.deleted_at.is_none()) {
+        row(&mut w, "identity", &i.folder, i.favorite, &i.title, &i.notes, serde_json::to_value(i).unwrap_or(serde_json::Value::Null))?;
+    }
+    for s in vault.ssh_keys.iter().filter(|s| s.deleted_at.is_none()) {
+        row(&mut w, "ssh", &s.folder, s.favorite, &s.title, &s.notes, serde_json::to_value(s).unwrap_or(serde_json::Value::Null))?;
+    }
+    for p in vault.passkeys.iter().filter(|p| p.deleted_at.is_none()) {
+        row(&mut w, "passkey", "", p.favorite, &p.rp_id, "", serde_json::to_value(p).unwrap_or(serde_json::Value::Null))?;
+    }
+    for t in &vault.totp_accounts {
+        let title = format!("{} {}", t.issuer, t.account_name).trim().to_string();
+        row(&mut w, "totp", "", t.favorite, &title, "", serde_json::to_value(t).unwrap_or(serde_json::Value::Null))?;
+    }
+    let bytes = w.into_inner().map_err(|e| format!("csv finalize failed: {e}"))?;
+    String::from_utf8(bytes).map_err(|e| format!("csv utf8 failed: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -548,5 +692,188 @@ mod tests {
         v.credentials[0].password = "=cmd|'/c calc'!A1".into();
         let csv = export_csv(&v);
         assert!(csv.contains("'=cmd"), "formula password must be quoted");
+    }
+
+    fn vault_all_kinds() -> Vault {
+        let mut v = vault_one();
+        v.credentials[0].attachments.push(crate::models::EncryptedAttachment {
+            id: "att1".into(),
+            filename: "id.bin".into(),
+            mime_type: "application/octet-stream".into(),
+            size_bytes: 3,
+            data: vec![1, 2, 3],
+        });
+        v.totp_accounts.push(crate::models::TotpAccount {
+            id: "t1".into(),
+            account_name: "me@x.com".into(),
+            issuer: "GitHub".into(),
+            secret: "JBSWY3DP".into(),
+            digits: 6,
+            period: 30,
+            algorithm: "SHA1".into(),
+            otp_type: "totp".into(),
+            counter: 0,
+            favorite: false,
+        });
+        v.licenses.push(crate::models::SoftwareLicense {
+            id: "l1".into(),
+            app_name: "IDE".into(),
+            license_key: "KEY-1".into(),
+            expiry_date: None,
+            folder: "Work".into(),
+            custom_fields: vec![],
+            attachments: vec![],
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.notes.push(crate::models::SecureNote {
+            id: "n1".into(),
+            title: "Note".into(),
+            content: "body".into(),
+            folder: "Work".into(),
+            custom_fields: vec![],
+            attachments: vec![],
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.cards.push(crate::models::PaymentCard {
+            id: "k1".into(),
+            title: "Visa".into(),
+            cardholder_name: "Me".into(),
+            card_number: "4111".into(),
+            exp_month: "12".into(),
+            exp_year: "30".into(),
+            cvv: "1".into(),
+            folder: "Work".into(),
+            notes: String::new(),
+            custom_fields: vec![],
+            attachments: vec![],
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.identities.push(crate::models::IdentityItem {
+            id: "i1".into(),
+            title: "Home".into(),
+            full_name: "Me".into(),
+            nid_or_passport: String::new(),
+            email: "me@x.com".into(),
+            phone: String::new(),
+            address: String::new(),
+            company: String::new(),
+            city: String::new(),
+            state: String::new(),
+            zip: String::new(),
+            country: String::new(),
+            folder: "Work".into(),
+            notes: String::new(),
+            custom_fields: vec![],
+            attachments: vec![],
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.ssh_keys.push(crate::models::SshKeyItem {
+            id: "s1".into(),
+            title: "Server".into(),
+            public_key: "ssh-ed25519 A".into(),
+            private_key: "PRIV".into(),
+            fingerprint: "fp".into(),
+            folder: "Work".into(),
+            notes: String::new(),
+            custom_fields: vec![],
+            attachments: vec![],
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.passkeys.push(crate::models::PasskeyItem {
+            id: "p1".into(),
+            rp_id: "github.com".into(),
+            user_name: "me".into(),
+            user_handle: vec![1],
+            credential_id: vec![2, 3],
+            private_key_pkcs8: vec![9, 8, 7],
+            public_key_der: vec![4],
+            sign_count: 1,
+            created_at: 5,
+            favorite: false,
+            deleted_at: None,
+        });
+        v
+    }
+
+    #[test]
+    fn native_backup_is_lossless_and_encrypted() {
+        let v = vault_all_kinds();
+        let pw = secrecy::SecretString::new("master-pw".to_string());
+        let blob = export_native_encrypted(&v, &pw).unwrap();
+        assert_eq!(&blob[..4], crate::crypto::V2_PORTABLE_MAGIC);
+        let plain = crate::crypto::decrypt_vault_portable_secret(&pw, &blob).unwrap();
+        let doc: serde_json::Value = serde_json::from_slice(&plain).unwrap();
+        assert_eq!(doc["format"], NATIVE_FORMAT);
+        assert_eq!(doc["version"], NATIVE_VERSION);
+        let back: Vault = serde_json::from_value(doc["vault"].clone()).unwrap();
+        assert_eq!(back.credentials.len(), 1);
+        assert_eq!(back.totp_accounts.len(), 1);
+        assert_eq!(back.licenses.len(), 1);
+        assert_eq!(back.passkeys.len(), 1);
+        assert_eq!(back.passkeys[0].private_key_pkcs8, vec![9, 8, 7]);
+        assert_eq!(back.credentials[0].attachments[0].data, vec![1, 2, 3]);
+        let bad = secrecy::SecretString::new("wrong".to_string());
+        assert!(crate::crypto::decrypt_vault_portable_secret(&bad, &blob).is_err());
+    }
+
+    #[test]
+    fn native_export_skips_trash_and_local_state() {
+        let mut v = vault_all_kinds();
+        v.credentials[0].deleted_at = Some(7);
+        v.verified_ids.push("x".into());
+        let doc = export_native_json(&v);
+        assert!(doc["vault"]["credentials"].as_array().unwrap().is_empty());
+        assert!(doc["vault"]["verified_ids"].as_array().unwrap().is_empty());
+        assert!(doc["vault"]["shared_grants"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn full_csv_covers_every_kind() {
+        let csv = export_csv_full_result(&vault_all_kinds()).unwrap();
+        for kind in ["login", "license", "note", "card", "identity", "ssh", "passkey", "totp"] {
+            assert!(csv.contains(kind), "missing {kind} row");
+        }
+        assert!(csv.contains("JBSWY3DP"), "2FA secret must be in the full CSV");
+    }
+
+    #[test]
+    fn native_backup_parses_through_the_real_sniffer() {
+        let v = vault_all_kinds();
+        let pw = secrecy::SecretString::new("master-pw".to_string());
+        let blob = export_native_encrypted(&v, &pw).unwrap();
+        let path = std::env::temp_dir().join(format!("pv-native-{}.pvx", std::process::id()));
+        std::fs::write(&path, &blob).unwrap();
+        let parsed = crate::importer::parse_import_any(&path, Some(&pw)).unwrap();
+        let _ = std::fs::remove_file(&path);
+        match parsed {
+            crate::importer::ParsedImport::Native(src, _) => {
+                let mut dst = Vault::new();
+                let mut s = crate::importer::ImportSummary::default();
+                crate::importer::merge_native(
+                    &mut dst,
+                    *src,
+                    &mut s,
+                    crate::importer::MergeMode::SkipDupes,
+                );
+                assert_eq!(dst.passkeys.len(), 1);
+                assert_eq!(dst.passkeys[0].private_key_pkcs8, vec![9, 8, 7]);
+                assert_eq!(dst.totp_accounts.len(), 1);
+                assert_eq!(dst.credentials.len(), 1);
+                assert_eq!(dst.credentials[0].attachments[0].data, vec![1, 2, 3]);
+                assert_eq!(s.passkeys, 1);
+                assert_eq!(s.totp_accounts, 1);
+            }
+            crate::importer::ParsedImport::Rows(..) => panic!("native backup sniffed as rows"),
+        }
     }
 }
