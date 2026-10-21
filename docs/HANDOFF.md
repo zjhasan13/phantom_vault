@@ -18,11 +18,13 @@
   SSH keys, attachment bytes), row-level preview with Skip / Update existing /
   Import all, URL-aware login dedupe, session-only undo guarded by a vault
   fingerprint, and an all-kinds "Full CSV" export. Importer decrypts `.pvx`
-  with the live master and refuses a foreign one. Rebuild installer + zips
-  (bump to 0.4.0) before shipping.
-  Tests `npm test` **79/79**, `cargo test` **461 passed / 1 ignored**.
-  Installer `installer-output/PhantomVault-Setup-0.3.2.exe` (excludes
-  `browser_extension/dist`). Release upload is user-side (`gh` unauthenticated).
+  with the live master and refuses a foreign one. Installer + zips rebuilt at
+  0.4.0.
+  Tests `npm test` **79/79**, `cargo test` **468 passed / 1 ignored**.
+  Installer `installer-output/PhantomVault-Setup-0.4.0.exe` (8.54 MB, sha16
+  `675196E7EC550471`, excludes `browser_extension/dist`); exe 19.55 MB
+  ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
+  (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
@@ -333,7 +335,7 @@
    zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
    `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
-   works too). The 0.3.2 installer + browser zips are built locally; the user
+   works too). The 0.4.0 installer + browser zips are built locally; the user
    uploads the Release in the web UI (device login is not usable from the
    agent shell).
 5. **Follow-ups for the other line:** legacy host `assert` unreachable from
