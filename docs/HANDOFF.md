@@ -1,9 +1,20 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: P6 web fill-strength + repo follow-ups (AgentKey ZeroizeOnDrop, adopt-guard regression test).
+> Read this fully in a fresh session BEFORE doing anything. Last updated: web 0.3.2 (unified login ranking, SPA identifier carry, per-tab carry, identity suggestions).
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
+
+- **Web 0.3.2 (latest):** one ranking for every fill path (`rankLogins`:
+  carried -> verified -> last_filled -> A->Z) used by the dropdown, hotkey and
+  context menu; identity suggestions fixed (raw `getIdentities()` - URL-less
+  rows no longer dropped, and `isAddr` beats the checkout-card heuristic);
+  per-tab carry (`pvCaptureCarry:<tabId>` via background `PV_TAB_ID`); SPA
+  identifier-only step 1 carries the username via a data-free `PV_SPA_IDENT`
+  tripwire; popup mirrors the trust rank; carry clears only on a full fill.
+  Tests `npm test` **79/79**, `cargo test` **461 passed / 1 ignored**.
+  Installer `installer-output/PhantomVault-Setup-0.3.2.exe` (excludes
+  `browser_extension/dist`). Release upload is user-side (`gh` unauthenticated).
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
@@ -311,10 +322,12 @@
    Bitwarden JSON → fresh vault + new password → import → verify count → export
    Recovery Sheet PDF → shred temp JSON → delete all `*.dpapi` → shred old backup.
 4. **GitHub cache check:** repo code-search `my_secure_vault` must return
-   zero; else request GitHub Support cache purge. `gh` 2.101 IS installed but
+   zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
    `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
-   works too). Then publish the pending Release object in the web UI.
+   works too). The 0.3.2 installer + browser zips are built locally; the user
+   uploads the Release in the web UI (device login is not usable from the
+   agent shell).
 5. **Follow-ups for the other line:** legacy host `assert` unreachable from
    extension (fails-closed test pinned — relay now uses
    `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH

@@ -382,6 +382,20 @@
   // vault browser below remains usable.
   const noHost = !host;
   frameHosts = await loadFrameHosts(tab && tab.id);
+  // Multi-page carry (K1): page 1's email, written by the content script under
+  // this tab's opaque id. Ranking only — suggestions are never filtered by it.
+  let carryUser = "";
+  try {
+    if (tab && tab.id != null && hostBase) {
+      const key = "pvCaptureCarry:" + tab.id;
+      const s = await chrome.storage.session.get({ [key]: null });
+      const c = s && s[key];
+      if (c && c.base === hostBase && c.username &&
+          Date.now() - (c.at || 0) < 5 * 60 * 1000) {
+        carryUser = String(c.username).trim().toLowerCase();
+      }
+    }
+  } catch (_) {}
   console.log("PV tab host:", host ? `${host} (base: ${hostBase})` : "(none — suggestions off)");
 
   // Domain helpers live in domain.js (loaded before popup.js) — E1/E2.
@@ -1068,9 +1082,16 @@
     // --- Tier 1: STRICT domain suggestions (website URLs only — a
     // "@gmail.com" username never promotes an entry to Google) ---
     const sugg = suggEntries.filter((e) => !siteBlocked() && suggestMatch(e) && matchText(e, f.q) && matchFolder(e, f.folder) && (f.type === "all" || f.type === "1"));
-    // Recently-used first (last_filled epoch, missing = 0), then A→Z by
-    // username so 20+ same-domain accounts scan effortlessly.
+    // Same trust rank as the in-page dropdown (K1 carry first, ordering only),
+    // then recently-used (last_filled epoch, missing = 0), then A→Z by username
+    // so 20+ same-domain accounts scan effortlessly.
+    const isCarry = (e) =>
+      !!carryUser && String(e.username || "").trim().toLowerCase() === carryUser;
     sugg.sort((a, b) => {
+      const ca = isCarry(a) ? 1 : 0, cb = isCarry(b) ? 1 : 0;
+      if (cb !== ca) return cb - ca;
+      const va = a.verified ? 1 : 0, vb = b.verified ? 1 : 0;
+      if (vb !== va) return vb - va;
       const ta = lastFilledMap[a.id] || 0, tb = lastFilledMap[b.id] || 0;
       if (tb !== ta) return tb - ta;
       return String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" });

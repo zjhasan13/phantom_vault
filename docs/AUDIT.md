@@ -256,3 +256,26 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   fields - never the current password on a change form. Tests: +12 content,
   +3 background, +1 Rust -> `npm test` **71/71**, `cargo test` **460 passed /
   1 ignored**; clippy unchanged (2 pre-existing `manual_clamp`).
+- **Multi-page carry v2 + identity suggestions (DONE, 0.3.2):** the carried
+  username is now the FIRST sort key in the login dropdown (`rankLogins`:
+  carried -> verified -> `last_filled` -> A->Z), and the same helper drives the
+  hotkey and context-menu fill/copy paths, so `logins[0]` vault order no longer
+  leaks into a fill (TOTP copy now picks the highest-ranked account that
+  actually carries a secret). Ordering only - the carry can never hide a row or
+  gate a fill (K1). Carry is scoped per tab through an opaque background
+  `PV_TAB_ID` (`pvCaptureCarry:<tabId>`), so two same-site tabs cannot clobber
+  each other; it is cleared only on a full username+password fill (a
+  password-only step keeps it for save pairing). Pure-XHR step 1 (a
+  `fetch`/XHR posting an identifier and no password) now pings a data-free
+  `PV_SPA_IDENT` tripwire, and `maybeCarryFromDom()` re-reads the username from
+  the DOM, so Google/FxA/Okta flows no longer depend on a native `submit`.
+  Identity suggestions were still dead because `suggestIdentities()` asked for
+  `PV_IDENTITIES` through `filterEntries`, which drops every URL-less row; it
+  now uses the raw `getIdentities()` path (like cards). The checkout-path
+  heuristic also hijacked explicit address fields (`isCard` won over
+  `isAddr`) so identities never appeared on billing steps - `isAddr` now takes
+  precedence. The popup suggestion list mirrors the same trust rank. Tests: +4
+  JS (identity row, SPA identifier carry, hotkey ranking, popup static) ->
+  `npm test` **79/79**; `cargo test` unchanged **461 passed / 1 ignored**
+  (Rust untouched). The jsdom harness now honours `storage.session` reads and
+  stubs `PV_IDENTITIES`.

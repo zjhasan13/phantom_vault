@@ -91,30 +91,47 @@
   // consumed to associate the later password step and never gates a fill.
   const PV_CARRY_TTL_MS = 5 * 60 * 1000;
   let pvCarryUser = "";
+  // Scope the carry to THIS tab: chrome.storage.session is extension-wide, so a
+  // single key let two tabs on the same site clobber each other. The tab id is
+  // opaque (no PII) and survives cross-origin navigation, unlike sessionStorage.
+  // Tests/background-less contexts fall back to the legacy shared key.
+  const pvCarryKeyReady = (async () => {
+    try {
+      const r = await chrome.runtime.sendMessage({ type: "PV_TAB_ID" });
+      if (r && r.ok && r.tabId != null) return "pvCaptureCarry:" + r.tabId;
+    } catch (_) {}
+    return "pvCaptureCarry";
+  })();
   function pvCarrySave(base, username) {
     const u = (username || "").trim();
     if (!base || !u) return;
     pvCarryUser = u;
-    try {
-      chrome.storage.session.set({
-        pvCaptureCarry: { base, username: u, at: Date.now() },
-      }).catch(() => {});
-    } catch (_) {}
+    pvCarryKeyReady.then((key) => {
+      try {
+        chrome.storage.session.set({
+          [key]: { base, username: u, at: Date.now() },
+        }).catch(() => {});
+      } catch (_) {}
+    }).catch(() => {});
   }
   function pvCarryLoad(base) {
-    try {
-      chrome.storage.session.get({ pvCaptureCarry: null }).then((s) => {
-        const c = s && s.pvCaptureCarry;
-        if (c && c.base === base && c.username &&
-            Date.now() - (c.at || 0) < PV_CARRY_TTL_MS) {
-          pvCarryUser = c.username;
-        }
-      }).catch(() => {});
-    } catch (_) {}
+    pvCarryKeyReady.then((key) => {
+      try {
+        chrome.storage.session.get({ [key]: null }).then((s) => {
+          const c = s && s[key];
+          if (c && c.base === base && c.username &&
+              Date.now() - (c.at || 0) < PV_CARRY_TTL_MS) {
+            pvCarryUser = c.username;
+          }
+        }).catch(() => {});
+      } catch (_) {}
+    }).catch(() => {});
   }
   function pvCarryClear() {
     pvCarryUser = "";
-    try { chrome.storage.session.remove("pvCaptureCarry").catch(() => {}); } catch (_) {}
+    pvCarryKeyReady.then((key) => {
+      try { chrome.storage.session.remove(key).catch(() => {}); } catch (_) {}
+    }).catch(() => {});
   }
   chrome.storage.local.get(DEFAULTS).then((s) => { settings = { ...DEFAULTS, ...s }; });
   chrome.storage.onChanged.addListener((ch, area) => {
@@ -1220,6 +1237,10 @@
     if (f.users[0] && entry.username) setNativeValue(f.users[0], entry.username);
     if (f.pass[0] && entry.password) {
       setNativeValue(f.pass[0], entry.password);
+      // Full fill on this step (own username + password): the carry is
+      // redundant now, and clearing it stops a stale "this step" marker.
+      // A password-only step keeps it — watchSubmit still needs it for pairing.
+      if (f.users[0]) pvCarryClear();
       // Multi-step chaining: remember the step-2 password in JS memory and
       // remember only WHICH account the OTP step belongs to.
       pvPending = { password: entry.password, totpId: entry.id || "" };
@@ -1615,6 +1636,28 @@
   }
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrop("escape"); }, true);
 
+  // One ranking for EVERY fill path (in-page dropdown, hotkey, context menu):
+  // carried account → verified → recently filled → A→Z. Ordering only —
+  // callers must never drop rows because of it (K1: a carry cannot gate a fill).
+  function carriedUserFor(f) {
+    const typed = ((f && f.users) || [])
+      .map((el) => String(el.value || "").trim())
+      .find(Boolean) || "";
+    return (typed || pvCarryUser || "").trim().toLowerCase();
+  }
+  function loginCarryHit(e, carried) {
+    return !!(carried && String((e && e.username) || "").trim().toLowerCase() === carried);
+  }
+  function rankLogins(list, carried) {
+    return [...(list || [])].sort(
+      (a, b) =>
+        (loginCarryHit(b, carried) ? 1 : 0) - (loginCarryHit(a, carried) ? 1 : 0) ||
+        (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
+        (b.last_filled || 0) - (a.last_filled || 0) ||
+        String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
+    );
+  }
+
   // Shared row resolver: classifies the anchor, queries the vault ONCE, and
   // returns dropdown rows (or null when nothing applies). Used by both the
   // passive focus path and the badge-click path so they can never disagree.
@@ -1624,8 +1667,10 @@
     const form = anchor.closest("form");
     const inCheckoutForm = !!form &&
       /check|pay|card/i.test(((form.id || "") + " " + location.pathname));
-    const isCard = f.cards.includes(anchor) || inCheckoutForm;
     const isAddr = f.addr.includes(anchor);
+    // A checkout path makes *unclassified* fields card-ish, but an explicit
+    // address field must still get identity suggestions (billing step).
+    const isCard = f.cards.includes(anchor) || (inCheckoutForm && !isAddr);
     // Unclassified inputs (search bars, plain textareas-as-inputs, unknown
     // widgets) get NO dropdown — previously EVERY input fell into login query.
     const isLogin = f.users.includes(anchor) || f.pass.includes(anchor) || f.newPass.includes(anchor);
@@ -1658,12 +1703,7 @@
     // carried in session storage. Rank that account FIRST — ordering only,
     // never a filter, so the K1 invariant (a carry must not gate a fill) still
     // holds. A username the page already prefilled wins over the carry.
-    const typedUser = (f.users || [])
-      .map((el) => String(el.value || "").trim())
-      .find(Boolean) || "";
-    const carried = (typedUser || pvCarryUser || "").trim().toLowerCase();
-    const carryHit = (e) =>
-      carried && String(e.username || "").trim().toLowerCase() === carried ? 1 : 0;
+    const carried = carriedUserFor(f);
     // Trust rank: carried account → verified → recently filled → A→Z. Fakes
     // (unverified, never filled) sink to the bottom automatically.
     const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
@@ -1674,16 +1714,10 @@
       if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
       return `${Math.floor(s / 86400)}d ago`;
     };
-    const ranked = [...logins].sort(
-      (a, b) =>
-        carryHit(b) - carryHit(a) ||
-        (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
-        (b.last_filled || 0) - (a.last_filled || 0) ||
-        String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
-    );
+    const ranked = rankLogins(logins, carried);
     return ranked.map((e) => {
       const badge = [e.verified ? "✅" : "", hIcon(e.health)].filter(Boolean).join(" ");
-      const sub = [e.username || "", badge, carryHit(e) ? "this step" : "",
+      const sub = [e.username || "", badge, loginCarryHit(e, carried) ? "this step" : "",
         e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
         .filter(Boolean)
         .join(" · ");
@@ -2096,7 +2130,8 @@
         if (cards[0]) { fillCard(cards[0]); return; }
       }
       const logins = await queryHost("PV_QUERY", pageBase());
-      if (logins[0]) fillLogin(logins[0], f);
+      const best = rankLogins(logins, carriedUserFor(f))[0];
+      if (best) fillLogin(best, f);
       else toast("🛡️ No matching credential for this site.");
     } catch (e) {
       toast("⚠️ " + (e.message || "bridge failed"));
@@ -2873,6 +2908,21 @@
       toast(`🔑 Vault passkey${keys.length > 1 ? "s" : ""} for ${rp}: ${who} — approve on desktop when asked.`);
     } catch (_) {}
   }
+  // Pure-XHR multi-page (Google/Okta): step 1 posts only an identifier, so no
+  // submit event fires and there is no password field yet. Mirror that username
+  // into the secret-free carry (K1) so step 2 can rank and pair it.
+  function maybeCarryFromDom() {
+    try {
+      if (isBlocked() || phishingRefuse() || !location.host) return;
+      const f = findFields();
+      if ((f.pass || []).length || (f.newPass || []).length) return;
+      const el = (f.users || []).find(
+        (x) => x instanceof HTMLInputElement && isVisible(x) && !isSearchField(x) &&
+          String(x.value || "").trim(),
+      );
+      if (el) pvCarrySave(pageBase(), el.value);
+    } catch (_) {}
+  }
   async function maybeOfferSpaSave() {
     try {
       if (isBlocked() || phishingRefuse() || !location.host) return;
@@ -2929,6 +2979,10 @@
       if (d.type === "PV_SPA_CARD") {
         maybeOfferSpaCardSave();
         setTimeout(maybeOfferSpaCardSave, 400);
+        return;
+      }
+      if (d.type === "PV_SPA_IDENT") {
+        maybeCarryFromDom();
         return;
       }
       if (d.type !== "PV_SPA_LOGIN") return;
@@ -3077,7 +3131,7 @@
         if (!(await requireExtPin())) return { ok: false };
         const f = findFields();
         if (msg.menu === "pv_fill_login") {
-          const l = await queryHost("PV_QUERY", pageBase());
+          const l = rankLogins(await queryHost("PV_QUERY", pageBase()), carriedUserFor(f));
           if (l[0]) fillLogin(l[0], f);
         } else if (msg.menu === "pv_fill_card") {
           const c = await queryCards();
@@ -3086,16 +3140,17 @@
           const ids = await getIdentities();
           if (ids[0]) fillIdentity(ids[0]);
         } else if (msg.menu === "pv_copy_password") {
-          const l = await queryHost("PV_QUERY", pageBase());
+          const l = rankLogins(await queryHost("PV_QUERY", pageBase()), carriedUserFor(f));
           if (l[0]) {
             if (l[0].reprompt && !(await confirmSensitive(l[0]))) return { ok: true };
             copyWithAutoclear(l[0].password);
           }
         } else if (msg.menu === "pv_copy_totp") {
-          const l = await queryHost("PV_QUERY", pageBase());
-          if (l[0] && l[0].totp) {
-            if (l[0].reprompt && !(await confirmSensitive(l[0]))) return { ok: true };
-            copyWithAutoclear(l[0].totp);
+          const l = rankLogins(await queryHost("PV_QUERY", pageBase()), carriedUserFor(f));
+          const t = l.find((x) => x.totp);
+          if (t) {
+            if (t.reprompt && !(await confirmSensitive(t))) return { ok: true };
+            copyWithAutoclear(t.totp);
           }
         } else if (msg.menu === "pv_generate_password") {
           // Registration pages: focused password field wins, else the first

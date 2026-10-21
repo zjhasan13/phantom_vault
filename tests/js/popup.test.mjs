@@ -33,6 +33,15 @@ test("P3: popup quick-fill delegates to the content engine first", () => {
   assert.ok(body.indexOf("PV_FILL_ENTRY") < body.indexOf("injectFill"),
     "content engine tried before direct inject");
 });
+test("P4: popup suggestions rank the carried account first (ordering only)", () => {
+  const read = SRC.match(/const key = "pvCaptureCarry:" \+ tab\.id;([\s\S]*?)carryUser = String\(c\.username\)/);
+  assert.ok(read, "popup reads the per-tab carry from storage.session");
+  assert.ok(!/sugg = sugg\.filter/.test(SRC.slice(SRC.indexOf("const isCarry"), SRC.indexOf("sugg.slice(0, 20)"))),
+    "carry must never filter suggestions");
+  assert.match(SRC, /const isCarry = \(e\) =>[\s\S]{0,220}sugg\.sort/,
+    "carry participates in the suggestion sort");
+});
+
 test("P6: fill targets the frame that owns the login form", () => {
   const fill = SRC.match(/async function fillEntry\(tabId, entry\) \{([\s\S]*?)\n  \}/);
   assert.ok(fill, "fillEntry present");

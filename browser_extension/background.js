@@ -222,6 +222,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (t && t.id != null && t.url) scheduleBadge(t.id, t.url);
       } catch (_) {}
     };
+    // Opaque per-tab scoping for the multi-page carry store (no secrets).
+    if (msg.type === "PV_TAB_ID") {
+      const t = sender && sender.tab;
+      return { ok: !!t && t.id != null, tabId: t && t.id != null ? t.id : null };
+    }
     if (msg.type === "PV_QUERY") {
       touchActivity();
       return await hostRequest({ cmd: "query", app: msg.app || msg.url || "" });

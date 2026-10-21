@@ -36,6 +36,34 @@
     return t.includes("password") || t.includes("passwd") || t.includes("pwd");
   }
 
+  // Identifier-only step (Google/FxA/Okta page 1): the body carries the email
+  // but no password. KEY names only — the content script re-reads the value
+  // from the DOM, so nothing sensitive crosses this tripwire.
+  function bodyLooksLikeIdentifier(body) {
+    if (!body) return false;
+    let s = "";
+    try {
+      if (typeof body === "string") {
+        s = body;
+      } else if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+        s = body.toString();
+      } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+        const parts = [];
+        body.forEach((_, k) => parts.push(k));
+        s = parts.join("&");
+      } else {
+        return false;
+      }
+    } catch (_) {
+      return false;
+    }
+    const t = String(s).slice(0, 4096);
+    if (/(?:^|&)(?:password|passwd|pwd)=/i.test(t)) return false;
+    if (/"?(?:password|passwd|pwd)"?\s*[:=]/i.test(t)) return false;
+    return /(?:^|&)(?:identifier|email|username|user|login)=/i.test(t) ||
+      /"(?:identifier|email|username|user|login)"\s*:/i.test(t);
+  }
+
   // Card requests are signalled by KEY names only (same data-free tripwire as
   // logins). Covers JSON bodies, FormData and urlencoded checkouts.
   function bodyLooksLikeCard(body) {
@@ -71,6 +99,7 @@
         if (method !== "GET" && method !== "HEAD") {
           if (bodyLooksLikeLogin(init && init.body)) ping("PV_SPA_LOGIN");
           else if (bodyLooksLikeCard(init && init.body)) ping("PV_SPA_CARD");
+          else if (bodyLooksLikeIdentifier(init && init.body)) ping("PV_SPA_IDENT");
         }
       } catch (_) {}
       return origFetch(input, init);
@@ -93,6 +122,7 @@
         if (m !== "GET" && m !== "HEAD") {
           if (bodyLooksLikeLogin(body)) ping("PV_SPA_LOGIN");
           else if (bodyLooksLikeCard(body)) ping("PV_SPA_CARD");
+          else if (bodyLooksLikeIdentifier(body)) ping("PV_SPA_IDENT");
         }
       } catch (_) {}
       return origSend.apply(this, arguments);

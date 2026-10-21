@@ -88,6 +88,53 @@ test("carry-priority: previous step's email sorts first in the login dropdown", 
   assert.match(rows[1].textContent, /zed@example\.com/);
 });
 
+test("identity suggestions reach the dropdown (url-less rows survive)", async (t) => {
+  const { window } = env(t, `<form>
+    <input autocomplete="street-address" name="address1" value="">
+  </form>`, "https://example.com/checkout", [], [], [
+    { id: "exti1", title: "Home", full_name: "Ada Lovelace",
+      email: "ada@example.com", phone: "+1 555 0100", address: "1 Analytical Way" },
+  ]);
+  const addr = window.document.querySelector('input[autocomplete="street-address"]');
+  addr.dispatchEvent(new window.Event("focusin", { bubbles: true }));
+  await flush(80);
+  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  assert.ok(rows.some((r) => /Ada Lovelace/.test(r.textContent)),
+    "identity row must appear even though identities store no URL");
+});
+
+test("SPA identifier-only step carries the username (no submit event)", async (t) => {
+  const { window, store } = env(t, `<form id="f">
+    <input type="email" name="identifier" value="ghost@example.com">
+  </form>`, "https://accounts.example.com/login");
+  window.dispatchEvent(new window.MessageEvent("message", {
+    data: { source: "__pv_hook", type: "PV_SPA_IDENT" }, source: window,
+  }));
+  await flush(80);
+  const c = store.session.pvCaptureCarry;
+  assert.ok(c, "carry must be written from a pure-XHR identifier step");
+  assert.equal(c.username, "ghost@example.com");
+  assert.equal(c.password, undefined, "password must never be carried (P1-b)");
+});
+
+test("hotkey fill ranks the carried account above a verified one", async (t) => {
+  const { window } = env(t, `<form id="step1">
+    <input type="email" name="email" value="alice@example.com">
+  </form>
+  <form id="step2"><input type="password" name="password" value=""></form>`,
+  "https://example.com/login", [
+    { id: "c2", username: "zed@example.com", password: "p2",
+      urls: ["example.com"], verified: true, last_filled: 1700000000 },
+    { id: "c1", username: "alice@example.com", password: "p1", urls: ["example.com"] },
+  ]);
+  submit(window, window.document.getElementById("step1"));
+  await flush();
+  await runtimeMessage(window, { type: "PV_HOTKEY_FILL" });
+  await flush(60);
+  assert.equal(window.document.querySelector('#step2 input[type="password"]').value, "p1",
+    "hotkey must use the same ranking as the dropdown, not vault order");
+});
+
 test("known credential is silent (no banner)", async (t) => {
   const { window } = env(t, `<form>
     <input type="text" name="username" value="bob">

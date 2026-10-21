@@ -31,6 +31,9 @@ function makeChrome(store) {
     if (msg.type === "PV_CARDS") {
       return { ok: true, entries: store.cards };
     }
+    if (msg.type === "PV_IDENTITIES") {
+      return { ok: true, entries: store.identities || [] };
+    }
     if (msg.type === "PV_SAVE_LOGIN") {
       store.saves.push(msg);
       return { ok: true, updated: false };
@@ -53,7 +56,13 @@ function makeChrome(store) {
     storage: {
       local: { get: async (d) => ({ ...d }), set: async () => {}, remove: async () => {} },
       session: {
-        get: async (d) => ({ ...d }),
+        get: async (d) => {
+          const out = { ...d };
+          for (const k of Object.keys(d)) {
+            if (k in store.session) out[k] = store.session[k];
+          }
+          return out;
+        },
         set: async (o) => { Object.assign(store.session, o); },
         remove: async (k) => { delete store.session[k]; },
         setAccessLevel: () => {},
@@ -65,7 +74,7 @@ function makeChrome(store) {
   };
 }
 
-export function loadContent(html, url = "https://example.com/login", entries = [], cards = []) {
+export function loadContent(html, url = "https://example.com/login", entries = [], cards = [], identities = []) {
   // content.js schedules 30 s toast timers; when a test closes its window those
   // fire against a torn-down document. Swallow only jsdom's teardown reports —
   // real assertion failures still surface normally.
@@ -85,7 +94,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, cards, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
+  const store = { entries, cards, identities, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
   window.chrome = makeChrome(store);
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);
