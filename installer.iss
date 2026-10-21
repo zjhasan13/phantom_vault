@@ -7,7 +7,7 @@
 
 #define MyAppName "PhantomVault"
 ; KEEP IN SYNC with Cargo.toml [package] version.
-#define MyAppVersion "0.3.2"
+#define MyAppVersion "0.4.0"
 #define MyAppPublisher "PhantomVault Security Foundation"
 #define MyAppExeName "phantom_vault.exe"
 ; Host manifests are GENERATED at install time by WriteHostManifest below

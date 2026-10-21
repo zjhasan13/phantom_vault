@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PhantomVault AutoFill",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "Zero-knowledge autofill via the PhantomVault native bridge (vault-gated, no cloud).",
   "permissions": ["favicon", "tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus"],
   "commands": {
