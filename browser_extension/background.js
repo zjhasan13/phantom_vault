@@ -253,7 +253,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
         }
     if (msg.type === "PV_CARDS") {
-      return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "" });
+      return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "", all: msg.all === true });
     }
     if (msg.type === "PV_IDENTITIES") {
       return await hostRequest({ cmd: "identities", app: msg.app || msg.url || "" });
@@ -331,25 +331,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         return { ok: false, error: String((e && e.message) || e) };
       }
     }
-    if (msg.type === "PV_SAVE_LOGIN") {
-      // Sender check (MISSING-HIGH): a malicious page must not save under
-      // another site's URL (github.com) to poison that credential via the
-      // host's domain match. P6: validate against the SENDER FRAME's URL, not
-      // the tab URL, so a login submitted inside a cross-origin iframe is
-      // saved under the iframe's origin — never under the embedding page.
+    // Sender check: a page must not save under another site's URL. P6 uses
+    // the SENDER FRAME's URL (not the tab URL) so a login/card inside a
+    // cross-origin frame is filed under the frame's origin.
+    function saveSenderOk(msgUrl) {
       try {
         const tabUrl = sender && sender.tab && sender.tab.url;
         const frameUrl = sender && sender.url;
         const srcUrl = (frameUrl && /^https?:/i.test(frameUrl)) ? frameUrl : tabUrl;
-        if (srcUrl && /^https?:/i.test(srcUrl) && msg.url) {
+        if (srcUrl && /^https?:/i.test(srcUrl) && msgUrl) {
           const srcBase = pvRegistrable(new URL(srcUrl).hostname);
-          const msgBase = pvRegistrable(new URL(String(msg.url).includes("://") ? msg.url : "https://" + msg.url).hostname);
-          if (srcBase && msgBase && srcBase !== msgBase) {
-            return { ok: false, error: "save url does not match sender frame" };
-          }
+          const msgBase = pvRegistrable(new URL(String(msgUrl).includes("://") ? msgUrl : "https://" + msgUrl).hostname);
+          if (srcBase && msgBase && srcBase !== msgBase) return false;
         }
       } catch (_) {}
+      return true;
+    }
+    if (msg.type === "PV_SAVE_LOGIN") {
+      if (!saveSenderOk(msg.url)) {
+        return { ok: false, error: "save url does not match sender frame" };
+      }
       const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
+      if (r && r.ok) { touchActivity(); retouchBadge(); }
+      return r;
+    }
+    // Smart-autofill: save a card typed into a checkout. Cards are global,
+    // but the sender check still blocks a hostile frame from filing one under
+    // another site's URL (used only for the audit log/notes).
+    if (msg.type === "PV_SAVE_CARD") {
+      if (!msg.url) return { ok: false, error: "url required" };
+      if (!saveSenderOk(msg.url)) {
+        return { ok: false, error: "save url does not match sender frame" };
+      }
+      const r = await hostRequest({
+        cmd: "save_card",
+        number: msg.number || "",
+        cardholder: msg.cardholder || "",
+        exp_month: msg.exp_month || "",
+        exp_year: msg.exp_year || "",
+        cvv: msg.cvv || "",
+        url: msg.url || "",
+        title: msg.title || "",
+      });
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }

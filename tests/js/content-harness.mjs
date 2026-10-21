@@ -28,8 +28,15 @@ function makeChrome(store) {
       store.pings += 1;
       return { ok: true, unlocked: true };
     }
+    if (msg.type === "PV_CARDS") {
+      return { ok: true, entries: store.cards };
+    }
     if (msg.type === "PV_SAVE_LOGIN") {
       store.saves.push(msg);
+      return { ok: true, updated: false };
+    }
+    if (msg.type === "PV_SAVE_CARD") {
+      store.cardSaves.push(msg);
       return { ok: true, updated: false };
     }
     return { ok: true };
@@ -58,7 +65,7 @@ function makeChrome(store) {
   };
 }
 
-export function loadContent(html, url = "https://example.com/login", entries = []) {
+export function loadContent(html, url = "https://example.com/login", entries = [], cards = []) {
   // content.js schedules 30 s toast timers; when a test closes its window those
   // fire against a torn-down document. Swallow only jsdom's teardown reports —
   // real assertion failures still surface normally.
@@ -78,7 +85,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, session: {}, pings: 0, sessionLocked: false, saves: [] };
+  const store = { entries, cards, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
   window.chrome = makeChrome(store);
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);

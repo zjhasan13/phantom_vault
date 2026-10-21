@@ -709,6 +709,37 @@
     document.addEventListener("mousedown", pvPickerOutside, true);
   }
 
+  // Shared checkout selectors: used by detection (badges + save prompt) and
+  // by fillCard, so a card the extension captures can always be filled back.
+  const CARD_NUM_SEL = 'input[autocomplete="cc-number"], input[name*="cardnumber" i], ' +
+    'input[name*="card_number" i], input[id*="cardnumber" i], input[id*="card-number" i], ' +
+    'input[name*="card" i][name*="num" i], input[id*="card" i][id*="num" i], ' +
+    'input[data-stripe="number"]';
+  const CARD_NAME_SEL = 'input[autocomplete="cc-name"], input[name*="cardholder" i], ' +
+    'input[name*="card_holder" i], input[id*="cardholder" i], ' +
+    'input[name*="card" i][name*="name" i], input[id*="card" i][id*="name" i]';
+  const CARD_CVV_SEL = 'input[autocomplete="cc-csc"], input[name*="cvv" i], ' +
+    'input[name*="cvc" i], input[name*="securitycode" i], input[name*="security-code" i], ' +
+    'input[id*="cvv" i], input[id*="cvc" i]';
+  const CARD_EXP_SEL = 'input[autocomplete="cc-exp"], input[name*="expir" i], ' +
+    'input[name*="exp-date" i], input[name*="expiry" i], ' +
+    'input[name*="card" i][name*="exp" i], input[id*="card" i][id*="exp" i]';
+  const CARD_EXP_M_SEL = 'input[autocomplete="cc-exp-month"], select[autocomplete="cc-exp-month"], ' +
+    'input[name*="exp-month" i], select[name*="exp-month" i], input[name*="expmonth" i], ' +
+    'select[name*="expmonth" i], input[name*="exp_month" i], select[name*="exp_month" i]';
+  const CARD_EXP_Y_SEL = 'input[autocomplete="cc-exp-year"], select[autocomplete="cc-exp-year"], ' +
+    'input[name*="exp-year" i], select[name*="exp-year" i], input[name*="expyear" i], ' +
+    'select[name*="expyear" i], input[name*="exp_year" i], select[name*="exp_year" i]';
+
+  // New/confirm password = signup, reset or password-change field. Shared by
+  // classification and the generator so it never overwrites a CURRENT
+  // password box while filling the confirmation.
+  function isNewPasswordField(el) {
+    const ac = (el.autocomplete || "").toLowerCase();
+    const nameId = ((el.name || "") + " " + (el.id || "")).toLowerCase();
+    return ac === "new-password" || nameId.includes("new");
+  }
+
   function findFields() {
     // Strict classifier: search bars NEVER classify (YouTube/Google/Amazon
     // search boxes must not get badges, listeners, or dropdowns). Login =
@@ -722,10 +753,8 @@
       // M15: type=password is NEVER a search box (forgot/find-password
       // pages like id="findPassword" were badge-less and unfillable).
       if (type !== "password" && isSearchField(el)) continue;
-      const ac = (el.autocomplete || "").toLowerCase();
       if (type === "password") {
-        const nameId = ((el.name || "") + " " + (el.id || "")).toLowerCase();
-        if (ac === "new-password" || nameId.includes("new")) newPass.push(el);
+        if (isNewPasswordField(el)) newPass.push(el);
         else pass.push(el);
         continue;
       }
@@ -733,10 +762,93 @@
       if (isUsernameField(el)) { users.push(el); continue; }
     }
     const q = (s) => [...document.querySelectorAll(s)].filter(isVisible).filter((el) => !isSearchField(el));
-    const cards = q('input[name*="cardnumber" i], input[autocomplete="cc-number"], input[data-stripe="number"]');
+    const cards = q(CARD_NUM_SEL);
     const addr = q('input[autocomplete="street-address"], input[autocomplete="address-line1"], ' +
       'input[name*="address" i], input[autocomplete="tel"], input[name*="phone" i]');
     return { pass, newPass, users, otp, cards, addr };
+  }
+
+  // ---------- payment-card capture (save prompt) ----------
+  // Luhn gate is the typo filter: a mistyped PAN must never be offered for
+  // vault storage. Expiry is normalized to the vault's MM / YY pair.
+  function digitsOf(v) { return String(v == null ? "" : v).replace(/\D/g, ""); }
+  function luhnOk(d) {
+    if (!/^\d{12,19}$/.test(d)) return false;
+    let sum = 0;
+    for (let i = 0; i < d.length; i++) {
+      let n = +d[d.length - 1 - i];
+      if (i % 2 === 1) { n *= 2; if (n > 9) n -= 9; }
+      sum += n;
+    }
+    return sum % 10 === 0;
+  }
+  function firstVisibleIn(root, sel) {
+    try {
+      for (const el of (root || document).querySelectorAll(sel)) {
+        if (isVisible(el)) return el;
+      }
+    } catch (_) {}
+    return null;
+  }
+  function monthDigits(el) {
+    const v = digitsOf(el.value);
+    if (v) return v;
+    const opt = el.selectedOptions && el.selectedOptions[0];
+    const t = ((el.value || "") + " " + ((opt && opt.textContent) || "")).toLowerCase();
+    const names = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"];
+    const i = names.findIndex((n) => t.includes(n));
+    return i >= 0 ? String(i + 1) : "";
+  }
+  // Reads the card currently typed into `root` (a form, or the document for
+  // SPA checkouts that never emit a submit event). NULL unless the PAN passes
+  // Luhn and a usable month/year pair is present.
+  function readFormCard(root) {
+    const scope = root || document;
+    const numEl = firstVisibleIn(scope, CARD_NUM_SEL);
+    if (!numEl) return null;
+    const number = digitsOf(numEl.value);
+    if (!luhnOk(number)) return null;
+    const holderEl = firstVisibleIn(scope, CARD_NAME_SEL);
+    const cvvEl = firstVisibleIn(scope, CARD_CVV_SEL);
+    let mm = "", yy = "";
+    const mEl = firstVisibleIn(scope, CARD_EXP_M_SEL);
+    const yEl = firstVisibleIn(scope, CARD_EXP_Y_SEL);
+    if (mEl && yEl) {
+      mm = monthDigits(mEl);
+      yy = digitsOf(yEl.value);
+    } else {
+      const expEl = firstVisibleIn(scope, CARD_EXP_SEL);
+      const raw = expEl ? String(expEl.value || "").trim() : "";
+      const m = raw.match(/(\d{1,4})\s*[\/\-.]\s*(\d{1,4})/);
+      if (m) {
+        // Accept MM/YY, MM/YYYY and YYYY-MM; MMYY (no separator) too.
+        if (m[1].length === 4) { mm = m[2]; yy = m[1]; }
+        else { mm = m[1]; yy = m[2]; }
+      } else if (/^\d{4}$/.test(raw)) {
+        mm = raw.slice(0, 2);
+        yy = raw.slice(2);
+      }
+    }
+    if (yy.length === 4) yy = yy.slice(2);
+    if (!/^(0?[1-9]|1[0-2])$/.test(mm) || !/^\d{2}$/.test(yy)) return null;
+    const cvv = digitsOf(cvvEl && cvvEl.value);
+    if (cvv && (cvv.length < 3 || cvv.length > 4)) return null;
+    return {
+      number,
+      cardholder: (holderEl && holderEl.value || "").trim(),
+      exp_month: mm.padStart(2, "0"),
+      exp_year: yy,
+      cvv,
+    };
+  }
+  function cardBrand(num) {
+    const d = digitsOf(num);
+    if (/^4/.test(d)) return "Visa";
+    if (/^(5[1-5]|2(2[2-9]|[3-6]\d|7[01]|720))/.test(d)) return "Mastercard";
+    if (/^3[47]/.test(d)) return "Amex";
+    if (/^(6011|65|64[4-9])/.test(d)) return "Discover";
+    if (/^(3(0[0-5]|[68])|35)/.test(d)) return "Diners/JCB";
+    return "";
   }
 
   // ---------- strict field classifier (search-blindness fix) ----------
@@ -764,6 +876,52 @@
     if (hay.split(/[^a-z0-9]+/).includes("q")) return true;
     return false;
   }
+  // Form-less SPA logins have no <form> to scope the username box, but the old
+  // document-wide fallback badged EVERY text input on the page (nickname,
+  // sidebar, comment boxes) whenever any password field existed. Keep the
+  // fallback inside the login cluster instead: the same tight container, or a
+  // password box sitting right next to the field.
+  function tightCommonAncestor(a, b) {
+    const chain = new Set();
+    let x = a.parentElement;
+    while (x) { chain.add(x); x = x.parentElement; }
+    let y = b.parentElement;
+    while (y && !chain.has(y)) y = y.parentElement;
+    // body/html would re-create the page-wide false positive.
+    if (!y || y === document.body || y === document.documentElement) return null;
+    return y.querySelectorAll("input, select, textarea").length <= 8 ? y : null;
+  }
+  // A standalone email/username box only earns a shield when the page itself
+  // reads like a credential step. Otherwise a matched domain badged every
+  // newsletter/contact email field on the site (page-match rule (a)).
+  function loginContextFor(el) {
+    const ac = (el.autocomplete || "").toLowerCase();
+    if (ac === "username" || ac === "email") return true;
+    if (el.form && /log ?in|sign ?in|sign ?up|register|auth/i.test(el.form.action || "")) return true;
+    return /log ?in|sign ?in|sign ?up|register|auth/i.test(location.pathname + " " + (document.title || ""));
+  }
+  function passwordNear(el) {
+    const pw = [...document.querySelectorAll('input[type="password"]')].filter(isVisible);
+    if (!pw.length) return false;
+    if (el.form) return pw.some((p) => p.form === el.form);
+    let r = null;
+    try { r = el.getBoundingClientRect(); } catch (_) {}
+    const laidOut = !!(r && (r.width > 0 || r.height > 0));
+    for (const p of pw) {
+      if (laidOut) {
+        try {
+          const q = p.getBoundingClientRect();
+          if (q.width > 0 || q.height > 0) {
+            const dx = Math.max(0, Math.max(r.left - q.right, q.left - r.right));
+            const dy = Math.max(0, Math.max(r.top - q.bottom, q.top - r.bottom));
+            if (Math.hypot(dx, dy) <= 320) return true;
+          }
+        } catch (_) {}
+      }
+      if (tightCommonAncestor(el, p)) return true;
+    }
+    return false;
+  }
   function isUsernameField(el) {
     if (isSearchField(el)) return false;
     const ac = (el.autocomplete || "").toLowerCase();
@@ -771,10 +929,9 @@
     const type = (el.type || "").toLowerCase();
     if (type === "email") return true;
     if (type !== "text") return false;
-    // type=text counts ONLY beside a password field in the SAME form.
-    // Form-less SPA logins fall back to any password field on the page.
-    const scope = el.form || document;
-    return [...scope.querySelectorAll('input[type="password"]')].some(isVisible);
+    // type=text counts ONLY beside a password field in the SAME form, or in
+    // the same login cluster when the site wraps fields without a <form>.
+    return passwordNear(el);
   }
   // Split-input OTP groups (Google/Stripe/banks) give their boxes names like
   // "digit-0" or no name at all, so every keyword path below misses them and
@@ -852,6 +1009,22 @@
     let timer;
     const timeout = new Promise((_, reject) => {
       timer = setTimeout(() => reject(new Error("vault bridge timed out")), ms);
+    });
+    return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
+  }
+  // Cards are not URL-bound (a card works on every checkout), so they must
+  // NOT pass through filterEntries() — that gate drops rows without `urls`,
+  // which silently killed every card suggestion/fill. `all` asks the host for
+  // the whole active card list.
+  function queryCards() {
+    const req = chrome.runtime.sendMessage({ type: "PV_CARDS", app: pageBase(), all: true })
+      .then((res) => {
+        if (!res || !res.ok) throw new Error((res && res.error) || "bridge failed");
+        return Array.isArray(res.entries) ? res.entries : [];
+      });
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error("vault bridge timed out")), 10000);
     });
     return Promise.race([req, timeout]).finally(() => clearTimeout(timer));
   }
@@ -1202,15 +1375,40 @@
     }
   }
 
+  // Selects (expiry month/year) reject the native input setter; set the
+  // matching option value instead, accepting "7" vs "07" and option text.
+  function setCardSelect(el, want) {
+    const w = String(want || "").trim();
+    if (!w) return;
+    if (el.tagName !== "SELECT") { setNativeValue(el, w); return; }
+    const norm = (s) => String(s == null ? "" : s).replace(/^0+/, "");
+    const opts = [...el.options];
+    const opt = opts.find((o) => o.value === w)
+      || opts.find((o) => norm(o.value) === norm(w))
+      || opts.find((o) => digitsOf(o.textContent) === norm(w));
+    if (!opt) return;
+    el.value = opt.value;
+    for (const t of ["input", "change"]) {
+      el.dispatchEvent(new Event(t, { bubbles: true }));
+    }
+  }
   function fillCard(entry) {
-    const num = document.querySelector('input[autocomplete="cc-number"], input[name*="cardnumber" i]');
-    const exp = document.querySelector('input[autocomplete="cc-exp"], input[name*="expir" i]');
-    const cvc = document.querySelector('input[autocomplete="cc-csc"], input[name*="cvv" i], input[name*="cvc" i]');
-    const holder = document.querySelector('input[autocomplete="cc-name"], input[name*="cardholder" i]');
+    const num = firstVisibleIn(document, CARD_NUM_SEL);
+    const holder = firstVisibleIn(document, CARD_NAME_SEL);
+    const cvc = firstVisibleIn(document, CARD_CVV_SEL);
     if (holder && entry.cardholder) setNativeValue(holder, entry.cardholder);
     if (num && entry.number) setNativeValue(num, entry.number);
-    if (exp && (entry.exp_month || entry.exp_year)) {
-      setNativeValue(exp, `${entry.exp_month || ""}/${entry.exp_year || ""}`);
+    // Split month/year selects first; a combined cc-exp input is the fallback.
+    const mEl = firstVisibleIn(document, CARD_EXP_M_SEL);
+    const yEl = firstVisibleIn(document, CARD_EXP_Y_SEL);
+    if (mEl && yEl && (entry.exp_month || entry.exp_year)) {
+      setCardSelect(mEl, entry.exp_month);
+      setCardSelect(yEl, entry.exp_year);
+    } else {
+      const exp = firstVisibleIn(document, CARD_EXP_SEL);
+      if (exp && (entry.exp_month || entry.exp_year)) {
+        setNativeValue(exp, `${entry.exp_month || ""}/${entry.exp_year || ""}`);
+      }
     }
     if (cvc && entry.cvv) setNativeValue(cvc, entry.cvv);
     pingFilled(entry.id);
@@ -1297,7 +1495,8 @@
       list.innerHTML = "";
       const q = filter.trim().toLowerCase();
       const items = rows
-        .filter((r) => !q || ((r.title || "") + " " + (r.sub || "")).toLowerCase().includes(q))
+        // Action rows (e.g. Generate) always stay visible; only accounts filter.
+        .filter((r) => r.action || !q || ((r.title || "") + " " + (r.sub || "")).toLowerCase().includes(q))
         .slice(0, 8);
       if (!items.length) {
         const none = document.createElement("div");
@@ -1310,6 +1509,7 @@
         const b = document.createElement("button");
         b.type = "button";
         b.dataset.pvIndex = String(index);
+        b.dataset.pvAction = r.action ? "1" : "0";
         b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
           "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;" +
           (r.dim ? "opacity:.55;" : "");
@@ -1317,7 +1517,7 @@
         const icon = document.createElement("div");
         icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
           "color:#080c14;font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:center;";
-        icon.textContent = brandLetter(r.entry || {});
+        icon.textContent = r.glyph || brandLetter(r.entry || {});
         const tx = document.createElement("div");
         tx.style.cssText = "flex:1;min-width:0;";
         const t = document.createElement("div");
@@ -1340,14 +1540,15 @@
         list.append(b);
       });
     };
-    if (rows.length > 1) {
+    const accounts = rows.filter((r) => !r.action);
+    if (accounts.length > 1) {
       const head = document.createElement("div");
       head.style.cssText = "display:flex;align-items:center;gap:8px;padding:2px 4px 8px;";
       const search = document.createElement("input");
       search.type = "text";
-      search.placeholder = `🔍 Filter ${rows.length} accounts…`;
+      search.placeholder = `🔍 Filter ${accounts.length} accounts…`;
       search.setAttribute("autocomplete", "off");
-      search.setAttribute("aria-label", `Filter ${rows.length} accounts`);
+      search.setAttribute("aria-label", `Filter ${accounts.length} accounts`);
       search.style.cssText = "flex:1;min-width:0;background:#0b1226;color:#eef1ff;" +
         "border:1px solid #26315c;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;";
       // Don't let page shortcuts swallow filter keystrokes (or vice versa).
@@ -1356,7 +1557,8 @@
         e.stopPropagation();
         if (e.key === "Enter") {
           e.preventDefault();
-          const first = list.querySelector("button");
+          const first = [...list.querySelectorAll("button")]
+            .find((b) => b.dataset.pvAction !== "1");
           if (first) first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
         }
       });
@@ -1398,15 +1600,20 @@
     const isLogin = f.users.includes(anchor) || f.pass.includes(anchor) || f.newPass.includes(anchor);
     if (f.otp.includes(anchor)) return null; // OTP: auto-inject owns it, no dropdown
     if (!isCard && !isAddr && !isLogin) return null;
-    if (isCard && settings.suggest_cards) {
-      const cards = await queryHost("PV_CARDS", pageBase());
+    // Each context resolves ONLY its own kind. Falling through used to offer
+    // login rows on card/address fields when a suggestions toggle was off.
+    if (isCard) {
+      if (!settings.suggest_cards) return null;
+      const cards = await queryCards();
       return cards.map((c) => ({
         entry: { title: c.title, username: c.cardholder },
         title: "💳 " + (c.title || "Card"),
         sub: `${c.cardholder || ""} ${masked(c.number)}`.trim(),
         onPick: () => fillCard(c),
       }));
-    } else if (isAddr && settings.suggest_identities) {
+    }
+    if (isAddr) {
+      if (!settings.suggest_identities) return null;
       const ids = await queryHost("PV_IDENTITIES", pageBase());
       return ids.map((i) => ({
         entry: { title: i.title, username: i.full_name },
@@ -1532,6 +1739,31 @@
       showDrop(field, rows);
     } catch (_) { /* bridge down: stay silent, popup explains */ }
   }
+  // Password-change context: one shield must serve BOTH intents, so clicking
+  // it opens fill rows plus a generate row (instead of a second dice icon).
+  // No saved logins ⇒ generating is the only useful action, do it directly.
+  async function badgeActionMenu(field) {
+    if (isBlocked() || phishingRefuse() || !location.host) return;
+    if (dropEl && dropAnchor === field) { closeDrop("toggle"); return; }
+    if (!(await requireExtPin())) return;
+    const gen = suggestGen;
+    try {
+      const f = findFields();
+      const group = badgeGroup(field);
+      const target = f.newPass.find((x) => isVisible(x) && badgeGroup(x) === group) || field;
+      const rows = await resolveRows(field, f);
+      if (gen !== suggestGen) return; // closed meanwhile: stale
+      const genRow = {
+        action: true,
+        glyph: "🎲",
+        title: "Generate strong password",
+        sub: "Fill new password + confirmation",
+        onPick: () => generateInto(target),
+      };
+      if (!rows || !rows.length) { genRow.onPick(); return; }
+      showDrop(field, [genRow, ...rows]);
+    } catch (_) { /* bridge down: stay silent */ }
+  }
   document.addEventListener("focusin", (e) => {
     const el = e.target;
     if (!(el instanceof HTMLInputElement) || !isVisible(el)) return;
@@ -1574,12 +1806,16 @@
       positionBadge(b, field);
     }
   }
-  function placeBadge(field) {
+  function placeBadge(field, withGen) {
     if (field.dataset.pvBadged) return;
     field.dataset.pvBadged = "1";
     const b = document.createElement("button");
     b.type = "button";
-    b.title = "Fill with PhantomVault";
+    b.dataset.pvKind = "shield";
+    b.dataset.pvGen = withGen ? "1" : "0";
+    b.title = withGen
+      ? "Fill a saved login or generate a new password (PhantomVault)"
+      : "Fill with PhantomVault";
     b.textContent = "🛡️";
     b.style.cssText = "position:fixed;z-index:2147483647;width:28px;height:28px;" +
       "display:flex;align-items:center;justify-content:center;" +
@@ -1594,7 +1830,8 @@
     b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
       ev.preventDefault(); ev.stopPropagation();
-      await badgeFill(field);
+      if (b.dataset.pvGen === "1") await badgeActionMenu(field);
+      else await badgeFill(field);
     });
     document.documentElement.appendChild(b);
     badges.set(b, field);
@@ -1615,7 +1852,13 @@
     setNativeValue(field, pw);
     const form = field.form;
     if (form) {
-      const confirm = [...form.querySelectorAll('input[type="password"]')].find((x) => x !== field && isVisible(x));
+      // Only fill a NEW/confirm password sibling. On a change-password form
+      // the first other password is the CURRENT one - filling it with the
+      // generated value would corrupt the very credential being rotated.
+      const others = [...form.querySelectorAll('input[type="password"]')]
+        .filter((x) => x !== field && isVisible(x) && isNewPasswordField(x));
+      const confirm = others.find((x) => /confirm|repeat|verify|again/i.test(
+        ((x.name || "") + " " + (x.id || "")).toLowerCase())) || others[0];
       if (confirm) setNativeValue(confirm, pw);
     }
     copyWithAutoclear(pw);
@@ -1627,6 +1870,7 @@
     field.dataset.pvDice = "1";
     const b = document.createElement("button");
     b.type = "button";
+    b.dataset.pvKind = "dice";
     b.title = "Generate strong password (PhantomVault)";
     b.textContent = "🎲";
     b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
@@ -1805,7 +2049,7 @@
     const f = findFields();
     try {
       if (f.cards[0] && settings.suggest_cards) {
-        const cards = await queryHost("PV_CARDS", pageBase());
+        const cards = await queryCards();
         if (cards[0]) { fillCard(cards[0]); return; }
       }
       const logins = await queryHost("PV_QUERY", pageBase());
@@ -1839,47 +2083,93 @@
         if (isBlocked() || phishingRefuse() || !location.host) return;
         const logins = await queryHost("PV_QUERY", pageBase());
         pageMatchState = (logins && logins.length) ? 1 : -1;
-        if (pageMatchState === -1) removeUserBadges();
-        else scan(); // match confirmed ⇒ place user badges skipped earlier
+        scan(); // reconcile: confirmed match adds username icons, -1 removes them
         console.log(`PV badge gate: ${pageMatchState === 1 ? "match" : "no match"} for ${pageBase()}`);
       } catch (_) {}
     })();
   }
-  // Strip badges already placed on user/email fields (no-match pages).
-  // Uses the button->field map; clears the pvBadged flag so a later
-  // confirmed match can re-place them.
-  function removeUserBadges() {
-    try {
-      const f = findFields();
-      const pwSet = new Set([...f.pass, ...f.newPass]);
-      if (pwSet.size) return; // password present ⇒ rule (b) keeps them
-      const userSet = new Set(f.users);
-      for (const [b, field] of [...badges]) {
-        try {
-          if (userSet.has(field)) {
-            b.remove();
-            badges.delete(b);
-            delete field.dataset.pvBadged;
-          }
-        } catch (_) {}
+  // One credential context = one icon. A login form used to get a shield on
+  // the username AND another on the password (plus a dice on every
+  // new-password box), carpeting pages with icons. Group by <form>, or - for
+  // form-less SPA logins - by the nearest ancestor that holds a password.
+  function badgeGroup(el) {
+    if (el.form) return el.form;
+    let p = el.parentElement;
+    while (p && p !== document.body && p !== document.documentElement) {
+      const fields = p.querySelectorAll("input, select, textarea").length;
+      if (fields >= 2 && [...p.querySelectorAll('input[type="password"]')].some(isVisible)) {
+        return p;
       }
-    } catch (_) {}
+      p = p.parentElement;
+    }
+    return document.documentElement;
   }
+  // Desired icon per context:
+  //   password only            -> shield (fill saved login)
+  //   password + new/confirm   -> shield with fill-or-generate menu
+  //   new/confirm only         -> dice (generate + fill confirmation)
+  //   username only + match    -> shield
+  //   card                     -> its own shield (fill card is another action)
+  // Reconciled on every scan (not appended): SPA transitions fold a username
+  // shield into the password shield, flip shield<->dice, and drop icons for
+  // removed/hidden groups without leaving duplicates behind.
   function scan() {
     if (isBlocked()) return;
-    // Badges ride every fillable field (the icon-click-only mode needs the
-    // badge present as the SOLE trigger — it must exist even though passive
-    // focus stays silent). Reposition pass keeps fixed overlays glued.
     const f = findFields();
     probePageMatch();
-    [...f.pass, ...f.cards].forEach(placeBadge);
-    // User/email badges need a reason: known match, or a password field
-    // beside them (unknown state falls back to the password rule).
-    const hasPass = f.pass.length > 0 || f.newPass.length > 0;
-    if (pageMatchState === 1 || hasPass) {
-      f.users.forEach(placeBadge);
+
+    const groups = new Map();
+    const groupFor = (el) => {
+      const key = badgeGroup(el);
+      let g = groups.get(key);
+      if (!g) { g = { users: [], pass: [], newPass: [], cards: [] }; groups.set(key, g); }
+      return g;
+    };
+    for (const el of f.users) if (isVisible(el)) groupFor(el).users.push(el);
+    for (const el of f.pass) if (isVisible(el)) groupFor(el).pass.push(el);
+    for (const el of f.newPass) if (isVisible(el)) groupFor(el).newPass.push(el);
+    for (const el of f.cards) if (isVisible(el)) groupFor(el).cards.push(el);
+
+    const want = new Map(); // field -> { kind: "shield"|"dice", gen: bool }
+    for (const g of groups.values()) {
+      if (g.cards.length && settings.suggest_cards) {
+        want.set(g.cards[0], { kind: "shield", gen: false });
+      }
+      if (g.pass.length) {
+        want.set(g.pass[0], { kind: "shield", gen: g.newPass.length > 0 });
+      } else if (g.newPass.length) {
+        want.set(g.newPass[0], { kind: "dice", gen: false });
+      } else if (g.users.length && !g.cards.length && pageMatchState === 1) {
+        // Standalone email/username: only on a credential-step page with a
+        // known match (never newsletters or checkout billing emails).
+        const user = g.users.find(loginContextFor);
+        if (user) want.set(user, { kind: "shield", gen: false });
+      }
     }
-    f.newPass.forEach(placeDice);
+    // Warm the global card list only on checkout-shaped pages (never ship
+    // PAN/CVV to every content script), once per frame/document.
+    if (f.cards.length && !pvCardsWarmTried) {
+      pvCardsWarmTried = true;
+      getCards().catch(() => {});
+    }
+
+    for (const [b, field] of [...badges]) {
+      const w = want.get(field);
+      const kind = b.dataset.pvKind || "shield";
+      const gen = b.dataset.pvGen === "1";
+      if (!w || w.kind !== kind || !!w.gen !== gen) {
+        b.remove();
+        badges.delete(b);
+        delete field.dataset.pvBadged;
+        delete field.dataset.pvDice;
+      }
+    }
+    const have = new Set(badges.values());
+    for (const [field, w] of want) {
+      if (have.has(field)) continue;
+      if (w.kind === "dice") placeDice(field);
+      else placeBadge(field, w.gen);
+    }
     repositionBadges();
   }
 
@@ -2041,6 +2331,117 @@
     if (verdict !== "new") updateToast(username, password);
     else saverToast(username, password);
   }
+
+  // ---------- card save: prompt + dedup ----------
+  // Cards are global (not URL-bound), so one warm list also tells us whether
+  // the submitted PAN is already stored (silent), needs an update, or is new.
+  let pvCardCache = null;
+  let pvCardInflight = null;
+  let pvCardsWarmTried = false;
+  let cardOfferedFor = "";
+  async function getCards() {
+    if (pvCardCache) return pvCardCache;
+    if (pvCardInflight) return pvCardInflight;
+    const p = queryCards().then((list) => {
+      pvCardCache = list || [];
+      pvCardInflight = null;
+      return pvCardCache;
+    }).catch((e) => {
+      pvCardInflight = null;
+      throw e;
+    });
+    pvCardInflight = p;
+    return p;
+  }
+  function cardsSync() { return pvCardCache; }
+  function sameCard(a, card) {
+    return digitsOf(a && a.number) === digitsOf(card.number)
+      && String(a.exp_month || "") === card.exp_month
+      && String(a.exp_year || "") === card.exp_year
+      // A blank CVV on the page (saved-card checkout) must not force an
+      // Update prompt on every submit: only compare when one was typed.
+      && (!card.cvv || String(a.cvv || "") === card.cvv);
+  }
+  function offerCardSave(card) {
+    if (!card) return;
+    const pan = digitsOf(card.number);
+    if (!pan) return;
+    // Include expiry/CVV so a corrected retry on the same page can prompt.
+    const fp = [pan, card.exp_month, card.exp_year, card.cvv || ""].join("|");
+    if (cardOfferedFor === fp) return;
+    cardOfferedFor = fp;
+    const cached = cardsSync();
+    if (cached) {
+      const existing = cached.find((k) => digitsOf(k && k.number) === pan);
+      if (existing && sameCard(existing, card)) return;
+      cardSaverToast(card, !!existing);
+      return;
+    }
+    // C1 parity: warm on boot so a normal submit can prompt synchronously
+    // before navigation; this branch only covers a cold first submit.
+    getCards().then((list) => {
+      const existing = (list || []).find((k) => digitsOf(k && k.number) === pan);
+      if (existing && sameCard(existing, card)) return;
+      cardSaverToast(card, !!existing);
+    }).catch(() => {}); // locked/bridge down: a save click would fail anyway
+  }
+  function cardSaverToast(card, updated) {
+    if (document.getElementById("__pv_saver")) return;
+    const brand = cardBrand(card.number);
+    const box = document.createElement("div");
+    box.id = "__pv_saver";
+    box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
+      "background:#0d131f;border:1px solid #10b981;border-radius:12px;padding:12px 14px;" +
+      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
+    const t = document.createElement("div");
+    t.style.cssText = "font-weight:700;margin-bottom:8px;";
+    t.textContent = updated ? "🔄 Update card in PhantomVault?" : "🛡️ Save card to PhantomVault?";
+    const sub = document.createElement("div");
+    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.textContent = [brand || "Card", masked(card.number), card.cardholder]
+      .filter(Boolean).join(" · ") + " — store it encrypted.";
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:8px;";
+    const save = document.createElement("button");
+    save.textContent = updated ? "🔄 Update" : "💾 Save";
+    save.style.cssText = "flex:1;background:#10b981;color:#04110b;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    const no = document.createElement("button");
+    no.textContent = "✕ Not Now";
+    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    row.append(save, no);
+    box.append(t, sub, row);
+    document.documentElement.append(box);
+    const dismissCard = () => { document.removeEventListener("keydown", escCard, true); box.remove(); };
+    const escCard = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissCard(); } };
+    document.addEventListener("keydown", escCard, true);
+    no.addEventListener("click", dismissCard);
+    setTimeout(dismissCard, 30000);
+    save.focus();
+    save.addEventListener("click", async () => {
+      save.textContent = "⏳ Saving…";
+      try {
+        const res = await chrome.runtime.sendMessage({
+          type: "PV_SAVE_CARD",
+          number: card.number,
+          cardholder: card.cardholder || "",
+          exp_month: card.exp_month,
+          exp_year: card.exp_year,
+          cvv: card.cvv || "",
+          url: captureUrl(),
+          title: captureTitle(),
+        });
+        if (res && res.ok) {
+          toast(res.updated ? "✅ Card updated in PhantomVault." : "✅ Card saved to PhantomVault.");
+          pvCardCache = null; // next prompt re-reads the fresh card list
+          dismissCard();
+        } else {
+          save.textContent = "⚠️ " + ((res && res.error) || "failed");
+        }
+      } catch (_) {
+        save.textContent = "⚠️ Bridge unreachable";
+      }
+    });
+  }
   // G3: form-scoped credential reader. Distinguishes signup (new-password or a
   // confirm field) from login, refuses to offer on a confirm-password mismatch
   // (a typo), and picks the "old" field on a change-password form.
@@ -2089,6 +2490,10 @@
     form.addEventListener("submit", () => {
       try {
         if (isBlocked() || phishingRefuse() || !location.host) return;
+        // Card checkout: same submit, different secret shape. Checked first so
+        // a checkout's billing name/email can never look like a login.
+        const card = readFormCard(form);
+        if (card) { offerCardSave(card); return; }
         const cred = readFormCreds(form);
         if (!cred) return;
         const base = pageBase();
@@ -2341,6 +2746,15 @@
       }).catch(() => {});
     } catch (_) {}
   }
+  // SPA checkout: the page hook only says "a card-shaped request happened";
+  // we re-read the typed card from our own DOM (same threat model as logins).
+  async function maybeOfferSpaCardSave() {
+    try {
+      if (isBlocked() || phishingRefuse() || !location.host) return;
+      const card = readFormCard(document);
+      if (card) offerCardSave(card);
+    } catch (_) {}
+  }
   window.addEventListener("message", (e) => {
     try {
       if (e.source !== window) return;
@@ -2350,6 +2764,11 @@
         // Phase 3 relay: hold the ceremony for explicit popup approval.
         // No approval in time → the page hook falls back to native behavior.
         pvCeremonyHold(d);
+        return;
+      }
+      if (d.type === "PV_SPA_CARD") {
+        maybeOfferSpaCardSave();
+        setTimeout(maybeOfferSpaCardSave, 400);
         return;
       }
       if (d.type !== "PV_SPA_LOGIN") return;
@@ -2501,7 +2920,7 @@
           const l = await queryHost("PV_QUERY", pageBase());
           if (l[0]) fillLogin(l[0], f);
         } else if (msg.menu === "pv_fill_card") {
-          const c = await queryHost("PV_CARDS", pageBase());
+          const c = await queryCards();
           if (c[0]) fillCard(c[0]);
         } else if (msg.menu === "pv_fill_identity") {
           const ids = await queryHost("PV_IDENTITIES", pageBase());

@@ -429,12 +429,17 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if q.is_empty() {
                 return no("empty query (refusing vault dump)");
             }
-            let entries: Vec<serde_json::Value> = vault
+            // `all` is the checkout path: a card is not URL-bound, so the
+            // domain hint must not filter it out. The non-empty query is still
+            // required (anti-dump), and the list is capped like logins.
+            let all = req.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+            let mut entries: Vec<serde_json::Value> = vault
                 .cards
                 .iter()
                 .filter(|k| {
                     k.deleted_at.is_none()
-                        && (k.title.to_lowercase().contains(&q)
+                        && (all
+                            || k.title.to_lowercase().contains(&q)
                             || k.cardholder_name.to_lowercase().contains(&q))
                 })
                 .map(|k| {
@@ -449,6 +454,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     })
                 })
                 .collect();
+            entries.truncate(25);
             crate::security::access_log::log_event("bridge-cards", &q);
             Answer {
                 reply: serde_json::json!({"ok": true, "entries": entries}),
@@ -1495,6 +1501,117 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 updated = false;
             }
             crate::security::access_log::log_event("bridge-save", &dom);
+            Answer {
+                reply: serde_json::json!({"ok": true, "updated": updated}),
+                persist: true,
+            }
+        }
+        // Smart-autofill: save a card freshly typed into a checkout form.
+        // Cards are global (one PAN fills any site), so dedupe is by PAN — a
+        // second checkout updates expiry/holder/CVV instead of duplicating it.
+        // Luhn + expiry shape are validated here too (the content script also
+        // gates, but the bridge never trusts the extension).
+        "save_card" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let number: String = req
+                .get("number")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect();
+            if number.len() < 12 || number.len() > 19 || !crate::luhn_valid(&number) {
+                return no("invalid card number");
+            }
+            let month_raw = req.get("exp_month").and_then(|v| v.as_str()).unwrap_or("").trim();
+            let month_num = month_raw.parse::<u32>().unwrap_or(0);
+            if !(1..=12).contains(&month_num) {
+                return no("invalid expiry month");
+            }
+            let month = format!("{month_num:02}");
+            let year_digits: String = req
+                .get("exp_year")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect();
+            let year = match year_digits.len() {
+                2 => year_digits,
+                4 => year_digits[2..].to_string(),
+                _ => return no("invalid expiry year"),
+            };
+            let cvv: String = req
+                .get("cvv")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .chars()
+                .filter(|c| c.is_ascii_digit())
+                .collect();
+            if !cvv.is_empty() && !(3..=4).contains(&cvv.len()) {
+                return no("invalid cvv");
+            }
+            let holder = req.get("cardholder").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let url = canonical_login_url(req.get("url").and_then(|v| v.as_str()).unwrap_or(""));
+            let dom = url_domain(&url);
+            let existing = vault.cards.iter_mut().find(|k| {
+                k.deleted_at.is_none()
+                    && k.card_number.chars().filter(|c| c.is_ascii_digit()).collect::<String>() == number
+            });
+            let updated;
+            if let Some(k) = existing {
+                if !holder.is_empty() {
+                    k.cardholder_name = holder;
+                }
+                k.card_number = number;
+                k.exp_month = month;
+                k.exp_year = year;
+                if !cvv.is_empty() {
+                    k.cvv = cvv;
+                }
+                updated = true;
+            } else {
+                let brand = crate::card_brand(&number);
+                let last4 = &number[number.len() - 4..];
+                let title = if brand.is_empty() {
+                    format!("Card •••• {last4}")
+                } else {
+                    format!("{brand} •••• {last4}")
+                };
+                let id = format!(
+                    "extc{}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+                let notes = if dom.is_empty() {
+                    String::from("Saved via browser extension")
+                } else {
+                    format!("Saved via browser extension from {dom}")
+                };
+                vault.cards.push(crate::models::PaymentCard {
+                    id,
+                    title,
+                    cardholder_name: holder,
+                    card_number: number,
+                    exp_month: month,
+                    exp_year: year,
+                    cvv,
+                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    notes,
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
+                });
+                updated = false;
+            }
+            let log_domain = if dom.is_empty() { "card" } else { dom.as_str() };
+            crate::security::access_log::log_event("bridge-save-card", log_domain);
             Answer {
                 reply: serde_json::json!({"ok": true, "updated": updated}),
                 persist: true,
@@ -3658,6 +3775,10 @@ mod tests {
         // Miss → ok with empty list.
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": "bank"}));
         assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
+        // Checkout path: `all` ignores the domain hint (cards are global).
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": "shop.example", "all": true}));
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(r.reply["entries"][0]["number"], "4111111111111111");
     }
 
     #[test]
@@ -3683,6 +3804,54 @@ mod tests {
         assert_eq!(c.password, "pw2");
         assert_eq!(c.password_history.len(), 1);
         assert_eq!(v.credentials.len(), 2);
+    }
+
+    #[test]
+    fn save_card_appends_updates_and_validates() {
+        let mut v = Vault::new();
+        // Missing/invalid PAN (Luhn), broken expiry, locked → refused, no persist.
+        for bad in [
+            serde_json::json!({"cmd": "save_card", "number": "4111111111111112", "exp_month": "12", "exp_year": "30"}),
+            serde_json::json!({"cmd": "save_card", "number": "4111111111111111", "exp_month": "13", "exp_year": "30"}),
+            serde_json::json!({"cmd": "save_card", "number": "4111111111111111", "exp_month": "12", "exp_year": "3"}),
+            serde_json::json!({"cmd": "save_card", "number": "4111111111111111", "exp_month": "12", "exp_year": "30", "cvv": "12"}),
+        ] {
+            let r = answer(&mut v, true, &bad);
+            assert_eq!(r.reply["ok"], false, "{bad}");
+            assert!(!r.persist);
+        }
+        let r = answer(&mut v, false, &serde_json::json!({
+            "cmd": "save_card", "number": "4111111111111111", "exp_month": "12", "exp_year": "30"}));
+        assert_eq!(r.reply["ok"], false);
+        assert!(v.cards.is_empty());
+        // New card → append, normalized PAN, brand title, no dup on retry.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "save_card", "number": "4111 1111 1111 1111", "cardholder": "Ada L",
+            "exp_month": "1", "exp_year": "2030", "cvv": "123",
+            "url": "https://shop.example/checkout"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["updated"], false);
+        assert!(r.persist);
+        assert_eq!(v.cards.len(), 1);
+        let k = &v.cards[0];
+        assert_eq!(k.card_number, "4111111111111111");
+        assert_eq!(k.exp_month, "01");
+        assert_eq!(k.exp_year, "30");
+        assert_eq!(k.cardholder_name, "Ada L");
+        assert!(k.title.starts_with("Visa"));
+        assert!(k.notes.contains("shop.example"));
+        // Same PAN from another site → update in place, never duplicate.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "save_card", "number": "4111111111111111", "cardholder": "Ada Lovelace",
+            "exp_month": "02", "exp_year": "31", "cvv": "456",
+            "url": "https://other.example/pay"}));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(r.reply["updated"], true);
+        assert_eq!(v.cards.len(), 1);
+        assert_eq!(v.cards[0].cardholder_name, "Ada Lovelace");
+        assert_eq!(v.cards[0].exp_month, "02");
+        assert_eq!(v.cards[0].exp_year, "31");
+        assert_eq!(v.cards[0].cvv, "456");
     }
 
     #[test]

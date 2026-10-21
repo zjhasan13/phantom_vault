@@ -363,6 +363,49 @@ test("P6: a frame may not save under a third site even when the tab matches", as
   assert.equal(chrome.__state.postedNative.length, 0);
 });
 
+test("PV_SAVE_CARD: proxies save_card after the sender-frame check", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://shop.example/checkout", tab: { url: "https://shop.example/cart" } };
+  const p = sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_CARD", number: "4111111111111111", cardholder: "Ada",
+    exp_month: "12", exp_year: "30", cvv: "123",
+    url: "https://shop.example/checkout", title: "Shop",
+  }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "save_card");
+  assert.equal(sent.number, "4111111111111111");
+  assert.equal(sent.exp_month, "12");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, updated: false }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("PV_SAVE_CARD: cross-site sender URL is refused, zero host spawn", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { tab: { url: "https://shop.example/checkout" } };
+  const r = await sendMessage(onMessage, chrome, {
+    type: "PV_SAVE_CARD", number: "4111111111111111", exp_month: "12", exp_year: "30",
+    url: "https://evil.example/checkout",
+  }, sender);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /does not match/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("PV_CARDS: forwards the checkout `all` flag", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, { type: "PV_CARDS", app: "shop.example", all: true });
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  assert.equal(chrome.__state.postedNative[0].cmd, "cards");
+  assert.equal(chrome.__state.postedNative[0].all, true);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, entries: [] }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
 test("P6: hotkey routes to the frame with the embedded login form", async () => {
   const { chrome } = fresh();
   chrome.__state.tabList = [{ id: 7, url: "https://shop.example.net/" }];

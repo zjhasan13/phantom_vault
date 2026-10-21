@@ -8,9 +8,9 @@
   if (window.__pvHook) return;
   window.__pvHook = true;
 
-  function ping() {
+  function ping(type) {
     try {
-      window.postMessage({ source: "__pv_hook", type: "PV_SPA_LOGIN" }, "*");
+      window.postMessage({ source: "__pv_hook", type: type || "PV_SPA_LOGIN" }, "*");
     } catch (_) {}
   }
 
@@ -36,14 +36,41 @@
     return t.includes("password") || t.includes("passwd") || t.includes("pwd");
   }
 
+  // Card requests are signalled by KEY names only (same data-free tripwire as
+  // logins). Covers JSON bodies, FormData and urlencoded checkouts.
+  function bodyLooksLikeCard(body) {
+    if (!body) return false;
+    let s = "";
+    try {
+      if (typeof body === "string") {
+        s = body;
+      } else if (typeof URLSearchParams !== "undefined" && body instanceof URLSearchParams) {
+        const parts = [];
+        body.forEach((_, k) => parts.push(k));
+        s = parts.join("&");
+      } else if (typeof FormData !== "undefined" && body instanceof FormData) {
+        const parts = [];
+        body.forEach((_, k) => parts.push(k));
+        s = parts.join("&");
+      } else {
+        return false;
+      }
+    } catch (_) {
+      return false;
+    }
+    const t = String(s).toLowerCase();
+    return /card.?number|cardnumber|cc-?number|\bcvv\b|\bcvc\b|security.?code/.test(t);
+  }
+
   // fetch() hook (React Query / axios-fetch / Next.js actions).
   try {
     const origFetch = window.fetch.bind(window);
     window.fetch = function (input, init) {
       try {
         const method = ((init && init.method) || "GET").toUpperCase();
-        if (method !== "GET" && method !== "HEAD" && bodyLooksLikeLogin(init && init.body)) {
-          ping();
+        if (method !== "GET" && method !== "HEAD") {
+          if (bodyLooksLikeLogin(init && init.body)) ping("PV_SPA_LOGIN");
+          else if (bodyLooksLikeCard(init && init.body)) ping("PV_SPA_CARD");
         }
       } catch (_) {}
       return origFetch(input, init);
@@ -63,8 +90,9 @@
     XMLHttpRequest.prototype.send = function (body) {
       try {
         const m = String(this.__pvMethod || "POST").toUpperCase();
-        if (m !== "GET" && m !== "HEAD" && bodyLooksLikeLogin(body)) {
-          ping();
+        if (m !== "GET" && m !== "HEAD") {
+          if (bodyLooksLikeLogin(body)) ping("PV_SPA_LOGIN");
+          else if (bodyLooksLikeCard(body)) ping("PV_SPA_CARD");
         }
       } catch (_) {}
       return origSend.apply(this, arguments);

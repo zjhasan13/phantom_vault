@@ -81,6 +81,229 @@ test("search box is never treated as a credential form", async (t) => {
   assert.equal(store.session.pvCaptureCarry, undefined);
 });
 
+test("card form submit offers to save the card", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input autocomplete="cc-number" name="cardnumber" value="4111 1111 1111 1111">
+    <input autocomplete="cc-name" name="cardholder" value="Ada L">
+    <input autocomplete="cc-exp" name="exp" value="12/30">
+    <input autocomplete="cc-csc" name="cvv" value="123">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  assert.ok(banner, "card save banner should appear");
+  assert.match(banner.textContent, /Save card/i);
+  const save = [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent));
+  save.click();
+  await flush();
+  assert.equal(store.cardSaves.length, 1);
+  assert.equal(store.cardSaves[0].number, "4111111111111111");
+  assert.equal(store.cardSaves[0].exp_month, "12");
+  assert.equal(store.cardSaves[0].exp_year, "30");
+  assert.equal(store.cardSaves[0].cvv, "123");
+});
+
+test("split expiry selects are normalized before save", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input name="cardnumber" value="4111111111111111">
+    <select autocomplete="cc-exp-month" name="expmonth"><option value="12">12</option></select>
+    <select autocomplete="cc-exp-year" name="expyear"><option value="2030">2030</option></select>
+    <input name="cvv" value="123">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  assert.ok(banner);
+  [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent)).click();
+  await flush();
+  assert.equal(store.cardSaves[0].exp_month, "12");
+  assert.equal(store.cardSaves[0].exp_year, "30");
+});
+
+test("card[...] names and YYYY-MM expiry save correctly", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input name="card[number]" value="4111111111111111">
+    <input name="card[name]" value="ADA LOVELACE">
+    <input name="card[exp]" value="2030-12">
+    <input name="card[cvc]" value="123">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  assert.ok(banner);
+  [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent)).click();
+  await flush();
+  assert.equal(store.cardSaves[0].exp_month, "12");
+  assert.equal(store.cardSaves[0].exp_year, "30");
+  assert.equal(store.cardSaves[0].cardholder, "ADA LOVELACE");
+});
+
+test("invalid (Luhn) card number never offers a save", async (t) => {
+  const { window } = env(t, `<form>
+    <input autocomplete="cc-number" value="4111111111111112">
+    <input autocomplete="cc-exp" value="12/30">
+    <input autocomplete="cc-csc" value="123">
+  </form>`);
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("already-saved card is silent on submit", async (t) => {
+  const { window } = env(t, `<form>
+    <input autocomplete="cc-number" value="4111111111111111">
+    <input autocomplete="cc-exp" value="12/30">
+    <input autocomplete="cc-csc" value="123">
+  </form>`, "https://example.com/checkout", [],
+    [{ id: "c1", number: "4111111111111111", exp_month: "12", exp_year: "30", cvv: "123" }]);
+  await flush(); // let the boot card-list warm resolve
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("form-less login gets ONE shield (on the password), not one per field", (t) => {
+  const { window } = env(t, `<div class="login">
+    <div><input type="text" name="user"></div>
+    <div><input type="password" name="pass"></div>
+  </div>
+  <div><input type="text" name="nickname"></div>
+  <div><input type="email" name="newsletter"></div>`);
+  const badged = (n) =>
+    !!window.document.querySelector(`input[name="${n}"]`).dataset.pvBadged;
+  assert.equal(badged("pass"), true, "password carries the single shield");
+  assert.equal(badged("user"), false, "username shares the password's shield");
+  assert.equal(badged("nickname"), false, "unrelated page text boxes stay badge-free");
+});
+
+test("form login gets one shield and no stray badges", (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="user">
+    <input type="password" name="pass">
+  </form>
+  <div><input type="text" name="nickname"></div>`);
+  const badged = (n) =>
+    !!window.document.querySelector(`input[name="${n}"]`).dataset.pvBadged;
+  assert.equal(badged("pass"), true);
+  assert.equal(badged("user"), false, "one shield per login form");
+  assert.equal(badged("nickname"), false, "a password elsewhere must not badge stray inputs");
+});
+
+test("matched username-only step still gets its single shield", async (t) => {
+  const { window } = env(t, `<div class="login"><input type="email" name="email"></div>`,
+    "https://example.com/login",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  assert.ok(window.document.querySelector('input[name="email"]').dataset.pvBadged,
+    "multi-step email/username pages must stay clickable");
+});
+
+test("a revealed password replaces the standalone email shield", async (t) => {
+  const { window } = env(t, `<form action="/login"><input type="email" name="email"></form>`,
+    "https://example.com/start",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  const email = window.document.querySelector('input[name="email"]');
+  const form = window.document.querySelector("form");
+  assert.ok(email.dataset.pvBadged);
+  const pw = window.document.createElement("input");
+  pw.type = "password"; pw.name = "password";
+  form.appendChild(pw);
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal(email.dataset.pvBadged, undefined, "username shield folds into the form shield");
+  assert.ok(pw.dataset.pvBadged);
+  assert.equal(window.document.querySelectorAll('button[title="Fill with PhantomVault"]').length, 1,
+    "rescan must not leave two shields on one form");
+});
+
+test("signup form gets a single dice, never an email shield", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="email" name="email">
+    <input type="password" autocomplete="new-password" name="new_password">
+    <input type="password" autocomplete="new-password" name="confirm_password">
+  </form>`, "https://example.com/signup",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  const icons = [...window.document.querySelectorAll("button")]
+    .filter((b) => /PhantomVault/.test(b.title));
+  assert.equal(icons.length, 1, "one icon per credential context");
+  assert.match(icons[0].title, /Generate/);
+  assert.equal(window.document.querySelector('input[name="email"]').dataset.pvBadged, undefined);
+});
+
+test("change-password form has ONE shield with fill + generate actions", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="password" name="current_password" value="old">
+    <input type="password" autocomplete="new-password" name="new_password">
+    <input type="password" autocomplete="new-password" name="confirm_password">
+  </form>`, "https://example.com/account/password",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  const icons = [...window.document.querySelectorAll("button")]
+    .filter((b) => /PhantomVault/.test(b.title));
+  assert.equal(icons.length, 1, "no second dice on the same form");
+  icons[0].click();
+  await flush(80);
+  const gen = [...window.document.querySelectorAll("button")]
+    .find((b) => /Generate strong password/.test(b.textContent));
+  assert.ok(gen, "shield menu exposes generation for the new field");
+  gen.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await flush(40);
+  const v = (n) => window.document.querySelector(`input[name="${n}"]`).value;
+  assert.equal(v("current_password"), "old", "current password is never overwritten");
+  assert.ok(v("new_password").length >= 16);
+  assert.equal(v("new_password"), v("confirm_password"));
+});
+
+test("checkout and login on one page keep one icon per context", async (t) => {
+  const { window } = env(t, `<form class="login">
+      <input type="email" name="email"><input type="password" name="password">
+    </form>
+    <form class="checkout">
+      <input type="email" name="billing_email">
+      <input autocomplete="cc-number" value="4111111111111111">
+      <input autocomplete="cc-exp" value="12/30">
+      <input autocomplete="cc-csc" value="123">
+    </form>`, "https://example.com/checkout",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(60);
+  assert.ok(window.document.querySelector('input[name="password"]').dataset.pvBadged);
+  assert.equal(window.document.querySelector('input[name="billing_email"]').dataset.pvBadged, undefined,
+    "billing email belongs to the card context, not a login");
+  const icons = [...window.document.querySelectorAll("button")]
+    .filter((b) => /PhantomVault/.test(b.title));
+  assert.equal(icons.length, 2, "login shield + card shield");
+});
+
+test("removing a field removes its stale shield", async (t) => {
+  const { window } = env(t, `<form><input type="password" name="password"></form>`,
+    "https://example.com/login",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  const pw = window.document.querySelector('input[name="password"]');
+  assert.ok(pw.dataset.pvBadged);
+  pw.remove();
+  await new Promise((r) => setTimeout(r, 250));
+  assert.equal([...window.document.querySelectorAll("button")]
+    .filter((b) => /PhantomVault/.test(b.title)).length, 0);
+});
+
+test("matched newsletter email is never badged", async (t) => {
+  const { window } = env(t, `<form class="newsletter"><input type="email" name="email"></form>`,
+    "https://example.com/newsletter",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  assert.equal(window.document.querySelector('input[name="email"]').dataset.pvBadged, undefined);
+});
+
+test("email-only login step is badged from its action/path", async (t) => {
+  const { window } = env(t, `<form action="/login"><input type="email" name="email"></form>`,
+    "https://example.com/start",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush();
+  assert.ok(window.document.querySelector('input[name="email"]').dataset.pvBadged);
+});
+
 test("E4/P6: all frames load the engine, domain decisions use the frame origin", () => {
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
   for (const mf of ["manifest.json", "manifest.firefox.json"]) {
