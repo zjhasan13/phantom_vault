@@ -61,6 +61,33 @@ test("K1: page-1 email submit carries the username (no password yet)", async (t)
   assert.equal(c.password, undefined, "password must never be carried (P1-b)");
 });
 
+test("carry-priority: previous step's email sorts first in the login dropdown", async (t) => {
+  const { window } = env(t, `<form id="step1">
+    <input type="email" name="email" value="alice@example.com">
+  </form>
+  <form id="step2">
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/login", [
+    { id: "c2", title: "Example", username: "zed@example.com", password: "p2",
+      urls: ["example.com"], verified: true, last_filled: Math.floor(Date.now() / 1000) },
+    { id: "c1", title: "Example", username: "alice@example.com", password: "p1",
+      urls: ["example.com"], verified: false, last_filled: 0 },
+  ]);
+  // Page 1 submits the email → the username is carried (no password yet).
+  submit(window, window.document.getElementById("step1"));
+  await flush();
+  // Page 2 focuses the password field → the dropdown opens.
+  const pw = window.document.querySelector('#step2 input[type="password"]');
+  pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
+  await flush(80);
+  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  assert.ok(rows.length >= 2, "dropdown should list both accounts");
+  assert.match(rows[0].textContent, /alice@example\.com/,
+    "carried email must be first even though the other account is verified");
+  assert.match(rows[0].textContent, /this step/);
+  assert.match(rows[1].textContent, /zed@example\.com/);
+});
+
 test("known credential is silent (no banner)", async (t) => {
   const { window } = env(t, `<form>
     <input type="text" name="username" value="bob">

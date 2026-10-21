@@ -1645,7 +1645,7 @@
     }
     if (isAddr) {
       if (!settings.suggest_identities) return null;
-      const ids = await queryHost("PV_IDENTITIES", pageBase());
+      const ids = await getIdentities();
       return ids.map((i) => ({
         entry: { title: i.title, username: i.full_name },
         title: "🪪 " + (i.title || i.full_name || "Identity"),
@@ -1654,8 +1654,18 @@
       }));
     }
     const logins = await queryHost("PV_QUERY", pageBase());
-    // Trust rank: verified → recently filled → A→Z. Fakes (unverified,
-    // never filled) sink to the bottom automatically.
+    // Multi-page login (Google-style): the email typed on the previous step is
+    // carried in session storage. Rank that account FIRST — ordering only,
+    // never a filter, so the K1 invariant (a carry must not gate a fill) still
+    // holds. A username the page already prefilled wins over the carry.
+    const typedUser = (f.users || [])
+      .map((el) => String(el.value || "").trim())
+      .find(Boolean) || "";
+    const carried = (typedUser || pvCarryUser || "").trim().toLowerCase();
+    const carryHit = (e) =>
+      carried && String(e.username || "").trim().toLowerCase() === carried ? 1 : 0;
+    // Trust rank: carried account → verified → recently filled → A→Z. Fakes
+    // (unverified, never filled) sink to the bottom automatically.
     const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
     const agoShort = (ts) => {
       const s = Math.max(0, Math.floor(Date.now() / 1000) - (ts || 0));
@@ -1666,13 +1676,15 @@
     };
     const ranked = [...logins].sort(
       (a, b) =>
+        carryHit(b) - carryHit(a) ||
         (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
         (b.last_filled || 0) - (a.last_filled || 0) ||
         String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
     );
     return ranked.map((e) => {
       const badge = [e.verified ? "✅" : "", hIcon(e.health)].filter(Boolean).join(" ");
-      const sub = [e.username || "", badge, e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
+      const sub = [e.username || "", badge, carryHit(e) ? "this step" : "",
+        e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
         .filter(Boolean)
         .join(" · ");
       // Likely-unused laboratory: dimmed, never hidden (user is the judge).
@@ -3071,7 +3083,7 @@
           const c = await queryCards();
           if (c[0]) fillCard(c[0]);
         } else if (msg.menu === "pv_fill_identity") {
-      const ids = await getIdentities();
+          const ids = await getIdentities();
           if (ids[0]) fillIdentity(ids[0]);
         } else if (msg.menu === "pv_copy_password") {
           const l = await queryHost("PV_QUERY", pageBase());
