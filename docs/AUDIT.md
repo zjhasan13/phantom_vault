@@ -231,3 +231,28 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   so session teardown does not rely on implicit field-drop order. Tests: +2 →
   `cargo test` **459 passed / 1 ignored**; clippy unchanged (2 pre-existing
   `manual_clamp`).
+- **Badge noise + card capture (DONE `e8a282f`):** the in-field control is
+  now reconciled to exactly ONE action-aware icon per credential context:
+  login = shield on the password (username folds into it), signup/new-password
+  = dice only, password-change = the same shield opens a fill-or-generate menu
+  (so no second dice), card = its own shield. Icon kinds are derived each scan
+  and stale/mismatched buttons are removed, which also fixes SPA transitions
+  (revealed password, form swap, removed field) and hidden groups. Checkout
+  billing emails are never treated as logins. The form-less fallback was the real bug - it treated
+  *any* password on the page as proof that every text input was a username, so
+  nickname/sidebar/comment boxes were badged; it now requires the same `<form>`,
+  a tight login ancestor, or 320px proximity. Standalone email/username badges
+  require a credential-step signal (autocomplete, form action, path/title), and
+  checkout pages never badge billing emails. Card save is implemented end to
+  end: `readFormCard()` (Luhn + MM/YY + CVV shape), a masked Save/Update
+  banner, SPA `PV_SPA_CARD` hook, background `PV_SAVE_CARD` with the P6
+  sender-frame check, and native `save_card` (validates PAN/expiry, dedupes by
+  PAN, updates holder/expiry/CVV in place). Card *fill* was also dead:
+  `filterEntries()` dropped card rows (no `urls`), so `queryCards()` now asks
+  the host with `all:true` (a domain hint is not a card binding) and
+  `fillCard()` handles split month/year selects. `resolveRows()` now returns
+  only the anchor's own kind (a disabled card/identity toggle no longer falls
+  through to login rows), and the generator fills only new/confirm sibling
+  fields - never the current password on a change form. Tests: +12 content,
+  +3 background, +1 Rust -> `npm test` **71/71**, `cargo test` **460 passed /
+  1 ignored**; clippy unchanged (2 pre-existing `manual_clamp`).

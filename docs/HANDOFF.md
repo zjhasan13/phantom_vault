@@ -195,7 +195,28 @@
     ceremony/OTP popup messages now pass `{frameId:0}`.
   - Tests: +4 background, +1 domain, +2 popup -> `npm test` **53/53**;
     `browser_extension/build.ps1` builds chrome+firefox.
-- Baselines: `cargo test` 459 passed / 1 ignored, `npm test` 53/53 (24 background + 16 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
+- **Badge noise + card capture (DONE `e8a282f`):**
+  - One action-aware icon per context, reconciled every scan: login = shield
+    on the password (username folds in), signup = dice only, password-change =
+    that shield's menu (fill login OR generate new+confirm), card = its own
+    shield. Mode changes/removals drop the old button, so SPA transitions can
+    never leave two icons or a stale one. Checkout billing emails are never
+    badged. The form-less fallback no longer badges every text input on a page
+    that has a password (same form / tight ancestor / 320px only), and
+    standalone email badges need a credential-step signal.
+  - Card save: `readFormCard()` (Luhn, MM/YY, CVV shape) + masked Save/Update
+    banner + `PV_SPA_CARD` tripwire; background `PV_SAVE_CARD` reuses the
+    sender-frame check; native `save_card` validates, dedupes by PAN and updates
+    expiry/holder/CVV in place (cards stay global, never URL-bound).
+  - Card fill repair: `filterEntries()` used to drop card rows (no `urls`);
+    `queryCards()` now requests `all:true`, and `fillCard()` handles split
+    month/year selects as well as `cc-exp`. `resolveRows()` sticks to the
+    anchor's kind (disabled card/identity toggles no longer leak login rows),
+    and the generator only writes new/confirm siblings, never the current
+    password on a change form.
+  - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
+    `cargo test` **460 passed / 1 ignored**.
+- Baselines: `cargo test` 460 passed / 1 ignored, `npm test` 71/71 (27 background + 31 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
