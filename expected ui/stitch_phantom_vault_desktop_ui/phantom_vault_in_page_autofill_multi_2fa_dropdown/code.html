@@ -1,0 +1,276 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Phantom Vault - In-Page Autofill &amp; Multi-2FA HUD</title>
+<!-- Tailwind CSS v3 -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: {
+              950: '#070709',
+              900: '#0d0d11',
+              850: '#111116',
+              800: '#17171e',
+              700: '#22222d',
+              600: '#323242'
+            },
+            phantom: {
+              violet: '#8B5CF6',
+              violetGlow: '#7C3AED',
+              cyan: '#06B6D4',
+              emerald: '#10B981',
+              amber: '#F59E0B',
+              rose: '#F43F5E'
+            }
+          },
+          fontFamily: {
+            mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'Monaco', 'Consolas', 'monospace'],
+            sans: ['Inter', 'system-ui', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif']
+          },
+          boxShadow: {
+            'glow-violet': '0 0 25px -4px rgba(139, 92, 246, 0.35), 0 0 10px -2px rgba(124, 58, 237, 0.25)',
+            'glow-cyan': '0 0 20px -3px rgba(6, 182, 212, 0.35)',
+            'dropdown': '0 20px 45px -12px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(255, 255, 255, 0.08)'
+          }
+        }
+      }
+    }
+  </script>
+<!-- BEGIN: Custom CSS -->
+<style data-purpose="custom-animations">
+    @keyframes pulse-slow {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.65; transform: scale(0.97); }
+    }
+    .animate-pulse-slow {
+      animation: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    @keyframes sweep {
+      0% { transform: rotate(0deg); }
+      100% { transform: rotate(360deg); }
+    }
+    .totp-ring {
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+  </style>
+<!-- END: Custom CSS -->
+</head>
+<body class="bg-[#0b0c0e] text-zinc-100 font-sans min-h-screen flex flex-col items-center justify-center p-4 sm:p-8 antialiased selection:bg-purple-600 selection:text-white relative overflow-x-hidden">
+<!-- BEGIN: Ambient Background Glows -->
+<div class="fixed top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[720px] h-[400px] bg-purple-900/10 rounded-full blur-[140px] pointer-events-none -z-10"></div>
+<div class="fixed top-1/2 right-1/4 w-[450px] h-[300px] bg-cyan-900/10 rounded-full blur-[120px] pointer-events-none -z-10"></div>
+<!-- END: Ambient Background Glows -->
+<!-- BEGIN: Page Header / Simulated Browser Meta -->
+<div class="w-full max-w-5xl mb-3 flex items-center justify-between text-xs text-zinc-500 font-mono">
+<div class="flex items-center gap-2">
+<span class="inline-block w-2.5 h-2.5 rounded-full bg-emerald-500/80 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
+<span class="">Phantom Extension Engine: <span class="text-zinc-300 font-semibold">Active &amp; Intercepting Input Enclave</span></span>
+</div>
+<div class="flex items-center gap-4 text-[11px]">
+<span class="text-zinc-400">RAM: Zero-Knowledge Keystore</span>
+<span class="px-2 py-0.5 rounded bg-zinc-800/90 text-purple-300 border border-purple-500/30">v4.9.8-LOCKED</span>
+</div>
+</div>
+<!-- END: Page Header / Simulated Browser Meta -->
+<!-- BEGIN: Simulated Target Webpage (Realistic Google / Enterprise Dark Login Context) -->
+<main class="w-full max-w-5xl bg-[#131417] border border-zinc-800/90 rounded-3xl p-8 sm:p-14 shadow-2xl relative">
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-10 items-start">
+<!-- Left Column: Branding and Context Identity -->
+<div class="lg:col-span-5 flex flex-col justify-between h-full space-y-6">
+<div>
+<!-- Google Logo SVG -->
+<div class="w-11 h-11 mb-6">
+<svg class="w-full h-full" viewBox="0 0 48 48">
+<path d="M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z" fill="#EA4335"></path>
+<path d="M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z" fill="#4285F4"></path>
+<path d="M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z" fill="#FBBC05"></path>
+<path d="M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z" fill="#34A853"></path>
+</svg>
+</div>
+<h1 class="text-3xl sm:text-4xl font-normal tracking-tight text-white mb-3">Welcome</h1>
+<p class="text-zinc-400 text-sm mb-6">to your Workspace Identity Control Center</p>
+<!-- Selected Account Pill (as in reference image) -->
+<div class="inline-flex items-center gap-2.5 px-3.5 py-1.5 rounded-full border border-zinc-700 bg-zinc-900/90 text-sm text-zinc-200 hover:border-zinc-500 cursor-pointer transition">
+<span class="w-5 h-5 rounded-full bg-purple-600/30 text-purple-300 border border-purple-500/40 flex items-center justify-center text-xs font-medium">Z</span>
+<span class="font-medium">zjhasan13@gmail.com</span>
+<svg class="w-4 h-4 text-zinc-400 ml-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</div>
+</div>
+<div class="pt-8 border-t border-zinc-800/80 text-xs text-zinc-500 space-y-2">
+<div class="flex items-center gap-2 text-zinc-400 font-mono text-[11px]">
+<svg class="w-4 h-4 text-emerald-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="">FIDO2 / TOTP multi-factor protocol active</span>
+</div>
+<p class="">Protected by Phantom Vault Client Extension (Hardware Security Enclave).</p>
+</div>
+</div>
+<!-- Right Column: The Input Field with Floating Dropdown Overlay -->
+<div class="lg:col-span-7 relative pt-2">
+<!-- BEGIN: Host Page Active Input Field -->
+<div class="space-y-4">
+<label class="block text-sm font-medium text-zinc-300" for="password-input">
+            Enter your password or use Security Passkey
+          </label>
+<!-- Input Wrapper with Active Focus state & Phantom Vault Inline Icon -->
+<div class="relative group">
+<input class="w-full bg-[#18191f] text-zinc-100 px-4 py-3.5 pr-28 rounded-xl border-2 border-purple-500/80 shadow-[0_0_0_3px_rgba(139,92,246,0.18)] focus:outline-none text-base tracking-wide font-mono transition-all" id="password-input" placeholder="Enter password or identity" type="text" value="zjhasan13">
+<!-- Real-time typing cursor indicator -->
+<span class="absolute left-[102px] top-4 w-0.5 h-5 bg-purple-400 animate-pulse"></span>
+<!-- Inline Phantom Vault Interactive Shield Trigger -->
+<div class="absolute right-2.5 top-1/2 -translate-y-1/2 flex items-center gap-1.5 bg-obsidian-900 border border-purple-500/40 hover:border-purple-400 px-2.5 py-1.5 rounded-lg shadow-sm cursor-pointer group/badge transition">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
+</span>
+<!-- Phantom Vault Logo Badge -->
+<svg class="w-4 h-4 text-purple-400 group-hover/badge:text-purple-300 transition" fill="currentColor" viewBox="0 0 24 24">
+<path d="M12 2L4 5v6.09c0 5.05 3.41 9.76 8 10.91 4.59-1.15 8-5.86 8-10.91V5l-8-3zm0 2.18l6 2.25v4.66c0 4.12-2.73 7.97-6 9-3.27-1.03-6-4.88-6-9V6.43l6-2.25z"></path>
+<path d="M12 6a3.5 3.5 0 00-3.5 3.5c0 1.5 1 2.8 2.3 3.3v2.7a1.2 1.2 0 002.4 0v-2.7c1.3-.5 2.3-1.8 2.3-3.3A3.5 3.5 0 0012 6z"></path>
+</svg>
+<span class="text-[11px] font-mono font-medium text-purple-300 group-hover/badge:text-purple-200">2 Matches</span>
+</div>
+</div>
+</div>
+<!-- END: Host Page Active Input Field -->
+<!-- BEGIN: Phantom Vault Dual-Panel Floating Autofill HUD -->
+<div class="relative mt-2.5 z-50" data-purpose="phantom-autofill-hud">
+<div class="grid-cols-1 md:grid-cols-12 gap-3 items-start">
+<!-- LEFT PANEL: Primary Credential Selector (MD: 5 cols) -->
+<div class="bg-obsidian-900/98 backdrop-blur-xl border border-zinc-700/80 rounded-2xl shadow-dropdown overflow-hidden flex flex-col w-full">
+<!-- Panel Header -->
+<div class="px-3.5 py-2.5 bg-obsidian-850 border-b border-zinc-800 flex items-center justify-between">
+<div class="flex items-center gap-2">
+<div class="w-5 h-5 rounded bg-purple-950/80 border border-purple-500/40 flex items-center justify-center">
+<svg class="w-3 h-3 text-purple-400" fill="currentColor" viewBox="0 0 24 24">
+<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4z"></path>
+</svg>
+</div>
+<span class="text-xs font-semibold text-zinc-200 tracking-tight">Phantom Vault</span>
+</div>
+<span class="text-[10px] font-mono text-zinc-400 bg-zinc-800/80 px-1.5 py-0.5 rounded">accounts.google.com</span>
+</div>
+<!-- Matching Account Item 1 (Active / Selected) -->
+<div class="p-3 bg-purple-950/20 border-l-2 border-purple-500 border-b border-zinc-800/80 hover:bg-purple-900/30 cursor-pointer transition relative group">
+<div class="flex items-start justify-between">
+<div class="flex items-start gap-2.5">
+<div class="w-7 h-7 mt-0.5 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-xs text-white">
+                      G
+                    </div>
+<div>
+<div class="flex items-center gap-1.5">
+<span class="text-xs font-semibold text-white tracking-tight">accounts.google.com</span>
+<span class="px-1.5 py-0.2 rounded text-[9px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">Root Admin</span>
+</div>
+<div class="text-[11px] text-zinc-300 font-mono mt-0.5">zjhasan13@gmail.com</div>
+</div>
+</div>
+</div>
+<!-- Multiple 2FA Tag Notification -->
+<div class="mt-2.5 flex items-center justify-between bg-obsidian-950/80 px-2.5 py-1.5 rounded-lg border border-purple-500/30">
+<div class="flex items-center gap-1.5 text-[11px] text-purple-300 font-medium">
+<svg class="w-3.5 h-3.5 text-purple-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="">3 Multi-2FA Keys</span>
+</div>
+<span class="text-[10px] text-zinc-400 font-mono flex items-center gap-1">
+                    Auto-expand <svg class="w-3 h-3 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+</span>
+</div>
+</div>
+<!-- Matching Account Item 2 -->
+<div class="p-3 hover:bg-zinc-800/40 cursor-pointer transition border-b border-zinc-800/80">
+<div class="flex items-start gap-2.5">
+<div class="w-7 h-7 mt-0.5 rounded-lg bg-zinc-800/80 border border-zinc-700/60 flex items-center justify-center font-bold text-xs text-zinc-300">
+                    G
+                  </div>
+<div class="flex-1">
+<div class="flex items-center justify-between">
+<span class="text-xs font-medium text-zinc-300">accounts.google.com</span>
+<span class="text-[9px] bg-zinc-800 text-zinc-400 px-1 rounded">Sandbox</span>
+</div>
+<div class="text-[11px] text-zinc-400 font-mono mt-0.5">zjhasan.dev@gmail.com</div>
+<div class="mt-1 flex items-center gap-2 text-[10px] text-zinc-500 font-mono">
+<span class="">TOTP: 341 802</span>
+<span class="">•</span>
+<span class="text-emerald-500">28s</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Quick Action Toolbar -->
+<div class="p-2.5 bg-obsidian-950 flex items-center justify-between text-[11px] text-zinc-400">
+<button class="flex items-center gap-1 hover:text-purple-400 transition" type="button">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 4v16m8-8H4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="">Gen Password</span>
+</button>
+<button class="flex items-center gap-1 hover:text-zinc-200 transition" type="button">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path><path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path></svg>
+<span class="">Open Vault</span>
+</button>
+</div>
+</div>
+<!-- END LEFT PANEL -->
+<!-- RIGHT PANEL: Dedicated Interactive Multi-2FA / TOTP Drawer (MD: 7 cols) -->
+
+<!-- END RIGHT PANEL -->
+</div>
+</div>
+<!-- END: Phantom Vault Dual-Panel Floating Autofill HUD -->
+<!-- Secondary Buttons for the Webpage Form -->
+<div class="mt-8 flex items-center justify-between">
+<button class="text-sm font-medium text-purple-400 hover:text-purple-300 transition" type="button">
+            Forgot password?
+          </button>
+<div class="flex items-center gap-3">
+<button class="px-4 py-2 text-sm font-medium text-zinc-300 hover:bg-zinc-800/80 rounded-full transition" type="button">
+              Create account
+            </button>
+<button class="px-6 py-2 text-sm font-medium text-white bg-purple-600 hover:bg-purple-500 rounded-full shadow-lg transition" type="button">
+              Next
+            </button>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- END: Simulated Target Webpage -->
+<!-- BEGIN: Bottom Context Footer -->
+<footer class="w-full max-w-5xl mt-6 px-4 flex flex-col sm:flex-row items-center justify-between text-xs text-zinc-500 gap-3">
+<div class="flex items-center gap-4">
+<span class="hover:text-zinc-400 cursor-pointer">English (United States)</span>
+<span class="hover:text-zinc-400 cursor-pointer">Help</span>
+<span class="hover:text-zinc-400 cursor-pointer">Privacy</span>
+<span class="hover:text-zinc-400 cursor-pointer">Terms</span>
+</div>
+<div class="font-mono text-[11px] text-zinc-500">
+      Phantom Vault Runtime Identity Inspector • Zero Tracking
+    </div>
+</footer>
+<!-- END: Bottom Context Footer -->
+<!-- BEGIN: Interactive Simulated Autofill Script -->
+<script data-purpose="totp-timer-simulation">
+    // Micro-simulation for the TOTP timer decrement
+    let timeLeft = 14;
+    const ringElement = document.querySelector('.totp-ring path.text-purple-400');
+    const textElement = document.querySelector('.totp-ring + span');
+    
+    if (ringElement && textElement) {
+      setInterval(() => {
+        timeLeft -= 1;
+        if (timeLeft < 0) {
+          timeLeft = 30;
+        }
+        textElement.textContent = timeLeft;
+        const progress = Math.round((timeLeft / 30) * 100);
+        ringElement.setAttribute('stroke-dasharray', `${progress}, 100`);
+      }, 1000);
+    }
+  </script>
+<!-- END: Interactive Simulated Autofill Script -->
+
+
+</body></html>

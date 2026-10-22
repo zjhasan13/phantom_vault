@@ -1,0 +1,857 @@
+<!DOCTYPE html><html class="dark" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Phantom Vault — Zero-Knowledge 2FA Hub</title>
+<!-- Tailwind CSS v3 with Forms & Container Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Configuration -->
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: {
+              950: '#07080b',
+              900: '#0c0d12',
+              850: '#10121a',
+              800: '#141722',
+              700: '#1c2130',
+              600: '#282f44',
+            },
+            phantom: {
+              400: '#c084fc',
+              500: '#a855f7',
+              600: '#9333ea',
+              accent: '#8b5cf6',
+              glow: 'rgba(139, 92, 246, 0.18)',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'system-ui', '-apple-system', 'sans-serif'],
+            mono: ['JetBrains Mono', 'Fira Code', 'SF Mono', 'ui-monospace', 'monospace'],
+          },
+          animation: {
+            'pulse-subtle': 'pulseSubtle 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
+            'radar': 'radarSweep 4s linear infinite',
+          },
+          keyframes: {
+            pulseSubtle: {
+              '0%, 100%': { opacity: '1' },
+              '50%': { opacity: '0.45' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+<!-- Google Fonts: Inter & JetBrains Mono -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+<!-- BEGIN: Custom Micro-Styles -->
+<style data-purpose="custom-decorations">
+    body {
+      background-color: #08090d;
+      font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+      overflow-x: hidden;
+    }
+
+    /* Subtle Glassmorphism Card Effect */
+    .glass-card {
+      background: linear-gradient(145deg, rgba(20, 23, 34, 0.72) 0%, rgba(14, 16, 24, 0.9) 100%);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    
+    .glass-card:hover {
+      border-color: rgba(168, 85, 247, 0.35);
+      box-shadow: 0 10px 32px -8px rgba(147, 51, 234, 0.18), 0 0 0 1px rgba(168, 85, 247, 0.2);
+      transform: translateY(-2px);
+    }
+
+    /* TOTP digits spacing & glow */
+    .totp-digits {
+      letter-spacing: 0.18em;
+      text-shadow: 0 0 20px rgba(192, 132, 252, 0.25);
+    }
+
+    /* Custom thin scrollbar */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0c0d12;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #1e2333;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #374151;
+    }
+  </style>
+<!-- END: Custom Micro-Styles -->
+</head>
+<body class="text-zinc-200 antialiased selection:bg-purple-500/30 selection:text-purple-200 min-h-screen flex flex-col font-sans">
+<!-- BEGIN: LayoutWrapper -->
+<div class="flex h-screen w-full overflow-hidden" data-purpose="app-shell">
+<!-- BEGIN: LeftSidebar -->
+<aside class="w-72 bg-obsidian-900 border-r border-zinc-800/80 flex flex-col justify-between flex-shrink-0 z-30 selection:bg-purple-500/20" data-purpose="vault-sidebar">
+<!-- Upper Section -->
+<div class="flex flex-col h-full overflow-y-auto">
+<!-- Brand Header -->
+<div class="px-6 py-5 flex items-center justify-between border-b border-zinc-800/60">
+<div class="flex items-center space-x-3">
+<div class="relative w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-700 via-indigo-600 to-purple-400 p-[1px] shadow-lg shadow-purple-600/30">
+<div class="w-full h-full bg-obsidian-900 rounded-[11px] flex items-center justify-center">
+<svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<span class="absolute -top-1 -right-1 flex h-3 w-3">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+<span class="relative inline-flex rounded-full h-3 w-3 bg-emerald-500 border-2 border-obsidian-900"></span>
+</span>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<span class="font-bold text-base tracking-tight text-white font-mono">PHANTOM</span>
+<span class="text-[10px] uppercase font-semibold px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30">PRO</span>
+</div>
+<p class="text-[11px] text-zinc-400 font-mono tracking-wider">HARDENED VAULT</p>
+</div>
+</div>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/60 transition" title="Collapse Sidebar">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M11 19l-7-7 7-7m8 14l-7-7 7-7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+<!-- Engine & Enclave Security State Pill -->
+<div class="px-5 py-3.5 bg-obsidian-850/70 border-b border-zinc-800/50">
+<div class="flex items-center justify-between text-[11px] font-mono text-zinc-400 mb-1.5">
+<span class="flex items-center space-x-1.5">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+<span class="text-zinc-300">ARGON2id • GCM-256</span>
+</span>
+<span class="text-emerald-400/90 font-medium">LOCKED RAM</span>
+</div>
+<div class="w-full bg-zinc-800/80 rounded-full h-1 overflow-hidden">
+<div class="bg-gradient-to-r from-emerald-500 to-purple-500 h-1 rounded-full w-full"></div>
+</div>
+</div>
+<!-- Navigation Categories -->
+<nav class="p-4 space-y-6" data-purpose="vault-folders">
+<!-- Main Section -->
+<div>
+<div class="px-3 mb-2 text-[10px] font-mono font-semibold tracking-wider text-zinc-300 uppercase">Vault Essentials</div>
+<ul class="space-y-1">
+<li>
+<a class="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>All Items</span>
+</div>
+<span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400">148</span>
+</a>
+</li>
+<li>
+<!-- Active 2FA Hub category -->
+<a class="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium bg-gradient-to-r from-purple-900/40 to-purple-800/20 text-purple-200 border border-purple-500/30 shadow-sm shadow-purple-900/20" href="#">
+<div class="flex items-center space-x-2.5">
+<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span class="font-semibold text-white">2FA Authenticator Hub</span>
+</div>
+<span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">24</span>
+</a>
+</li>
+<li>
+<a class="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Passkeys &amp; Logins</span>
+</div>
+<span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400">89</span>
+</a>
+</li>
+<li>
+<a class="flex items-center justify-between px-3 py-2 rounded-lg text-xs font-medium text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/50 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>API &amp; SSH Secrets</span>
+</div>
+<span class="text-[11px] font-mono px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-400">31</span>
+</a>
+</li>
+</ul>
+</div>
+<!-- Vault Tags/Collections -->
+<div>
+<div class="flex items-center justify-between px-3 mb-2 text-[10px] font-mono font-semibold tracking-wider text-zinc-300 uppercase">
+<span>Environments</span>
+<button class="text-zinc-400 hover:text-purple-400 transition text-xs font-bold" title="Create Filter Tag">+</button>
+</div>
+<ul class="space-y-1">
+<li>
+<a class="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40" href="#">
+<span class="flex items-center space-x-2">
+<span class="w-2 h-2 rounded-full bg-red-500"></span>
+<span>Production Root</span>
+</span>
+<span class="text-[10px] font-mono text-zinc-400">6</span>
+</a>
+</li>
+<li>
+<a class="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40" href="#">
+<span class="flex items-center space-x-2">
+<span class="w-2 h-2 rounded-full bg-amber-500"></span>
+<span>DevOps &amp; Infra</span>
+</span>
+<span class="text-[10px] font-mono text-zinc-400">9</span>
+</a>
+</li>
+<li>
+<a class="flex items-center justify-between px-3 py-1.5 rounded-lg text-xs text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40" href="#">
+<span class="flex items-center space-x-2">
+<span class="w-2 h-2 rounded-full bg-indigo-500"></span>
+<span>Personal Accounts</span>
+</span>
+<span class="text-[10px] font-mono text-zinc-400">9</span>
+</a>
+</li>
+</ul>
+</div>
+<!-- Hardware Device Sync -->
+<div class="p-3 bg-zinc-900/60 rounded-xl border border-zinc-800/60 text-xs">
+<div class="flex items-center space-x-2 mb-1.5 text-zinc-300 font-medium">
+<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>YubiKey 5C NFC</span>
+</div>
+<p class="text-[11px] text-zinc-400">FIDO2 Hardware Bound. PIN verified.</p>
+</div>
+</nav>
+</div>
+<!-- Bottom Profile & Lock Action -->
+<div class="p-4 border-t border-zinc-800/70 bg-obsidian-950/80">
+<div class="flex items-center justify-between mb-3">
+<div class="flex items-center space-x-2.5">
+<div class="w-8 h-8 rounded-full bg-gradient-to-br from-purple-500 to-indigo-700 flex items-center justify-center font-bold text-xs text-white uppercase ring-2 ring-purple-500/20">
+              PV
+            </div>
+<div class="leading-tight">
+<p class="text-xs font-semibold text-zinc-200">sec-admin@phantom</p>
+<p class="text-[10px] font-mono text-emerald-400">Session Secure (44m)</p>
+</div>
+</div>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/80 transition" title="Settings">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+<!-- Immediate Instant Panic Lock -->
+<button class="w-full py-2 px-3 rounded-lg bg-zinc-800/80 hover:bg-rose-950/60 hover:text-rose-300 hover:border-rose-800/60 border border-zinc-700/60 text-zinc-300 text-xs font-mono font-medium flex items-center justify-center space-x-2 transition duration-150 group">
+<svg class="w-4 h-4 text-zinc-400 group-hover:text-rose-400 transition" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>PANIC LOCK VAULT</span>
+</button>
+</div>
+</aside>
+<!-- END: LeftSidebar -->
+<!-- BEGIN: MainContentArea -->
+<main class="flex-1 flex flex-col h-full overflow-hidden bg-obsidian-950" data-purpose="primary-dashboard">
+<!-- Top Action Bar -->
+<header class="h-16 px-8 border-b border-zinc-800/70 bg-obsidian-900/60 backdrop-blur-md flex items-center justify-between flex-shrink-0 z-20">
+<!-- Quick Fuzzy Search Input with Keyboard Indicator -->
+<div class="relative w-96">
+<div class="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none">
+<svg class="h-4 w-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+<input class="w-full pl-10 pr-14 py-2 bg-obsidian-850/80 border border-zinc-700/60 rounded-xl text-xs text-zinc-200 placeholder-zinc-400 focus:outline-none focus:border-purple-500 focus:ring-1 focus:ring-purple-500/50 transition font-sans" placeholder="Search accounts, tags, or keys (e.g. AWS, GitHub)..." type="text">
+<div class="absolute inset-y-0 right-0 pr-3 flex items-center pointer-events-none">
+<kbd class="px-1.5 py-0.5 text-[10px] font-mono font-semibold text-zinc-400 bg-zinc-800 rounded border border-zinc-700/80">⌘K</kbd>
+</div>
+</div>
+<!-- Global Header Controls -->
+<div class="flex items-center space-x-3">
+<!-- Live NTP Drift Indicator -->
+<div class="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-obsidian-850 border border-zinc-800 text-[11px] font-mono text-zinc-400">
+<span class="inline-block w-2 h-2 rounded-full bg-emerald-400"></span>
+<span>NTP OFFSET: <span class="text-zinc-200">+0.02s</span></span>
+</div>
+<!-- Batch Action: Show All Next Preview -->
+<button class="px-3.5 py-2 rounded-xl bg-obsidian-850 hover:bg-zinc-800 border border-zinc-700/70 text-zinc-300 text-xs font-medium flex items-center space-x-2 transition" id="toggleNextTokensBtn" title="Preview next RFC 6238 token code ahead of cycle">
+<svg class="w-4 h-4 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Show NEXT Tokens</span>
+</button>
+<!-- Export Encrypted Backup -->
+<button class="px-3.5 py-2 rounded-xl bg-obsidian-850 hover:bg-zinc-800 border border-zinc-700/70 text-zinc-300 text-xs font-medium flex items-center space-x-2 transition" title="Export TOTP Secret URIs">
+<svg class="w-4 h-4 text-zinc-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Export</span>
+</button>
+<!-- Add New 2FA Modal Trigger -->
+<button class="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white text-xs font-semibold shadow-lg shadow-purple-600/25 flex items-center space-x-2 transition">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 4v16m8-8H4" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>+ Add New 2FA</span>
+</button>
+</div>
+</header>
+<!-- Scrollable Authenticator Content Area -->
+<div class="flex-1 overflow-y-auto px-8 py-6 space-y-6">
+<!-- Top Dashboard Status Bar / Key Metrics -->
+<div class="grid grid-cols-1 md:grid-cols-4 gap-4" data-purpose="metric-cards">
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-zinc-800/80 flex items-center justify-between">
+<div>
+<p class="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Active 2FA Keys</p>
+<h3 class="text-2xl font-bold font-mono text-white mt-1">24 <span class="text-xs font-sans font-normal text-emerald-400">Tokens</span></h3>
+</div>
+<div class="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+</div>
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-zinc-800/80 flex items-center justify-between">
+<div>
+<p class="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Algorithm Standard</p>
+<h3 class="text-2xl font-bold font-mono text-white mt-1">RFC 6238 <span class="text-xs font-sans font-normal text-purple-400">30s/SHA1</span></h3>
+</div>
+<div class="w-10 h-10 rounded-lg bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+</div>
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-zinc-800/80 flex items-center justify-between">
+<div>
+<p class="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Time Drift Check</p>
+<h3 class="text-2xl font-bold font-mono text-emerald-400 mt-1">0.00s <span class="text-xs font-sans font-normal text-zinc-400">Synchronized</span></h3>
+</div>
+<div class="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+</div>
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-zinc-800/80 flex items-center justify-between">
+<div>
+<p class="text-[11px] font-mono text-zinc-400 uppercase tracking-wider">Zero-Leak Protection</p>
+<h3 class="text-2xl font-bold font-mono text-white mt-1">Enforced <span class="text-xs font-sans font-normal text-purple-400">Ephemerality</span></h3>
+</div>
+<div class="w-10 h-10 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</div>
+</div>
+</div>
+<!-- Filter & Sorting Sub-Bar -->
+<div class="flex flex-wrap items-center justify-between gap-4 py-2 border-b border-zinc-800/60 text-xs">
+<div class="flex items-center space-x-2">
+<span class="text-zinc-400 font-mono text-[11px]">Filter:</span>
+<button class="px-2.5 py-1 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/40 font-medium">All (24)</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition">Starred (4)</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition">Infrastructure</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-900 text-zinc-400 hover:text-zinc-200 border border-zinc-800 transition">Developer Cloud</button>
+</div>
+<div class="flex items-center space-x-3 text-zinc-400">
+<span class="text-[11px] font-mono">Sort by:</span>
+<select class="bg-obsidian-900 border border-zinc-800 text-xs rounded-lg py-1 px-2.5 text-zinc-300 focus:outline-none focus:border-purple-500">
+<option>Alphabetical (A - Z)</option>
+<option>Time Remaining (Expiring First)</option>
+<option>Recently Added</option>
+<option>Frequency of Use</option>
+</select>
+</div>
+</div>
+<!-- BEGIN: AuthenticatorGrid -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5" data-purpose="totp-card-grid">
+<!-- CARD 1: GitHub -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex items-start justify-between">
+<!-- Service Logo & Identifiers -->
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-zinc-900 border border-zinc-700/80 flex items-center justify-center p-2 text-white shadow-inner">
+<svg class="w-full h-full fill-current" viewBox="0 0 24 24">
+<path clip-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.53 1.032 1.53 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" fill-rule="evenodd"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">GitHub Ops</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-400 font-semibold border border-emerald-500/30">PROD</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">zjhasan13@github</p>
+</div>
+</div>
+<!-- Starred and Menu Actions -->
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<!-- Giant 6-digit TOTP Number Display -->
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-purple-300 totp-digits select-all tracking-wider">
+                  288 <span class="text-white">787</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">912 045</span></p>
+</div>
+<!-- Animated Radial Progress Timer -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-purple-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="35" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-zinc-200">22s</span>
+</div>
+</div>
+<!-- Bottom Interactive Controls -->
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy Code</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition" title="Quick Audit Log">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+<!-- CARD 2: AWS Root Production -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group border-amber-500/20">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center p-2 text-amber-400 shadow-inner">
+<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+<path d="M18.824 13.06c-.256-.477-.66-.867-1.16-1.12.593-.326 1.05-.827 1.305-1.436.257-.61.268-1.289.034-1.928-.275-.76-.848-1.377-1.597-1.722-.75-.346-1.614-.388-2.392-.12a6.49 6.49 0 00-2.378 1.488c-.682.7-1.177 1.572-1.442 2.533-.122.441-.184.896-.184 1.353v3.916c0 .546.442.988.988.988h1.228a.988.988 0 00.988-.988v-3.79c.002-.516.14-1.022.4-1.465.26-.443.64-.798 1.096-1.024.456-.226.974-.316 1.487-.258.513.057.994.267 1.38.602.388.336.657.784.773 1.287.116.503.06 1.031-.161 1.517-.222.485-.606.877-1.097 1.121-.491.244-1.055.334-1.609.256-.34-.047-.648.167-.689.507l-.147 1.196c-.042.342.174.65.516.697 1.027.144 2.072-.02 3.012-.473.94-.452 1.704-1.193 2.196-2.126.492-.934.685-2.006.55-3.08a6.38 6.38 0 00-1.048-2.61z"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">AWS Cloud Root</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-rose-500/20 text-rose-300 font-semibold border border-rose-500/30">CRITICAL</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">root-devops@corp</p>
+</div>
+</div>
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<!-- TOTP Display: Warning State (Expiring Soon - 5 seconds left) -->
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-rose-400 totp-digits select-all tracking-wider animate-pulse">
+                  509 <span class="text-rose-200">111</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">339 120</span></p>
+</div>
+<!-- Animated Radial Progress Timer (Warning Red) -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-rose-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="98" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-rose-400">4s</span>
+</div>
+</div>
+<!-- Bottom Interactive Controls -->
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-rose-500/20 hover:bg-rose-600 text-rose-200 hover:text-white border border-rose-500/40 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy (Expiring)</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition" title="Secret Details">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+<path d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+<!-- CARD 3: Bitwarden Emergency -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-blue-600/10 border border-blue-500/30 flex items-center justify-center p-2 text-blue-400 shadow-inner">
+<svg class="w-6 h-6" fill="currentColor" viewBox="0 0 24 24">
+<path d="M12 1L3 5v6c0 5.55 3.84 10.74 9 12 5.16-1.26 9-6.45 9-12V5l-9-4zm-1 6h2v2h-2V7zm0 4h2v6h-2v-6z"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">Bitwarden Master</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 font-semibold border border-blue-500/30">KEY</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">zjhasan3@gmail.com</p>
+</div>
+</div>
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-zinc-600 hover:text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<!-- TOTP Display -->
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-purple-300 totp-digits select-all tracking-wider">
+                  331 <span class="text-white">950</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">184 722</span></p>
+</div>
+<!-- Animated Radial Progress Timer -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-purple-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="65" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-zinc-200">14s</span>
+</div>
+</div>
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy Code</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+<!-- CARD 4: Discord Security -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-indigo-500/10 border border-indigo-500/30 flex items-center justify-center p-2 text-indigo-400 shadow-inner">
+<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+<path d="M20.317 4.37a19.791 19.791 0 00-4.885-1.515.074.074 0 00-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 00-5.487 0 12.64 12.64 0 00-.617-1.25.077.077 0 00-.079-.037A19.736 19.736 0 003.677 4.37a.07.07 0 00-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 00.031.057 19.9 19.9 0 005.993 3.03.078.078 0 00.084-.028c.462-.63.874-1.295 1.226-1.994.021-.041.001-.09-.041-.106a13.107 13.107 0 01-1.872-.892.077.077 0 01-.008-.128 10.2 10.2 0 00.372-.292.074.074 0 01.077-.01c3.929 1.793 8.18 1.793 12.061 0a.074.074 0 01.078.01c.12.098.246.198.373.292a.077.077 0 01-.006.127 12.299 12.299 0 01-1.873.893.077.077 0 00-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 00.084.028 19.839 19.839 0 006.002-3.03.077.077 0 00.032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 00-.031-.028zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">Discord Comm</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">PERSONAL</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">zjhasan13@gmail.com</p>
+</div>
+</div>
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-zinc-600 hover:text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-purple-300 totp-digits select-all tracking-wider">
+                  521 <span class="text-white">144</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">677 392</span></p>
+</div>
+<!-- Animated Radial Progress Timer -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-purple-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="18" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-zinc-200">26s</span>
+</div>
+</div>
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy Code</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+<!-- CARD 5: Google Workspace Marketer -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-red-500/10 border border-red-500/30 flex items-center justify-center p-2 text-red-400 shadow-inner">
+<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+<path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">Google Workspace</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-zinc-800 text-zinc-400 border border-zinc-700">WORK</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">zahidulislam@agency.com</p>
+</div>
+</div>
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-purple-300 totp-digits select-all tracking-wider">
+                  914 <span class="text-white">468</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">442 819</span></p>
+</div>
+<!-- Animated Radial Progress Timer -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-purple-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="40" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-zinc-200">20s</span>
+</div>
+</div>
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy Code</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+<!-- CARD 6: Cloudflare Edge Network -->
+<article class="glass-card rounded-2xl p-5 flex flex-col justify-between relative overflow-hidden group">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-11 h-11 rounded-xl bg-orange-500/10 border border-orange-500/30 flex items-center justify-center p-2 text-orange-400 shadow-inner">
+<svg class="w-6 h-6 fill-current" viewBox="0 0 24 24">
+<path d="M16.924 16.518c.32-.403.468-.909.434-1.424-.034-.515-.246-.995-.615-1.348l-.071-.068a3.176 3.176 0 00-2.22-.843h-7.61a2.822 2.822 0 01-1.42-.382 2.766 2.766 0 01-1.026-1.054 2.84 2.84 0 01-.362-1.433 2.83 2.83 0 01.378-1.43 2.77 2.77 0 011.042-1.036c.45-.25.96-.38 1.48-.375h.33a5.53 5.53 0 012.02-3.13 5.56 5.56 0 013.56-1.25c1.39.01 2.73.55 3.75 1.52a5.53 5.53 0 011.66 3.48l.09.68.68.08a4.34 4.34 0 013.2 2.01 4.3 4.3 0 01.59 2.59c-.07.9-.45 1.74-1.08 2.38a4.33 4.33 0 01-2.47 1.25l-.33.04z"></path>
+</svg>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="font-bold text-white text-sm tracking-wide">Cloudflare Edge</h4>
+<span class="text-[9px] font-mono px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">DNS/SEC</span>
+</div>
+<p class="text-xs text-zinc-400 font-mono truncate max-w-[150px]">edge-admin@infra</p>
+</div>
+</div>
+<div class="flex items-center space-x-1">
+<button class="p-1.5 rounded-lg text-zinc-600 hover:text-amber-400 hover:bg-zinc-800 transition" title="Favorite">
+<svg class="w-4 h-4 fill-current" viewBox="0 0 20 20">
+<path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z"></path>
+</svg>
+</button>
+<button class="p-1.5 rounded-lg text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 transition" title="Secret actions">
+<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</div>
+<div class="my-5 flex items-baseline justify-between">
+<div>
+<span class="text-3xl font-extrabold font-mono text-purple-300 totp-digits select-all tracking-wider">
+                  743 <span class="text-white">793</span>
+</span>
+<p class="text-[10px] text-zinc-400 font-mono mt-0.5">NEXT: <span class="text-zinc-400 font-semibold">502 911</span></p>
+</div>
+<!-- Animated Radial Progress Timer -->
+<div class="relative w-11 h-11 flex items-center justify-center">
+<svg class="w-11 h-11 transform -rotate-90">
+<circle class="text-zinc-800" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-width="2.5"></circle>
+<circle class="text-purple-500 transition-all duration-1000 ease-linear" cx="22" cy="22" fill="transparent" r="18" stroke="currentColor" stroke-dasharray="113" stroke-dashoffset="75" stroke-linecap="round" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute font-mono text-xs font-bold text-zinc-200">11s</span>
+</div>
+</div>
+<div class="flex items-center space-x-2 pt-3 border-t border-zinc-800/80">
+<button class="flex-1 py-1.5 px-3 rounded-lg bg-purple-600/15 hover:bg-purple-600 text-purple-300 hover:text-white border border-purple-500/30 text-xs font-medium flex items-center justify-center space-x-1.5 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span>Copy Code</span>
+</button>
+<button class="p-1.5 rounded-lg bg-zinc-800/80 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 border border-zinc-700/60 transition">
+<svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+</button>
+</div>
+</article>
+</div>
+<!-- END: AuthenticatorGrid -->
+<!-- Bottom Audit & Health Status Bar -->
+<footer class="pt-6 pb-4 border-t border-zinc-800/60 flex flex-col md:flex-row items-center justify-between gap-4 text-xs text-zinc-400 font-mono" data-purpose="hub-footer">
+<div class="flex items-center space-x-3">
+<span class="flex items-center space-x-1.5">
+<span class="w-2 h-2 rounded-full bg-emerald-400"></span>
+<span class="text-zinc-300">Vault Health: Clean &amp; Enforced</span>
+</span>
+<span>•</span>
+<span>Clipboard Auto-Purge: <span class="text-purple-400">15s</span></span>
+<span>•</span>
+<span>Biometric Re-check: <span class="text-zinc-300">Active</span></span>
+</div>
+<div class="flex items-center space-x-4">
+<a class="hover:text-purple-400 transition" href="#">Hardware Key Config</a>
+<a class="hover:text-purple-400 transition" href="#">RFC 6238 Specs</a>
+<a class="hover:text-purple-400 transition" href="#">Panic Log</a>
+</div>
+</footer>
+</div>
+</main>
+<!-- END: MainContentArea -->
+</div>
+<!-- END: LayoutWrapper -->
+<!-- Toast Copy Notification (DOM helper) -->
+<div class="fixed bottom-6 right-6 px-4 py-2.5 rounded-xl bg-purple-600 text-white font-mono text-xs flex items-center space-x-2 shadow-xl shadow-purple-600/30 transform translate-y-20 opacity-0 transition-all duration-200 pointer-events-none z-50" id="copyToast">
+<svg class="w-4 h-4 text-emerald-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+<path d="M5 13l4 4L19 7" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"></path>
+</svg>
+<span id="copyToastMessage">Code copied to secure memory buffer!</span>
+</div>
+<!-- BEGIN: Interactive Interactivity Scripts -->
+<script data-purpose="copy-and-preview-handlers">
+    // Interactive Copy Buttons with Visual Feedback Pill
+    document.querySelectorAll('[data-purpose="totp-card-grid"] button').forEach(button => {
+      if (button.textContent.includes('Copy')) {
+        button.addEventListener('click', (e) => {
+          const card = button.closest('article');
+          const codeEl = card.querySelector('.totp-digits');
+          const originalText = button.innerHTML;
+          const codeText = codeEl ? codeEl.innerText.replace(/\s+/g, '') : 'TOKEN';
+
+          // Visual Feedback
+          button.innerHTML = `
+            <svg class="w-3.5 h-3.5 text-emerald-300 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+            </svg>
+            <span class="text-white font-semibold">Copied!</span>
+          `;
+          button.classList.add('bg-purple-600', 'text-white');
+
+          // Trigger Toast
+          const toast = document.getElementById('copyToast');
+          const toastMsg = document.getElementById('copyToastMessage');
+          if (toast && toastMsg) {
+            toastMsg.innerText = `TOTP Code [${codeText}] copied (15s purge)`;
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            setTimeout(() => {
+              toast.classList.remove('translate-y-0', 'opacity-100');
+              toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2500);
+          }
+
+          setTimeout(() => {
+            button.innerHTML = originalText;
+            button.classList.remove('bg-purple-600', 'text-white');
+          }, 1800);
+        });
+      }
+    });
+
+    // Toggle NEXT code lookahead preview button
+    const toggleBtn = document.getElementById('toggleNextTokensBtn');
+    let previewState = false;
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        previewState = !previewState;
+        const nextTexts = document.querySelectorAll('.totp-digits');
+        
+        toggleBtn.classList.toggle('bg-purple-600');
+        toggleBtn.classList.toggle('text-white');
+        toggleBtn.classList.toggle('border-purple-400');
+        
+        if (previewState) {
+          toggleBtn.querySelector('span').innerText = 'Hide NEXT Preview';
+        } else {
+          toggleBtn.querySelector('span').innerText = 'Show NEXT Tokens';
+        }
+      });
+    }
+  </script>
+<!-- END: Interactive Interactivity Scripts -->
+</body></html>

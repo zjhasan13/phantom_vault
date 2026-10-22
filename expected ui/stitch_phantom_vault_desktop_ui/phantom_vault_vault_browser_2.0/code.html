@@ -1,0 +1,759 @@
+<!DOCTYPE html><html class="dark h-full" lang="en"><head>
+<meta charset="utf-8">
+<meta content="width=device-width, initial-scale=1.0" name="viewport">
+<title>Phantom Vault Enterprise — Master Credential &amp; Secret Inspector</title>
+<!-- Tailwind CSS CDN with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Phosphor Icons for ultra-crisp security & tech iconography -->
+<script src="https://unpkg.com/@phosphor-icons/web"></script><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/regular/style.css"><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/thin/style.css"><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/light/style.css"><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/bold/style.css"><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/fill/style.css"><link rel="stylesheet" type="text/css" href="https://cdn.jsdelivr.net/npm/@phosphor-icons/web@2.1.2/src/duotone/style.css">
+<!-- Inter & JetBrains Mono Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect">
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            obsidian: {
+              950: '#07080b',
+              900: '#0b0c10',
+              850: '#101217',
+              800: '#15171e',
+              750: '#1a1d26',
+              700: '#222633',
+              600: '#2d3345',
+            },
+            violet: {
+              500: '#7c3aed',
+              600: '#6d28d9',
+              primary: '#6366f1',
+              accent: '#8b5cf6',
+            },
+            emerald: {
+              glow: '#10b981',
+            }
+          },
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          boxShadow: {
+            'glow-violet': '0 0 25px -5px rgba(124, 58, 237, 0.35)',
+            'glow-emerald': '0 0 20px -4px rgba(16, 185, 129, 0.3)',
+            'subtle': '0 1px 3px rgba(0,0,0,0.5), 0 1px 2px rgba(0,0,0,0.4)',
+          }
+        }
+      }
+    }
+  </script>
+<!-- BEGIN: Custom Styling Tags grouped by purpose -->
+<style data-purpose="base-enhancements">
+    /* Subtle custom scrollbar */
+    ::-webkit-scrollbar {
+      width: 5px;
+      height: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: rgba(11, 12, 16, 0.4);
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #222633;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #374151;
+    }
+    /* Smooth focus rings */
+    *:focus-visible {
+      outline: 2px solid #8b5cf6;
+      outline-offset: 1px;
+    }
+  </style>
+<style data-purpose="totp-animation">
+    /* Circular timer SVG dash array animation */
+    @keyframes countdown {
+      from { stroke-dashoffset: 0; }
+      to { stroke-dashoffset: 100; }
+    }
+    .totp-ring-circle {
+      stroke-dasharray: 100;
+      animation: countdown 30s linear infinite;
+    }
+  </style>
+<!-- END: Custom Styling Tags -->
+</head>
+<body class="bg-obsidian-950 text-slate-200 font-sans h-full overflow-hidden flex flex-col select-none antialiased">
+<!-- BEGIN: TopGlobalAppHeader -->
+<header class="h-12 border-b border-obsidian-700/60 bg-obsidian-900/95 backdrop-blur px-4 flex items-center justify-between z-20 shrink-0">
+<div class="flex items-center space-x-3">
+<!-- Vault Brand Icon & Title -->
+<div class="flex items-center space-x-2.5">
+<div class="w-7 h-7 rounded-lg bg-gradient-to-tr from-violet-600 via-indigo-600 to-violet-400 flex items-center justify-center shadow-lg shadow-violet-500/20 text-white font-bold text-sm tracking-tight ring-1 ring-white/20">
+<i class="ph-bold ph-shield-checkered text-base"></i>
+</div>
+<div class="flex items-baseline space-x-1.5">
+<span class="font-bold text-sm text-white tracking-wide uppercase">Phantom</span>
+<span class="text-[11px] font-medium text-violet-400 px-1.5 py-0.2 rounded bg-violet-500/10 border border-violet-500/20">ENTERPRISE</span>
+</div>
+</div>
+<div class="h-3.5 w-px bg-obsidian-700"></div>
+<!-- Organization / Team Switcher -->
+<button class="flex items-center space-x-1.5 text-xs text-slate-300 hover:text-white px-2 py-1 rounded hover:bg-obsidian-800 transition">
+<i class="ph-duotone ph-buildings text-slate-400"></i>
+<span class="font-medium">Apex Security Lab (HQ)</span>
+<i class="ph ph-caret-down text-[10px] text-slate-400"></i>
+</button>
+</div>
+<!-- Central Security State Indicator -->
+<div class="hidden md:flex items-center space-x-4 text-xs font-mono">
+<div class="flex items-center space-x-2 px-3 py-1 bg-obsidian-850/80 rounded-full border border-emerald-500/20 text-emerald-400">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+<span class="text-[11px]">E2EE AES-256-GCM Hardware Sealed</span>
+</div>
+</div>
+<!-- Top Right Status & Lock Controls -->
+<div class="flex items-center space-x-2.5">
+<div class="flex items-center space-x-1 bg-obsidian-800/80 rounded-lg p-0.5 border border-obsidian-700/60">
+<button class="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-obsidian-700 rounded transition" title="Sync Vault Now">
+<i class="ph-bold ph-arrows-clockwise text-xs"></i>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-obsidian-700 rounded transition" title="Audit Log">
+<i class="ph-bold ph-file-text text-xs"></i>
+</button>
+<button class="p-1.5 text-slate-400 hover:text-slate-100 hover:bg-obsidian-700 rounded transition" title="Settings">
+<i class="ph-bold ph-gear text-xs"></i>
+</button>
+</div>
+<button class="flex items-center space-x-1.5 px-2.5 py-1 text-xs font-medium bg-red-950/40 hover:bg-red-900/60 text-red-300 border border-red-800/50 rounded-lg transition duration-150" id="lockVaultBtn">
+<i class="ph-bold ph-lock-key text-xs"></i>
+<span>Lock Vault</span>
+</button>
+<!-- User Avatar -->
+<div class="w-7 h-7 rounded-full bg-gradient-to-tr from-slate-700 to-slate-600 ring-1 ring-white/10 flex items-center justify-center font-bold text-xs text-white">
+        ZH
+      </div>
+</div>
+</header>
+<!-- END: TopGlobalAppHeader -->
+<!-- BEGIN: MasterLayoutThreeColumn -->
+<div class="flex-1 flex overflow-hidden">
+<!-- BEGIN: LeftNavigationSidebar (Col 1) -->
+<aside class="w-64 bg-obsidian-900 border-r border-obsidian-700/60 flex flex-col shrink-0 text-slate-400 text-xs select-none" data-purpose="vault-sidebar">
+<!-- Top Action in Sidebar -->
+<div class="p-3">
+<button class="w-full flex items-center justify-center space-x-2 py-2 px-3 bg-violet-600 hover:bg-violet-500 text-white rounded-lg font-medium shadow-md shadow-violet-600/20 ring-1 ring-violet-400/30 transition duration-150 group">
+<i class="ph-bold ph-plus-circle text-base transition-transform group-hover:rotate-90"></i>
+<span>New Secret Item</span>
+</button>
+</div>
+<!-- Scrollable Navigation Tree -->
+<div class="flex-1 overflow-y-auto px-2 space-y-5 pb-4">
+<!-- Category: Vault Scopes -->
+<div>
+<div class="px-2 pb-1.5 text-[10px] uppercase tracking-wider font-semibold text-slate-500">Vaults</div>
+<nav class="space-y-0.5">
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-violet-600/15 text-white font-medium border border-violet-500/20" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-fill ph-tray text-violet-400 text-sm"></i>
+<span>All Vault Items</span>
+</div>
+<span class="text-[10px] font-mono bg-violet-500/20 text-violet-300 px-1.5 py-0.2 rounded-full">184</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-bold ph-star text-amber-400 text-sm"></i>
+<span>Favorites</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">12</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-bold ph-shield-warning text-rose-400 text-sm"></i>
+<span>Compromised / Reused</span>
+</div>
+<span class="text-[10px] font-mono bg-rose-500/20 text-rose-300 px-1.5 py-0.2 rounded-full">7</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-bold ph-trash text-slate-500 text-sm"></i>
+<span>Trash</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">3</span>
+</a>
+</nav>
+</div>
+<!-- Category: Secret Types -->
+<div>
+<div class="px-2 pb-1.5 text-[10px] uppercase tracking-wider font-semibold text-slate-500">Categories</div>
+<nav class="space-y-0.5">
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-duotone ph-key text-indigo-400 text-sm"></i>
+<span>Logins &amp; Passwords</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">142</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-duotone ph-fingerprint-simple text-emerald-400 text-sm"></i>
+<span>Passkeys &amp; FIDO2</span>
+</div>
+<span class="text-[10px] font-mono text-emerald-400/90 font-medium bg-emerald-500/10 px-1 rounded">28</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-duotone ph-terminal-window text-cyan-400 text-sm"></i>
+<span>SSH &amp; API Keys</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">9</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-duotone ph-credit-card text-amber-400 text-sm"></i>
+<span>Credit Cards</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">3</span>
+</a>
+<a class="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<div class="flex items-center space-x-2.5">
+<i class="ph-duotone ph-file-lock text-purple-400 text-sm"></i>
+<span>Secure Notes</span>
+</div>
+<span class="text-[10px] font-mono text-slate-500">12</span>
+</a>
+</nav>
+</div>
+<!-- Category: Folders Tree -->
+<div>
+<div class="flex items-center justify-between px-2 pb-1.5">
+<span class="text-[10px] uppercase tracking-wider font-semibold text-slate-500">Folders</span>
+<button class="text-slate-500 hover:text-slate-300" title="Create Folder">
+<i class="ph ph-folder-plus text-xs"></i>
+</button>
+</div>
+<nav class="space-y-0.5">
+<a class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<i class="ph-bold ph-folder text-violet-400 text-xs"></i>
+<span class="truncate">Infrastructure &amp; Cloud</span>
+</a>
+<a class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<i class="ph-bold ph-folder text-slate-500 text-xs"></i>
+<span class="truncate">Google Workspace &amp; Identity</span>
+</a>
+<a class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<i class="ph-bold ph-folder text-slate-500 text-xs"></i>
+<span class="truncate">Financial &amp; Stripe</span>
+</a>
+<a class="flex items-center space-x-2 px-2.5 py-1.5 rounded-lg hover:bg-obsidian-800 hover:text-slate-200 transition" href="#">
+<i class="ph-bold ph-folder text-slate-500 text-xs"></i>
+<span class="truncate">Development / Git</span>
+</a>
+</nav>
+</div>
+</div>
+<!-- Bottom Sidebar Footer: Duress / Travel Mode & Status -->
+<div class="p-3 border-t border-obsidian-700/60 bg-obsidian-900/50 space-y-2">
+<div class="p-2.5 bg-obsidian-850 rounded-lg border border-obsidian-700/50 flex items-center justify-between">
+<div class="flex items-center space-x-2">
+<i class="ph-duotone ph-airplane-tilt text-violet-400 text-base"></i>
+<div>
+<div class="text-[11px] font-semibold text-slate-200">Travel Mode</div>
+<div class="text-[10px] text-slate-500">Duress safe filter</div>
+</div>
+</div>
+<label class="relative inline-flex items-center cursor-pointer">
+<input class="sr-only peer" type="checkbox" value="">
+<div class="w-8 h-4.5 bg-obsidian-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-slate-300 after:border-slate-300 after:border after:rounded-full after:h-3.5 after:w-3.5 after:transition-all peer-checked:bg-violet-600"></div>
+</label>
+</div>
+<div class="flex items-center justify-between text-[11px] text-slate-500 px-1">
+<span>Phantom v4.8.2</span>
+<span class="flex items-center space-x-1 text-emerald-400">
+<i class="ph-fill ph-circle text-[7px]"></i>
+<span>Encrypted Sync</span>
+</span>
+</div>
+</div>
+</aside>
+<!-- END: LeftNavigationSidebar -->
+<!-- BEGIN: MiddleItemsListColumn (Col 2) -->
+<section class="w-80 lg:w-96 border-r border-obsidian-700/60 bg-obsidian-900/40 flex flex-col shrink-0" data-purpose="credential-items-list">
+<!-- List Controls & Quick Search -->
+<div class="p-3 border-b border-obsidian-700/60 space-y-2.5 bg-obsidian-900/60">
+<!-- Search bar with keyboard shortcut -->
+<div class="relative">
+<i class="ph ph-magnifying-glass absolute left-3 top-2.5 text-slate-400 text-sm"></i>
+<input class="w-full bg-obsidian-850 border border-obsidian-700 focus:border-violet-500 rounded-lg pl-9 pr-12 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none transition" placeholder="Search vault... ( / to focus )" type="text">
+<kbd class="absolute right-2.5 top-2 text-[10px] font-mono bg-obsidian-750 text-slate-400 px-1.5 py-0.5 rounded border border-obsidian-600/50">⌘K</kbd>
+</div>
+<!-- Filter Chips -->
+<div class="flex items-center space-x-1.5 overflow-x-auto pb-0.5 no-scrollbar text-[11px]">
+<button class="px-2.5 py-1 rounded-md bg-violet-600/20 text-violet-300 border border-violet-500/30 font-medium whitespace-nowrap">All (184)</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-800 hover:bg-obsidian-750 text-slate-400 hover:text-slate-200 border border-obsidian-700/60 transition whitespace-nowrap">Weak (7)</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-800 hover:bg-obsidian-750 text-slate-400 hover:text-slate-200 border border-obsidian-700/60 transition whitespace-nowrap">Passkeys</button>
+<button class="px-2.5 py-1 rounded-md bg-obsidian-800 hover:bg-obsidian-750 text-slate-400 hover:text-slate-200 border border-obsidian-700/60 transition whitespace-nowrap">2FA Enabled</button>
+</div>
+<!-- Sort and Bulk Select Row -->
+<div class="flex items-center justify-between text-xs text-slate-400 pt-0.5">
+<label class="flex items-center space-x-2 cursor-pointer hover:text-slate-300">
+<input class="rounded bg-obsidian-800 border-obsidian-700 text-violet-600 focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5" type="checkbox">
+<span class="text-[11px]">Select items</span>
+</label>
+<div class="flex items-center space-x-1.5">
+<span class="text-[10px] uppercase font-semibold text-slate-500">Sort:</span>
+<button class="flex items-center space-x-1 text-[11px] text-slate-300 hover:text-white">
+<span>Domain (A-Z)</span>
+<i class="ph ph-sort-ascending text-xs"></i>
+</button>
+</div>
+</div>
+</div>
+<!-- Credential List Container -->
+<div class="flex-1 overflow-y-auto divide-y divide-obsidian-800/60">
+<!-- ACTIVE ITEM: 1.wino-ex.com (Direct upgrade from original screenshot) -->
+<article class="p-3 bg-obsidian-800/90 border-l-2 border-l-violet-500 relative cursor-pointer group transition-colors shadow-sm">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<!-- Service Logo / Monogram -->
+<div class="w-9 h-9 rounded-lg bg-gradient-to-br from-indigo-500 to-violet-700 ring-1 ring-violet-400/30 flex items-center justify-center text-white font-bold text-sm shadow-md shrink-0">
+<span>W1</span>
+</div>
+<div class="min-w-0">
+<div class="flex items-center space-x-1.5">
+<h3 class="font-semibold text-xs text-white truncate">1.wino-ex.com</h3>
+<i class="ph-fill ph-star text-amber-400 text-xs"></i>
+</div>
+<p class="text-[11px] font-mono text-slate-400 truncate">zjhasan3</p>
+</div>
+</div>
+<!-- Quick copy action on hover -->
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy Password">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<!-- Metadata Tags & Security health badge -->
+<div class="mt-2.5 flex items-center justify-between text-[10px]">
+<div class="flex items-center space-x-1.5">
+<span class="px-1.5 py-0.5 rounded bg-violet-500/10 text-violet-300 font-mono border border-violet-500/20">#google-sso</span>
+<span class="px-1.5 py-0.5 rounded bg-obsidian-700 text-slate-400">TOTP active</span>
+</div>
+<div class="flex items-center space-x-1 text-emerald-400" title="Password Strength: 96%">
+<i class="ph-bold ph-shield-check text-xs"></i>
+<span class="font-mono">Strong</span>
+</div>
+</div>
+</article>
+<!-- Item 2: GitHub Enterprise -->
+<article class="p-3 hover:bg-obsidian-850/80 cursor-pointer group transition-colors">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-slate-800 ring-1 ring-slate-700 flex items-center justify-center text-white shrink-0">
+<i class="ph-bold ph-github-logo text-lg text-slate-100"></i>
+</div>
+<div class="min-w-0">
+<div class="flex items-center space-x-1.5">
+<h3 class="font-medium text-xs text-slate-200 group-hover:text-white truncate">github.com</h3>
+<span class="text-[9px] px-1 py-0.2 bg-emerald-500/10 text-emerald-400 rounded border border-emerald-500/20">FIDO2</span>
+</div>
+<p class="text-[11px] font-mono text-slate-400 truncate">dev-ops@phantom.sh</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<div class="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+<span>Prod Infrastructure</span>
+<span class="font-mono">Passkey Bound</span>
+</div>
+</article>
+<!-- Item 3: 2captcha.com (From screenshot) -->
+<article class="p-3 hover:bg-obsidian-850/80 cursor-pointer group transition-colors">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-emerald-950/60 ring-1 ring-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+<i class="ph-bold ph-lock-key-open text-base"></i>
+</div>
+<div class="min-w-0">
+<h3 class="font-medium text-xs text-slate-200 group-hover:text-white truncate">2captcha.com</h3>
+<p class="text-[11px] font-mono text-slate-400 truncate">wopijov565@gmail.com</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<div class="mt-2 flex items-center justify-between text-[10px]">
+<span class="px-1.5 py-0.5 rounded bg-obsidian-750 text-slate-400">#google</span>
+<span class="text-rose-400 flex items-center space-x-1 font-mono">
+<i class="ph-bold ph-warning-circle"></i>
+<span>Reused in 154 items</span>
+</span>
+</div>
+</article>
+<!-- Item 4: 127.0.0.1 (Local Cluster) -->
+<article class="p-3 hover:bg-obsidian-850/80 cursor-pointer group transition-colors">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-obsidian-800 ring-1 ring-obsidian-700 flex items-center justify-center text-indigo-400 shrink-0">
+<i class="ph-bold ph-hard-drives text-base"></i>
+</div>
+<div class="min-w-0">
+<h3 class="font-medium text-xs text-slate-200 group-hover:text-white truncate">127.0.0.1:8443 (Local Proxy)</h3>
+<p class="text-[11px] font-mono text-slate-400 truncate">admin</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<div class="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+<span>General Vault</span>
+<span class="font-mono text-amber-400">Expiring in 4d</span>
+</div>
+</article>
+<!-- Item 5: AWS Cloud Console -->
+<article class="p-3 hover:bg-obsidian-850/80 cursor-pointer group transition-colors">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-amber-500/10 ring-1 ring-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+<i class="ph-bold ph-cloud text-base"></i>
+</div>
+<div class="min-w-0">
+<h3 class="font-medium text-xs text-slate-200 group-hover:text-white truncate">aws.amazon.com</h3>
+<p class="text-[11px] font-mono text-slate-400 truncate">secops-master@corp</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<div class="mt-2 flex items-center justify-between text-[10px]">
+<span class="px-1.5 py-0.5 rounded bg-obsidian-750 text-slate-400">#production</span>
+<span class="text-emerald-400 font-mono">Hardware MFA</span>
+</div>
+</article>
+<!-- Item 6: 192.168.1.1 (Gateway) -->
+<article class="p-3 hover:bg-obsidian-850/80 cursor-pointer group transition-colors">
+<div class="flex items-start justify-between">
+<div class="flex items-center space-x-3 min-w-0">
+<div class="w-9 h-9 rounded-lg bg-obsidian-800 ring-1 ring-obsidian-700 flex items-center justify-center text-slate-400 shrink-0">
+<i class="ph-bold ph-wifi-high text-base"></i>
+</div>
+<div class="min-w-0">
+<h3 class="font-medium text-xs text-slate-200 group-hover:text-white truncate">192.168.1.1 (Gateway Router)</h3>
+<p class="text-[11px] font-mono text-slate-400 truncate">root</p>
+</div>
+</div>
+<button class="opacity-0 group-hover:opacity-100 p-1.5 hover:bg-obsidian-700 rounded text-slate-300 hover:text-white transition" title="Quick Copy">
+<i class="ph ph-copy text-xs"></i>
+</button>
+</div>
+<div class="mt-2 flex items-center justify-between text-[10px] text-slate-500">
+<span>Hardware Enclave</span>
+<span class="font-mono text-slate-400">Updated 2mo ago</span>
+</div>
+</article>
+</div>
+</section>
+<!-- END: MiddleItemsListColumn -->
+<!-- BEGIN: RightMainInspectorPanel (Col 3: Full Secret Controller) -->
+<main class="flex-1 bg-obsidian-950 flex flex-col overflow-y-auto" data-purpose="secret-inspector">
+<!-- Top Inspector Bar: Entity Name & Global Secret Actions -->
+<header class="p-5 border-b border-obsidian-750 bg-obsidian-900/60 sticky top-0 backdrop-blur z-10 flex flex-wrap items-center justify-between gap-4">
+<div class="flex items-center space-x-3.5">
+<div class="w-12 h-12 rounded-xl bg-gradient-to-tr from-violet-600 to-indigo-500 ring-1 ring-white/20 shadow-xl flex items-center justify-center text-white font-bold text-lg">
+<span>W1</span>
+</div>
+<div>
+<div class="flex items-center space-x-2.5">
+<h1 class="text-lg font-bold text-white tracking-tight">1.wino-ex.com</h1>
+<span class="px-2 py-0.5 rounded-full bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 text-[10px] font-mono uppercase tracking-wider flex items-center space-x-1">
+<span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+<span>Active Vault</span>
+</span>
+</div>
+<div class="flex items-center space-x-3 text-xs text-slate-400 mt-0.5">
+<a class="hover:text-violet-400 flex items-center space-x-1 transition" href="https://1.wino-ex.com" target="_blank">
+<i class="ph ph-arrow-square-out text-xs"></i>
+<span>https://1.wino-ex.com/login</span>
+</a>
+<span>•</span>
+<span class="flex items-center space-x-1">
+<i class="ph ph-folder text-slate-500"></i>
+<span class="text-slate-300">Infrastructure / Google</span>
+</span>
+</div>
+</div>
+</div>
+<!-- Action Ribbon -->
+<div class="flex items-center space-x-2">
+<button class="p-2 rounded-lg bg-obsidian-800 hover:bg-obsidian-750 border border-obsidian-700 text-amber-400 hover:text-amber-300 transition" title="Favorite Item">
+<i class="ph-fill ph-star text-sm"></i>
+</button>
+<button class="p-2 rounded-lg bg-obsidian-800 hover:bg-obsidian-750 border border-obsidian-700 text-slate-300 hover:text-white transition" title="Share Encrypted Link">
+<i class="ph-bold ph-share-network text-sm"></i>
+</button>
+<button class="p-2 rounded-lg bg-obsidian-800 hover:bg-obsidian-750 border border-obsidian-700 text-slate-300 hover:text-white transition" title="Move to Folder">
+<i class="ph-bold ph-folder-notch-open text-sm"></i>
+</button>
+<button class="p-2 rounded-lg bg-obsidian-800 hover:bg-red-950/60 border border-obsidian-700 hover:border-red-800/60 text-slate-400 hover:text-red-400 transition" title="Delete Item">
+<i class="ph-bold ph-trash text-sm"></i>
+</button>
+<div class="h-6 w-px bg-obsidian-750 mx-1"></div>
+<button class="flex items-center space-x-1.5 px-3 py-2 bg-obsidian-800 hover:bg-obsidian-750 text-slate-200 border border-obsidian-700 rounded-lg text-xs font-medium transition">
+<i class="ph-bold ph-pencil-simple text-xs"></i>
+<span>Edit Entry</span>
+</button>
+</div>
+</header>
+<!-- Inspector Body -->
+<div class="p-6 max-w-4xl space-y-6">
+<!-- PRIMARY CALL TO ACTION: Quick Fill & Inject -->
+<div class="relative overflow-hidden p-4 rounded-xl bg-gradient-to-r from-violet-900/40 via-indigo-900/30 to-obsidian-850 border border-violet-500/30 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-glow-violet">
+<div class="flex items-center space-x-3.5">
+<div class="w-10 h-10 rounded-lg bg-violet-600 flex items-center justify-center text-white shadow-lg shadow-violet-500/40 shrink-0">
+<i class="ph-bold ph-lightning text-xl"></i>
+</div>
+<div>
+<div class="text-sm font-semibold text-white">Browser Extension Bridge Active</div>
+<div class="text-xs text-slate-400">Match found on active tab: <span class="font-mono text-slate-300">1.wino-ex.com/register</span></div>
+</div>
+</div>
+<button class="w-full sm:w-auto px-5 py-2.5 bg-violet-600 hover:bg-violet-500 active:scale-95 text-white font-medium text-xs rounded-lg shadow-lg shadow-violet-600/30 flex items-center justify-center space-x-2 transition duration-150">
+<i class="ph-bold ph-browser text-sm"></i>
+<span>Autofill &amp; Inject Credentials</span>
+</button>
+</div>
+<!-- CREDENTIAL CARDS GRID -->
+<div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<!-- Username / Account Field Card -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 hover:border-obsidian-700 transition">
+<div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+<span class="font-semibold uppercase tracking-wider text-[10px]">Username / Account Identifier</span>
+<span class="text-[10px] text-slate-500">Plaintext</span>
+</div>
+<div class="flex items-center space-x-2">
+<div class="flex-1 bg-obsidian-850 px-3.5 py-2 rounded-lg border border-obsidian-700 font-mono text-sm text-slate-100 truncate select-all">
+                zjhasan3
+              </div>
+<button class="px-3 py-2 bg-obsidian-800 hover:bg-violet-600 text-slate-300 hover:text-white border border-obsidian-700 hover:border-violet-500 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95" onclick="navigator.clipboard.writeText('zjhasan3')" title="Copy Username">
+<i class="ph-bold ph-copy text-xs"></i>
+<span>Copy</span>
+</button>
+</div>
+</div>
+<!-- Live 2FA / TOTP Authenticator Card -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 hover:border-obsidian-700 transition relative overflow-hidden">
+<div class="flex items-center justify-between text-xs text-slate-400 mb-2">
+<div class="flex items-center space-x-1.5">
+<i class="ph-bold ph-clock-countdown text-violet-400"></i>
+<span class="font-semibold uppercase tracking-wider text-[10px]">One-Time Code (TOTP 2FA)</span>
+</div>
+<span class="text-[10px] font-mono text-emerald-400 flex items-center space-x-1">
+<i class="ph-fill ph-circle text-[6px]"></i>
+<span>Sync OK</span>
+</span>
+</div>
+<div class="flex items-center justify-between space-x-3">
+<div class="flex items-center space-x-3">
+<!-- Circular Countdown Visual -->
+<div class="relative w-8 h-8 flex items-center justify-center shrink-0">
+<svg class="w-8 h-8 transform -rotate-90">
+<circle cx="16" cy="16" fill="none" r="13" stroke="#222633" stroke-width="2.5"></circle>
+<circle class="totp-ring-circle" cx="16" cy="16" fill="none" r="13" stroke="#8b5cf6" stroke-width="2.5"></circle>
+</svg>
+<span class="absolute text-[10px] font-mono font-bold text-violet-300">18s</span>
+</div>
+<!-- 6-digit code with distinct 3-3 grouping -->
+<div class="font-mono text-xl tracking-wider font-bold text-white bg-obsidian-850 px-3 py-1 rounded-lg border border-obsidian-700 select-all">
+                  842 <span class="text-violet-400">910</span>
+</div>
+</div>
+<button class="px-3 py-2 bg-obsidian-800 hover:bg-violet-600 text-slate-300 hover:text-white border border-obsidian-700 hover:border-violet-500 rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95" onclick="navigator.clipboard.writeText('842910')" title="Copy TOTP Code">
+<i class="ph-bold ph-copy text-xs"></i>
+<span>Copy 2FA</span>
+</button>
+</div>
+</div>
+</div>
+<!-- PASSWORD SECTION (Master View) -->
+<div class="p-5 rounded-xl bg-obsidian-900/80 border border-obsidian-750 space-y-4">
+<div class="flex items-center justify-between">
+<div>
+<span class="text-[10px] font-semibold uppercase tracking-wider text-slate-400">Encrypted Password</span>
+<div class="text-xs text-slate-500">Protected with Argon2id Key Derivation</div>
+</div>
+<div class="flex items-center space-x-2 text-xs">
+<button class="text-slate-400 hover:text-slate-200 flex items-center space-x-1 text-[11px]" title="Password Audit History">
+<i class="ph ph-clock-counter-clockwise"></i>
+<span>Previous Passwords (2)</span>
+</button>
+</div>
+</div>
+<!-- Password Value & Reveal Control -->
+<div class="flex items-center space-x-2">
+<div class="flex-1 bg-obsidian-850 px-4 py-2.5 rounded-lg border border-obsidian-700 flex items-center justify-between font-mono text-sm tracking-widest text-slate-100">
+<span id="passwordMasked">••••••••••••••••••••</span>
+<span class="hidden text-violet-300 select-all tracking-normal text-sm font-semibold" id="passwordPlain">kX9#mQ!9vLp2$8zR@Wb</span>
+</div>
+<!-- Reveal Toggle -->
+<button class="p-2.5 bg-obsidian-800 hover:bg-obsidian-750 text-slate-300 hover:text-white border border-obsidian-700 rounded-lg transition" id="togglePasswordBtn" title="Show/Hide Password">
+<i class="ph-bold ph-eye text-sm" id="revealIcon"></i>
+</button>
+<!-- Copy Password -->
+<button class="px-4 py-2.5 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-xs font-medium flex items-center space-x-1.5 transition active:scale-95 shadow-md shadow-violet-600/20" id="copyPasswordBtn" title="Copy Password">
+<i class="ph-bold ph-copy text-xs"></i>
+<span>Copy Password</span>
+</button>
+<!-- Generate Strong Password -->
+<button class="p-2.5 bg-obsidian-800 hover:bg-obsidian-750 text-slate-300 hover:text-white border border-obsidian-700 rounded-lg transition" title="Launch Password Generator">
+<i class="ph-bold ph-arrows-clockwise text-sm"></i>
+</button>
+</div>
+<!-- Password Entropy & Health Breakdown -->
+<div class="p-3 bg-obsidian-850/60 rounded-lg border border-obsidian-750/70 space-y-2">
+<div class="flex items-center justify-between text-xs">
+<div class="flex items-center space-x-2 text-emerald-400 font-medium">
+<i class="ph-fill ph-check-circle text-sm"></i>
+<span>High Security (128-bit Shannon Entropy)</span>
+</div>
+<span class="text-[11px] font-mono text-slate-400">Crack Time: ~4.2M Years</span>
+</div>
+<!-- Progress Bar -->
+<div class="w-full bg-obsidian-750 h-1.5 rounded-full overflow-hidden flex">
+<div class="bg-emerald-500 h-full w-[94%] rounded-full shadow-glow-emerald"></div>
+</div>
+<div class="flex flex-wrap items-center gap-y-1 gap-x-4 text-[11px] text-slate-400 pt-1">
+<span>• Length: 19 chars</span>
+<span>• 0 Leaked Datasets</span>
+<span>• Not reused across any other logins</span>
+<span class="text-violet-400">• Includes Symbols &amp; Digits</span>
+</div>
+</div>
+</div>
+<!-- HARDWARE SECURITY & PASSKEY BINDING -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 flex items-center justify-between">
+<div class="flex items-center space-x-3.5">
+<div class="w-10 h-10 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+<i class="ph-duotone ph-fingerprint-simple text-2xl"></i>
+</div>
+<div>
+<div class="flex items-center space-x-2">
+<h4 class="text-xs font-semibold text-white">Hardware Passkey (FIDO2 / WebAuthn)</h4>
+<span class="text-[9px] px-1.5 py-0.2 bg-emerald-500/20 text-emerald-300 rounded font-mono">Bound</span>
+</div>
+<p class="text-[11px] text-slate-400">Registered with Apple Touch ID Secure Enclave • Credential ID: <span class="font-mono text-slate-300">pk_live_8910...</span></p>
+</div>
+</div>
+<button class="text-xs text-violet-400 hover:text-violet-300 font-medium px-3 py-1.5 rounded-lg border border-violet-500/30 hover:bg-violet-500/10 transition">
+            Manage Keys
+          </button>
+</div>
+<!-- AUTO-FILL URLS & REGEX TARGETS -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 space-y-3">
+<div class="flex items-center justify-between text-xs text-slate-400">
+<span class="font-semibold uppercase tracking-wider text-[10px]">Autofill Target URI Rules</span>
+<button class="text-[11px] text-violet-400 hover:text-violet-300 flex items-center space-x-1">
+<i class="ph-bold ph-plus"></i>
+<span>Add URL Match</span>
+</button>
+</div>
+<div class="space-y-2">
+<div class="flex items-center justify-between p-2.5 bg-obsidian-850 rounded-lg border border-obsidian-700 text-xs">
+<div class="flex items-center space-x-2 font-mono text-slate-300 text-[11px]">
+<span class="px-1.5 py-0.5 rounded bg-obsidian-750 text-slate-400 text-[9px] font-sans">Exact</span>
+<span>https://1.wino-ex.com/register/Rashidul2214</span>
+</div>
+<div class="flex items-center space-x-1 text-slate-400">
+<button class="p-1 hover:text-white" title="Launch"><i class="ph ph-arrow-square-out text-xs"></i></button>
+<button class="p-1 hover:text-white" title="Copy"><i class="ph ph-copy text-xs"></i></button>
+</div>
+</div>
+</div>
+</div>
+<!-- ENCRYPTED ATTACHMENTS & SECURE NOTES -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 space-y-3">
+<div class="flex items-center justify-between text-xs text-slate-400">
+<span class="font-semibold uppercase tracking-wider text-[10px]">Encrypted Attachments (0)</span>
+<span class="text-[10px] text-slate-500">Max 50MB per file</span>
+</div>
+<div class="border-2 border-dashed border-obsidian-700 hover:border-violet-500/50 rounded-xl p-5 text-center cursor-pointer transition">
+<i class="ph-duotone ph-file-arrow-up text-2xl text-slate-400 mb-1"></i>
+<p class="text-xs text-slate-300 font-medium">Drop encrypted backup keys, PEM certificates or ID docs</p>
+<p class="text-[10px] text-slate-500 mt-0.5">Zero-knowledge client-side encryption applied before upload</p>
+</div>
+</div>
+<!-- AUDIT LOG & REVISION TIMELINE -->
+<div class="p-4 rounded-xl bg-obsidian-900/80 border border-obsidian-750 space-y-3">
+<div class="flex items-center justify-between text-xs text-slate-400">
+<span class="font-semibold uppercase tracking-wider text-[10px]">Item Audit Trail &amp; Rotation Status</span>
+<button class="text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 px-2.5 py-1 rounded text-[11px] font-medium transition flex items-center space-x-1">
+<i class="ph-bold ph-check"></i>
+<span>Mark Verified Working</span>
+</button>
+</div>
+<div class="flex items-center justify-between text-xs text-slate-400 bg-obsidian-850 p-3 rounded-lg border border-obsidian-700">
+<div class="space-y-1">
+<div class="text-slate-300 font-medium text-[11px]">Last rotated: 2 days ago (by ZJ Hasan)</div>
+<div class="text-[10px] text-slate-500">Created on November 14, 2023 • Never failed an automated autofill probe</div>
+</div>
+<div class="text-right">
+<span class="px-2 py-0.5 bg-obsidian-750 rounded text-slate-400 font-mono text-[10px]">v4 Revision</span>
+</div>
+</div>
+</div>
+</div>
+</main>
+<!-- END: RightMainInspectorPanel -->
+</div>
+<!-- END: MasterLayoutThreeColumn -->
+<!-- BEGIN: InteractiveScripts -->
+<script data-purpose="credential-interactions">
+    // Password mask toggle logic
+    const togglePasswordBtn = document.getElementById('togglePasswordBtn');
+    const passwordMasked = document.getElementById('passwordMasked');
+    const passwordPlain = document.getElementById('passwordPlain');
+    const revealIcon = document.getElementById('revealIcon');
+
+    let isRevealed = false;
+
+    togglePasswordBtn.addEventListener('click', () => {
+      isRevealed = !isRevealed;
+      if (isRevealed) {
+        passwordMasked.classList.add('hidden');
+        passwordPlain.classList.remove('hidden');
+        revealIcon.classList.replace('ph-eye', 'ph-eye-slash');
+      } else {
+        passwordMasked.classList.remove('hidden');
+        passwordPlain.classList.add('hidden');
+        revealIcon.classList.replace('ph-eye-slash', 'ph-eye');
+      }
+    });
+
+    // Copy password notification feedback
+    const copyPasswordBtn = document.getElementById('copyPasswordBtn');
+    copyPasswordBtn.addEventListener('click', () => {
+      navigator.clipboard.writeText('kX9#mQ!9vLp2$8zR@Wb');
+      const originalHTML = copyPasswordBtn.innerHTML;
+      copyPasswordBtn.innerHTML = '<i class="ph-bold ph-check text-xs"></i><span>Copied!</span>';
+      copyPasswordBtn.classList.replace('bg-violet-600', 'bg-emerald-600');
+      setTimeout(() => {
+        copyPasswordBtn.innerHTML = originalHTML;
+        copyPasswordBtn.classList.replace('bg-emerald-600', 'bg-violet-600');
+      }, 1500);
+    });
+
+    // Vault quick lock simulation
+    const lockVaultBtn = document.getElementById('lockVaultBtn');
+    lockVaultBtn.addEventListener('click', () => {
+      const confirmed = confirm("Lock Phantom Vault Master Session immediately?");
+      if (confirmed) {
+        alert("Session locked. Master cryptographic key purged from RAM memory.");
+      }
+    });
+  </script>
+<!-- END: InteractiveScripts -->
+</body></html>

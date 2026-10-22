@@ -1,0 +1,997 @@
+<!DOCTYPE html>
+
+<html class="dark h-full" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Phantom Vault Enterprise — Sovereign Cryptographic Manager</title>
+<!-- Tailwind CSS CDN with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "on-tertiary-fixed": "#002113",
+          "surface-container-lowest": "#0e0e10",
+          "background": "#131315",
+          "primary-container": "#a078ff",
+          "secondary-container": "#4f319c",
+          "on-surface-variant": "#cbc3d7",
+          "on-background": "#e5e1e4",
+          "on-secondary-fixed": "#21005e",
+          "on-tertiary-container": "#00311f",
+          "tertiary-container": "#00a572",
+          "on-secondary-container": "#bea8ff",
+          "on-secondary": "#381385",
+          "surface-container-low": "#1c1b1d",
+          "on-primary-fixed-variant": "#5516be",
+          "inverse-on-surface": "#313032",
+          "surface-container-highest": "#353437",
+          "secondary": "#cebdff",
+          "primary": "#d0bcff",
+          "secondary-fixed-dim": "#cebdff",
+          "error-container": "#93000a",
+          "primary-fixed": "#e9ddff",
+          "primary-fixed-dim": "#d0bcff",
+          "surface-variant": "#353437",
+          "on-primary-fixed": "#23005c",
+          "on-tertiary": "#003824",
+          "tertiary-fixed": "#6ffbbe",
+          "outline-variant": "#494454",
+          "on-secondary-fixed-variant": "#4f319c",
+          "surface-container-high": "#2a2a2c",
+          "tertiary-fixed-dim": "#4edea3",
+          "surface-container": "#201f22",
+          "on-tertiary-fixed-variant": "#005236",
+          "on-surface": "#e5e1e4",
+          "on-error": "#690005",
+          "on-primary": "#3c0091",
+          "on-primary-container": "#340080",
+          "error": "#ffb4ab",
+          "tertiary": "#4edea3",
+          "surface": "#131315",
+          "inverse-surface": "#e5e1e4",
+          "surface-dim": "#131315",
+          "inverse-primary": "#6d3bd7",
+          "secondary-fixed": "#e8ddff",
+          "outline": "#958ea0",
+          "on-error-container": "#ffdad6",
+          "surface-bright": "#39393b",
+          "surface-tint": "#d0bcff"
+        },
+        "borderRadius": {
+          "DEFAULT": "0.125rem",
+          "lg": "0.25rem",
+          "xl": "0.5rem",
+          "full": "0.75rem"
+        },
+        "spacing": {
+          "margin-desktop": "2rem",
+          "space-md": "0.75rem",
+          "space-sm": "0.5rem",
+          "space-xl": "2rem",
+          "margin": "1rem",
+          "gutter": "1rem",
+          "space-lg": "1.25rem",
+          "gutter-desktop": "1.5rem",
+          "space-xs": "0.25rem"
+        },
+        "fontFamily": {
+          "label-code-lg": ["JetBrains Mono"],
+          "headline-xl": ["Inter"],
+          "label-code-md": ["JetBrains Mono"],
+          "headline-lg": ["Inter"],
+          "headline-md": ["Inter"],
+          "body-md": ["Inter"],
+          "body-lg": ["Inter"],
+          "body-sm": ["Inter"],
+          "label-badge": ["JetBrains Mono"],
+          "headline-xl-mobile": ["Inter"]
+        },
+        "fontSize": {
+          "label-code-lg": ["14px", {"lineHeight": "20px", "letterSpacing": "-0.01em", "fontWeight": "500"}],
+          "headline-xl": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.025em", "fontWeight": "600"}],
+          "label-code-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "500"}],
+          "headline-lg": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+          "headline-md": ["18px", {"lineHeight": "26px", "letterSpacing": "-0.015em", "fontWeight": "600"}],
+          "body-md": ["13px", {"lineHeight": "18px", "letterSpacing": "-0.005em", "fontWeight": "400"}],
+          "body-lg": ["15px", {"lineHeight": "22px", "letterSpacing": "-0.01em", "fontWeight": "400"}],
+          "body-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+          "label-badge": ["10px", {"lineHeight": "12px", "letterSpacing": "0.06em", "fontWeight": "600"}],
+          "headline-xl-mobile": ["26px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600"}]
+        }
+      }
+    }
+  }
+</script>
+<!-- Inter & JetBrains Mono Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+  @layer base {
+    * {
+      box-sizing: border-box;
+    }
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0e0e10;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a2c;
+      border-radius: 2px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #494454;
+    }
+  }
+</style>
+<meta content="web_dashboard" name="shell-type"/></head>
+<body class="bg-surface-container-lowest text-on-surface font-body-md antialiased min-h-screen">
+<!-- BEGIN: TopGlobalAppHeader -->
+<header class="fixed top-0 left-0 right-0 z-40 bg-surface border-b border-surface-container-high/80">
+<div class="h-14 px-margin-desktop flex items-center justify-between">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-sm">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high border border-primary/30 flex items-center justify-center text-primary shadow-sm">
+<span class="material-symbols-outlined text-[20px]">shield_lock</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-headline-md text-headline-md tracking-tight text-on-surface">PHANTOM</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">ENTERPRISE</span>
+</div>
+</div>
+</div>
+<span class="h-4 w-px bg-outline-variant/30"></span>
+<div class="hidden md:flex items-center gap-space-xs font-label-code-md text-label-code-md text-on-surface-variant bg-surface-container-low px-space-sm py-1 rounded border border-outline-variant/20">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span>AES-256-GCM Hardware Enclave Sealed</span>
+</div>
+</div>
+<div class="flex items-center gap-space-md">
+<div class="hidden lg:flex items-center gap-space-sm font-label-code-md text-label-code-md text-on-surface-variant">
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-outline-variant/20 text-tertiary">Zero-Knowledge verified</span>
+</div>
+<div class="flex items-center gap-space-xs bg-surface-container-low p-1 rounded border border-outline-variant/20">
+<button class="px-2.5 py-1 text-label-code-md font-label-code-md text-on-surface-variant hover:text-on-surface rounded transition" title="Audit Ledger" type="button">
+          AUDIT
+        </button>
+<button class="px-2.5 py-1 text-label-code-md font-label-code-md text-on-surface-variant hover:text-on-surface rounded transition" title="Master Cryptographic Sync" type="button">
+          SYNC
+        </button>
+</div>
+<button class="flex items-center gap-space-xs px-space-md py-1.5 text-label-code-md font-label-code-md bg-error-container/20 hover:bg-error-container/30 text-error border border-error/30 rounded-lg transition" id="lockVaultBtn" type="button">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+<span>Lock Vault</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-secondary-container border border-primary/30 flex items-center justify-center font-label-code-md text-label-code-md text-on-secondary-container font-semibold">
+        PV
+      </div>
+</div>
+</div>
+</header>
+<!-- END: TopGlobalAppHeader -->
+<!-- BEGIN: Sidebar Navigation Rail -->
+<aside class="fixed top-14 left-0 bottom-0 w-64 bg-surface-container-lowest border-r border-surface-container-high/80 flex flex-col z-30">
+<!-- Quick Master Action -->
+<div class="p-space-md border-b border-surface-container-high/40">
+<button class="w-full flex items-center justify-center gap-space-sm py-2 px-space-md bg-primary-container text-on-primary-container hover:bg-primary font-headline-md text-body-md font-medium rounded-lg shadow-sm transition" type="button">
+<span class="material-symbols-outlined text-[18px]">add_circle</span>
+<span>New Secret Item</span>
+</button>
+</div>
+<!-- Navigation Menus -->
+<div class="flex-1 overflow-y-auto px-space-sm py-space-md space-y-space-lg">
+<!-- Primary Vault Core -->
+<div>
+<div class="px-space-sm pb-space-xs font-label-code-md text-label-badge text-outline uppercase tracking-wider">Vault Operations</div>
+<nav class="space-y-0.5" data-active-classes="bg-surface-container text-primary border-l-2 border-primary font-medium" data-purpose="vault-nav">
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="phantom-vault-vault-browser-20" href="#">
+<span>Vault Browser 2.0</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-surface-container text-outline">184</span>
+</a>
+<a aria-current="page" class="flex items-center justify-between px-space-md py-1.5 rounded transition bg-surface-container text-primary border-l-2 border-primary font-medium" data-path="generator" href="#">
+<span>Generator Studio</span>
+<span class="font-label-badge text-label-badge px-1 py-0.2 rounded bg-primary/10 text-primary">AES</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="shamir-recovery" href="#">
+<span>Shamir Recovery</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-surface-container text-outline">SLIP-39</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="secure-send" href="#">
+<span>Secure Send</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-tertiary/10 text-tertiary">P2P</span>
+</a>
+</nav>
+</div>
+<!-- Critical Security Operations -->
+<div>
+<div class="px-space-sm pb-space-xs font-label-code-md text-label-badge text-outline uppercase tracking-wider">Governance &amp; Forensics</div>
+<nav class="space-y-0.5" data-active-classes="bg-surface-container text-primary border-l-2 border-primary font-medium" data-purpose="security-nav">
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="migration-wizard" href="#">
+<span>Migration Wizard</span>
+<span class="font-label-badge text-label-badge text-outline">Import</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="forensic-decoy" href="#">
+<span>Forensic &amp; Decoy</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-error/10 text-error">DURESS</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="security-developer-settings" href="#">
+<span>Security &amp; Developer Settings</span>
+</a>
+</nav>
+</div>
+</div>
+<!-- Bottom Enclave Health & Version Info -->
+<div class="p-space-md border-t border-surface-container-high/60 bg-surface space-y-space-xs">
+<div class="p-space-sm bg-surface-container-low rounded border border-surface-container-high flex items-center justify-between">
+<div>
+<div class="font-label-code-md text-label-code-md font-semibold text-on-surface">Duress Sentinel</div>
+<div class="font-body-sm text-body-sm text-outline">Silent tamper trigger</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+</div>
+<div class="flex items-center justify-between text-label-badge font-label-badge text-outline pt-1 px-1">
+<span>ENCLAVE v4.9.0-SOVEREIGN</span>
+<span class="text-tertiary">ONLINE</span>
+</div>
+</div>
+</aside>
+<!-- END: Sidebar Navigation Rail -->
+<!-- BEGIN: Dynamic Main View Area -->
+<main class="pt-14 pl-64 min-h-screen bg-background">
+<div class="flex flex-col w-full">
+<div class="p-space-lg max-w-7xl mx-auto w-full space-y-space-lg">
+<!-- Top Telemetry & Status Ribbon -->
+<div class="flex flex-wrap items-center justify-between gap-space-md p-space-sm bg-surface-container rounded-xl shadow-md">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md bg-surface-container-lowest px-space-sm py-1 rounded text-tertiary">
+<span class="w-2 h-2 rounded-full bg-tertiary animate-ping inline-block"></span>
+<span>HARDWARE TRNG ACTIVE</span>
+</div>
+<span class="font-label-code-md text-label-code-md text-outline">/dev/urandom local CSPRNG verified</span>
+<span class="hidden sm:inline-block font-label-code-md text-label-code-md text-outline-variant">•</span>
+<span class="hidden sm:inline-block font-label-code-md text-label-code-md text-tertiary">Zero Network Egress Sealed</span>
+</div>
+<div class="flex items-center gap-space-sm font-label-code-md text-label-code-md text-on-surface-variant">
+<span class="px-2 py-0.5 rounded bg-surface-container-high text-primary font-semibold">WebCrypto v2</span>
+<div class="flex items-center gap-1.5 bg-surface-container-lowest px-2 py-0.5 rounded text-secondary">
+<span class="material-symbols-outlined text-[14px]">format_image_left</span>
+<span>Hardware Isolated</span>
+</div>
+</div>
+</div>
+<!-- Main Cryptographic Hero Console -->
+<div class="relative bg-surface-container rounded-xl p-space-lg shadow-xl overflow-hidden">
+<!-- Decorative ambient subtle aura -->
+<div class="absolute -right-24 -top-24 w-96 h-96 bg-primary-container/10 rounded-full blur-3xl pointer-events-none"></div>
+<div class="absolute -left-20 -bottom-20 w-80 h-80 bg-tertiary-container/10 rounded-full blur-3xl pointer-events-none"></div>
+<div class="relative z-10 flex flex-col gap-space-md">
+<!-- Console Subheader -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-code-md text-label-code-md text-outline uppercase tracking-wider">Generated Secret Vector</span>
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-surface-container-highest text-secondary-fixed" id="charCountBadge">32 CHARS / 5 WORDS</span>
+</div>
+<div class="flex items-center gap-space-sm font-label-code-md text-label-code-md text-outline">
+<span>Shortcut:</span>
+<kbd class="px-1.5 py-0.5 bg-surface-container-lowest text-primary rounded shadow-sm text-body-sm">Space</kbd>
+<span>/</span>
+<kbd class="px-1.5 py-0.5 bg-surface-container-lowest text-primary rounded shadow-sm text-body-sm">Enter</kbd>
+</div>
+</div>
+<!-- Output Display Box with color-coded syntax highlighting -->
+<div class="relative bg-surface-container-lowest rounded-xl p-space-lg shadow-inner group">
+<div class="flex items-center justify-between gap-space-md">
+<div class="font-label-code-lg text-headline-md sm:text-headline-lg tracking-wide select-all break-all overflow-x-auto py-1" id="outputDisplay">
+<!-- Default highlighted tokens dynamically injected -->
+<span class="text-tertiary font-semibold">correct</span><span class="text-outline">-</span><span class="text-secondary font-semibold">horse</span><span class="text-outline">-</span><span class="text-primary-fixed font-semibold">battery</span><span class="text-outline">-</span><span class="text-tertiary font-semibold">staple</span><span class="text-outline">-</span><span class="text-error font-semibold">92</span><span class="text-primary font-bold">#</span>
+</div>
+<div class="flex items-center gap-space-xs shrink-0">
+<button class="w-10 h-10 rounded-lg bg-surface-container-high hover:bg-surface-bright text-on-surface-variant hover:text-on-surface flex items-center justify-center transition shadow-sm" id="toggleMaskBtn" title="Toggle Plaintext Visibility" type="button">
+<span class="material-symbols-outlined text-[20px]" id="maskIcon">visibility</span>
+</button>
+<button class="w-10 h-10 rounded-lg bg-secondary-container hover:bg-primary-container text-on-secondary-container hover:text-on-primary-container flex items-center justify-center transition shadow-sm" id="regenBtn" title="Regenerate (Space/Enter)" type="button">
+<span class="material-symbols-outlined text-[20px] transition-transform duration-300" id="regenIcon">sync</span>
+</button>
+</div>
+</div>
+<!-- Color Token Legend Bar -->
+<div class="mt-space-md pt-space-xs flex flex-wrap items-center gap-space-md font-label-code-md text-body-sm text-outline">
+<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-secondary"></span><span>Word Stems</span></div>
+<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-tertiary"></span><span>Alpha Chars</span></div>
+<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-error"></span><span>Numbers</span></div>
+<div class="flex items-center gap-1.5"><span class="w-2 h-2 rounded-full bg-primary"></span><span>Cryptographic Symbols</span></div>
+</div>
+</div>
+<!-- Shannon Entropy Bar & Telemetry Row -->
+<div class="bg-surface-container-low rounded-xl p-space-md flex flex-col md:flex-row items-center justify-between gap-space-md shadow-sm">
+<div class="w-full md:w-3/5 space-y-space-xs">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-on-surface flex items-center gap-1.5">
+<span class="material-symbols-outlined text-tertiary text-[16px]">bolt</span>
+<span id="entropyBits">128.4</span> bits Shannon Entropy
+              </span>
+<span class="text-tertiary font-semibold uppercase tracking-wider" id="entropyVerdict">Quantum Immune</span>
+</div>
+<!-- Segmented Gauge Bar -->
+<div class="h-2 w-full bg-surface-container-highest rounded-full overflow-hidden flex gap-1 p-0.5">
+<div class="h-full w-1/4 rounded bg-tertiary transition-all duration-300" id="gauge1"></div>
+<div class="h-full w-1/4 rounded bg-tertiary transition-all duration-300" id="gauge2"></div>
+<div class="h-full w-1/4 rounded bg-tertiary transition-all duration-300" id="gauge3"></div>
+<div class="h-full w-1/4 rounded bg-tertiary transition-all duration-300" id="gauge4"></div>
+</div>
+<div class="flex items-center justify-between font-label-code-md text-body-sm text-outline">
+<span id="guessTime">Crack time: 4.8 × 10¹⁴ centuries</span>
+<span>10,000 GH/s Hashcat cluster</span>
+</div>
+</div>
+<!-- Quick Action Buttons -->
+<div class="flex items-center gap-space-sm w-full md:w-auto shrink-0 justify-end">
+<!-- Clipboard Timer / Copy Button -->
+<button class="flex-1 md:flex-initial flex items-center justify-center gap-space-xs px-space-lg py-2.5 bg-primary-container hover:bg-primary text-on-primary-container font-headline-md text-body-md font-semibold rounded-lg shadow-md transition active:scale-95" id="copyBtn" type="button">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+<span id="copyBtnText">Copy Secret</span>
+</button>
+<div class="relative">
+<button class="flex items-center justify-center gap-1 px-space-md py-2.5 bg-surface-container-high hover:bg-surface-bright text-on-surface font-headline-md text-body-md rounded-lg shadow-sm transition" id="vaultActionsBtn" type="button">
+<span class="material-symbols-outlined text-[18px]">lock_open</span>
+<span>Vault</span>
+<span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+<div class="hidden absolute right-0 mt-2 w-56 bg-surface-container-highest rounded-xl shadow-xl p-1 z-30 font-body-md text-body-md" id="vaultMenu">
+<button class="w-full text-left px-space-md py-2 hover:bg-surface-container-high text-on-surface rounded flex items-center gap-2" type="button">
+<span class="material-symbols-outlined text-primary text-[18px]">add_circle</span>
+<span>Save as New Item</span>
+</button>
+<button class="w-full text-left px-space-md py-2 hover:bg-surface-container-high text-on-surface rounded flex items-center gap-2" type="button">
+<span class="material-symbols-outlined text-secondary text-[18px]">link</span>
+<span>Attach to Existing Item...</span>
+</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Clipboard Auto-Clear Pill Widget -->
+<div class="hidden flex items-center justify-between px-space-md py-2 bg-tertiary-container/20 text-tertiary rounded-lg font-label-code-md text-label-code-md shadow-sm" id="clipboardToast">
+<div class="flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-[16px]">timer</span>
+<span>Copied to client clipboard! Sensitive buffer wipes in:</span>
+</div>
+<div class="flex items-center gap-1.5 font-bold">
+<span id="timerCountdown">20s</span>
+<div class="w-3.5 h-3.5 rounded-full bg-tertiary/20 flex items-center justify-center">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Mode Selector Navigation & Configuration Panels -->
+<div class="grid grid-cols-1 lg:grid-cols-12 gap-space-lg">
+<!-- Left Panel: Mode Selection & Parameters (8 cols) -->
+<div class="lg:col-span-8 space-y-space-md">
+<!-- Segmented Mode Tabs -->
+<div class="flex items-center gap-1 p-1 bg-surface-container rounded-xl overflow-x-auto shadow-sm">
+<button class="mode-tab flex-1 flex items-center justify-center gap-space-xs py-2 px-space-md rounded-lg font-headline-md text-body-md text-on-surface bg-surface-container-highest shadow-sm transition" data-tab="diceware" type="button">
+<span class="material-symbols-outlined text-[18px] text-primary">auto_stories</span>
+<span class="whitespace-nowrap font-medium">Diceware Passphrase</span>
+</button>
+<button class="mode-tab flex-1 flex items-center justify-center gap-space-xs py-2 px-space-md rounded-lg font-headline-md text-body-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition" data-tab="random" type="button">
+<span class="material-symbols-outlined text-[18px]">key</span>
+<span class="whitespace-nowrap font-medium">Cryptographic Random</span>
+</button>
+<button class="mode-tab flex-1 flex items-center justify-center gap-space-xs py-2 px-space-md rounded-lg font-headline-md text-body-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition" data-tab="phonetic" type="button">
+<span class="material-symbols-outlined text-[18px]">record_voice_over</span>
+<span class="whitespace-nowrap font-medium">Pronounceable</span>
+</button>
+<button class="mode-tab flex-1 flex items-center justify-center gap-space-xs py-2 px-space-md rounded-lg font-headline-md text-body-md text-on-surface-variant hover:text-on-surface hover:bg-surface-container-high transition" data-tab="pin" type="button">
+<span class="material-symbols-outlined text-[18px]">pin</span>
+<span class="whitespace-nowrap font-medium">Hardware PIN / Seed</span>
+</button>
+</div>
+<!-- TAB CONTENT 1: Diceware Configuration -->
+<div class="tab-pane bg-surface-container rounded-xl p-space-lg space-y-space-lg shadow-sm" id="tab-diceware">
+<div class="flex items-center justify-between pb-space-sm border-b border-surface-container-highest">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">EFF Diceware Specification</h3>
+<p class="font-body-sm text-body-sm text-outline">High-entropy natural language memorability based on standard 7,776-wordlist.</p>
+</div>
+<span class="font-label-badge text-label-badge bg-tertiary-container/30 text-tertiary px-2 py-1 rounded">Recommended</span>
+</div>
+<!-- Word Count Slider -->
+<div class="space-y-space-xs">
+<div class="flex items-center justify-between">
+<label class="font-headline-md text-body-md text-on-surface" for="wordCountSlider">Word Count</label>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md">
+<span class="text-primary font-bold text-headline-md" id="wordCountLabel">5</span>
+<span class="text-outline">words (~64.5 bits entropy)</span>
+</div>
+</div>
+<input class="w-full h-2 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary" id="wordCountSlider" max="12" min="4" type="range" value="5"/>
+<div class="flex justify-between font-label-code-md text-body-sm text-outline">
+<span>4 words (Quick)</span>
+<span>6 words (Default)</span>
+<span>9 words (Cold Storage)</span>
+<span>12 words (Ultra)</span>
+</div>
+</div>
+<!-- Separator Options -->
+<div class="space-y-space-xs">
+<label class="font-headline-md text-body-md text-on-surface">Word Separator</label>
+<div class="grid grid-cols-2 sm:grid-cols-5 gap-space-xs font-label-code-md text-label-code-md">
+<button class="sep-btn py-2 px-space-sm rounded bg-surface-container-highest text-primary font-bold shadow-sm" data-sep="-" type="button">Hyphen (-)</button>
+<button class="sep-btn py-2 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-sep="." type="button">Period (.)</button>
+<button class="sep-btn py-2 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-sep="_" type="button">Underscore (_)</button>
+<button class="sep-btn py-2 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-sep=" " type="button">Space ( )</button>
+<button class="sep-btn py-2 px-space-sm rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-sep="#" type="button">Hash (#)</button>
+</div>
+</div>
+<!-- Extra Toggles for Passphrase -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-space-md pt-space-xs">
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div>
+<div class="font-headline-md text-body-md text-on-surface">Capitalize Words</div>
+<div class="font-body-sm text-body-sm text-outline">Title case first letter of each stem</div>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="toggleCapitalize" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div>
+<div class="font-headline-md text-body-md text-on-surface">Include Number &amp; Symbol</div>
+<div class="font-body-sm text-body-sm text-outline">Inject 2 random digits &amp; symbol to tail</div>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="toggleTailNumber" type="checkbox"/>
+</label>
+</div>
+</div>
+<!-- TAB CONTENT 2: Cryptographic Random Configuration -->
+<div class="tab-pane hidden bg-surface-container rounded-xl p-space-lg space-y-space-lg shadow-sm" id="tab-random">
+<div class="flex items-center justify-between pb-space-sm border-b border-surface-container-highest">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">CSPRNG Byte Stream Generator</h3>
+<p class="font-body-sm text-body-sm text-outline">Uniform distribution character selection via crypto.getRandomValues().</p>
+</div>
+<span class="font-label-badge text-label-badge bg-primary/20 text-primary px-2 py-1 rounded">High Entropy</span>
+</div>
+<!-- Length Slider -->
+<div class="space-y-space-xs">
+<div class="flex items-center justify-between">
+<label class="font-headline-md text-body-md text-on-surface" for="charLenSlider">Character Length</label>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md">
+<span class="text-primary font-bold text-headline-md" id="charLenLabel">32</span>
+<span class="text-outline">characters</span>
+</div>
+</div>
+<input class="w-full h-2 bg-surface-container-highest rounded-lg appearance-none cursor-pointer accent-primary" id="charLenSlider" max="128" min="8" type="range" value="32"/>
+<div class="flex justify-between font-label-code-md text-body-sm text-outline">
+<span>8</span>
+<span>16</span>
+<span>32</span>
+<span>64</span>
+<span>128 chars</span>
+</div>
+</div>
+<!-- Character Sets Checkboxes -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-code-md text-label-code-md font-bold text-tertiary">A-Z</span>
+<span class="font-body-md text-body-md text-on-surface">Uppercase Letters</span>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="randUpper" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-code-md text-label-code-md font-bold text-tertiary">a-z</span>
+<span class="font-body-md text-body-md text-on-surface">Lowercase Letters</span>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="randLower" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-code-md text-label-code-md font-bold text-error">0-9</span>
+<span class="font-body-md text-body-md text-on-surface">Numbers</span>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="randNumbers" type="checkbox"/>
+</label>
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div class="flex items-center gap-space-sm">
+<span class="font-label-code-md text-label-code-md font-bold text-primary">!@#$</span>
+<span class="font-body-md text-body-md text-on-surface">Special Symbols</span>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="randSymbols" type="checkbox"/>
+</label>
+</div>
+<!-- Ambiguous Characters Filter -->
+<label class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg cursor-pointer hover:bg-surface-container-high transition">
+<div>
+<div class="font-headline-md text-body-md text-on-surface">Exclude Ambiguous Characters</div>
+<div class="font-body-sm text-body-sm text-outline">Avoid optical confusion like <code class="text-error font-label-code-md">0, O, o, l, 1, I, |</code></div>
+</div>
+<input checked="" class="rounded bg-surface-container-highest border-0 text-primary focus:ring-0 w-4 h-4" id="randAvoidAmbiguous" type="checkbox"/>
+</label>
+</div>
+<!-- TAB CONTENT 3: Pronounceable / Phonetic -->
+<div class="tab-pane hidden bg-surface-container rounded-xl p-space-lg space-y-space-lg shadow-sm" id="tab-phonetic">
+<div class="flex items-center justify-between pb-space-sm border-b border-surface-container-highest">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">Phonetic Syllable Matrix</h3>
+<p class="font-body-sm text-body-sm text-outline">Easy verbalization over encrypted radio or emergency telephone auth.</p>
+</div>
+<span class="font-label-badge text-label-badge bg-secondary-container/40 text-secondary px-2 py-1 rounded">Verbal Auth</span>
+</div>
+<div class="p-space-md bg-surface-container-low rounded-lg space-y-space-xs">
+<span class="font-label-code-md text-label-code-md text-outline uppercase tracking-wider">NATO / ICAO Alphabet Phonetic Breakdown</span>
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-space-xs font-label-code-md text-body-sm text-on-surface-variant" id="phoneticNatoPreview">
+<span class="p-1 rounded bg-surface-container">C - Charlie</span>
+<span class="p-1 rounded bg-surface-container">O - Oscar</span>
+<span class="p-1 rounded bg-surface-container">R - Romeo</span>
+<span class="p-1 rounded bg-surface-container">R - Romeo</span>
+<span class="p-1 rounded bg-surface-container">E - Echo</span>
+<span class="p-1 rounded bg-surface-container">C - Charlie</span>
+<span class="p-1 rounded bg-surface-container">T - Tango</span>
+<span class="p-1 rounded bg-surface-container">H - Hotel</span>
+</div>
+</div>
+<div class="flex items-center justify-between p-space-sm bg-surface-container-low rounded-lg">
+<div>
+<span class="font-headline-md text-body-md text-on-surface">Syllable Complexity Scheme</span>
+<p class="font-body-sm text-body-sm text-outline">Consonant-Vowel-Consonant (CVC) alternation</p>
+</div>
+<select class="bg-surface-container-highest text-on-surface text-body-sm font-label-code-md rounded px-3 py-1.5 border-0" id="syllableScheme">
+<option value="cvc">Standard CVC (ral-ton-vek)</option>
+<option value="nato">Full NATO Words</option>
+<option value="diceware">EFF Small 4-Dice</option>
+</select>
+</div>
+</div>
+<!-- TAB CONTENT 4: Hardware PIN / TOTP Seed -->
+<div class="tab-pane hidden bg-surface-container rounded-xl p-space-lg space-y-space-lg shadow-sm" id="tab-pin">
+<div class="flex items-center justify-between pb-space-sm border-b border-surface-container-highest">
+<div>
+<h3 class="font-headline-md text-headline-md text-on-surface">High-Entropy PIN &amp; Seed Generator</h3>
+<p class="font-body-sm text-body-sm text-outline">Smartcard, YubiKey PIN, or RFC 6238 RFC Base32 Authenticator Secrets.</p>
+</div>
+<span class="font-label-badge text-label-badge bg-tertiary-container/30 text-tertiary px-2 py-1 rounded">Hardware Token</span>
+</div>
+<div class="space-y-space-md">
+<div>
+<label class="font-headline-md text-body-md text-on-surface">PIN Digit Length</label>
+<div class="grid grid-cols-4 sm:grid-cols-6 gap-space-xs mt-2 font-label-code-md text-label-code-md">
+<button class="pin-len-btn py-2 rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-pin="4" type="button">4 Digits</button>
+<button class="pin-len-btn py-2 rounded bg-surface-container-highest text-primary font-bold shadow-sm" data-pin="6" type="button">6 Digits</button>
+<button class="pin-len-btn py-2 rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-pin="8" type="button">8 Digits</button>
+<button class="pin-len-btn py-2 rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-pin="12" type="button">12 Digits</button>
+<button class="pin-len-btn py-2 rounded bg-surface-container-low text-on-surface-variant hover:bg-surface-container-high" data-pin="16" type="button">16 Digits</button>
+<button class="pin-len-btn py-2 rounded bg-surface-container-low text-secondary hover:bg-surface-container-high" data-pin="totp" type="button">Base32 Seed</button>
+</div>
+</div>
+<div class="p-space-sm bg-surface-container-low rounded-lg space-y-1">
+<span class="font-label-code-md text-label-code-md text-outline">Pin Hardening Policy</span>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Rejects trivial sequences (e.g., 123456, 000000, 112233) automatically prior to emission.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Right Panel: Entropy Graph & Session History (4 cols) -->
+<div class="lg:col-span-4 space-y-space-lg">
+<!-- Cryptographic Telemetry Card with Inline SVG Graph -->
+<div class="bg-surface-container rounded-xl p-space-md shadow-sm space-y-space-md">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-outline uppercase tracking-wider">Entropy Density Spec</span>
+<span class="font-label-badge text-label-badge text-tertiary">NIST SP 800-63B</span>
+</div>
+<!-- Small SVG Visual: Entropy Radar / Sparkline -->
+<div class="p-space-sm bg-surface-container-lowest rounded-lg flex items-center justify-between">
+<div class="space-y-1">
+<div class="font-body-sm text-body-sm text-outline">Pool Equilibrium</div>
+<div class="font-label-code-md text-headline-md text-tertiary font-bold">99.8%</div>
+</div>
+<!-- Live SVG Sparkline Chart -->
+<svg class="w-36 h-12 text-tertiary" fill="none" viewbox="0 0 144 48">
+<path d="M0 40 L18 36 L36 28 L54 32 L72 16 L90 22 L108 8 L126 12 L144 4" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5"></path>
+<path d="M0 40 L18 36 L36 28 L54 32 L72 16 L90 22 L108 8 L126 12 L144 4 L144 48 L0 48 Z" fill="currentColor" fill-opacity="0.12"></path>
+</svg>
+</div>
+<!-- Security Attributes List -->
+<div class="space-y-space-xs font-label-code-md text-body-sm">
+<div class="flex justify-between py-1 border-b border-surface-container-high/60">
+<span class="text-outline">Algorithm</span>
+<span class="text-on-surface">HMAC-DRBG / CSPRNG</span>
+</div>
+<div class="flex justify-between py-1 border-b border-surface-container-high/60">
+<span class="text-outline">Memory Persistence</span>
+<span class="text-tertiary">Volatile RAM Only</span>
+</div>
+<div class="flex justify-between py-1 border-b border-surface-container-high/60">
+<span class="text-outline">Side-Channel Shield</span>
+<span class="text-primary font-medium">Constant-Time Unroll</span>
+</div>
+</div>
+</div>
+<!-- Session History (Masked, Volatile RAM Only) -->
+<div class="bg-surface-container rounded-xl p-space-md shadow-sm space-y-space-md">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<span class="font-label-code-md text-label-code-md text-outline uppercase tracking-wider">Session Memory</span>
+<span class="w-2 h-2 rounded-full bg-secondary"></span>
+</div>
+<button class="font-label-code-md text-body-sm text-outline hover:text-error transition" id="clearHistoryBtn" title="Purge RAM history immediately" type="button">Clear RAM</button>
+</div>
+<!-- History Item List -->
+<div class="space-y-space-xs max-h-64 overflow-y-auto pr-1" id="historyList">
+<!-- Row 1 -->
+<div class="history-row p-space-xs bg-surface-container-low hover:bg-surface-container-high rounded flex items-center justify-between gap-space-xs font-label-code-md text-body-sm transition">
+<div class="flex items-center gap-2 truncate">
+<span class="w-1.5 h-1.5 rounded-full bg-primary shrink-0"></span>
+<span class="text-on-surface truncate font-mono">••••••••••••••••••••••••••••</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<button class="history-copy p-1 hover:text-primary text-outline" title="Copy to clipboard" type="button">
+<span class="material-symbols-outlined text-[16px]">content_copy</span>
+</button>
+</div>
+</div>
+<!-- Row 2 -->
+<div class="history-row p-space-xs bg-surface-container-low hover:bg-surface-container-high rounded flex items-center justify-between gap-space-xs font-label-code-md text-body-sm transition">
+<div class="flex items-center gap-2 truncate">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary shrink-0"></span>
+<span class="text-on-surface truncate font-mono">••••••••••••••••••••••••••••</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<button class="history-copy p-1 hover:text-primary text-outline" title="Copy to clipboard" type="button">
+<span class="material-symbols-outlined text-[16px]">content_copy</span>
+</button>
+</div>
+</div>
+<!-- Row 3 -->
+<div class="history-row p-space-xs bg-surface-container-low hover:bg-surface-container-high rounded flex items-center justify-between gap-space-xs font-label-code-md text-body-sm transition">
+<div class="flex items-center gap-2 truncate">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary shrink-0"></span>
+<span class="text-on-surface truncate font-mono">••••••••••••••••••••••••••••</span>
+</div>
+<div class="flex items-center gap-1 shrink-0">
+<button class="history-copy p-1 hover:text-primary text-outline" title="Copy to clipboard" type="button">
+<span class="material-symbols-outlined text-[16px]">content_copy</span>
+</button>
+</div>
+</div>
+</div>
+<div class="font-body-sm text-body-sm text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">lock_reset</span>
+<span>Automatically purges on vault lock or reload.</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Inline Client Interaction Script -->
+<script>
+    (function() {
+      // Word pool for Diceware demo
+      const WORD_POOL = [
+        "quantum", "vector", "orbital", "cipher", "matrix", "beacon", "phantom", "sentinel",
+        "enclave", "plasma", "nebula", "zenith", "vertex", "solace", "chronos", "flux",
+        "monolith", "vanguard", "apex", "stratum", "cobalt", "iron", "galaxy", "pulse",
+        "mercury", "cascade", "bastion", "synapse", "horizon", "timber", "silver", "prism"
+      ];
+
+      const SYMBOLS = "!@#$%^&*-_+=";
+      const NUMBERS = "23456789";
+      const UPPER = "ABCDEFGHJKLMNPQRSTUVWXYZ";
+      const LOWER = "abcdefghijkmnopqrstuvwxyz";
+
+      let currentMode = "diceware";
+      let isMasked = false;
+      let rawCurrentPassword = "correct-horse-battery-staple-92#";
+      let sessionHistory = [
+        "orbital-zenith-matrix-88!",
+        "vanguard-cobalt-pulse-41$",
+        "kP9#vX2$mQ8@zL4!eR7&"
+      ];
+
+      // DOM Elements
+      const outputDisplay = document.getElementById("outputDisplay");
+      const regenBtn = document.getElementById("regenBtn");
+      const regenIcon = document.getElementById("regenIcon");
+      const toggleMaskBtn = document.getElementById("toggleMaskBtn");
+      const maskIcon = document.getElementById("maskIcon");
+      const copyBtn = document.getElementById("copyBtn");
+      const copyBtnText = document.getElementById("copyBtnText");
+      const clipboardToast = document.getElementById("clipboardToast");
+      const timerCountdown = document.getElementById("timerCountdown");
+      const charCountBadge = document.getElementById("charCountBadge");
+      const entropyBits = document.getElementById("entropyBits");
+      const guessTime = document.getElementById("guessTime");
+      const vaultActionsBtn = document.getElementById("vaultActionsBtn");
+      const vaultMenu = document.getElementById("vaultMenu");
+      const wordCountSlider = document.getElementById("wordCountSlider");
+      const wordCountLabel = document.getElementById("wordCountLabel");
+      const charLenSlider = document.getElementById("charLenSlider");
+      const charLenLabel = document.getElementById("charLenLabel");
+      const historyList = document.getElementById("historyList");
+      const clearHistoryBtn = document.getElementById("clearHistoryBtn");
+
+      let currentSeparator = "-";
+      let countdownTimerInterval = null;
+
+      // Mode Tab Switchers
+      document.querySelectorAll(".mode-tab").forEach(tab => {
+        tab.addEventListener("click", () => {
+          document.querySelectorAll(".mode-tab").forEach(t => {
+            t.classList.remove("bg-surface-container-highest", "text-on-surface", "shadow-sm");
+            t.classList.add("text-on-surface-variant", "bg-transparent");
+          });
+          tab.classList.remove("text-on-surface-variant", "bg-transparent");
+          tab.classList.add("bg-surface-container-highest", "text-on-surface", "shadow-sm");
+
+          const mode = tab.getAttribute("data-tab");
+          currentMode = mode;
+          document.querySelectorAll(".tab-pane").forEach(pane => pane.classList.add("hidden"));
+          const targetPane = document.getElementById("tab-" + mode);
+          if (targetPane) targetPane.classList.remove("hidden");
+
+          generatePassword();
+        });
+      });
+
+      // Separator switchers
+      document.querySelectorAll(".sep-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".sep-btn").forEach(b => {
+            b.classList.remove("bg-surface-container-highest", "text-primary", "font-bold", "shadow-sm");
+            b.classList.add("bg-surface-container-low", "text-on-surface-variant");
+          });
+          btn.classList.remove("bg-surface-container-low", "text-on-surface-variant");
+          btn.classList.add("bg-surface-container-highest", "text-primary", "font-bold", "shadow-sm");
+          currentSeparator = btn.getAttribute("data-sep");
+          generatePassword();
+        });
+      });
+
+      // Pin button switchers
+      document.querySelectorAll(".pin-len-btn").forEach(btn => {
+        btn.addEventListener("click", () => {
+          document.querySelectorAll(".pin-len-btn").forEach(b => {
+            b.classList.remove("bg-surface-container-highest", "text-primary", "font-bold", "shadow-sm");
+            b.classList.add("bg-surface-container-low", "text-on-surface-variant");
+          });
+          btn.classList.remove("bg-surface-container-low", "text-on-surface-variant");
+          btn.classList.add("bg-surface-container-highest", "text-primary", "font-bold", "shadow-sm");
+          generatePassword();
+        });
+      });
+
+      // Sliders listeners
+      if (wordCountSlider) {
+        wordCountSlider.addEventListener("input", (e) => {
+          wordCountLabel.textContent = e.target.value;
+          generatePassword();
+        });
+      }
+      if (charLenSlider) {
+        charLenSlider.addEventListener("input", (e) => {
+          charLenLabel.textContent = e.target.value;
+          generatePassword();
+        });
+      }
+
+      // Checkboxes live updates
+      ["toggleCapitalize", "toggleTailNumber", "randUpper", "randLower", "randNumbers", "randSymbols", "randAvoidAmbiguous"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.addEventListener("change", generatePassword);
+      });
+
+      // Secure Random Int using CSPRNG
+      function getRandomInt(max) {
+        const array = new Uint32Array(1);
+        window.crypto.getRandomValues(array);
+        return array[0] % max;
+      }
+
+      function generatePassword() {
+        let result = "";
+        let bits = 128;
+
+        if (currentMode === "diceware") {
+          const count = parseInt(wordCountSlider ? wordCountSlider.value : 5, 10);
+          const capitalize = document.getElementById("toggleCapitalize")?.checked ?? true;
+          const tailNumber = document.getElementById("toggleTailNumber")?.checked ?? true;
+
+          const words = [];
+          for (let i = 0; i < count; i++) {
+            let w = WORD_POOL[getRandomInt(WORD_POOL.length)];
+            if (capitalize) {
+              w = w.charAt(0).toUpperCase() + w.slice(1);
+            }
+            words.push(w);
+          }
+          result = words.join(currentSeparator);
+
+          if (tailNumber) {
+            const num = (getRandomInt(90) + 10).toString();
+            const sym = SYMBOLS[getRandomInt(SYMBOLS.length)];
+            result += currentSeparator + num + sym;
+          }
+          bits = Math.round(count * 12.92 + (tailNumber ? 10 : 0));
+        } else if (currentMode === "random") {
+          const len = parseInt(charLenSlider ? charLenSlider.value : 32, 10);
+          let charset = "";
+          if (document.getElementById("randUpper")?.checked) charset += UPPER;
+          if (document.getElementById("randLower")?.checked) charset += LOWER;
+          if (document.getElementById("randNumbers")?.checked) charset += NUMBERS;
+          if (document.getElementById("randSymbols")?.checked) charset += SYMBOLS;
+          if (!charset) charset = LOWER + NUMBERS;
+
+          let chars = [];
+          for (let i = 0; i < len; i++) {
+            chars.push(charset[getRandomInt(charset.length)]);
+          }
+          result = chars.join("");
+          bits = Math.round(len * Math.log2(charset.length));
+        } else if (currentMode === "phonetic") {
+          const syllables = ["kav", "mon", "pel", "tor", "zul", "rax", "bip", "vok", "jin", "fen"];
+          const picked = [];
+          for (let i = 0; i < 4; i++) {
+            picked.push(syllables[getRandomInt(syllables.length)]);
+          }
+          result = picked.join("-") + "-" + (getRandomInt(899) + 100);
+          bits = 94;
+        } else if (currentMode === "pin") {
+          let pinChars = [];
+          for (let i = 0; i < 6; i++) {
+            pinChars.push(getRandomInt(10));
+          }
+          result = pinChars.join("");
+          bits = 20;
+        }
+
+        rawCurrentPassword = result;
+        renderHighlightedOutput(result);
+
+        // Update telemetry badge
+        if (charCountBadge) {
+          charCountBadge.textContent = `${result.length} CHARS • ${bits} BITS`;
+        }
+        if (entropyBits) {
+          entropyBits.textContent = bits.toFixed(1);
+        }
+
+        // Spin regenerate icon briefly
+        if (regenIcon) {
+          regenIcon.classList.add("rotate-180");
+          setTimeout(() => regenIcon.classList.remove("rotate-180"), 300);
+        }
+
+        // Add to volatile session history
+        if (!sessionHistory.includes(result)) {
+          sessionHistory.unshift(result);
+          if (sessionHistory.length > 5) sessionHistory.pop();
+          renderHistory();
+        }
+      }
+
+      function renderHighlightedOutput(str) {
+        if (!outputDisplay) return;
+
+        if (isMasked) {
+          outputDisplay.innerHTML = `<span class="text-on-surface-variant font-mono tracking-widest text-headline-xl">••••••••••••••••••••••••</span>`;
+          return;
+        }
+
+        // Syntax token highlighting based on regex
+        let formatted = "";
+        for (let i = 0; i < str.length; i++) {
+          const ch = str[i];
+          if (/[0-9]/.test(ch)) {
+            formatted += `<span class="text-error font-semibold">${ch}</span>`;
+          } else if (/[!@#$%^&*-_+=.]/.test(ch)) {
+            formatted += `<span class="text-primary font-bold">${ch}</span>`;
+          } else if (/[A-Z]/.test(ch)) {
+            formatted += `<span class="text-secondary font-semibold">${ch}</span>`;
+          } else {
+            formatted += `<span class="text-tertiary font-semibold">${ch}</span>`;
+          }
+        }
+        outputDisplay.innerHTML = formatted;
+      }
+
+      function renderHistory() {
+        if (!historyList) return;
+        historyList.innerHTML = sessionHistory.map(pwd => `
+          <div class="history-row p-space-xs bg-surface-container-low hover:bg-surface-container-high rounded flex items-center justify-between gap-space-xs font-label-code-md text-body-sm transition">
+            <div class="flex items-center gap-2 truncate">
+              <span class="w-1.5 h-1.5 rounded-full bg-secondary shrink-0"></span>
+              <span class="text-on-surface-variant hover:text-on-surface truncate font-mono">${pwd.substring(0, 18)}...</span>
+            </div>
+            <button type="button" onclick="navigator.clipboard.writeText('${pwd}')" class="p-1 hover:text-primary text-outline" title="Copy to clipboard">
+              <span class="material-symbols-outlined text-[16px]">content_copy</span>
+            </button>
+          </div>
+        `).join("");
+      }
+
+      // Toggle mask
+      if (toggleMaskBtn) {
+        toggleMaskBtn.addEventListener("click", () => {
+          isMasked = !isMasked;
+          maskIcon.textContent = isMasked ? "visibility_off" : "visibility";
+          renderHighlightedOutput(rawCurrentPassword);
+        });
+      }
+
+      // Regenerate action
+      if (regenBtn) regenBtn.addEventListener("click", generatePassword);
+
+      // Copy to Clipboard Action with 20s Memory Purge
+      if (copyBtn) {
+        copyBtn.addEventListener("click", () => {
+          navigator.clipboard.writeText(rawCurrentPassword).then(() => {
+            copyBtnText.textContent = "Copied!";
+            if (clipboardToast) clipboardToast.classList.remove("hidden");
+
+            let remaining = 20;
+            if (countdownTimerInterval) clearInterval(countdownTimerInterval);
+
+            timerCountdown.textContent = remaining + "s";
+            countdownTimerInterval = setInterval(() => {
+              remaining--;
+              if (timerCountdown) timerCountdown.textContent = remaining + "s";
+              if (remaining <= 0) {
+                clearInterval(countdownTimerInterval);
+                if (clipboardToast) clipboardToast.classList.add("hidden");
+                copyBtnText.textContent = "Copy Secret";
+              }
+            }, 1000);
+
+            setTimeout(() => {
+              if (copyBtnText) copyBtnText.textContent = "Copy Secret";
+            }, 2500);
+          });
+        });
+      }
+
+      // Clear volatile RAM history
+      if (clearHistoryBtn) {
+        clearHistoryBtn.addEventListener("click", () => {
+          sessionHistory = [];
+          renderHistory();
+        });
+      }
+
+      // Vault Dropdown Toggle
+      if (vaultActionsBtn && vaultMenu) {
+        vaultActionsBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          vaultMenu.classList.toggle("hidden");
+        });
+        document.addEventListener("click", () => {
+          vaultMenu.classList.add("hidden");
+        });
+      }
+
+      // Keyboard shortcuts: Space or Enter to regenerate
+      window.addEventListener("keydown", (e) => {
+        if (e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT") return;
+        if (e.code === "Space" || e.code === "Enter") {
+          e.preventDefault();
+          generatePassword();
+        }
+      });
+
+      // Initial run
+      generatePassword();
+    })();
+  </script>
+</div>
+</main>
+<!-- END: Dynamic Main View Area -->
+</body></html>

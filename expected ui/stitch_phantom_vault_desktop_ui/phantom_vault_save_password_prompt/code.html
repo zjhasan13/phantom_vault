@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head><meta charset="utf-8"/><meta content="width=device-width, initial-scale=1.0" name="viewport"/><meta content="web_standard" name="shell-type"/><link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/><link href="https://fonts.googleapis.com" rel="preconnect"/><link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/><style>@layer base{html,body{margin:0;padding:0;}body{overscroll-behavior:none;}main>:first-child{margin-top:0!important;}main>:last-child{margin-bottom:0!important;}}::-webkit-scrollbar{display:none;}</style><script src="https://cdn.tailwindcss.com"></script><script id="tailwind-config">tailwind.config={darkMode:"class",theme:{extend:{colors:{"on-surface":"#e5e1e4","on-tertiary-fixed-variant":"#005236","surface-bright":"#39393b","surface-container-low":"#1c1b1d","primary":"#d0bcff","error":"#ffb4ab","surface-container":"#201f22","outline-variant":"#494454","secondary":"#cebdff","primary-fixed-dim":"#d0bcff","inverse-primary":"#6d3bd7","on-background":"#e5e1e4","surface-container-lowest":"#0e0e10","on-tertiary-container":"#00311f","surface-variant":"#353437","outline":"#958ea0","on-secondary-container":"#bea8ff","surface":"#131315","primary-container":"#a078ff","secondary-fixed":"#e8ddff","on-secondary-fixed-variant":"#4f319c","on-secondary":"#381385","secondary-container":"#4f319c","surface-container-high":"#2a2a2c","surface-dim":"#131315","inverse-surface":"#e5e1e4","tertiary-container":"#00a572","error-container":"#93000a","primary-fixed":"#e9ddff","tertiary-fixed":"#6ffbbe","on-secondary-fixed":"#21005e","surface-container-highest":"#353437","on-primary-container":"#340080","background":"#131315","inverse-on-surface":"#313032","surface-tint":"#d0bcff","secondary-fixed-dim":"#cebdff","on-tertiary-fixed":"#002113","on-primary-fixed-variant":"#5516be","tertiary-fixed-dim":"#4edea3","on-error-container":"#ffdad6","on-error":"#690005","tertiary":"#4edea3","on-primary-fixed":"#23005c","on-primary":"#3c0091","on-tertiary":"#003824","on-surface-variant":"#cbc3d7"},borderRadius:{DEFAULT:"0.125rem",lg:"0.25rem",xl:"0.5rem",full:"0.75rem"},spacing:{"space-xs":"0.25rem","space-lg":"1.25rem","space-md":"0.75rem",gutter:"1rem","gutter-desktop":"1.5rem","margin-desktop":"2rem",margin:"1rem","space-sm":"0.5rem","space-xl":"2rem"},fontFamily:{"label-code-lg":["JetBrains Mono"],"headline-xl-mobile":["Inter"],"body-lg":["Inter"],"label-code-md":["JetBrains Mono"],"headline-xl":["Inter"],"headline-lg":["Inter"],"headline-md":["Inter"],"label-badge":["JetBrains Mono"],"body-md":["Inter"],"body-sm":["Inter"]},fontSize:{"label-code-lg":["14px",{lineHeight:"20px",letterSpacing:"-0.01em",fontWeight:"500"}],"headline-xl-mobile":["26px",{lineHeight:"32px",letterSpacing:"-0.02em",fontWeight:"600"}],"body-lg":["15px",{lineHeight:"22px",letterSpacing:"-0.01em",fontWeight:"400"}],"label-code-md":["12px",{lineHeight:"16px",letterSpacing:"0em",fontWeight:"500"}],"headline-xl":["32px",{lineHeight:"40px",letterSpacing:"-0.025em",fontWeight:"600"}],"headline-lg":["24px",{lineHeight:"32px",letterSpacing:"-0.02em",fontWeight:"600"}],"headline-md":["18px",{lineHeight:"26px",letterSpacing:"-0.015em",fontWeight:"600"}],"label-badge":["10px",{lineHeight:"12px",letterSpacing:"0.06em",fontWeight:"600"}],"body-md":["13px",{lineHeight:"18px",letterSpacing:"-0.005em",fontWeight:"400"}],"body-sm":["12px",{lineHeight:"16px",fontWeight:"400"}]}}}};</script></head><body class="bg-background text-on-surface font-body-md antialiased selection:bg-primary-container selection:text-on-primary-container min-h-screen"><header class="fixed top-0 left-0 right-0 z-50 bg-surface-container-lowest/90 backdrop-blur-xl border-b border-outline-variant/30 shadow-[0_1px_8px_rgba(0,0,0,0.04)]"><div class="h-12 w-full px-gutter flex items-center justify-between"><div class="flex items-center gap-space-md"><div class="flex items-center gap-space-xs text-outline"><span class="w-3 h-3 rounded-full bg-error/80 inline-block"></span><span class="w-3 h-3 rounded-full bg-secondary-container inline-block"></span><span class="w-3 h-3 rounded-full bg-tertiary-container inline-block"></span></div><div class="h-4 w-[1px] bg-outline-variant/30 mx-space-xs"></div><div class="flex items-center gap-space-xs text-on-surface-variant"><span class="material-symbols-outlined text-[18px] text-outline cursor-pointer hover:text-on-surface transition-colors">arrow_back</span><span class="material-symbols-outlined text-[18px] text-outline cursor-pointer hover:text-on-surface transition-colors">arrow_forward</span><span class="material-symbols-outlined text-[18px] text-outline cursor-pointer hover:text-on-surface transition-colors">refresh</span></div><div class="flex items-center bg-surface-container-low px-space-md py-1 rounded-xl text-body-sm text-on-surface-variant w-80 lg:w-96 gap-space-sm border border-outline-variant/20"><span class="material-symbols-outlined text-[14px] text-tertiary">lock</span><span class="font-label-code-md text-on-surface">auth.phantom-vault.internal</span><span class="text-outline text-body-sm">/login</span></div></div><nav class="hidden md:flex items-center gap-space-sm" data-active-classes="bg-surface-container-high text-on-surface font-semibold rounded-lg"><a aria-current="page" class="px-space-md py-1.5 transition-colors bg-surface-container-high text-on-surface font-semibold rounded-lg" data-path="browser-mockup-prompt" href="#">Capture View</a><a class="px-space-md py-1.5 text-body-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors rounded-lg" data-path="vault-records" href="#">Records</a><a class="px-space-md py-1.5 text-body-sm text-on-surface-variant hover:text-on-surface hover:bg-surface-container transition-colors rounded-lg" data-path="extension-telemetry" href="#">Telemetry</a></nav><div class="flex items-center gap-space-md"><div class="relative flex items-center bg-surface-container px-space-sm py-1 rounded-lg border border-primary/30 text-primary gap-space-xs cursor-pointer hover:bg-surface-container-high transition-colors"><span class="material-symbols-outlined text-[16px] text-primary">security</span><span class="font-label-badge text-primary uppercase">Phantom v2.4</span><span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span></div><div class="w-8 h-8 rounded-full bg-primary flex items-center justify-center"><span class="material-symbols-outlined text-on-primary text-[18px]">person</span></div></div></div></header><main class="w-full pt-12 bg-background min-h-[calc(100vh-48px)] flex flex-col"><div class="flex flex-col w-full relative">
+<!-- Subtle decorative ambient glow elements strictly contained -->
+<div class="absolute top-12 left-1/3 w-96 h-96 bg-primary-container/10 rounded-full blur-3xl pointer-events-none -z-10"></div>
+<div class="absolute top-36 right-16 w-80 h-80 bg-tertiary-container/10 rounded-full blur-3xl pointer-events-none -z-10"></div>
+<!-- Simulated Browser Viewport Stage -->
+<div class="w-full max-w-[1440px] mx-auto px-gutter py-space-md flex flex-col gap-space-md">
+<!-- Browser Window Container -->
+<div class="w-full bg-surface-container-lowest rounded-xl shadow-2xl overflow-hidden relative">
+<!-- Browser Inner Chrome Bar (Tab bar & Address bar context) -->
+<div class="bg-surface-container px-space-md py-space-sm flex flex-col gap-space-xs">
+<!-- Tab strip -->
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs">
+<!-- Active Tab -->
+<div class="bg-surface-container-high px-space-md py-1.5 rounded-t-lg flex items-center gap-space-sm max-w-xs shadow-sm">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<span class="font-body-sm text-body-sm text-on-surface truncate">Example Cloud Services • Sign In</span>
+<span class="material-symbols-outlined text-[14px] text-outline hover:text-on-surface cursor-pointer">close</span>
+</div>
+<!-- Secondary Tab -->
+<div class="px-space-md py-1.5 flex items-center gap-space-sm max-w-xs text-outline hover:text-on-surface-variant cursor-pointer transition-colors">
+<span class="material-symbols-outlined text-[14px]">terminal</span>
+<span class="font-body-sm text-body-sm truncate">Localhost:8080 - Cluster Admin</span>
+</div>
+<!-- Add Tab -->
+<div class="p-1 text-outline hover:text-on-surface cursor-pointer rounded-lg hover:bg-surface-variant transition-colors">
+<span class="material-symbols-outlined text-[16px]">add</span>
+</div>
+</div>
+<!-- Window Controls -->
+<div class="flex items-center gap-2">
+<span class="w-2.5 h-2.5 rounded-full bg-surface-variant"></span>
+<span class="w-2.5 h-2.5 rounded-full bg-surface-variant"></span>
+<span class="w-2.5 h-2.5 rounded-full bg-surface-variant"></span>
+</div>
+</div>
+<!-- Omnibox & Active Extension Bar -->
+<div class="flex items-center gap-space-md bg-surface-container-low p-space-xs rounded-lg">
+<!-- Standard Nav Icons -->
+<div class="flex items-center gap-1 text-outline pl-1">
+<button class="p-1 rounded hover:bg-surface-variant transition-colors"><span class="material-symbols-outlined text-[18px]">arrow_back</span></button>
+<button class="p-1 rounded hover:bg-surface-variant transition-colors"><span class="material-symbols-outlined text-[18px]">arrow_forward</span></button>
+<button class="p-1 rounded hover:bg-surface-variant transition-colors"><span class="material-symbols-outlined text-[18px]">refresh</span></button>
+</div>
+<!-- Address Bar URL Anchor -->
+<div class="flex-1 bg-surface-container-high/60 hover:bg-surface-container-high transition-colors px-space-md py-1.5 rounded-lg flex items-center justify-between text-body-sm">
+<div class="flex items-center gap-space-sm overflow-hidden">
+<span class="material-symbols-outlined text-[15px] text-tertiary">lock</span>
+<span class="font-label-code-md text-tertiary">https://</span>
+<span class="font-label-code-md text-on-surface font-semibold">example-service.com</span>
+<span class="font-label-code-md text-outline">/identity/sso/login</span>
+</div>
+<div class="flex items-center gap-space-xs">
+<span class="font-label-badge text-outline uppercase bg-surface-container px-1.5 py-0.5 rounded">TLS 1.3</span>
+<span class="material-symbols-outlined text-[16px] text-outline hover:text-on-surface cursor-pointer">star</span>
+</div>
+</div>
+<!-- Browser Extension Pin Area (Anchor Origin) -->
+<div class="flex items-center gap-space-sm pr-1">
+<div class="p-1.5 text-outline hover:text-on-surface cursor-pointer rounded hover:bg-surface-variant"><span class="material-symbols-outlined text-[18px]">translate</span></div>
+<div class="p-1.5 text-outline hover:text-on-surface cursor-pointer rounded hover:bg-surface-variant"><span class="material-symbols-outlined text-[18px]">download</span></div>
+<!-- Phantom Vault Active Extension Icon (TRIGGER) -->
+<div class="relative bg-primary-container/20 p-1.5 rounded-lg text-primary flex items-center justify-center cursor-pointer shadow-[0_0_15px_rgba(160,120,255,0.4)] transition-all">
+<span class="material-symbols-outlined text-[20px] text-primary" style="font-variation-settings: 'FILL' 1;">shield_with_heart</span>
+<span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-primary animate-ping"></span>
+<span class="absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full bg-primary"></span>
+</div>
+</div>
+</div>
+</div>
+<!-- Browser Webpage Canvas (Underlying Web App with submitted login form) -->
+<div class="relative w-full min-h-[640px] bg-surface flex flex-col items-center justify-center p-gutter overflow-hidden select-none">
+<!-- Subtle Grid Pattern for background realism -->
+<div class="absolute inset-0 bg-[radial-gradient(#2a2a2c_1px,transparent_1px)] [background-size:24px_24px] opacity-40"></div>
+<!-- Rendered Web Page Card (Submitted form state) -->
+<div class="relative z-0 w-full max-w-md bg-surface-container-low p-space-xl rounded-xl shadow-xl flex flex-col gap-space-lg opacity-40 blur-[1.5px] pointer-events-none transition-all duration-300">
+<div class="flex items-center gap-space-sm">
+<div class="w-8 h-8 rounded-lg bg-surface-container-highest flex items-center justify-center">
+<span class="material-symbols-outlined text-outline">dns</span>
+</div>
+<div>
+<div class="font-headline-md text-headline-md text-on-surface">Example Cloud Services</div>
+<div class="font-body-sm text-body-sm text-outline">Identity Management Console</div>
+</div>
+</div>
+<div class="flex flex-col gap-space-md">
+<div class="flex flex-col gap-1">
+<span class="font-body-sm text-body-sm text-outline">Email Address</span>
+<div class="bg-surface-container px-space-md py-2 rounded-lg font-label-code-md text-on-surface">
+                zjhasan13@gmail.com
+              </div>
+</div>
+<div class="flex flex-col gap-1">
+<span class="font-body-sm text-body-sm text-outline">Master Passcode</span>
+<div class="bg-surface-container px-space-md py-2 rounded-lg font-label-code-md text-on-surface">
+                ••••••••••••
+              </div>
+</div>
+<div class="w-full bg-surface-variant py-2.5 rounded-lg flex items-center justify-center gap-2">
+<span class="w-4 h-4 rounded-full border-2 border-outline border-t-transparent animate-spin inline-block"></span>
+<span class="font-body-md text-body-md text-outline">Authenticating session...</span>
+</div>
+</div>
+</div>
+<!-- Floating Prompt Backdrop Shade (Soft focal dimming) -->
+<div class="absolute inset-0 bg-surface-container-lowest/40 backdrop-blur-[2px] z-10"></div>
+<!-- ========================================================================= -->
+<!-- THE MAIN "SAVE TO PHANTOM VAULT?" HIGH-TECH CYBERSECURITY PROMPT BUBBLE   -->
+<!-- Anchored top-right near the glowing toolbar shield                        -->
+<!-- ========================================================================= -->
+<div class="absolute top-4 right-6 lg:right-12 z-20 w-full max-w-lg bg-surface-container-low/95 backdrop-blur-2xl rounded-xl shadow-[0_20px_50px_rgba(0,0,0,0.8),0_0_0_1px_rgba(208,188,255,0.2)] p-space-lg flex flex-col gap-space-md transition-all duration-200">
+<!-- Micro Arrow Pointer to Extension Toolbar -->
+<div class="absolute -top-2 right-10 w-4 h-4 bg-surface-container-low rotate-45 shadow-[-2px_-2px_4px_rgba(0,0,0,0.4)]"></div>
+<!-- Section 1: Brand & Security Detection Header -->
+<div class="flex items-start justify-between gap-space-md">
+<div class="flex items-start gap-space-md">
+<!-- Animated Glowing Shield Emblem -->
+<div class="relative flex-shrink-0 w-11 h-11 rounded-lg bg-primary/10 flex items-center justify-center text-primary shadow-[0_0_20px_rgba(160,120,255,0.3)]">
+<span class="material-symbols-outlined text-[26px]" style="font-variation-settings: 'FILL' 1;">security</span>
+<span class="absolute bottom-0 right-0 w-3 h-3 bg-tertiary rounded-full shadow-[0_0_8px_#4edea3]"></span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<h2 class="font-headline-md text-headline-md text-on-surface font-semibold tracking-tight">Save to Phantom Vault?</h2>
+<span class="font-label-badge text-label-badge bg-primary-container/20 text-primary px-1.5 py-0.5 rounded uppercase font-semibold">Prompt</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Zero-Knowledge Enclave detected credentials for <span class="font-label-code-md text-primary font-medium">example-service.com</span></p>
+</div>
+</div>
+<!-- Instant dismiss 'Esc' button -->
+<button class="text-outline hover:text-on-surface hover:bg-surface-container p-1 rounded-lg transition-colors" id="dismissPrompt" title="Dismiss (Esc)">
+<span class="material-symbols-outlined text-[20px]">close</span>
+</button>
+</div>
+<!-- Section 2: Credential Details Card Stack -->
+<div class="bg-surface-container-lowest/80 rounded-lg p-space-md flex flex-col gap-space-sm shadow-inner">
+<!-- Row A: Username / Account Identity -->
+<div class="flex flex-col gap-1">
+<div class="flex items-center justify-between text-outline">
+<span class="font-label-code-md text-label-code-md uppercase tracking-wider text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">person</span>
+                  Identity / Username
+                </span>
+<button class="font-body-sm text-body-sm text-primary hover:text-secondary-fixed flex items-center gap-1 transition-colors">
+<span class="material-symbols-outlined text-[13px]">edit</span>
+                  Edit
+                </button>
+</div>
+<div class="flex items-center justify-between bg-surface-container-high/90 px-space-md py-2 rounded-lg">
+<div class="flex items-center gap-space-sm min-w-0">
+<span class="font-label-code-md text-label-code-md text-on-surface font-medium truncate">zjhasan13@gmail.com</span>
+</div>
+<span class="font-label-badge text-label-badge bg-tertiary/10 text-tertiary px-1.5 py-0.5 rounded uppercase">Primary ID</span>
+</div>
+</div>
+<!-- Row B: Password Field with Entropy Analytics & Unmask Toggle -->
+<div class="flex flex-col gap-1 mt-1">
+<div class="flex items-center justify-between text-outline">
+<span class="font-label-code-md text-label-code-md uppercase tracking-wider text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[14px]">key</span>
+                  Secret Password
+                </span>
+<span class="font-label-badge text-label-badge text-tertiary flex items-center gap-1">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+                  Verified High Entropy
+                </span>
+</div>
+<div class="flex items-center justify-between bg-surface-container-high/90 px-space-md py-2 rounded-lg">
+<div class="flex items-center gap-space-sm min-w-0 flex-1">
+<span class="font-label-code-md text-label-code-md text-on-surface tracking-widest font-mono" id="passwordValue">
+                    ••••••••••••••
+                  </span>
+</div>
+<div class="flex items-center gap-1">
+<button class="text-outline hover:text-on-surface p-1 rounded transition-colors" id="togglePasswordBtn" title="Toggle Plaintext">
+<span class="material-symbols-outlined text-[18px]" id="togglePasswordIcon">visibility</span>
+</button>
+<button class="text-outline hover:text-primary p-1 rounded transition-colors" id="copyPasswordBtn" title="Copy to Clipboard (Auto-purge 30s)">
+<span class="material-symbols-outlined text-[18px]">content_copy</span>
+</button>
+</div>
+</div>
+<!-- Real-time Shannon Entropy Visual Meter -->
+<div class="flex flex-col gap-1 mt-0.5 px-0.5">
+<div class="w-full h-1.5 bg-surface-container rounded-full overflow-hidden flex gap-0.5">
+<div class="h-full w-1/4 bg-tertiary rounded-full"></div>
+<div class="h-full w-1/4 bg-tertiary rounded-full"></div>
+<div class="h-full w-1/4 bg-tertiary rounded-full"></div>
+<div class="h-full w-1/4 bg-tertiary rounded-full shadow-[0_0_8px_#4edea3]"></div>
+</div>
+<div class="flex items-center justify-between text-body-sm font-label-code-md text-outline">
+<span class="text-tertiary font-medium">14 chars • 98.4-bit Entropy</span>
+<span class="text-on-surface-variant">Crack Time: ~3,400 Centuries</span>
+</div>
+</div>
+</div>
+<!-- Row C: Auto-Detected Domain and Target Vault Folder -->
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-space-sm mt-1 pt-2 bg-surface-container/20 rounded-lg p-space-xs">
+<!-- Target Domain -->
+<div class="flex flex-col gap-1">
+<span class="font-label-code-md text-label-code-md text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px]">link</span>
+                  Host Scope
+                </span>
+<div class="bg-surface-container-high/60 px-space-sm py-1.5 rounded flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface truncate">example-service.com</span>
+<span class="material-symbols-outlined text-[14px] text-tertiary" title="Domain verified">verified_user</span>
+</div>
+</div>
+<!-- Vault Folder Picker -->
+<div class="flex flex-col gap-1">
+<span class="font-label-code-md text-label-code-md text-outline flex items-center gap-1">
+<span class="material-symbols-outlined text-[13px]">folder</span>
+                  Vault Partition
+                </span>
+<div class="relative">
+<select class="w-full appearance-none bg-surface-container-high/60 hover:bg-surface-container-high text-on-surface font-body-sm text-body-sm px-space-sm py-1.5 rounded cursor-pointer pr-6 focus:outline-none focus:bg-surface-container-highest">
+<option selected="">Personal Vault</option>
+<option>Work • Cloud Infrastructure</option>
+<option>DevOps • Staging</option>
+<option>Shared Team Safe</option>
+</select>
+<span class="material-symbols-outlined text-[16px] text-outline absolute right-1.5 top-2 pointer-events-none">expand_more</span>
+</div>
+</div>
+</div>
+<!-- 2FA TOTP Optional Integration Prompt -->
+<div class="flex items-center justify-between pt-1">
+<button class="flex items-center gap-1.5 text-primary hover:text-secondary-fixed font-body-sm text-body-sm transition-colors py-1">
+<span class="material-symbols-outlined text-[16px]">dialpad</span>
+<span>+ Add TOTP authenticator key / QR seed</span>
+</button>
+<span class="font-label-badge text-label-badge text-outline uppercase">RFC 6238</span>
+</div>
+</div>
+<!-- Section 3: Primary & Secondary Actions Bar -->
+<div class="flex flex-col gap-space-sm">
+<div class="flex items-center gap-space-sm">
+<!-- Primary Violet Call to Action -->
+<button class="flex-1 bg-primary text-on-primary font-body-md text-body-md font-semibold px-space-lg py-2.5 rounded-lg flex items-center justify-center gap-space-sm shadow-[0_0_20px_rgba(208,188,255,0.35)] hover:bg-primary-fixed-dim active:scale-[0.99] transition-all" id="saveCredentialBtn">
+<span class="material-symbols-outlined text-[18px]">lock_clock</span>
+<span>Save to Vault</span>
+<span class="font-label-code-md text-label-code-md bg-on-primary/20 px-1.5 py-0.5 rounded ml-1 text-on-primary">Enter ⏎</span>
+</button>
+<!-- Secondary Dismissal / Whitelist Menu Dropdown Button -->
+<div class="relative group">
+<button class="bg-surface-container hover:bg-surface-container-high text-on-surface font-body-md text-body-md px-space-md py-2.5 rounded-lg flex items-center gap-1 transition-colors">
+<span>Never</span>
+<span class="material-symbols-outlined text-[18px] text-outline group-hover:text-on-surface">arrow_drop_down</span>
+</button>
+<!-- Flyout Menu on Hover/Click -->
+<div class="hidden group-hover:flex flex-col absolute bottom-full mb-2 right-0 w-56 bg-surface-container-high rounded-lg shadow-2xl p-1.5 z-30">
+<button class="text-left font-body-sm text-body-sm text-on-surface px-space-md py-2 rounded hover:bg-surface-variant transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-error">block</span>
+                    Never ask for this domain
+                  </button>
+<button class="text-left font-body-sm text-body-sm text-on-surface px-space-md py-2 rounded hover:bg-surface-variant transition-colors flex items-center gap-2">
+<span class="material-symbols-outlined text-[16px] text-outline">timer_off</span>
+                    Ignore for this session
+                  </button>
+</div>
+</div>
+<!-- Not Now Tertiary -->
+<button class="bg-transparent hover:bg-surface-container text-outline hover:text-on-surface font-body-md text-body-md px-space-md py-2.5 rounded-lg transition-colors" id="notNowBtn">
+                Not Now
+              </button>
+</div>
+<!-- Section 4: Security Guarantee Micro-Badge -->
+<div class="flex items-center justify-between px-1 text-outline">
+<div class="flex items-center gap-1.5 font-label-code-md text-label-code-md">
+<span class="material-symbols-outlined text-[14px] text-tertiary">lock</span>
+<span>AES-256-GCM locally sealed • RAM-isolated enclave</span>
+</div>
+<div class="flex items-center gap-1 font-label-code-md text-label-code-md text-on-surface-variant">
+<span>Passcode ID:</span>
+<span class="text-primary font-mono">0x4F...77C9</span>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Browser Status Footprint Bar -->
+<div class="bg-surface-container px-space-md py-1.5 flex items-center justify-between text-outline font-label-code-md text-body-sm">
+<div class="flex items-center gap-space-md">
+<span class="flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span> Secure Context (Wasm Isolated)</span>
+<span>Dom Handshake: 1.2ms</span>
+</div>
+<div class="flex items-center gap-space-md">
+<span>Phantom Vault Extension v2.4.1 (Active)</span>
+</div>
+</div>
+</div>
+<!-- Supplementary Feature Context Cards (Below mockup to show ecosystem integration) -->
+<div class="grid grid-cols-1 md:grid-cols-3 gap-space-md mt-space-md">
+<!-- Card 1: Zero Knowledge -->
+<div class="bg-surface-container-low p-space-md rounded-xl flex items-start gap-space-md shadow-md">
+<div class="w-9 h-9 rounded-lg bg-primary-container/20 text-primary flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">enhanced_encryption</span>
+</div>
+<div class="flex flex-col gap-1">
+<div class="font-headline-md text-headline-md text-on-surface">Client-Side Cipher</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Master keys never leave your machine's volatile enclave memory. Even memory dumps are scrambled upon vault locking.</p>
+</div>
+</div>
+<!-- Card 2: Automatic Autofill & Breach Radar -->
+<div class="bg-surface-container-low p-space-md rounded-xl flex items-start gap-space-md shadow-md">
+<div class="w-9 h-9 rounded-lg bg-tertiary/10 text-tertiary flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">radar</span>
+</div>
+<div class="flex flex-col gap-1">
+<div class="font-headline-md text-headline-md text-on-surface">Breach Interception</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Instant k-Anonymity checks verify passwords against public breaches without transmitting the plain unhashed string.</p>
+</div>
+</div>
+<!-- Card 3: Seamless Keybind Workflow -->
+<div class="bg-surface-container-low p-space-md rounded-xl flex items-start gap-space-md shadow-md">
+<div class="w-9 h-9 rounded-lg bg-secondary-container/20 text-secondary flex items-center justify-center flex-shrink-0">
+<span class="material-symbols-outlined text-[20px]">keyboard</span>
+</div>
+<div class="flex flex-col gap-1">
+<div class="font-headline-md text-headline-md text-on-surface">Keyboard First</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">Press <kbd class="font-label-code-md text-label-code-md bg-surface-container-highest px-1.5 py-0.5 rounded text-on-surface">Enter</kbd> to save, <kbd class="font-label-code-md text-label-code-md bg-surface-container-highest px-1.5 py-0.5 rounded text-on-surface">Esc</kbd> to defer, or <kbd class="font-label-code-md text-label-code-md bg-surface-container-highest px-1.5 py-0.5 rounded text-on-surface">⌘+Shift+V</kbd> to inspect the full vault.</p>
+</div>
+</div>
+</div>
+</div>
+<!-- Interactive Demo Micro-logic -->
+<script>
+    (function initPhantomPrompt() {
+      const toggleBtn = document.getElementById('togglePasswordBtn');
+      const passText = document.getElementById('passwordValue');
+      const toggleIcon = document.getElementById('togglePasswordIcon');
+      const copyBtn = document.getElementById('copyPasswordBtn');
+      const saveBtn = document.getElementById('saveCredentialBtn');
+      const dismissBtn = document.getElementById('dismissPrompt');
+      const notNowBtn = document.getElementById('notNowBtn');
+
+      let revealed = false;
+      const masked = '••••••••••••••';
+      const plaintext = 'kX9#vQ8$2Lp@91';
+
+      if (toggleBtn && passText && toggleIcon) {
+        toggleBtn.addEventListener('click', () => {
+          revealed = !revealed;
+          passText.textContent = revealed ? plaintext : masked;
+          toggleIcon.textContent = revealed ? 'visibility_off' : 'visibility';
+        });
+      }
+
+      if (copyBtn) {
+        copyBtn.addEventListener('click', () => {
+          navigator.clipboard.writeText(plaintext);
+          const origIcon = copyBtn.innerHTML;
+          copyBtn.innerHTML = '<span class="material-symbols-outlined text-[18px] text-tertiary">check</span>';
+          setTimeout(() => {
+            copyBtn.innerHTML = origIcon;
+          }, 1500);
+        });
+      }
+
+      function handleActionSaved() {
+        if (!saveBtn) return;
+        saveBtn.innerHTML = '<span class="material-symbols-outlined text-[18px] text-tertiary">verified</span> <span>Encrypted & Saved!</span>';
+        saveBtn.classList.remove('bg-primary');
+        saveBtn.classList.add('bg-tertiary-container', 'text-on-tertiary');
+        setTimeout(() => {
+          saveBtn.innerHTML = '<span class="material-symbols-outlined text-[18px]">lock_clock</span><span>Save to Vault</span>';
+          saveBtn.classList.add('bg-primary');
+          saveBtn.classList.remove('bg-tertiary-container', 'text-on-tertiary');
+        }, 2200);
+      }
+
+      if (saveBtn) {
+        saveBtn.addEventListener('click', handleActionSaved);
+      }
+
+      // Keyboard navigation support
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+          handleActionSaved();
+        } else if (e.key === 'Escape') {
+          if (notNowBtn) {
+            notNowBtn.classList.add('text-on-surface');
+            setTimeout(() => notNowBtn.classList.remove('text-on-surface'), 300);
+          }
+        }
+      });
+    })();
+  </script>
+</div></main><footer class="w-full bg-surface-container-lowest/80 border-t border-outline-variant/20 py-space-sm px-gutter text-on-surface-variant text-body-sm"><div class="w-full px-gutter flex items-center justify-between text-body-sm"><div class="flex items-center gap-space-md"><span class="flex items-center gap-1 font-label-code-md text-body-sm text-outline"><span class="w-2 h-2 rounded-full bg-tertiary inline-block"></span>Client Keystore Mounted: 0x8F9C...E4A1</span></div><div class="flex items-center gap-space-lg text-outline font-label-code-md text-body-sm"><span>Zero-Knowledge Engine</span><span>AES-GCM-256</span></div></div></footer></body></html>

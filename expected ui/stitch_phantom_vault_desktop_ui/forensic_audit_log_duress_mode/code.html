@@ -1,0 +1,647 @@
+<!DOCTYPE html>
+
+<html class="dark h-full" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Phantom Vault Enterprise — Sovereign Cryptographic Manager</title>
+<!-- Tailwind CSS CDN with forms and container queries -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script id="tailwind-config">
+  tailwind.config = {
+    darkMode: "class",
+    theme: {
+      extend: {
+        "colors": {
+          "on-tertiary-fixed": "#002113",
+          "surface-container-lowest": "#0e0e10",
+          "background": "#131315",
+          "primary-container": "#a078ff",
+          "secondary-container": "#4f319c",
+          "on-surface-variant": "#cbc3d7",
+          "on-background": "#e5e1e4",
+          "on-secondary-fixed": "#21005e",
+          "on-tertiary-container": "#00311f",
+          "tertiary-container": "#00a572",
+          "on-secondary-container": "#bea8ff",
+          "on-secondary": "#381385",
+          "surface-container-low": "#1c1b1d",
+          "on-primary-fixed-variant": "#5516be",
+          "inverse-on-surface": "#313032",
+          "surface-container-highest": "#353437",
+          "secondary": "#cebdff",
+          "primary": "#d0bcff",
+          "secondary-fixed-dim": "#cebdff",
+          "error-container": "#93000a",
+          "primary-fixed": "#e9ddff",
+          "primary-fixed-dim": "#d0bcff",
+          "surface-variant": "#353437",
+          "on-primary-fixed": "#23005c",
+          "on-tertiary": "#003824",
+          "tertiary-fixed": "#6ffbbe",
+          "outline-variant": "#494454",
+          "on-secondary-fixed-variant": "#4f319c",
+          "surface-container-high": "#2a2a2c",
+          "tertiary-fixed-dim": "#4edea3",
+          "surface-container": "#201f22",
+          "on-tertiary-fixed-variant": "#005236",
+          "on-surface": "#e5e1e4",
+          "on-error": "#690005",
+          "on-primary": "#3c0091",
+          "on-primary-container": "#340080",
+          "error": "#ffb4ab",
+          "tertiary": "#4edea3",
+          "surface": "#131315",
+          "inverse-surface": "#e5e1e4",
+          "surface-dim": "#131315",
+          "inverse-primary": "#6d3bd7",
+          "secondary-fixed": "#e8ddff",
+          "outline": "#958ea0",
+          "on-error-container": "#ffdad6",
+          "surface-bright": "#39393b",
+          "surface-tint": "#d0bcff"
+        },
+        "borderRadius": {
+          "DEFAULT": "0.125rem",
+          "lg": "0.25rem",
+          "xl": "0.5rem",
+          "full": "0.75rem"
+        },
+        "spacing": {
+          "margin-desktop": "2rem",
+          "space-md": "0.75rem",
+          "space-sm": "0.5rem",
+          "space-xl": "2rem",
+          "margin": "1rem",
+          "gutter": "1rem",
+          "space-lg": "1.25rem",
+          "gutter-desktop": "1.5rem",
+          "space-xs": "0.25rem"
+        },
+        "fontFamily": {
+          "label-code-lg": ["JetBrains Mono"],
+          "headline-xl": ["Inter"],
+          "label-code-md": ["JetBrains Mono"],
+          "headline-lg": ["Inter"],
+          "headline-md": ["Inter"],
+          "body-md": ["Inter"],
+          "body-lg": ["Inter"],
+          "body-sm": ["Inter"],
+          "label-badge": ["JetBrains Mono"],
+          "headline-xl-mobile": ["Inter"]
+        },
+        "fontSize": {
+          "label-code-lg": ["14px", {"lineHeight": "20px", "letterSpacing": "-0.01em", "fontWeight": "500"}],
+          "headline-xl": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.025em", "fontWeight": "600"}],
+          "label-code-md": ["12px", {"lineHeight": "16px", "letterSpacing": "0em", "fontWeight": "500"}],
+          "headline-lg": ["24px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600"}],
+          "headline-md": ["18px", {"lineHeight": "26px", "letterSpacing": "-0.015em", "fontWeight": "600"}],
+          "body-md": ["13px", {"lineHeight": "18px", "letterSpacing": "-0.005em", "fontWeight": "400"}],
+          "body-lg": ["15px", {"lineHeight": "22px", "letterSpacing": "-0.01em", "fontWeight": "400"}],
+          "body-sm": ["12px", {"lineHeight": "16px", "fontWeight": "400"}],
+          "label-badge": ["10px", {"lineHeight": "12px", "letterSpacing": "0.06em", "fontWeight": "600"}],
+          "headline-xl-mobile": ["26px", {"lineHeight": "32px", "letterSpacing": "-0.02em", "fontWeight": "600"}]
+        }
+      }
+    }
+  }
+</script>
+<!-- Inter & JetBrains Mono Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<style>
+  @layer base {
+    * {
+      box-sizing: border-box;
+    }
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #0e0e10;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a2c;
+      border-radius: 2px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #494454;
+    }
+  }
+</style>
+<meta content="web_dashboard" name="shell-type"/></head>
+<body class="bg-surface-container-lowest text-on-surface font-body-md antialiased min-h-screen">
+<!-- BEGIN: TopGlobalAppHeader -->
+<header class="fixed top-0 left-0 right-0 z-40 bg-surface border-b border-surface-container-high/80">
+<div class="h-14 px-margin-desktop flex items-center justify-between">
+<div class="flex items-center gap-space-md">
+<div class="flex items-center gap-space-sm">
+<div class="w-8 h-8 rounded-lg bg-surface-container-high border border-primary/30 flex items-center justify-center text-primary shadow-sm">
+<span class="material-symbols-outlined text-[20px]">shield_lock</span>
+</div>
+<div class="flex flex-col">
+<div class="flex items-center gap-space-xs">
+<span class="font-headline-md text-headline-md tracking-tight text-on-surface">PHANTOM</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.5 rounded bg-primary/10 text-primary border border-primary/20">ENTERPRISE</span>
+</div>
+</div>
+</div>
+<span class="h-4 w-px bg-outline-variant/30"></span>
+<div class="hidden md:flex items-center gap-space-xs font-label-code-md text-label-code-md text-on-surface-variant bg-surface-container-low px-space-sm py-1 rounded border border-outline-variant/20">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span>AES-256-GCM Hardware Enclave Sealed</span>
+</div>
+</div>
+<div class="flex items-center gap-space-md">
+<div class="hidden lg:flex items-center gap-space-sm font-label-code-md text-label-code-md text-on-surface-variant">
+<span class="px-2 py-0.5 rounded bg-surface-container-low border border-outline-variant/20 text-tertiary">Zero-Knowledge verified</span>
+</div>
+<div class="flex items-center gap-space-xs bg-surface-container-low p-1 rounded border border-outline-variant/20">
+<button class="px-2.5 py-1 text-label-code-md font-label-code-md text-on-surface-variant hover:text-on-surface rounded transition" title="Audit Ledger" type="button">
+          AUDIT
+        </button>
+<button class="px-2.5 py-1 text-label-code-md font-label-code-md text-on-surface-variant hover:text-on-surface rounded transition" title="Master Cryptographic Sync" type="button">
+          SYNC
+        </button>
+</div>
+<button class="flex items-center gap-space-xs px-space-md py-1.5 text-label-code-md font-label-code-md bg-error-container/20 hover:bg-error-container/30 text-error border border-error/30 rounded-lg transition" id="lockVaultBtn" type="button">
+<span class="material-symbols-outlined text-[16px]">lock</span>
+<span>Lock Vault</span>
+</button>
+<div class="w-8 h-8 rounded-full bg-secondary-container border border-primary/30 flex items-center justify-center font-label-code-md text-label-code-md text-on-secondary-container font-semibold">
+        PV
+      </div>
+</div>
+</div>
+</header>
+<!-- END: TopGlobalAppHeader -->
+<!-- BEGIN: Sidebar Navigation Rail -->
+<aside class="fixed top-14 left-0 bottom-0 w-64 bg-surface-container-lowest border-r border-surface-container-high/80 flex flex-col z-30">
+<!-- Quick Master Action -->
+<div class="p-space-md border-b border-surface-container-high/40">
+<button class="w-full flex items-center justify-center gap-space-sm py-2 px-space-md bg-primary-container text-on-primary-container hover:bg-primary font-headline-md text-body-md font-medium rounded-lg shadow-sm transition" type="button">
+<span class="material-symbols-outlined text-[18px]">add_circle</span>
+<span>New Secret Item</span>
+</button>
+</div>
+<!-- Navigation Menus -->
+<div class="flex-1 overflow-y-auto px-space-sm py-space-md space-y-space-lg">
+<!-- Primary Vault Core -->
+<div>
+<div class="px-space-sm pb-space-xs font-label-code-md text-label-badge text-outline uppercase tracking-wider">Vault Operations</div>
+<nav class="space-y-0.5" data-active-classes="bg-surface-container text-primary border-l-2 border-primary font-medium" data-purpose="vault-nav">
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="phantom-vault-vault-browser-20" href="#">
+<span>Vault Browser 2.0</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-surface-container text-outline">184</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="generator" href="#">
+<span>Generator Studio</span>
+<span class="font-label-badge text-label-badge px-1 py-0.2 rounded bg-primary/10 text-primary">AES</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="shamir-recovery" href="#">
+<span>Shamir Recovery</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-surface-container text-outline">SLIP-39</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="secure-send" href="#">
+<span>Secure Send</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-tertiary/10 text-tertiary">P2P</span>
+</a>
+</nav>
+</div>
+<!-- Critical Security Operations -->
+<div>
+<div class="px-space-sm pb-space-xs font-label-code-md text-label-badge text-outline uppercase tracking-wider">Governance &amp; Forensics</div>
+<nav class="space-y-0.5" data-active-classes="bg-surface-container text-primary border-l-2 border-primary font-medium" data-purpose="security-nav">
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="migration-wizard" href="#">
+<span>Migration Wizard</span>
+<span class="font-label-badge text-label-badge text-outline">Import</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="forensic-decoy" href="#">
+<span>Forensic &amp; Decoy</span>
+<span class="font-label-badge text-label-badge px-1.5 py-0.2 rounded bg-error/10 text-error">DURESS</span>
+</a>
+<a class="flex items-center justify-between px-space-md py-1.5 rounded text-on-surface-variant hover:text-on-surface hover:bg-surface-container-low transition" data-path="security-developer-settings" href="#">
+<span>Security &amp; Developer Settings</span>
+</a>
+</nav>
+</div>
+</div>
+<!-- Bottom Enclave Health & Version Info -->
+<div class="p-space-md border-t border-surface-container-high/60 bg-surface space-y-space-xs">
+<div class="p-space-sm bg-surface-container-low rounded border border-surface-container-high flex items-center justify-between">
+<div>
+<div class="font-label-code-md text-label-code-md font-semibold text-on-surface">Duress Sentinel</div>
+<div class="font-body-sm text-body-sm text-outline">Silent tamper trigger</div>
+</div>
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+</div>
+<div class="flex items-center justify-between text-label-badge font-label-badge text-outline pt-1 px-1">
+<span>ENCLAVE v4.9.0-SOVEREIGN</span>
+<span class="text-tertiary">ONLINE</span>
+</div>
+</div>
+</aside>
+<!-- END: Sidebar Navigation Rail -->
+<!-- BEGIN: Dynamic Main View Area -->
+<main class="pt-14 pl-64 min-h-screen bg-background">
+<div class="flex flex-col w-full">
+<!-- Operational Sentinel Banner -->
+<div class="relative overflow-hidden bg-surface-container-low px-margin-desktop py-space-md shadow-sm">
+<div class="absolute inset-0 bg-gradient-to-r from-error/5 via-primary/5 to-tertiary/5 pointer-events-none"></div>
+<div class="relative flex flex-col lg:flex-row lg:items-center lg:justify-between gap-space-sm">
+<div class="flex flex-wrap items-center gap-space-md">
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md">
+<span class="relative flex h-2.5 w-2.5">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-error"></span>
+</span>
+<span class="text-on-surface font-semibold tracking-wide">DURESS SENTINEL:</span>
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-error/15 text-error">ARMED</span>
+</div>
+<span class="hidden sm:inline text-outline-variant font-label-code-md">|</span>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md text-on-surface-variant">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<span>EPHEMERAL RAM KEYSTORE:</span>
+<span class="text-tertiary font-semibold">ACTIVE (ZERO TRACE)</span>
+</div>
+<span class="hidden sm:inline text-outline-variant font-label-code-md">|</span>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md text-on-surface-variant">
+<span class="w-2 h-2 rounded-full bg-primary"></span>
+<span>TAMPER FORENSICS:</span>
+<span class="text-primary font-semibold">ONLINE (BLAKE3 HASH-CHAIN)</span>
+</div>
+</div>
+<div class="flex items-center gap-space-sm font-label-code-md text-label-code-md">
+<span class="text-outline">DEVICE LOC:</span>
+<span class="text-on-surface font-medium bg-surface-container px-2 py-0.5 rounded">ENCLAVE SECURE TEE #09</span>
+</div>
+</div>
+</div>
+<!-- Primary Dashboard Grid -->
+<div class="p-margin-desktop grid grid-cols-1 xl:grid-cols-12 gap-gutter-desktop">
+<!-- LEFT COLUMN: Duress / Decoy Vault Anti-Coercion Protocol -->
+<section class="xl:col-span-7 flex flex-col gap-space-lg">
+<!-- Section Header -->
+<div class="flex items-start justify-between">
+<div>
+<div class="flex items-center gap-space-xs">
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-error/10 text-error">ANTI-COERCION PROTOCOL</span>
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-surface-container-high text-outline">PHYSICAL THREAT VECTOR</span>
+</div>
+<h1 class="font-headline-lg text-headline-lg text-on-surface mt-space-xs">Decoy Vault &amp; Plausible Deniability</h1>
+<p class="font-body-md text-body-md text-on-surface-variant max-w-2xl mt-1">
+            If forced to unlock your vault under physical threat or coercion, entering your designated Duress PIN or Password immediately unlocks an authentic-looking Decoy Vault populated with realistic synthetic records while executing silent tactical countermeasures.
+          </p>
+</div>
+<div class="p-3 bg-surface-container rounded-xl shadow-sm text-error hidden md:flex items-center justify-center">
+<span class="material-symbols-outlined text-[32px]">shield_with_heart</span>
+</div>
+</div>
+<!-- Duress Passcode Enclave Config -->
+<div class="bg-surface-container-low rounded-xl p-space-lg shadow-md space-y-space-md">
+<div class="flex items-center justify-between">
+<div>
+<span class="font-label-code-md text-label-badge text-outline uppercase tracking-wider">Authentication Layer</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Duress Secret Triggers</h2>
+</div>
+<span class="font-label-badge text-label-badge px-2 py-1 rounded bg-tertiary/15 text-tertiary">SEPARATE SALTED KEY</span>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-2 gap-space-md pt-space-xs">
+<!-- Duress Password Card -->
+<div class="bg-surface-container p-space-md rounded-lg space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-medium">Duress Master Password</span>
+<span class="font-label-badge text-label-badge text-tertiary">CONFIGURED</span>
+</div>
+<div class="relative flex items-center">
+<input class="w-full bg-surface-container-lowest text-on-surface font-label-code-md text-label-code-md px-3 py-2 rounded shadow-inner focus:outline-none" id="duressPassInput" readonly="" type="password" value="phantom-duress-fallback-983"/>
+<button class="absolute right-2 text-outline hover:text-on-surface transition" onclick="togglePassVisibility('duressPassInput', this)" type="button">
+<span class="material-symbols-outlined text-[18px]">visibility</span>
+</button>
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="font-label-code-md text-label-badge text-outline">Derivation: Argon2id (64MB)</span>
+<button class="font-label-code-md text-label-code-md text-primary hover:text-primary-fixed transition underline" type="button">Change Password</button>
+</div>
+</div>
+<!-- Duress PIN Card -->
+<div class="bg-surface-container p-space-md rounded-lg space-y-space-sm">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-medium">Duress Emergency PIN</span>
+<span class="font-label-badge text-label-badge text-tertiary">CONFIGURED</span>
+</div>
+<div class="relative flex items-center">
+<input class="w-full bg-surface-container-lowest text-on-surface font-label-code-md text-label-code-md px-3 py-2 rounded shadow-inner focus:outline-none tracking-widest" id="duressPinInput" readonly="" type="password" value="892014"/>
+<button class="absolute right-2 text-outline hover:text-on-surface transition" onclick="togglePassVisibility('duressPinInput', this)" type="button">
+<span class="material-symbols-outlined text-[18px]">visibility</span>
+</button>
+</div>
+<div class="flex items-center justify-between pt-1">
+<span class="font-label-code-md text-label-badge text-outline">TPM Hardware Rate-Limited</span>
+<button class="font-label-code-md text-label-code-md text-primary hover:text-primary-fixed transition underline" type="button">Rotate PIN</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Decoy Vault Generator & Synthetic Payload -->
+<div class="bg-surface-container-low rounded-xl p-space-lg shadow-md space-y-space-md">
+<div class="flex flex-col sm:flex-row sm:items-center justify-between gap-space-sm">
+<div>
+<span class="font-label-code-md text-label-badge text-outline uppercase tracking-wider">Realistic Camouflage</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Decoy Vault Content Generator</h2>
+</div>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md text-outline">
+<span>Payload Status:</span>
+<span class="text-tertiary font-semibold">45 Synthetic Records Loaded</span>
+</div>
+</div>
+<p class="font-body-md text-body-md text-on-surface-variant">
+          Auto-populate 45 plausible decoy accounts (Netflix, Spotify, Fake Gmail, Amazon, Socials, Personal Banking dummy portals) with organic activity timestamps and non-critical passwords. The adversary inspects realistic, functioning web history without ever knowing a separate vault container exists.
+        </p>
+<!-- Synthetic Account Roster Preview -->
+<div class="grid grid-cols-2 sm:grid-cols-4 gap-space-sm">
+<div class="bg-surface-container p-space-sm rounded-lg flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-primary text-[20px]">mail</span>
+<div class="min-w-0">
+<div class="font-label-code-md text-label-code-md text-on-surface truncate">gmail.personal</div>
+<div class="font-label-badge text-label-badge text-outline truncate">12 fake accounts</div>
+</div>
+</div>
+<div class="bg-surface-container p-space-sm rounded-lg flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-tertiary text-[20px]">movie</span>
+<div class="min-w-0">
+<div class="font-label-code-md text-label-code-md text-on-surface truncate">streaming.svcs</div>
+<div class="font-label-badge text-label-badge text-outline truncate">Netflix / Prime</div>
+</div>
+</div>
+<div class="bg-surface-container p-space-sm rounded-lg flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-secondary text-[20px]">account_balance</span>
+<div class="min-w-0">
+<div class="font-label-code-md text-label-code-md text-on-surface truncate">banking.dummy</div>
+<div class="font-label-badge text-label-badge text-outline truncate">Simulated balances</div>
+</div>
+</div>
+<div class="bg-surface-container p-space-sm rounded-lg flex items-center gap-space-sm">
+<span class="material-symbols-outlined text-outline text-[20px]">share</span>
+<div class="min-w-0">
+<div class="font-label-code-md text-label-code-md text-on-surface truncate">social.identities</div>
+<div class="font-label-badge text-label-badge text-outline truncate">18 accounts</div>
+</div>
+</div>
+</div>
+<div class="flex flex-wrap items-center justify-between pt-space-xs gap-space-sm">
+<button class="px-space-md py-2 bg-surface-container-high hover:bg-surface-container-highest text-on-surface font-label-code-md text-label-code-md rounded-lg shadow-sm transition flex items-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[16px]">shuffle</span>
+<span>Regenerate Organic Synthetic Data (45 Items)</span>
+</button>
+<button class="px-space-md py-2 bg-primary/10 hover:bg-primary/20 text-primary font-label-code-md text-label-code-md rounded-lg transition flex items-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[16px]">visibility</span>
+<span>Preview Decoy Vault Session</span>
+</button>
+</div>
+</div>
+<!-- Silent Duress Tactical Action Checklist -->
+<div class="bg-surface-container-low rounded-xl p-space-lg shadow-md space-y-space-md">
+<div class="flex items-center justify-between">
+<div>
+<span class="font-label-code-md text-label-badge text-error uppercase tracking-wider font-semibold">Defensive Countermeasures</span>
+<h2 class="font-headline-md text-headline-md text-on-surface">Silent Duress Triggers</h2>
+</div>
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-error-container/30 text-error">CRITICAL VECTOR</span>
+</div>
+<div class="space-y-space-sm">
+<!-- Item 1 -->
+<label class="flex items-start gap-space-md p-space-md rounded-lg bg-surface-container hover:bg-surface-container-high cursor-pointer transition">
+<input checked="" class="mt-0.5 rounded text-primary focus:ring-0 bg-surface-container-lowest border-0" type="checkbox"/>
+<div class="flex-1 min-w-0">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-semibold">Silently purge true master encryption keys from volatile RAM</span>
+<span class="font-label-badge text-label-badge text-tertiary">ARMED</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                Overwrites L1/L2 hardware memory caches with cryptographic pseudorandom noise 7 times. Cold boot recovery becomes cryptographically impossible.
+              </p>
+</div>
+</label>
+<!-- Item 2 -->
+<label class="flex items-start gap-space-md p-space-md rounded-lg bg-surface-container hover:bg-surface-container-high cursor-pointer transition">
+<input checked="" class="mt-0.5 rounded text-primary focus:ring-0 bg-surface-container-lowest border-0" type="checkbox"/>
+<div class="flex-1 min-w-0">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-semibold">Transmit encrypted distress beacon to Emergency Shamir Trustees</span>
+<span class="font-label-badge text-label-badge text-tertiary">ARMED</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                Emits an out-of-band P2P packet containing current network telemetry, GPS coordinates, and signed duress verification hash to your 3 trusted Shamir shard custodians.
+              </p>
+</div>
+</label>
+<!-- Item 3 -->
+<label class="flex items-start gap-space-md p-space-md rounded-lg bg-surface-container hover:bg-surface-container-high cursor-pointer transition">
+<input checked="" class="mt-0.5 rounded text-primary focus:ring-0 bg-surface-container-lowest border-0" type="checkbox"/>
+<div class="flex-1 min-w-0">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-semibold">Execute decoy panic wipe after 30 minutes of decoy session</span>
+<span class="font-label-badge text-label-badge text-tertiary">TIMER ACTIVE</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                Allows sufficient time to satisfy an adversary inspecting the device before silently corrupting decoy container headers to simulate accidental flash storage failure.
+              </p>
+</div>
+</label>
+<!-- Item 4 -->
+<label class="flex items-start gap-space-md p-space-md rounded-lg bg-surface-container hover:bg-surface-container-high cursor-pointer transition">
+<input class="mt-0.5 rounded text-primary focus:ring-0 bg-surface-container-lowest border-0" type="checkbox"/>
+<div class="flex-1 min-w-0">
+<div class="flex items-center justify-between">
+<span class="font-label-code-md text-label-code-md text-on-surface font-semibold">Brick local biometrics / TPM until hardware cold reboot</span>
+<span class="font-label-badge text-label-badge text-outline">STANDBY</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant mt-0.5">
+                Instructs Secure Enclave to invalidate local biometric enrollment tokens. Device requires physical Shamir threshold assembly to unlock.
+              </p>
+</div>
+</label>
+</div>
+</div>
+</section>
+<!-- RIGHT COLUMN: Forensic Audit Log & Cryptographic Ledger -->
+<section class="xl:col-span-5 flex flex-col gap-space-lg">
+<!-- Section Header -->
+<div class="flex items-start justify-between">
+<div>
+<div class="flex items-center gap-space-xs">
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-tertiary/10 text-tertiary">IMMUTABLE INTEGRITY</span>
+<span class="font-label-badge text-label-badge px-2 py-0.5 rounded bg-primary/10 text-primary">SHA-3 / BLAKE3</span>
+</div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface mt-space-xs">Forensic Audit Log</h2>
+<p class="font-body-md text-body-md text-on-surface-variant mt-1">
+            Chained cryptographic records signed with your hardware key. Detects unauthorized memory queries, injection attacks, and covert key extractions.
+          </p>
+</div>
+<div class="p-3 bg-surface-container rounded-xl shadow-sm text-tertiary hidden md:flex items-center justify-center">
+<span class="material-symbols-outlined text-[32px]">fingerprint</span>
+</div>
+</div>
+<!-- Live Hash Chain Indicator Card -->
+<div class="bg-surface-container-low rounded-xl p-space-md shadow-md space-y-space-sm">
+<div class="flex items-center justify-between">
+<div class="flex items-center gap-space-xs font-label-code-md text-label-code-md text-on-surface font-semibold">
+<span class="material-symbols-outlined text-[16px] text-tertiary">link</span>
+<span>Cryptographic Merkle Root</span>
+</div>
+<span class="font-label-badge text-label-badge text-tertiary bg-tertiary/10 px-2 py-0.5 rounded">CHAIN VALIDATED</span>
+</div>
+<div class="p-space-sm bg-surface-container-lowest rounded font-label-code-md text-label-code-md text-on-surface-variant break-all select-all flex items-center justify-between">
+<span class="text-tertiary font-mono">0x9c4f...b72e9a8f4c20e1189d</span>
+<button class="text-outline hover:text-on-surface ml-2 transition" title="Verify Chain Signature" type="button">
+<span class="material-symbols-outlined text-[16px]">verified</span>
+</button>
+</div>
+<div class="flex items-center justify-between font-label-badge text-label-badge text-outline">
+<span>Signed block #1,842</span>
+<span>Zero egress verification</span>
+</div>
+</div>
+<!-- Live Event Stream Feed -->
+<div class="bg-surface-container-low rounded-xl p-space-lg shadow-md flex-1 flex flex-col justify-between space-y-space-md">
+<div>
+<div class="flex items-center justify-between mb-space-sm">
+<span class="font-label-code-md text-label-badge text-outline uppercase tracking-wider">Live Event Stream</span>
+<div class="flex items-center gap-space-xs font-label-code-md text-label-badge text-on-surface-variant">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary animate-pulse"></span>
+<span>MONITORING STREAM</span>
+</div>
+</div>
+<!-- Chronological Forensic Item Rows -->
+<div class="space-y-space-xs">
+<!-- Event 1 -->
+<div class="p-space-sm bg-surface-container rounded-lg space-y-1">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-tertiary font-medium">TPM 2.0 Bound Key Verification</span>
+<span class="font-label-badge text-label-badge text-outline">14:28:02 UTC</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                Vault Unlocked via hardware enclave bound key (AES-256 GCM session initialized).
+              </p>
+<div class="font-label-badge text-label-badge text-outline flex items-center gap-space-xs">
+<span>TX: b3f4...2802</span>
+<span>•</span>
+<span class="text-tertiary">SIG_OK</span>
+</div>
+</div>
+<!-- Event 2 -->
+<div class="p-space-sm bg-surface-container rounded-lg space-y-1">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-primary font-medium">Keystore Ephemeral Scrub</span>
+<span class="font-label-badge text-label-badge text-outline">13:12:44 UTC</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                Memory Keystore Ephemeral Scrub Executed (0 traces remaining in heap allocation).
+              </p>
+<div class="font-label-badge text-label-badge text-outline flex items-center gap-space-xs">
+<span>TX: a812...1244</span>
+<span>•</span>
+<span class="text-primary">RAM_PURGED</span>
+</div>
+</div>
+<!-- Event 3 -->
+<div class="p-space-sm bg-surface-container rounded-lg space-y-1">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-on-surface font-medium">Secure Autofill Handshake</span>
+<span class="font-label-badge text-label-badge text-outline">22:05:19 UTC</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                In-Page Autofill Dispatched to <span class="text-primary font-mono">https://github.com</span> (Zero Egress Verified via local IPC).
+              </p>
+<div class="font-label-badge text-label-badge text-outline flex items-center gap-space-xs">
+<span>TX: c904...0519</span>
+<span>•</span>
+<span class="text-outline">IPC_LOCAL</span>
+</div>
+</div>
+<!-- Event 4 -->
+<div class="p-space-sm bg-surface-container rounded-lg space-y-1">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-secondary font-medium">Canary Honeytoken Verification</span>
+<span class="font-label-badge text-label-badge text-outline">19:40:11 UTC</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                Canary Honeytoken Checked - 0 unauthorized queries detected across external monitors.
+              </p>
+<div class="font-label-badge text-label-badge text-outline flex items-center gap-space-xs">
+<span>TX: 71ea...4011</span>
+<span>•</span>
+<span class="text-secondary">INTEGRITY_MAX</span>
+</div>
+</div>
+<!-- Event 5 -->
+<div class="p-space-sm bg-surface-container rounded-lg space-y-1">
+<div class="flex items-center justify-between font-label-code-md text-label-code-md">
+<span class="text-tertiary font-medium">Shamir Shard Trustee Heartbeat</span>
+<span class="font-label-badge text-label-badge text-outline">08:15:33 UTC</span>
+</div>
+<p class="font-body-sm text-body-sm text-on-surface-variant">
+                Emergency Shamir Shard #2 Heartbeat Confirmed via encrypted peer handshake.
+              </p>
+<div class="font-label-badge text-label-badge text-outline flex items-center gap-space-xs">
+<span>TX: d420...1533</span>
+<span>•</span>
+<span class="text-tertiary">PEER_ALIVE</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Tactical Forensic Action Buttons -->
+<div class="pt-space-md space-y-space-sm">
+<div class="grid grid-cols-1 sm:grid-cols-2 gap-space-sm">
+<button class="px-space-md py-2.5 bg-surface-container hover:bg-surface-container-high text-on-surface font-label-code-md text-label-code-md rounded-lg shadow-sm transition flex items-center justify-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[16px]">file_download</span>
+<span>Export Ledger (.sig)</span>
+</button>
+<button class="px-space-md py-2.5 bg-surface-container hover:bg-surface-container-high text-on-surface font-label-code-md text-label-code-md rounded-lg shadow-sm transition flex items-center justify-center gap-space-xs" type="button">
+<span class="material-symbols-outlined text-[16px]">radar</span>
+<span>Plant Canary Token</span>
+</button>
+</div>
+<!-- Instant Panic Zero-Wipe Trigger -->
+<button class="w-full px-space-md py-3 bg-error-container/30 hover:bg-error-container/50 text-error font-label-code-md text-label-code-md font-semibold rounded-lg shadow-md transition flex items-center justify-center gap-space-sm" id="zeroWipeBtn" type="button">
+<span class="material-symbols-outlined text-[20px]">skull</span>
+<span>Trigger RAM Zero-Wipe Panic Now (Manual Override)</span>
+</button>
+</div>
+</div>
+</section>
+</div>
+</div>
+<script>
+  function togglePassVisibility(inputId, btn) {
+    const input = document.getElementById(inputId);
+    const icon = btn.querySelector('.material-symbols-outlined');
+    if (input.type === 'password') {
+      input.type = 'text';
+      icon.textContent = 'visibility_off';
+    } else {
+      input.type = 'password';
+      icon.textContent = 'visibility';
+    }
+  }
+
+  document.getElementById('zeroWipeBtn')?.addEventListener('click', function() {
+    if (confirm('TACTICAL OVERRIDE CONFIRMATION:\n\nTrigger immediate zero-fill scrub of volatile heap keys? Unsaved transient credentials will be destroyed.')) {
+      this.classList.add('opacity-50');
+      this.innerHTML = '<span class="material-symbols-outlined animate-spin text-[20px]">refresh</span><span>Purging RAM Key Blocks (7 passes)...</span>';
+      setTimeout(() => {
+        this.innerHTML = '<span class="material-symbols-outlined text-[20px]">check_circle</span><span>RAM Zeroed Successfully. Enclave Safe.</span>';
+        this.classList.remove('opacity-50');
+        this.classList.replace('text-error', 'text-tertiary');
+      }, 1200);
+    }
+  });
+</script>
+</main>
+<!-- END: Dynamic Main View Area -->
+</body></html>

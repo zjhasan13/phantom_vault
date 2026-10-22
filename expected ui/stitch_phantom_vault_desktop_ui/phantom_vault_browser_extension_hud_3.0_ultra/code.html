@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Phantom Vault - Next-Gen Browser Extension HUD</title>
+<!-- Google Fonts: Inter & JetBrains Mono -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Lucide Icons -->
+<script src="https://unpkg.com/lucide@latest"></script>
+<!-- Tailwind CSS v3 -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['"JetBrains Mono"', 'monospace']
+          },
+          colors: {
+            vault: {
+              surface: '#0d0d11',
+              card: '#14141b',
+              subtle: '#1b1b24',
+              hover: '#22222f',
+              border: '#2a2a3a',
+              accent: '#8b5cf6',
+              accentGlow: '#a855f7',
+              emerald: '#10b981',
+              cyan: '#06b6d4'
+            }
+          },
+          boxShadow: {
+            'glow-violet': '0 0 25px -5px rgba(139, 92, 246, 0.35)',
+            'glow-emerald': '0 0 15px -3px rgba(16, 185, 129, 0.3)',
+            'inner-glow': 'inset 0 1px 0 0 rgba(255, 255, 255, 0.08)'
+          }
+        }
+      }
+    }
+  </script>
+<style data-purpose="base-styling">
+    body {
+      background-color: #070709;
+      color: #e2e8f0;
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+    }
+    /* Custom thin scrollbar */
+    ::-webkit-scrollbar {
+      width: 4px;
+      height: 4px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a2a3c;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3f3f58;
+    }
+  </style>
+<style data-purpose="animations">
+    @keyframes pulse-ring {
+      0% { transform: scale(0.95); opacity: 0.8; }
+      50% { transform: scale(1.05); opacity: 0.3; }
+      100% { transform: scale(0.95); opacity: 0.8; }
+    }
+    .animate-pulse-subtle {
+      animation: pulse-ring 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+    }
+    .totp-countdown-circle {
+      stroke-dasharray: 100;
+      stroke-dashoffset: 28; /* ~18s remaining out of 30s */
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+      transition: stroke-dashoffset 1s linear;
+    }
+  </style>
+</head>
+<body class="min-h-screen bg-[#07070a] text-zinc-100 flex items-start justify-center md:justify-end p-4 md:p-8 antialiased selection:bg-purple-600 selection:text-white font-sans">
+<!-- BEGIN: ExtensionMockupContainer -->
+<!-- Simulated Browser Backdrop Window context for extension popup presentation -->
+<main class="w-full max-w-[440px] rounded-2xl bg-[#0c0d12]/95 border border-violet-500/30 shadow-[0_20px_50px_rgba(0,0,0,0.85),0_0_35px_rgba(139,92,246,0.18)] relative overflow-hidden flex flex-col font-sans backdrop-blur-2xl ring-1 ring-white/10"><div class="h-[2px] w-full bg-gradient-to-r from-violet-600 via-fuchsia-500 to-cyan-400"></div><header class="px-4 py-3 border-b border-vault-border/80 bg-[#0d0e14]/90 backdrop-blur-md sticky top-0 z-30" data-purpose="extension-header"><div class="flex items-center justify-between mb-2.5"><div class="flex items-center space-x-2.5"><div class="relative flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-violet-600 to-indigo-800 shadow-glow-violet ring-1 ring-violet-400/30"><i class="w-4 h-4 text-white" data-lucide="shield-check"></i><span class="absolute -top-1 -right-1 flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-emerald-400 ring-2 ring-[#0c0d12]"></span></span></div><div><div class="flex items-center space-x-1.5"><span class="font-bold text-sm tracking-tight text-white flex items-center gap-1.5">Phantom Vault<span class="text-[9px] text-violet-300 font-mono px-1.5 py-0.5 rounded bg-violet-950/90 border border-violet-500/40 tracking-wider font-semibold">v3.2 PRO</span></span></div><div class="flex items-center space-x-1.5 text-[10px] text-zinc-400 mt-0.5"><span class="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span><span class="font-medium text-emerald-400/90 uppercase tracking-wider font-mono text-[9px]">RAM Enclave Sealed</span><span class="text-zinc-600">•</span><span class="text-zinc-400 font-mono text-[9px]">IPC 0.1ms</span></div></div></div><div class="flex items-center space-x-1"><button class="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-vault-hover transition-colors" title="Fast Vault Sync"><i class="w-3.5 h-3.5" data-lucide="refresh-cw"></i></button><button class="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-vault-hover transition-colors" title="Popout Window (Detached HUD)"><i class="w-3.5 h-3.5" data-lucide="external-link"></i></button><button class="p-1.5 text-amber-400/90 hover:text-amber-300 rounded-lg hover:bg-amber-950/30 transition-colors flex items-center gap-1" title="Quick Lock Enclave (Ctrl+L)"><i class="w-3.5 h-3.5" data-lucide="lock"></i></button><button class="p-1.5 text-zinc-400 hover:text-white rounded-lg hover:bg-vault-hover transition-colors" title="Preferences &amp; Security Rules"><i class="w-3.5 h-3.5" data-lucide="settings"></i></button></div></div><div class="flex items-center justify-between bg-[#12131b] px-2.5 py-1.5 rounded-lg border border-violet-500/20" data-purpose="active-domain-indicator"><div class="flex items-center space-x-2 min-w-0"><span class="flex h-2 w-2 relative"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-emerald-400"></span></span><span class="text-xs font-mono font-medium text-zinc-200 truncate">https://accounts.google.com</span><span class="text-[9px] bg-cyan-950/70 border border-cyan-800/40 text-cyan-300 font-medium px-1.5 py-0.5 rounded-full flex items-center gap-1"><i class="w-2.5 h-2.5 text-cyan-400" data-lucide="shield-check"></i> SSL SHA-256</span></div><div class="flex items-center space-x-1 text-[10px]"><span class="text-emerald-400 font-medium text-[9px] bg-emerald-950/50 border border-emerald-800/40 px-1.5 py-0.5 rounded flex items-center gap-1 font-mono" title="Punycode and Zero-Redirect Verified"><i class="w-2.5 h-2.5" data-lucide="check-circle-2"></i> Safe / 0-Redirect</span></div></div></header><nav class="flex items-center px-3 pt-2.5 pb-1 border-b border-vault-border/50 text-xs font-medium space-x-1 bg-[#0c0d12] overflow-x-auto scrollbar-none" data-purpose="tab-navigation"><button class="relative pb-2 px-2.5 text-violet-300 font-semibold flex items-center gap-1.5 transition-colors flex-shrink-0"><span>Autofill</span><span class="text-[9px] px-1.5 py-0.2 rounded-full bg-violet-600/40 text-violet-200 border border-violet-500/40 font-mono">2</span><span class="absolute bottom-0 left-0 right-0 h-0.5 bg-violet-400 rounded-full shadow-[0_0_8px_#8b5cf6]"></span></button><button class="pb-2 px-2.5 text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 transition-colors flex-shrink-0"><span>2FA Hub</span><span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span></button><button class="pb-2 px-2.5 text-zinc-400 hover:text-zinc-200 flex items-center gap-1 transition-colors flex-shrink-0"><span>Generator</span></button><button class="pb-2 px-2.5 text-zinc-400 hover:text-zinc-200 flex items-center gap-1 transition-colors flex-shrink-0"><span>Passkeys</span><span class="text-[9px] text-emerald-400 font-mono">FIDO2</span></button><button class="pb-2 px-2 text-zinc-500 hover:text-zinc-300 flex items-center gap-1 transition-colors ml-auto font-mono text-[10px]"><i class="w-3 h-3" data-lucide="search"></i><span>⌘K</span></button></nav><div class="overflow-y-auto max-h-[510px] p-3.5 space-y-3.5 scrollbar-none"><section class="space-y-2.5" data-purpose="matched-accounts-section"><div class="flex items-center justify-between text-xs font-medium text-zinc-400 px-0.5"><span class="flex items-center gap-1.5 text-zinc-300 text-[11px]"><i class="w-3.5 h-3.5 text-violet-400" data-lucide="sparkles"></i>Suggested for active tab (2)</span><span class="text-[10px] text-violet-400/90 font-mono bg-violet-950/40 border border-violet-500/20 px-1.5 py-0.5 rounded">Ctrl+Shift+L</span></div><article class="bg-gradient-to-b from-[#141520] to-[#0f1017] border border-violet-500/40 rounded-xl p-3.5 shadow-lg relative overflow-hidden group hover:border-violet-400/70 transition-all duration-200"><div class="absolute top-0 right-0 px-2 py-0.5 bg-violet-600/30 text-violet-300 text-[9px] font-medium tracking-wide rounded-bl-lg border-b border-l border-violet-500/30 flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-emerald-400"></span>Primary Login</div><div class="flex items-start space-x-3 mb-3"><div class="w-9 h-9 rounded-lg bg-zinc-800/90 border border-zinc-700/60 flex items-center justify-center p-1.5 flex-shrink-0 mt-0.5"><svg class="w-full h-full" viewbox="0 0 24 24"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"></path><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"></path><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.06H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.94l2.85-2.22.81-.63z" fill="#FBBC05"></path><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z" fill="#EA4335"></path></svg></div><div class="min-w-0 flex-1 pr-14"><div class="flex items-center gap-1.5"><h4 class="text-xs font-semibold text-white truncate">dev-ops@google.internal</h4></div><p class="text-[11px] text-zinc-400 truncate">Security Lead • Cloud Infra Ops</p><div class="flex items-center gap-1 mt-1 text-[9px] text-emerald-400 font-medium"><i class="w-3 h-3" data-lucide="fingerprint"></i><span>FIDO2 WebAuthn Passkey Bound</span></div></div></div><div class="bg-[#0c0d13] rounded-lg p-2 flex items-center justify-between border border-vault-border/70 mb-2.5" data-purpose="credential-preview"><div class="flex items-center space-x-2"><i class="w-3.5 h-3.5 text-zinc-500" data-lucide="key"></i><span class="font-mono text-xs tracking-widest text-zinc-300">••••••••••••••••</span></div><div class="flex items-center space-x-1"><button class="p-1 text-zinc-400 hover:text-zinc-200 transition-colors" title="Peek Password"><i class="w-3.5 h-3.5" data-lucide="eye"></i></button><button class="p-1 text-zinc-400 hover:text-zinc-200 transition-colors" title="Copy Password"><i class="w-3.5 h-3.5" data-lucide="copy"></i></button><button class="px-1.5 py-0.5 text-[9px] font-mono text-zinc-400 hover:text-violet-300 rounded border border-zinc-700 hover:border-violet-500/50 transition-colors" title="Copy as export SECRET_KEY=">.env</button></div></div><div class="rounded-lg bg-gradient-to-r from-violet-950/40 via-purple-950/20 to-zinc-900 border border-violet-500/30 p-2.5 mb-3 flex items-center justify-between shadow-sm" data-purpose="totp-module"><div class="flex items-center space-x-2.5"><div class="relative w-7 h-7 flex items-center justify-center flex-shrink-0"><svg class="w-7 h-7"><circle cx="14" cy="14" fill="none" opacity="0.2" r="11" stroke="#4c1d95" stroke-width="2.5"></circle><circle class="totp-countdown-circle" cx="14" cy="14" fill="none" r="11" stroke="#a855f7" stroke-dasharray="69" stroke-dashoffset="18" stroke-width="2.5"></circle></svg><span class="absolute text-[8px] font-mono font-bold text-violet-200">24s</span></div><div><div class="text-[9px] uppercase font-semibold tracking-wider text-violet-300/80 flex items-center gap-1.5"><span>Streaming 2FA Token</span><span class="text-[8px] text-emerald-400 font-mono">● Auto-Copy On</span></div><div class="font-mono text-base font-bold tracking-wider text-white flex items-center gap-1"><span>842</span><span class="text-violet-300">190</span><span class="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse ml-0.5"></span></div></div></div><button class="px-2 py-1 text-xs font-medium text-violet-200 hover:text-white bg-violet-900/50 hover:bg-violet-800/70 rounded-md border border-violet-700/60 flex items-center gap-1 transition-all shadow-sm active:scale-95" title="One-click TOTP Copy"><i class="w-3.5 h-3.5 text-violet-400" data-lucide="copy-check"></i><span>Copy TOTP</span></button></div><div class="grid grid-cols-12 gap-2" data-purpose="action-buttons"><button class="col-span-8 bg-gradient-to-r from-violet-600 to-indigo-600 hover:from-violet-500 hover:to-indigo-500 text-white text-xs font-semibold py-2 px-3 rounded-lg shadow-lg shadow-violet-600/30 flex items-center justify-center space-x-1.5 transition-all active:scale-[0.98] border border-violet-400/40"><i class="w-3.5 h-3.5 fill-current text-violet-200" data-lucide="zap"></i><span>Autofill &amp; Submit</span></button><button class="col-span-4 bg-vault-subtle hover:bg-vault-hover text-zinc-200 text-xs font-medium py-2 px-2 rounded-lg border border-vault-border flex items-center justify-center space-x-1 transition-colors" title="Use WebAuthn Hardware Key"><i class="w-3.5 h-3.5 text-emerald-400" data-lucide="fingerprint"></i><span>Passkey Tap</span></button></div></article><article class="bg-[#12131b]/80 hover:bg-[#141520] border border-vault-border hover:border-zinc-700 rounded-xl p-3 transition-all duration-150"><div class="flex items-center justify-between"><div class="flex items-center space-x-2.5 min-w-0"><div class="w-8 h-8 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center font-bold text-xs text-zinc-300 font-mono">G</div><div class="min-w-0"><div class="text-xs font-medium text-white truncate flex items-center gap-1.5"><span>Personal Account</span><span class="text-[9px] text-zinc-400 font-mono bg-zinc-800 px-1 py-0.2 rounded">OAuth</span></div><div class="text-[11px] text-zinc-400 font-mono truncate">alex.miller@gmail.com</div></div></div><div class="flex items-center space-x-1.5"><button class="px-2.5 py-1 text-xs font-medium bg-zinc-800 hover:bg-zinc-700 text-zinc-200 rounded-md border border-zinc-700 flex items-center gap-1 transition-colors"><i class="w-3 h-3 text-violet-400" data-lucide="corner-down-right"></i>Quick Fill</button></div></div></article></section><section class="bg-[#12131b]/60 border border-vault-border/60 rounded-xl p-3 space-y-2" data-purpose="micro-generator-hud"><div class="flex items-center justify-between text-xs"><span class="font-medium text-zinc-300 flex items-center gap-1.5 text-[11px]"><i class="w-3.5 h-3.5 text-violet-400" data-lucide="dices"></i>Quantum Diceware Generator</span><span class="text-[9px] text-emerald-400 font-mono bg-emerald-950/40 border border-emerald-800/40 px-1.5 py-0.5 rounded font-semibold">128-bit Shannon Entropy</span></div><div class="flex items-center space-x-1.5 bg-[#0a0a0e] rounded-lg p-1.5 border border-vault-border"><input class="bg-transparent border-0 text-xs font-mono text-violet-200 focus:ring-0 w-full select-all px-1 tracking-wide" readonly="" type="text" value="nebula-quantum-shield-72"/><button class="p-1 hover:text-violet-400 text-zinc-400 transition-colors" title="Generate Next Seed"><i class="w-3.5 h-3.5" data-lucide="rotate-ccw"></i></button><button class="p-1 hover:text-white text-zinc-400 transition-colors" title="Copy Generated Passphrase"><i class="w-3.5 h-3.5" data-lucide="clipboard"></i></button><button class="px-1.5 py-0.5 text-[9px] font-mono bg-violet-950/60 hover:bg-violet-900 border border-violet-700/50 text-violet-300 rounded transition-colors" title="Directly insert into active input">Fill</button></div></section><section class="space-y-1.5 pt-0.5" data-purpose="vault-search-filter"><div class="relative"><i class="w-3.5 h-3.5 text-zinc-500 absolute left-3 top-1/2 -translate-y-1/2" data-lucide="search"></i><input class="w-full bg-[#12131b] border border-vault-border rounded-lg pl-8.5 pr-8 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-violet-500 transition-colors font-sans" placeholder="Search 493 credentials, TOTPs, secure notes..." type="text"/><kbd class="absolute right-2.5 top-1/2 -translate-y-1/2 text-[9px] font-mono bg-[#0c0d12] text-zinc-400 px-1.5 py-0.5 rounded border border-vault-border">⌘K</kbd></div></section><div class="pt-1 border-t border-vault-border/40 flex items-center justify-between text-xs text-zinc-400"><label class="flex items-center space-x-2 cursor-pointer group"><input class="w-3.5 h-3.5 rounded border-zinc-700 bg-zinc-900 text-violet-600 focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox"/><span class="group-hover:text-zinc-300 text-[10px] transition-colors">Whitelist withgoogle.com for automated passkey auth</span></label></div></div><footer class="p-2.5 border-t border-vault-border/80 bg-[#0d0e14]/95 text-[10px] text-zinc-400 flex items-center justify-between" data-purpose="extension-footer"><div class="flex items-center space-x-2"><div class="flex items-center space-x-1.5"><i class="w-3.5 h-3.5 text-amber-400/80" data-lucide="timer"></i><span>Clipboard wipe in <span class="text-zinc-200 font-mono font-semibold">12s</span></span></div><div class="w-10 h-1 bg-zinc-800 rounded-full overflow-hidden hidden sm:block"><div class="w-3/5 h-full bg-amber-400/80 rounded-full"></div></div></div><div class="flex items-center space-x-1.5"><span class="text-[9px] text-emerald-400 font-mono bg-emerald-950/60 border border-emerald-800/50 px-1.5 py-0.5 rounded flex items-center gap-1"><i class="w-2.5 h-2.5" data-lucide="fingerprint"></i>TouchID Ready</span><button class="p-1 text-zinc-500 hover:text-red-400 transition-colors" title="Duress Wipe / Panic Enclave Lockdown"><i class="w-3 h-3" data-lucide="skull"></i></button></div></footer></main>
+<!-- END: ExtensionMockupContainer -->
+<!-- BEGIN: InteractiveIconsScript -->
+<script data-purpose="feather-icons-init">
+    // Initialize Lucide icons inside the extension HUD
+    document.addEventListener('DOMContentLoaded', () => {
+      lucide.createIcons();
+    });
+  </script>
+<!-- END: InteractiveIconsScript -->
+</body></html>
