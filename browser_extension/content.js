@@ -30,6 +30,10 @@
     match_mode: "base", // base | host | exact
     auto_submit: false,
     blocked_domains: [],
+    // Registrable domains where the user chose "Never" on the save prompt.
+    // Enforced here (prompt never appears) and in background.js (refuses the
+    // save even if a content script asks anyway).
+    never_save_domains: [],
   };
   let settings = { ...DEFAULTS };
   // H15: multi-step pending entry lives in this isolated-world closure var,
@@ -2333,7 +2337,20 @@
     }
     return "new";
   }
+  function neverSaveHit() {
+    const list = Array.isArray(settings.never_save_domains) ? settings.never_save_domains : [];
+    return list.includes(pageBase());
+  }
+  async function markNeverSave() {
+    const base = pageBase();
+    if (!base) return;
+    const list = Array.isArray(settings.never_save_domains) ? settings.never_save_domains.slice() : [];
+    if (!list.includes(base)) list.push(base);
+    settings.never_save_domains = list;
+    try { await chrome.storage.local.set({ never_save_domains: list }); } catch (_) {}
+  }
   function saverToast(username, password) {
+    if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";
@@ -2347,20 +2364,29 @@
     sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
     sub.textContent = `New login for ${pageBase()} — store it encrypted.`;
     const row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:8px;";
+    row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
     const save = document.createElement("button");
     save.textContent = "💾 Save";
     save.style.cssText = "flex:1;background:#8b7cf6;color:#fff;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
     const no = document.createElement("button");
     no.textContent = "✕ Not Now";
     no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
-    row.append(save, no);
+    const never = document.createElement("button");
+    never.textContent = "🚫 Never";
+    never.title = "Never offer to save logins for this site";
+    never.style.cssText = "flex:1;background:#1a2450;color:#ffb4ab;border:1px solid #5a2530;border-radius:8px;padding:8px;font-size:11px;cursor:pointer;";
+    row.append(save, no, never);
     box.append(t, sub, row);
     document.documentElement.append(box);
     const dismissSave = () => { document.removeEventListener("keydown", escSave, true); box.remove(); };
     const escSave = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissSave(); } };
     document.addEventListener("keydown", escSave, true);
     no.addEventListener("click", dismissSave);
+    never.addEventListener("click", async () => {
+      try { await markNeverSave(); } catch (_) {}
+      dismissSave();
+      toast(`Save prompt disabled for ${pageBase()}. Re-enable in Settings.`);
+    });
     setTimeout(dismissSave, 30000);
     save.focus();
     save.addEventListener("click", async () => {
@@ -2390,6 +2416,7 @@
   // domain → rotates into history, returns updated:true). Never auto-saves:
   // explicit click only, Not Now + 30s auto-dismiss like the save prompt.
   function updateToast(username, password) {
+    if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";

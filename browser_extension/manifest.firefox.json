@@ -9,7 +9,7 @@
       "strict_min_version": "121.0"
     }
   },
-  "permissions": ["tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus"],
+  "permissions": ["tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus", "alarms"],
   "commands": {
     "autofill_active_tab": {
       "suggested_key": {

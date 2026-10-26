@@ -472,3 +472,111 @@ test("P6: hotkey falls back to the top frame on restricted pages", async () => {
   assert.equal(hit.length, 1);
   assert.equal(hit[0].opts.frameId, 0);
 });
+// ---- Proactive idle lock (chrome.alarms) ---------------------------------
+// The timeout used to be evaluated only on the next message, so an open popup
+// kept claiming "unlocked" for up to 15s and background tabs kept a warm gate
+// cache. The alarm closes that window by TELLING every tab it locked.
+
+test("idle alarm is armed once at load with a 1-minute period", () => {
+  const { chrome } = fresh();
+  const armed = chrome.__state.alarms.filter((a) => a.name === "pv_idle_check");
+  assert.equal(armed.length, 1);
+  assert.equal(armed[0].info.periodInMinutes, 1);
+});
+
+test("idle alarm broadcasts PV_GATE_LOCKED to every tab past the timeout", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [
+    { id: 1, url: "https://a.example/" },
+    { id: 2, url: "https://b.example/" },
+  ];
+  chrome.__state.localStore.lock_timeout_min = 10;
+  chrome.__state.sessionStore.pv_last_active = Date.now() - 11 * 60 * 1000;
+  chrome.__listeners.onAlarm[0]({ name: "pv_idle_check" });
+  await flushTicks();
+  const locked = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_GATE_LOCKED");
+  assert.deepEqual(locked.map((x) => x.id).sort(), [1, 2]);
+  assert.ok(chrome.__state.sessionStore.pv_locked_at > 0);
+});
+
+test("idle alarm stays silent while the session is still fresh", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [{ id: 1, url: "https://a.example/" }];
+  chrome.__state.localStore.lock_timeout_min = 10;
+  chrome.__state.sessionStore.pv_last_active = Date.now();
+  chrome.__listeners.onAlarm[0]({ name: "pv_idle_check" });
+  await flushTicks();
+  const locked = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_GATE_LOCKED");
+  assert.equal(locked.length, 0);
+});
+
+test("idle alarm respects lock_timeout_min 0 (Never)", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [{ id: 1, url: "https://a.example/" }];
+  chrome.__state.localStore.lock_timeout_min = 0;
+  chrome.__state.sessionStore.pv_last_active = Date.now() - 60 * 60 * 1000;
+  chrome.__listeners.onAlarm[0]({ name: "pv_idle_check" });
+  await flushTicks();
+  const locked = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_GATE_LOCKED");
+  assert.equal(locked.length, 0);
+});
+
+test("idle alarm ignores unrelated alarm names", async () => {
+  const { chrome } = fresh();
+  chrome.__state.tabList = [{ id: 1, url: "https://a.example/" }];
+  chrome.__state.sessionStore.pv_last_active = Date.now() - 60 * 60 * 1000;
+  chrome.__listeners.onAlarm[0]({ name: "something_else" });
+  await flushTicks();
+  assert.equal(chrome.__state.sentToTabs.length, 0);
+});
+
+// ---- "Never save for this site" -----------------------------------------
+// Content side hides the prompt; this is the defense-in-depth half, so a
+// hostile/skewed content script cannot file a login the user refused.
+
+test("PV_SAVE_LOGIN is refused for a domain in never_save_domains", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.never_save_domains = ["example.com"];
+  const r = await sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_SAVE_LOGIN", username: "u", password: "p", url: "https://login.example.com/in", title: "Example" },
+    { tab: { url: "https://login.example.com/in" }, url: "https://login.example.com/in" },
+  );
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /never save/i);
+  assert.equal(chrome.__state.ports.length, 0);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("PV_SAVE_LOGIN still reaches the host for unlisted domains", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.never_save_domains = ["other.com"];
+  const p = sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_SAVE_LOGIN", username: "u", password: "p", url: "https://example.com/login", title: "Example" },
+    { tab: { url: "https://example.com/login" }, url: "https://example.com/login" },
+  );
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "save_login");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("never_save_domains tolerates a corrupted (non-array) value", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.never_save_domains = "not-an-array";
+  const p = sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_SAVE_LOGIN", username: "u", password: "p", url: "https://example.com/login", title: "Example" },
+    { tab: { url: "https://example.com/login" }, url: "https://example.com/login" },
+  );
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "save_login");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});

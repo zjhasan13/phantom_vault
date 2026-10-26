@@ -61,7 +61,12 @@ function makeChrome(store) {
       lastError: undefined,
     },
     storage: {
-      local: { get: async (d) => ({ ...d }), set: async () => {}, remove: async () => {} },
+      local: {
+        // Seed `store.local` to model settings persisted by an earlier run.
+        get: async (d) => ({ ...d, ...(store.local || {}) }),
+        set: async (o) => { store.local = { ...(store.local || {}), ...o }; },
+        remove: async (k) => { if (store.local) delete store.local[k]; },
+      },
       session: {
         get: async (d) => {
           const out = { ...d };
@@ -81,7 +86,7 @@ function makeChrome(store) {
   };
 }
 
-export function loadContent(html, url = "https://example.com/login", entries = [], cards = [], identities = [], totp = []) {
+export function loadContent(html, url = "https://example.com/login", entries = [], cards = [], identities = [], totp = [], local = {}) {
   // content.js schedules 30 s toast timers; when a test closes its window those
   // fire against a torn-down document. Swallow only jsdom's teardown reports —
   // real assertion failures still surface normally.
@@ -101,7 +106,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, cards, identities, totp, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
+  const store = { entries, cards, identities, totp, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [], local: { ...local } };
   window.chrome = makeChrome(store);
   // jsdom has no innerText. content.js reads it for OTP hint/context text, so
   // map it to textContent; without this the hint paths see empty strings and

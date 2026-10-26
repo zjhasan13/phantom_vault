@@ -583,3 +583,67 @@ test("focused real 2FA box still opens the account picker (control)", async (t) 
   await flush(150);
   assert.ok(window.document.getElementById("__pv_otp_picker"), "explicit focus must still open the picker");
 });
+
+// ---- "Never save for this site" (content side) ---------------------------
+// Bitwarden parity for the save prompt: the middle option is "Not Now", the
+// permanent opt-out must exist too. Choice is stored per registrable domain,
+// so a decision on login.example.com also silences accounts.example.com.
+
+test("save banner offers Never and stores the registrable domain", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://login.example.com/signin");
+  await flush(); // settings boot get() settles before the first submit
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  assert.ok(banner, "banner first");
+  const never = [...banner.querySelectorAll("button")].find((b) => /Never/.test(b.textContent));
+  assert.ok(never, "Never button must exist");
+  never.click();
+  await flush();
+  assert.deepEqual(Array.from(store.local.never_save_domains), ["example.com"]);
+  assert.equal(saver(window), null, "banner dismissed");
+});
+
+test("after Never, a later submit on the same site stays silent", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login");
+  await flush();
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const banner = saver(window);
+  [...banner.querySelectorAll("button")].find((b) => /Never/.test(b.textContent)).click();
+  await flush();
+  // Second submit (e.g. a failed login retried) must not re-open the prompt.
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("a seeded never_save_domains entry suppresses the prompt on load", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login", [], [], [], [], { never_save_domains: ["example.com"] });
+  await flush();
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});
+
+test("Never also silences the password-update prompt for that site", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="newpw">
+  </form>`, "https://example.com/login",
+    [{ id: "e1", username: "alice", password: "oldpw", urls: ["example.com"] }],
+    [], [], [], { never_save_domains: ["example.com"] });
+  await flush();
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.equal(saver(window), null);
+});

@@ -26,7 +26,7 @@ const BG = fs.readFileSync(path.join(EXT, "background.js"), "utf8");
 // Records what the router asked for; tests answer native-host frames by
 // hand. Anything unimplemented throws LOUDLY (silent no-ops hide bugs).
 function makeChrome() {
-  const listeners = { onMessage: [], onInstalled: [], onStartup: [], onActivated: [], onUpdated: [], onClicked: [], onCommand: [], onChanged: [] };
+  const listeners = { onMessage: [], onInstalled: [], onStartup: [], onActivated: [], onUpdated: [], onClicked: [], onCommand: [], onChanged: [], onAlarm: [] };
   const state = {
     sessionStore: {},
     localStore: { lock_timeout_min: 10 },
@@ -35,6 +35,7 @@ function makeChrome() {
     accessLevel: null,
     tabList: [],
     sentToTabs: [],
+    alarms: [],
   };
   const port = () => {
     const handlers = { message: [], disconnect: [] };
@@ -104,6 +105,12 @@ function makeChrome() {
       onClicked: { addListener: (fn) => listeners.onClicked.push(fn) },
     },
     commands: { onCommand: { addListener: (fn) => listeners.onCommand.push(fn) } },
+    alarms: {
+      create: (name, info) => {
+        state.alarms.push({ name, info });
+      },
+      onAlarm: { addListener: (fn) => listeners.onAlarm.push(fn) },
+    },
   };
   return chrome;
 }

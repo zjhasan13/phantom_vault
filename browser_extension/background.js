@@ -211,6 +211,33 @@ function broadcastGateLocked() {
   } catch (_) {}
 }
 
+// Proactive idle lock. Until now the timeout was evaluated lazily, on the
+// next message: a popup left open kept looking unlocked until it polled, and
+// background tabs kept a warm gate cache. An alarm ticks once a minute and
+// pushes PV_GATE_LOCKED the moment the deadline passes, so "locked" is a fact
+// the UI is told, not a verdict it has to ask for.
+const IDLE_ALARM = "pv_idle_check";
+function armIdleAlarm() {
+  try {
+    if (!chrome.alarms || typeof chrome.alarms.create !== "function") return;
+    chrome.alarms.create(IDLE_ALARM, { periodInMinutes: 1 });
+  } catch (_) {}
+}
+async function idleAlarmTick() {
+  const st = await sessionState();
+  if (!st || st.ok !== true || st.locked !== true) return;
+  try {
+    await chrome.storage.session.set({ pv_locked_at: Date.now() });
+  } catch (_) {}
+  broadcastGateLocked();
+}
+if (chrome.alarms && chrome.alarms.onAlarm && chrome.alarms.onAlarm.addListener) {
+  chrome.alarms.onAlarm.addListener((a) => {
+    if (!a || a.name !== IDLE_ALARM) return;
+    idleAlarmTick();
+  });
+}
+
 // Content scripts + popup talk to us here; we only proxy to the vault.
 // After mutating calls (save/fill) the toolbar count may change, so the
 // originating tab's badge refreshes on the next tick.
@@ -355,6 +382,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_SAVE_LOGIN") {
       if (!saveSenderOk(msg.url)) {
         return { ok: false, error: "save url does not match sender frame" };
+      }
+      if (await neverSaveHit(msg.url)) {
+        return { ok: false, error: "never save for this site" };
       }
       const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
       if (r && r.ok) { touchActivity(); retouchBadge(); }
@@ -526,8 +556,9 @@ async function refreshContextMenus() {
   } catch (_) { /* menus are best-effort */ }
 }
 
-chrome.runtime.onInstalled.addListener(refreshContextMenus);
-chrome.runtime.onStartup.addListener(refreshContextMenus);
+chrome.runtime.onInstalled.addListener(() => { armIdleAlarm(); refreshContextMenus(); });
+chrome.runtime.onStartup.addListener(() => { armIdleAlarm(); refreshContextMenus(); });
+armIdleAlarm();
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.show_context_menu) refreshContextMenus();
 });
@@ -560,6 +591,22 @@ chrome.commands.onCommand.addListener(async (command) => {
 // E1/E2: implementations live in domain.js (single source).
 function pvRegistrable(host) {
   return PVDomain.registrable(host);
+}
+// "Never save for this site": the user's save prompt choice, enforced here
+// too (defense in depth — a content script must not be able to file a login
+// the user explicitly refused). Values are registrable domains, so a decision
+// on accounts.example.com also covers login.example.com.
+async function neverSaveHit(rawUrl) {
+  try {
+    const host = new URL(String(rawUrl).includes("://") ? String(rawUrl) : "https://" + rawUrl).hostname;
+    const base = pvRegistrable(host);
+    if (!base) return false;
+    const s = await chrome.storage.local.get({ never_save_domains: [] });
+    const list = Array.isArray(s.never_save_domains) ? s.never_save_domains : [];
+    return list.includes(base);
+  } catch (_) {
+    return false;
+  }
 }
 const PV_EQUIV = PVDomain.EQUIV_CLUSTERS;
 function pvMemberHit(member, domain) {
