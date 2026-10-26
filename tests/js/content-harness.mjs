@@ -34,6 +34,13 @@ function makeChrome(store) {
     if (msg.type === "PV_IDENTITIES") {
       return { ok: true, entries: store.identities || [] };
     }
+    // 2FA picker path: the content engine asks the host for per-site TOTP
+    // candidates and opens its picker only when more than one matches.
+    if (msg.type === "PV_TOTP_LOOKUP") {
+      const all = store.totp || [];
+      const id = msg.id ? String(msg.id) : "";
+      return { ok: true, candidates: id ? all.filter((c) => String(c.id) === id) : all };
+    }
     if (msg.type === "PV_SAVE_LOGIN") {
       store.saves.push(msg);
       return { ok: true, updated: false };
@@ -74,7 +81,7 @@ function makeChrome(store) {
   };
 }
 
-export function loadContent(html, url = "https://example.com/login", entries = [], cards = [], identities = []) {
+export function loadContent(html, url = "https://example.com/login", entries = [], cards = [], identities = [], totp = []) {
   // content.js schedules 30 s toast timers; when a test closes its window those
   // fire against a torn-down document. Swallow only jsdom's teardown reports —
   // real assertion failures still surface normally.
@@ -94,8 +101,18 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, cards, identities, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
+  const store = { entries, cards, identities, totp, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [] };
   window.chrome = makeChrome(store);
+  // jsdom has no innerText. content.js reads it for OTP hint/context text, so
+  // map it to textContent; without this the hint paths see empty strings and
+  // the classification under test would be untestable here.
+  try {
+    Object.defineProperty(window.HTMLElement.prototype, "innerText", {
+      get() { return this.textContent; },
+      set(v) { this.textContent = v; },
+      configurable: true,
+    });
+  } catch (_) {}
   // Manifest order: domain.js before content.js (same isolated world).
   window.eval(DOMAIN);
   window.eval(CONTENT);

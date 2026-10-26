@@ -990,47 +990,92 @@
 
   function isOtpField(el) {
     if (isSearchField(el)) return false;
+    const type = (el.type || "").toLowerCase();
+    // A password box is never an OTP box here; neither is a hidden input or an
+    // email box (2FA-by-email still uses a dedicated short code field).
+    if (type === "password" || type === "hidden" || type === "email") return false;
     if ((el.autocomplete || "").toLowerCase() === "one-time-code") return true;
     if (inSplitOtpGroup(el)) return true;
-    const hay = ((el.name || "") + " " + (el.id || "")).toLowerCase();
-    if (/otp|2fa|two-factor|one-time|verif|token/.test(hay)) return true;
-    // "code" as a standalone token only ("postcode"/"area-code" are addresses).
-    if (hay.split(/[^a-z0-9]+/).includes("code")) return true;
-    // Context path (Instagram-style signal-less inputs: type=text,
-    // autocomplete=off, React-hash id): read the associated label +
-    // enclosing form text for code ceremonies. Tight keywords only —
-    // bare "verify" (captchas) must NOT match. Never password fields,
-    // never forms that also hold one (that's a login form, not OTP).
-    try {
-      const t = (el.type || "").toLowerCase();
-      if ((t === "text" || t === "number" || t === "tel") && otpContextHit(el)) return true;
-    } catch (_) {}
+
+    const hay = ((el.name || "") + " " + (el.id || "") + " " +
+      ((el.getAttribute && el.getAttribute("aria-label")) || "")).toLowerCase();
+    // Strong tokens are decisive: nobody names a repository field "totp".
+    // Compact matching covers the separated spellings ("security_code",
+    // "verification code") that Bitwarden's TotpFieldNames also accept.
+    if (STRONG_OTP_TOKEN.test(hay) ||
+      STRONG_OTP_COMPACT.test(hay.replace(/[\s_-]+/g, ""))) return true;
+
+    // Generic free-text fields (repo name, title, description, message, …) are
+    // not code boxes. Without this gate any form whose surrounding copy
+    // happened to contain the word "code" classified as a 2FA ceremony — that
+    // is how the picker opened on GitHub's "New repository" form.
+    if (isGenericTextField(el)) return false;
+
+    const hint = explicitHintText(el);
+    const weakToken = ((hay + " " + hint).split(/[^a-z0-9]+/).includes("code")) ||
+      ((hay + " " + hint).split(/[^a-z0-9]+/).includes("token"));
+    // "code"/"token" alone is a weak signal, so the box must also look like a
+    // code box (short and/or numeric) or the page must explicitly announce a
+    // code ceremony next to this input.
+    if (weakToken) {
+      if (looksLikeCodeBox(el) || CEREMONY_HINT.test(hint)) return true;
+    }
+    if (WEAK_OTP_PHRASE.test(hint) && looksLikeCodeBox(el)) return true;
     return false;
   }
-  function otpContextHit(el) {
-    const texts = [];
+  // OTP tokens strong enough to classify on their own.
+  const STRONG_OTP_TOKEN = /\b(totp|otp|otc|2fa|mfa|two-factor|twofactor|one-time|onetime|authenticator)\b/;
+  const STRONG_OTP_COMPACT = /(totpcode|otpcode|2facode|mfacode|onetimecode|onetimepassword|verificationcode|securitycode|authcode|confirmationcode|approvalscode|secondfactor|twofactorcode)/;
+  // Words that say "this is the code step" when they sit on the field's own
+  // label/hint. Deliberately narrow: bare "verify" is a captcha, not an OTP.
+  const CEREMONY_HINT = /^(code|enter code|enter the code|login code|sign-?in code|security code|verification code|confirmation code|2fa code)$|enter (the )?code|code (sent|via)|6.?digit|one.?time|verification code|security code|two.?step|two.?factor|authenticator/;
+  const WEAK_OTP_PHRASE = /\b(verification|security|auth|confirmation)\b/;
+  // Free-text tokens: a field carrying one of these is never an OTP box.
+  const GENERIC_TEXT_TOKENS = new Set([
+    "repository", "repo", "name", "title", "description", "desc", "subject",
+    "message", "comment", "body", "gist", "filename", "file", "path", "branch",
+    "tag", "url", "link", "label", "project", "workspace", "organization",
+    "org", "team", "folder", "directory", "company", "website", "display",
+    "note", "notes", "snippet", "content", "query", "search",
+  ]);
+  function isGenericTextField(el) {
+    const hay = ((el.name || "") + " " + (el.id || "") + " " +
+      ((el.getAttribute && el.getAttribute("aria-label")) || "")).toLowerCase();
+    return hay.split(/[^a-z0-9]+/).some((t) => t && GENERIC_TEXT_TOKENS.has(t));
+  }
+  // A real code box is short and/or numeric; a repository name is neither.
+  function looksLikeCodeBox(el) {
+    const t = (el.type || "").toLowerCase();
+    if (t === "number") return true;
+    if (((el.getAttribute && el.getAttribute("inputmode")) || "").toLowerCase() === "numeric") return true;
+    const pat = (el.getAttribute && el.getAttribute("pattern")) || "";
+    if (/\d/.test(pat)) return true;
+    const max = parseInt((el.getAttribute && el.getAttribute("maxlength")) || "", 10);
+    return Number.isFinite(max) && max >= 4 && max <= 8;
+  }
+  // ONLY text the page ties to this input: <label>, aria-labelledby,
+  // aria-label, aria-describedby, placeholder. Page/form copy is excluded on
+  // purpose — that is where the false "code" came from.
+  function explicitHintText(el) {
+    const parts = [];
     try {
-      if (el.labels) {
-        for (const l of el.labels) texts.push(l.innerText || l.textContent || "");
-      }
-      const labelledby = (el.getAttribute && el.getAttribute("aria-labelledby")) || "";
-      for (const id of labelledby.split(/\s+/)) {
+      if (el.labels) for (const l of el.labels) parts.push(l.textContent || "");
+      const lb = (el.getAttribute && el.getAttribute("aria-labelledby")) || "";
+      for (const id of lb.split(/\s+/)) {
         if (!id) continue;
         const n = document.getElementById(id);
-        if (n) texts.push(n.innerText || n.textContent || "");
+        if (n) parts.push(n.textContent || "");
       }
-      const form = (el.closest && el.closest("form")) || null;
-      if (form && form.querySelector('input[type="password"]')) return false;
-      const scope = form || (el.parentElement && el.parentElement.parentElement) || document.body;
-      const t = ((scope && scope.innerText) || "").slice(0, 800);
-      if (t) texts.push(t);
-    } catch (_) { return false; }
-    const hay = texts.join(" ").toLowerCase();
-    // Bare "Code" label (Instagram: lab=Code) counts like the name/id
-    // standalone-token rule — but address "code" (postal/zip/area) never does.
-    const tokens = hay.split(/[^a-z0-9]+/);
-    if (tokens.includes("code") && !/(postal|zip|area|address|city|state|country)/.test(hay)) return true;
-    return /6.?digit|one.?time|authenticator|2fa|two.?factor|security code|verification code|confirmation code|enter (the )?code|code (sent|via)|two.?step/.test(hay);
+      const db = (el.getAttribute && el.getAttribute("aria-describedby")) || "";
+      for (const id of db.split(/\s+/)) {
+        if (!id) continue;
+        const n = document.getElementById(id);
+        if (n) parts.push(n.textContent || "");
+      }
+      parts.push((el.getAttribute && el.getAttribute("aria-label")) || "");
+      parts.push(el.placeholder || "");
+    } catch (_) {}
+    return parts.join(" ").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 240);
   }
   function queryHost(type, q, ms = 10000) {
     // Dead-bridge hang guard: every round-trip races a timeout (popup and
@@ -2045,6 +2090,19 @@
     }
     return { code: list[0].code, source: "ranked", id: list[0].id, expiresIn: list[0].expires_in };
   }
+  // The sweep is passive (mutation-driven); the picker is not. Only an
+  // explicit user gesture — focus inside the code box — or a pinned account
+  // from step 1 justifies covering the page with a menu.
+  function otpSweepMayPrompt(f) {
+    if (pvPending && pvPending.totpId) return true;
+    const box = f && f.otp && f.otp[0];
+    if (!box) return false;
+    const active = document.activeElement;
+    if (!active) return false;
+    if (active === box || box.contains(active)) return true;
+    // Split code screen: the user is in a sibling box of the same OTP group.
+    return active.tagName === "INPUT" && isOtpField(active);
+  }
   function sweepOtpOnce() {
     sweepOtpAsync().catch(() => {});
   }  async function sweepOtpAsync() {
@@ -2086,9 +2144,19 @@
           // fires on every mutation and a live picker must not re-toast or
           // rebuild. Re-open a dead handle (page re-render), but never re-pop
           // one the user just dismissed — focus/badge is the way back.
-          if (!otpPickerLive() && !otpPickerUserClosed) {
-            openOtpPicker(r.candidates || [], f);
+          if (otpPickerLive() || otpPickerUserClosed) return;
+          // Bitwarden parity: a passive page scan never opens the account
+          // menu by itself. It opens only when the user is IN the code box
+          // (focus is explicit intent) or when step 1 already pinned WHICH
+          // account this ceremony belongs to. Without this gate the sweep
+          // re-opened the picker on every unrelated mutation anywhere on the
+          // page, and a merely *suspected* OTP field could summon it.
+          if (!otpSweepMayPrompt(f)) {
+            console.log(`PV OTP: ${r.candidates.length} candidates, no focus/pin — picker stays closed`);
+            return;
           }
+          console.log(`PV OTP picker open on #${f.otp[0].id || "-"}[${f.otp[0].name || "-"}], focus=${document.activeElement === f.otp[0]}, pinned=${pinnedId || "none"}`);
+          openOtpPicker(r.candidates || [], f);
           return;
         }
         toast("🔐 একাধিক 2FA account — popup থেকে বেছে নিন।");

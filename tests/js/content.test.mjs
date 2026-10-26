@@ -531,3 +531,55 @@ test("E6: document scans run through one debounced observer", () => {
   assert.ok(!/new MutationObserver\(scanForms\)/.test(src), "no undebounced scanForms observer");
   assert.match(src, /pvScanTimer = setTimeout\(\(\) => \{[\s\S]{0,120}scan\(\);[\s\S]{0,80}scanForms\(\);[\s\S]{0,40}\}, 120\)/);
 });
+
+// ---- 2FA picker qualification (Bitwarden parity) -------------------------
+// The picker must be evidence-driven, never inferred. Regression: on GitHub's
+// "New repository" page the surrounding copy contains the word "code", and the
+// old classifier read that as an OTP ceremony and covered the page with the
+// TOTP account menu.
+const TOTP_TWO = [
+  { id: "t1", account: "zjhasan13", issuer: "GitHub", code: "379321", has_totp: true, totp: "1" },
+  { id: "t2", account: "zjhasan33", issuer: "GitHub", code: "163997", has_totp: true, totp: "1" },
+];
+const REPO_FORM = `<form action="/repositories" method="post">
+  <label for="repository_name">Repository name</label>
+  <input type="text" id="repository_name" name="repository[name]" autocomplete="off" maxlength="100">
+  <p>Choose which files not to track. Code owners can be added later.</p>
+  <label for="repository_description">Description</label>
+  <input type="text" id="repository_description" name="repository[description]" autocomplete="off">
+  <button type="submit">Create repository</button>
+</form>`;
+
+test("2FA picker stays closed on a generic text field (GitHub new-repo copy mentions 'code')", async (t) => {
+  const { window } = env(t, REPO_FORM, "https://github.com/new", [], [], [], TOTP_TWO);
+  await flush(120); // boot sweep + mutation observer
+  assert.equal(window.document.getElementById("__pv_otp_picker"), null);
+});
+
+test("2FA picker stays closed when a generic text field is focused", async (t) => {
+  const { window } = env(t, REPO_FORM, "https://github.com/new", [], [], [], TOTP_TWO);
+  const box = window.document.getElementById("repository_name");
+  box.focus();
+  await flush(150);
+  assert.equal(window.document.activeElement, box);
+  assert.equal(window.document.getElementById("__pv_otp_picker"), null);
+});
+
+test("passive sweep never opens the picker without focus or a pinned account", async (t) => {
+  const { window } = env(t, `<form>
+    <p>Enter the 6-digit code from your authenticator app.</p>
+    <input type="text" id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+  </form>`, "https://github.com/sessions/two-factor", [], [], [], TOTP_TWO);
+  await flush(150);
+  assert.equal(window.document.getElementById("__pv_otp_picker"), null);
+});
+
+test("focused real 2FA box still opens the account picker (control)", async (t) => {
+  const { window } = env(t, `<form>
+    <p>Enter the 6-digit code from your authenticator app.</p>
+    <input type="text" id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric" maxlength="6">
+  </form>`, "https://github.com/sessions/two-factor", [], [], [], TOTP_TWO);
+  window.document.getElementById("otp").focus();
+  await flush(150);
+  assert.ok(window.document.getElementById("__pv_otp_picker"), "explicit focus must still open the picker");
+});
