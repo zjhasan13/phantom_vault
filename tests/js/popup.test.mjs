@@ -73,3 +73,44 @@ test("P6: popup gates and suggestions include embedded frame origins", () => {
   const assign = SRC.indexOf("frameHosts = await loadFrameHosts");
   assert.ok(decl > 0 && decl < assign, "frameHosts declared before the init assignment (no TDZ)");
 });
+
+// ---- A3: item editor ----
+
+test("A3: popup sends create/update/delete only through the editor", () => {
+  assert.match(SRC, /function openItemEditor\(entry\)/, "editor present");
+  assert.match(SRC, /type: isNew \? "PV_ITEM_CREATE" : "PV_ITEM_UPDATE"/);
+  assert.match(SRC, /type: "PV_ITEM_DELETE"/);
+  assert.match(SRC, /document\.getElementById\("addItemBtn"\)/, "Add button wired");
+  assert.match(SRC, /function editButton\(id\)/, "per-row edit control present");
+});
+
+test("A3: armed items require the master reprompt before any mutation", () => {
+  const editor = SRC.slice(SRC.indexOf("async function requestReprompt"), SRC.indexOf("function currentFilter"));
+  assert.match(editor, /type: "PV_REPROMPT"/, "reprompt goes through the bridge");
+  const save = editor.slice(editor.indexOf("saveBtn.addEventListener"), editor.indexOf("if (delBtn)"));
+  assert.match(save, /needsToken\(\) \? await requestReprompt/, "save gates on reprompt");
+  assert.ok(save.indexOf("requestReprompt") < save.indexOf("PV_ITEM_UPDATE"),
+    "reprompt happens before the mutation");
+  const del = editor.slice(editor.indexOf("delBtn.addEventListener"));
+  assert.match(del, /entry\.reprompt \? await requestReprompt/, "delete gates on reprompt");
+  assert.match(del, /PV_ITEM_DELETE/);
+});
+
+test("A3: edit flow never overwrites a TOTP secret with a live code", () => {
+  assert.match(SRC, /if \(totpIn\.value\.trim\(\)\) payload\.totp = totpIn\.value\.trim\(\);/,
+    "blank TOTP field is omitted, not sent");
+  assert.match(SRC, /fetchEntry\(1, id\)/, "editor loads the full item on demand");
+});
+
+// ---- A4: clipboard auto-clear ----
+
+test("A4: every popup copy arms the background auto-clear alarm", () => {
+  const arm = SRC.match(/function armClipboardClear\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(arm, "armClipboardClear present");
+  assert.match(arm[1], /type: "PV_CLIP_ARM"/);
+  const clip = SRC.match(/async function clipText\(text, btn\) \{([\s\S]*?)\n  \}/);
+  assert.ok(clip, "clipText present");
+  assert.match(clip[1], /armClipboardClear\(\)/);
+  assert.match(SRC, /armClipboardClear\(\);\s*\n\s*btn\.textContent = full\.totp;/, "2FA copy arms it too");
+  assert.match(SRC, /await navigator\.clipboard\.writeText\(genOut\.textContent \|\| ""\);\s*\n\s*armClipboardClear\(\);/, "generator copy arms it");
+});

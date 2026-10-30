@@ -9,6 +9,12 @@
 //! - `{"cmd":"assert","rp_id":"...","challenge":"<b64>","credential_id"?}`
 //!   → Ed25519 assertion `{credential_id, signature, sign_count}` with an
 //!   in-memory counter bump the serve loop persists (RP clone detection).
+//! - `{"cmd":"verify_master","password":"..."}` → single-use reprompt token
+//!   (120 s) after a constant-time check against the Hello-unsealed session
+//!   passphrase. No token is minted for a locked/decoy session.
+//! - `{"cmd":"create_login",...}` / `{"cmd":"update_login","id":...}` /
+//!   `{"cmd":"delete_login","id":...}` → popup item editor. Armed rows
+//!   (`reprompt: true`) require `reprompt_token`; delete is a soft Trash move.
 //!
 //! Security contract: the host unlocks ONLY via the Hello-cached DPAPI
 //! passphrase (stdin IS the protocol pipe — no TTY prompt possible, and none
@@ -256,6 +262,66 @@ pub(crate) fn mint_test_uv(rp: &str) -> String {
     mint_uv_token(rp, crate::models::current_timestamp())
 }
 
+/// A3: master-reprompt tokens. The host holds the Hello-unsealed master
+/// passphrase for the whole session, so it can re-verify a password typed in
+/// the extension without a second KDF. A successful check mints a single-use
+/// token (120s TTL) that `create_login`/`update_login`/`delete_login` require
+/// when the item is (or becomes) reprompt-armed. The token never leaves this
+/// process and is never persisted.
+static REPROMPT_TOKENS: std::sync::OnceLock<UvStore> = std::sync::OnceLock::new();
+
+fn reprompt_store() -> &'static UvStore {
+    REPROMPT_TOKENS.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Mint after the serve loop verified the master password. Pure shape — tested.
+pub(crate) fn mint_reprompt_token(now: u64) -> String {
+    use rand_core::RngCore as _;
+    let mut raw = [0u8; 32];
+    rand_core::OsRng.fill_bytes(&mut raw);
+    let mut s = String::with_capacity(64);
+    for b in raw {
+        s.push_str(&format!("{b:02x}"));
+    }
+    if let Ok(mut g) = reprompt_store().lock() {
+        g.retain(|_, (_, exp)| *exp > now);
+        g.insert(s.clone(), ("reprompt".to_string(), now.saturating_add(120)));
+    }
+    s
+}
+
+/// Single-use consume. Wrong/expired tokens do not burn a valid one.
+pub(crate) fn consume_reprompt_token(token: &str, now: u64) -> bool {
+    let Ok(mut g) = reprompt_store().lock() else {
+        return false;
+    };
+    let ok = matches!(g.get(token), Some((_, exp)) if now <= *exp);
+    if ok {
+        g.remove(token);
+    }
+    ok
+}
+
+/// Constant-time passphrase comparison (length is not hidden; the KDF is the
+/// real cost barrier and the host also delays failed attempts).
+pub(crate) fn ct_eq_bytes(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.iter().zip(b.iter()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Reprompt gate for persisting item edits. Missing/expired token fails closed.
+fn reprompt_ok(req: &serde_json::Value, now: u64) -> bool {
+    req.get("reprompt_token")
+        .and_then(|v| v.as_str())
+        .is_some_and(|t| consume_reprompt_token(t, now))
+}
+
 /// M12: fill-event brake (120/min per host process — popup tiles report
 /// per frame; unauthenticated floods must not spin the sidecar).
 /// Counters are module-level (not fn-local) so cfg(test) resets make
@@ -318,6 +384,49 @@ fn live_totp(secret: &str) -> String {
 }
 
 /// Pure request router (vault mutation limited to the assert counter bump).
+/// A3: normalize the optional `urls` array plus the single `url` field into
+/// deduplicated, canonical `LoginUrl`s. Empty/garbage entries are dropped; the
+/// cap keeps one popup edit from bloating the sealed blob.
+fn req_login_urls(req: &serde_json::Value) -> Vec<crate::models::LoginUrl> {
+    let mut out: Vec<crate::models::LoginUrl> = Vec::new();
+    let mut push = |raw: &str| {
+        let canon = canonical_login_url(raw);
+        if canon.is_empty() {
+            return;
+        }
+        if out.iter().any(|u| u.url().eq_ignore_ascii_case(&canon)) {
+            return;
+        }
+        out.push(crate::models::LoginUrl::from(canon));
+    };
+    if let Some(arr) = req.get("urls").and_then(|v| v.as_array()) {
+        for u in arr {
+            if let Some(s) = u.as_str() {
+                push(s);
+            }
+        }
+    }
+    if let Some(s) = req.get("url").and_then(|v| v.as_str()) {
+        push(s);
+    }
+    out.truncate(10);
+    out
+}
+
+/// A3: validate/register a folder name. Unknown names are created (the desktop
+/// folder engine heals the same way); invalid names fall back to General.
+fn req_folder(vault: &mut Vault, raw: &str) -> String {
+    let name = raw.trim();
+    if name.is_empty() {
+        return crate::models::DEFAULT_FOLDER.to_string();
+    }
+    if name.chars().count() > 48 || name.contains('/') || name.contains('\\') {
+        return crate::models::DEFAULT_FOLDER.to_string();
+    }
+    let _ = vault.add_folder(name);
+    name.to_string()
+}
+
 pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Answer {
     let no = |s: &str| Answer {
         reply: err(s),
@@ -1216,7 +1325,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 &format!("{}+{}+{}+{}", logins.len(), cards.len(), identities.len(), notes.len()),
             );
             Answer {
-                reply: serde_json::json!({"ok": true, "logins": logins, "cards": cards, "identities": identities, "notes": notes}),
+                reply: serde_json::json!({"ok": true, "logins": logins, "cards": cards, "identities": identities, "notes": notes, "folders": vault.folders}),
                 persist: false,
             }
         }
@@ -1427,6 +1536,178 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     "fill_counts": st.get("fill_counts").cloned().unwrap_or_else(|| serde_json::json!({})),
                 }),
                 persist: false,
+            }
+        }
+        // A3: full item editor from the popup. Create is unauthenticated beyond
+        // the unlocked bridge; arming reprompt on a NEW item still needs the
+        // master reprompt so a page cannot silently create an armed decoy row.
+        "create_login" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let now = crate::models::current_timestamp();
+            let reprompt = req.get("reprompt").and_then(|v| v.as_bool()).unwrap_or(false);
+            if reprompt && !reprompt_ok(req, now) {
+                return no("master reprompt required");
+            }
+            let username = req
+                .get("username")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if username.is_empty() {
+                return no("username required");
+            }
+            let password = req.get("password").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let urls = req_login_urls(req);
+            let mut title = req.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            if title.is_empty() {
+                title = urls
+                    .first()
+                    .map(|u| url_domain(u.url()))
+                    .filter(|d| !d.is_empty())
+                    .unwrap_or_else(|| "Untitled".to_string());
+            }
+            let folder = req_folder(vault, req.get("folder").and_then(|v| v.as_str()).unwrap_or(""));
+            let totp = req.get("totp").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let mut id = format!(
+                "ext{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_millis())
+                    .unwrap_or(0)
+            );
+            let mut bump = 0u32;
+            while vault.credentials.iter().any(|c| c.id == id) {
+                bump = bump.saturating_add(1);
+                id = format!(
+                    "ext{}-{bump}",
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_millis())
+                        .unwrap_or(0)
+                );
+            }
+            vault.credentials.push(crate::models::Credential {
+                id: id.clone(),
+                title,
+                username,
+                password,
+                totp_secret: totp,
+                urls,
+                apps: Vec::new(),
+                backup_codes: Vec::new(),
+                custom_fields: Vec::new(),
+                notes: String::from("Created via browser extension"),
+                folder,
+                reprompt,
+                attachments: Vec::new(),
+                travel_safe: false,
+                last_changed: now,
+                password_history: Vec::new(),
+                favorite: false,
+                deleted_at: None,
+            });
+            crate::security::access_log::log_event("bridge-create", &short_id(&id));
+            Answer {
+                reply: serde_json::json!({"ok": true, "id": id}),
+                persist: true,
+            }
+        }
+        // A3: partial edit. Every field is optional; absent means unchanged.
+        // Editing an armed item (or arming one) requires a consumed master
+        // reprompt token, so a stolen popup session cannot rewrite a secret row.
+        "update_login" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let now = crate::models::current_timestamp();
+            let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if id.is_empty() {
+                return no("id required");
+            }
+            let Some(idx) = vault
+                .credentials
+                .iter()
+                .position(|c| c.id == id && c.deleted_at.is_none())
+            else {
+                return no("unknown id");
+            };
+            let was_reprompt = vault.credentials[idx].reprompt;
+            let new_reprompt = req
+                .get("reprompt")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(was_reprompt);
+            if (was_reprompt || new_reprompt) && !reprompt_ok(req, now) {
+                return no("master reprompt required");
+            }
+            if let Some(v) = req.get("username").and_then(|v| v.as_str()) {
+                let v = v.trim();
+                if v.is_empty() {
+                    return no("username cannot be empty");
+                }
+                vault.credentials[idx].username = v.to_string();
+            }
+            if let Some(v) = req.get("title").and_then(|v| v.as_str()) {
+                let v = v.trim();
+                if !v.is_empty() {
+                    vault.credentials[idx].title = v.to_string();
+                }
+            }
+            if let Some(v) = req.get("totp").and_then(|v| v.as_str()) {
+                vault.credentials[idx].totp_secret = v.trim().to_string();
+            }
+            if let Some(v) = req.get("password").and_then(|v| v.as_str()) {
+                if vault.credentials[idx].password != v {
+                    let retired = vault.credentials[idx].password.clone();
+                    crate::models::push_history(&mut vault.credentials[idx].password_history, &retired, now);
+                    vault.credentials[idx].password = v.to_string();
+                    vault.credentials[idx].last_changed = now;
+                }
+            }
+            if req.get("urls").is_some() || req.get("url").is_some() {
+                vault.credentials[idx].urls = req_login_urls(req);
+            }
+            if let Some(f) = req.get("folder").and_then(|v| v.as_str()) {
+                let folder = req_folder(vault, f);
+                vault.credentials[idx].folder = folder;
+            }
+            if req.get("reprompt").is_some() {
+                vault.credentials[idx].reprompt = new_reprompt;
+            }
+            crate::security::access_log::log_event("bridge-update", &short_id(id));
+            Answer {
+                reply: serde_json::json!({"ok": true, "id": id}),
+                persist: true,
+            }
+        }
+        // A3: soft delete (Trash). Armed items require the same reprompt as an
+        // edit; the desktop Trash view can still restore the row.
+        "delete_login" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let now = crate::models::current_timestamp();
+            let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("").trim();
+            if id.is_empty() {
+                return no("id required");
+            }
+            let Some(idx) = vault
+                .credentials
+                .iter()
+                .position(|c| c.id == id && c.deleted_at.is_none())
+            else {
+                return no("unknown id");
+            };
+            if vault.credentials[idx].reprompt && !reprompt_ok(req, now) {
+                return no("master reprompt required");
+            }
+            vault.credentials[idx].deleted_at = Some(now);
+            crate::security::access_log::log_event("bridge-delete", &short_id(id));
+            Answer {
+                reply: serde_json::json!({"ok": true, "deleted": true, "id": id}),
+                persist: true,
             }
         }
         // Smart-autofill: save a freshly submitted login (update or append).
@@ -2532,6 +2813,9 @@ pub fn serve_cli() -> i32 {
     let mut output = std::io::stdout();
     let start = std::time::Instant::now();
     let mut last_active = std::time::Instant::now();
+    // A3: per-session failed master-reprompt counter (exponential delay only,
+    // never persisted; a successful check resets it).
+    let mut reprompt_fails: u32 = 0;
     // M1: watchdog — the loop blocks on stdin, so per-frame checks alone
     // leave the decrypted vault in heap indefinitely while idle. Poll every
     // 5 s: token deleted (app locked) / idle / max lifetime → hard exit.
@@ -2593,11 +2877,47 @@ pub fn serve_cli() -> i32 {
         // Cover integrity (H9): a coerced session must never write into the
         // decoy — refuse every persisting command, not just save_login
         // (assert also has persist:true via the sign-count bump).
-        if serving_decoy && req.get("cmd").and_then(|c| c.as_str()).unwrap_or("") == "save_login" {
+        let req_cmd = req.get("cmd").and_then(|c| c.as_str()).unwrap_or("");
+        if serving_decoy
+            && matches!(
+                req_cmd,
+                "save_login" | "save_card" | "save_identity" | "create_login" | "update_login" | "delete_login" | "verify_master"
+            )
+        {
             let frame = encode_frame(&err("save refused"));
             if output.write_all(&frame).and(output.flush()).is_err() {
                 break;
             }
+            continue;
+        }
+        // A3: master reprompt. The host already holds the Hello-unsealed
+        // passphrase, so re-verify it here (constant-time) and mint a
+        // single-use edit token. Failed attempts are delayed per session.
+        if req_cmd == "verify_master" {
+            let pwd = req.get("password").and_then(|v| v.as_str()).unwrap_or("");
+            let now = crate::models::current_timestamp();
+            let ok = !pwd.is_empty()
+                && ct_eq_bytes(pwd.as_bytes(), master.expose_secret().as_bytes());
+            let frame = if ok {
+                reprompt_fails = 0;
+                crate::security::access_log::log_event("bridge-reprompt", "ok");
+                encode_frame(&serde_json::json!({
+                    "ok": true,
+                    "token": mint_reprompt_token(now),
+                    "expires_in": 120,
+                }))
+            } else {
+                reprompt_fails = reprompt_fails.saturating_add(1);
+                crate::security::access_log::log_event("bridge-reprompt", "denied");
+                std::thread::sleep(std::time::Duration::from_millis(
+                    250u64.saturating_mul(1u64 << reprompt_fails.min(4)),
+                ));
+                encode_frame(&err("wrong master password"))
+            };
+            if output.write_all(&frame).and(output.flush()).is_err() {
+                break;
+            }
+            last_active = std::time::Instant::now();
             continue;
         }
         let unlocked = bridge_unlocked();
@@ -4498,5 +4818,95 @@ mod tests {
         v.credentials[0].deleted_at = Some(1);
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "query", "app": "github"}));
         assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
+    }
+    #[test]
+    fn a3_reprompt_token_single_use_and_expiry() {
+        let now = crate::models::current_timestamp();
+        let tok = mint_reprompt_token(now);
+        assert!(consume_reprompt_token(&tok, now));
+        assert!(!consume_reprompt_token(&tok, now), "token cannot replay");
+        let stale = mint_reprompt_token(now);
+        assert!(!consume_reprompt_token(&stale, now + 121));
+        assert!(ct_eq_bytes(b"master", b"master"));
+        assert!(!ct_eq_bytes(b"master", b"Master"));
+        assert!(!ct_eq_bytes(b"master", b"master "));
+    }
+
+    #[test]
+    fn a3_create_login_registers_folder_and_url() {
+        let mut v = Vault::new();
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "create_login", "title": "Work GH",
+                "username": "octo", "password": "pw", "url": "https://github.com/login?x=1",
+                "folder": "Work", "totp": " JBSWY3DPEHPK3PXP "}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        assert!(r.persist);
+        assert_eq!(v.credentials.len(), 1);
+        let c = &v.credentials[0];
+        assert_eq!(c.username, "octo");
+        assert_eq!(c.urls[0].url(), "https://github.com/login");
+        assert_eq!(c.folder, "Work");
+        assert_eq!(c.totp_secret, "JBSWY3DPEHPK3PXP");
+        assert!(v.folders.iter().any(|f| f == "Work"));
+        // URL-less create is allowed; autofill gates stay closed by URL rule.
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "create_login", "username": "nourl", "password": "p"}),
+        );
+        assert_eq!(r.reply["ok"], true);
+        assert!(v.credentials[1].urls.is_empty());
+    }
+
+    #[test]
+    fn a3_update_armed_item_requires_reprompt_token() {
+        let mut v = vault_with_login();
+        v.credentials[0].reprompt = true;
+        let denied = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "update_login", "id": "c1", "title": "Renamed",
+                "folder": "Finance"}),
+        );
+        assert_eq!(denied.reply["ok"], false);
+        assert_eq!(v.credentials[0].title, "GitHub");
+        let token = mint_reprompt_token(crate::models::current_timestamp());
+        let ok = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "update_login", "id": "c1", "title": "Renamed",
+                "folder": "Finance", "password": "new-pw", "reprompt_token": token}),
+        );
+        assert_eq!(ok.reply["ok"], true);
+        assert!(ok.persist);
+        assert_eq!(v.credentials[0].title, "Renamed");
+        assert_eq!(v.credentials[0].folder, "Finance");
+        assert_eq!(v.credentials[0].password, "new-pw");
+        assert_eq!(v.credentials[0].password_history[0].password, "ghp_x");
+        assert!(v.folders.iter().any(|f| f == "Finance"));
+    }
+
+    #[test]
+    fn a3_delete_is_soft_and_gated() {
+        let mut v = vault_with_login();
+        v.credentials[0].reprompt = true;
+        let denied = answer(&mut v, true, &serde_json::json!({"cmd": "delete_login", "id": "c1"}));
+        assert_eq!(denied.reply["ok"], false);
+        assert!(v.credentials[0].deleted_at.is_none());
+        let token = mint_reprompt_token(crate::models::current_timestamp());
+        let ok = answer(
+            &mut v,
+            true,
+            &serde_json::json!({"cmd": "delete_login", "id": "c1", "reprompt_token": token}),
+        );
+        assert_eq!(ok.reply["ok"], true);
+        assert!(ok.persist);
+        assert!(v.credentials[0].deleted_at.is_some());
+        // Trashed rows no longer resolve for a second delete.
+        let again = answer(&mut v, true, &serde_json::json!({"cmd": "delete_login", "id": "c1"}));
+        assert_eq!(again.reply["ok"], false);
     }
 }

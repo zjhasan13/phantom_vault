@@ -580,3 +580,151 @@ test("never_save_domains tolerates a corrupted (non-array) value", async () => {
   const r = await p;
   assert.equal(r.ok, true);
 });
+// ---- A3: item editor (popup) + reprompt ----
+
+test("A3: popup creates a login through create_login", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, {
+    type: "PV_ITEM_CREATE", title: "GitHub", username: "octo", password: "s3cret",
+    url: "https://github.com/login", folder: "Work", reprompt: false,
+  });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "create_login");
+  assert.equal(sent.username, "octo");
+  assert.equal(sent.folder, "Work");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, id: "ext1" }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("A3: a content script cannot mutate vault items", async () => {
+  const { chrome, onMessage } = fresh();
+  const r = await sendMessage(onMessage, chrome,
+    { type: "PV_ITEM_DELETE", id: "c1" },
+    { tab: { id: 4, url: "https://evil.example/" } });
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /popup-only/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("A3: update forwards the partial edit and reprompt token", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, {
+    type: "PV_ITEM_UPDATE", id: "c1", folder: "Finance", reprompt: true,
+    reprompt_token: "rp-1",
+  });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "update_login");
+  assert.equal(sent.id, "c1");
+  assert.equal(sent.folder, "Finance");
+  assert.equal(sent.reprompt, true);
+  assert.equal(sent.reprompt_token, "rp-1");
+  assert.ok(!("username" in sent), "absent fields stay absent");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("A3: delete proxies delete_login with the token", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_ITEM_DELETE", id: "c9", reprompt_token: "rp-9" });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "delete_login");
+  assert.equal(sent.id, "c9");
+  assert.equal(sent.reprompt_token, "rp-9");
+  assert.ok(!("password" in sent));
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("A3: PV_REPROMPT proxies verify_master and never stores the password", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, { type: "PV_REPROMPT", password: "master-pw" });
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "verify_master");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, token: "rp" }));
+  const r = await p;
+  assert.equal(r.ok, true);
+  assert.equal(r.token, "rp");
+  assert.ok(!("master-pw" in chrome.__state.sessionStore));
+});
+
+test("A3: PV_REPROMPT is refused from a page", async () => {
+  const { chrome, onMessage } = fresh();
+  const r = await sendMessage(onMessage, chrome,
+    { type: "PV_REPROMPT", password: "x" },
+    { tab: { id: 2, url: "https://evil.example/" } });
+  assert.equal(r.ok, false);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+// ---- A4: clipboard auto-clear ----
+
+test("A4: PV_CLIP_ARM uses the configured timeout and schedules one alarm", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.clipboard_clear_sec = 45;
+  const before = Date.now();
+  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM" });
+  assert.equal(r.ok, true);
+  assert.equal(r.seconds, 45);
+  const armed = chrome.__state.alarms.filter((a) => a.name === "pv_clip_clear");
+  assert.equal(armed.length, 1);
+  assert.ok(armed[0].info.when >= before + 45000 - 50);
+  assert.ok(chrome.__state.sessionStore.pv_clip_clear_at >= before + 45000);
+  assert.ok(chrome.__state.alarmsCleared.includes("pv_clip_clear"));
+});
+
+test("A4: PV_CLIP_ARM clamps short values and honours an explicit override", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.clipboard_clear_sec = 30;
+  let r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 1 });
+  assert.equal(r.seconds, 5, "minimum 5s");
+  r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 99999 });
+  assert.equal(r.seconds, 3600, "maximum 1h");
+});
+
+test("A4: timeout 0 disarms and clears the stored deadline", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.clipboard_clear_sec = 0;
+  chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
+  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM" });
+  assert.equal(r.armed, false);
+  assert.equal(chrome.__state.sessionStore.pv_clip_clear_at, undefined);
+});
+
+test("A4: the alarm clears through the offscreen document and drops the marker", async () => {
+  const { chrome } = fresh();
+  chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
+  chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
+  await flushTicks();
+  assert.equal(chrome.__state.offscreenDocs.length, 1);
+  assert.equal(chrome.__state.offscreenDocs[0].reasons[0], "CLIPBOARD");
+  const clear = chrome.__state.runtimeMessages.filter(
+    (m) => m && m.target === "offscreen" && m.type === "PV_CLIP_CLEAR");
+  assert.equal(clear.length, 1);
+  assert.equal(chrome.__state.sessionStore.pv_clip_clear_at, undefined);
+});
+
+test("A4: without offscreen support the alarm falls back to content scripts", async () => {
+  const { chrome } = fresh();
+  delete chrome.offscreen;
+  chrome.__state.tabList = [{ id: 7 }, { id: 8 }];
+  chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
+  await flushTicks();
+  const hits = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_CLIP_CLEAR");
+  assert.deepEqual(hits.map((x) => x.id).sort(), [7, 8]);
+  assert.ok(hits.every((x) => x.opts && x.opts.frameId === 0));
+});
+
+test("A4: unrelated alarms stay silent for the clipboard path", async () => {
+  const { chrome } = fresh();
+  chrome.__listeners.onAlarm[0]({ name: "pv_idle_check" });
+  await flushTicks();
+  assert.equal(chrome.__state.offscreenDocs.length, 0);
+  assert.equal(chrome.__state.runtimeMessages.length, 0);
+});

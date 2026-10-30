@@ -62,13 +62,13 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A0 | 2FA picker no longer opens on generic text fields | commit `72a220d`; `content.js` `isOtpField` / `otpSweepMayPrompt` | 83 tests pass, GitHub new-repo page stays quiet |
 | A1 | Proactive idle lock pushes `PV_GATE_LOCKED` | `background.js:219-240`; 5 new tests | Locked state reaches every tab within one alarm tick |
 | A2 | "Never save for this site" (content + background) | `content.js:2374-2378`, `background.js:594-611`; 4 new tests | Clicking Never silences save and update prompts for the registrable domain |
+| A3 | Extension item editor: add, edit, delete, move to folder | `popup.js` `openItemEditor`; `background.js` `PV_ITEM_*`; native `create_login`/`update_login`/`delete_login`; 6 new tests | A login can be created and edited entirely from the popup, with reprompt enforced |
+| A4 | Extension clipboard auto-clear | `background.js` `pv_clip_clear`; `offscreen.js`; popup `armClipboardClear`; 6 new tests | Copied secret is cleared after the configured timeout, even if the popup closes |
 
 ### P0 — parity blockers (do first)
 
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
-| A3 | Extension item editor: add, edit, delete, move to folder | E6 | 1-2 wk | A login can be created and edited entirely from the popup, with reprompt enforced |
-| A4 | Extension clipboard auto-clear | E7 | 2 days | Copied secret is cleared after the configured timeout, even if the popup closes |
 | A5 | Master password change / rekey | C1 | 1-2 wk | Old password fails, new password unlocks, one rollback snapshot exists |
 | A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
 | A7 | README, LICENSE, SECURITY.md | T1 | 2 days | Disclosure address + PGP key published; license present at root |
@@ -241,7 +241,7 @@ Two extension items were implemented and tested. No desktop behavior changed.
 
 ### 5.3 Test coverage added
 
-`npm test` now reports **95 passing, 0 failing** (was 83).
+`npm test` now reports **111 passing, 0 failing** (was 95 before A3/A4).
 
 New tests:
 
@@ -262,6 +262,49 @@ New tests:
 Harness changes: `chrome.alarms` stub with loud-fail semantics
 (`tests/js/harness.mjs`), and a seedable `chrome.storage.local` in the jsdom
 harness (`tests/js/content-harness.mjs`).
+
+### 5.4 Extension item editor (A3)
+
+`popup.js` now owns the write path that previously required the desktop app:
+
+- `openItemEditor` builds a modal with title, username, password, URL, folder,
+  TOTP secret, and the reprompt toggle. Add, edit, and delete all run from it.
+- Moving to a folder is the same update: the folder field is free text with a
+  datalist of known folders; the host registers unknown names through
+  `Vault::add_folder`.
+- New bridge commands: `create_login`, `update_login` (partial), `delete_login`
+  (soft delete to Trash). `list` now also returns `folders`.
+- Reprompt is enforced in the native host, not just the UI. `verify_master`
+  compares the typed password against the Hello-unsealed session passphrase in
+  constant time, delays failed attempts, and mints a single-use 120 s token.
+  Editing/deleting an armed item (or arming a new one) without that token
+  fails with `master reprompt required`.
+- The router refuses `PV_ITEM_*` and `PV_REPROMPT` when the sender carries a
+  tab, so a page/content script cannot mutate the vault.
+- Editing a TOTP item never sends the fetched live code back: a blank TOTP
+  field omits the key, so the stored secret survives.
+
+### 5.5 Clipboard auto-clear (A4)
+
+- Every popup copy (password, 2FA code, generator) calls `PV_CLIP_ARM` after
+  the clipboard write. Content-script copies do the same.
+- The service worker arms a one-shot `pv_clip_clear` alarm from
+  `clipboard_clear_sec` (15/30/60/120 s, 0 = Never). The deadline is mirrored in
+  `chrome.storage.session`, so a service-worker restart re-arms it.
+- On fire, the worker clears through an offscreen document with the
+  `CLIPBOARD` reason (Chrome), falling back to a content-script write when
+  offscreen is unavailable (Firefox). The secret is never sent to the worker:
+  only the timer is.
+- The old content-script timer stays as a fast path and verifies the clipboard
+  still holds its own text before blanking.
+
+### 5.6 Test coverage added for A3/A4
+
+- Popup source asserts create/update/delete routing, the reprompt-before-
+  mutation order, the TOTP-secret guard, and clipboard arming on every copy.
+- Router asserts popup-only item mutations, `verify_master` proxying,
+  reprompt-token forwarding, timeout clamping, disarm, the offscreen clear,
+  the content fallback, and unrelated-alarm silence.
 
 ---
 
@@ -382,12 +425,20 @@ paperwork would repeat the "PQ second factor" mistake at a larger scale.
 ## 9. How to verify this document
 
 ```powershell
-# Extension test suite (95 tests)
+# Extension test suite (111 tests)
 npm test
 
 # Idle-lock and never-save code
 Select-String -Path browser_extension\background.js -Pattern 'IDLE_ALARM|neverSaveHit|never save for this site'
 Select-String -Path browser_extension\content.js -Pattern 'never_save_domains|Never'
+
+# A3 item editor + host reprompt gate
+Select-String -Path browser_extension\popup.js -Pattern 'openItemEditor|PV_ITEM_CREATE|PV_REPROMPT'
+Select-String -Path src\windows_native\native_host.rs -Pattern 'create_login|update_login|delete_login|verify_master|reprompt_ok'
+
+# A4 clipboard auto-clear (alarm survives popup close)
+Select-String -Path browser_extension\background.js -Pattern 'pv_clip_clear|armClipboardClear|PV_CLIP_ARM'
+Select-String -Path browser_extension\offscreen.js -Pattern 'navigator.clipboard.writeText'
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6
@@ -422,8 +473,8 @@ pass missed, and corrected three assumptions.
 
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
-| E6 | Extension cannot add, edit, or delete items | No write command in `browser_extension/popup.js`; host exposes only `save_login`, `save_card`, `save_identity` (`native_host.rs:1435,1514,1626`) | Every change requires the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
-| E7 | Extension copy never clears the clipboard | `popup.js:1504-1507` writes and stops; desktop has `copy_sensitive` with auto-clear (`main.rs:484-520`) | A copied password stays in the OS clipboard indefinitely, and the popup comment claims otherwise | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | S1 |
+| E6 | Extension cannot add, edit, or delete items | ~~No write command in `browser_extension/popup.js`~~ — shipped in 5.4 (`openItemEditor`, `create_login`/`update_login`/`delete_login`) | Every change used to require the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
+| E7 | Extension copy never clears the clipboard | ~~`popup.js:1504-1507` writes and stops~~ — shipped in 5.5 (`pv_clip_clear` alarm + offscreen clear) | A copied password used to stay in the OS clipboard indefinitely | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | S1 |
 | E8 | No shadow-DOM autofill | `content.js:450` is the extension's own UI shadow root; no traversal of page shadow roots | Web-component login forms (increasing share of modern sites) never get badges or fill | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
 | E9 | No offline extension cache | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
 | E10 | No KDBX (binary) import or export | KeePass support is XML/CSV only (`src/importer/keepass.rs:1-5`); exporters are CSV/Bitwarden JSON/native (`exporter.rs:83-412`) | Users cannot move to or from KeePass's real container; lock-in both ways | Read/write KDBX 4 with Argon2 + AES-KDF; keep XML path | S2 |

@@ -334,6 +334,12 @@
   function copyWithAutoclear(text, ms = 30000) {
     if (!text) return;
     navigator.clipboard.writeText(text).then(() => {
+      // A4: the service-worker alarm survives this tab — clear even after a
+      // navigation or popup close. The local timer stays as the fast path.
+      try {
+        const p = chrome.runtime.sendMessage({ type: "PV_CLIP_ARM" });
+        if (p && p.catch) p.catch(() => {});
+      } catch (_) {}
       setTimeout(() => {
         // Only blank what is still ours — never clobber user-copied data.
         navigator.clipboard.readText().then((cur) => {
@@ -3107,6 +3113,12 @@
       // E5: background saw a lock/timeout (own probe, popup, or another tab) —
       // drop the desktop gate cache before the next page action.
       if (msg.type === "PV_GATE_LOCKED") { extDeskInvalidate(); return { ok: true }; }
+      // A4: background alarm blanking a copied secret. Best-effort; the page
+      // may have lost focus, in which case the offscreen path already ran.
+      if (msg.type === "PV_CLIP_CLEAR") {
+        try { await navigator.clipboard.writeText(""); return { ok: true }; }
+        catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
+      }
         if (msg.type === "PV_HOTKEY_FILL") { await hotkeyFill(); return { ok: true }; }
         // P3: popup quick-fill delegates here so React setters, multi-step
         // chaining and the URL gate are shared with hotkey/autofill. The

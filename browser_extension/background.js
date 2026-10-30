@@ -188,6 +188,116 @@ async function sessionState() {
   }
 }
 
+// ---- Clipboard auto-clear (A4) ----
+// The popup writes the secret itself (user gesture), then asks the SW to arm
+// a one-shot alarm. The alarm survives popup close and service-worker suspend,
+// and clears through an offscreen document (Chrome) or a content-script
+// fallback (Firefox). The deadline is mirrored in session storage so a SW
+// restart mid-window re-arms instead of leaking the secret until reboot.
+const CLIP_ALARM = "pv_clip_clear";
+const CLIP_DEFAULT_SEC = 30;
+
+function clipSeconds(raw) {
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  return Math.min(Math.max(Math.round(n), 5), 3600);
+}
+
+async function ensureOffscreen() {
+  try {
+    if (!chrome.offscreen || typeof chrome.offscreen.createDocument !== "function") return false;
+    if (chrome.runtime.getContexts) {
+      const ctx = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
+      if (Array.isArray(ctx) && ctx.length) return true;
+    } else if (typeof chrome.offscreen.hasDocument === "function" && await chrome.offscreen.hasDocument()) {
+      return true;
+    }
+    await chrome.offscreen.createDocument({
+      url: "offscreen.html",
+      reasons: ["CLIPBOARD"],
+      justification: "Clear copied passwords and 2FA codes after the auto-clear timeout.",
+    });
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function clearClipboardNow() {
+  let cleared = false;
+  // Preferred: offscreen document owns a DOM clipboard for the SW lifetime.
+  try {
+    if (await ensureOffscreen()) {
+      const r = await chrome.runtime.sendMessage({ target: "offscreen", type: "PV_CLIP_CLEAR" });
+      cleared = !!(r && r.ok);
+    }
+  } catch (_) {}
+  // Fallback: a content script can blank the clipboard while its page is
+  // focused. Best-effort — a denied write leaves the secret to expire with the
+  // user's next copy, never silently claims success.
+  if (!cleared) {
+    try {
+      const tabs = await chrome.tabs.query({});
+      await Promise.all((tabs || []).map((t) => {
+        if (!t || t.id == null) return null;
+        return Promise.resolve(chrome.tabs.sendMessage(t.id, { type: "PV_CLIP_CLEAR" }, { frameId: 0 }))
+          .then(() => { cleared = true; })
+          .catch(() => {});
+      }));
+    } catch (_) {}
+  }
+  try {
+    await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_token"]);
+  } catch (_) {}
+  return { ok: true, cleared };
+}
+
+async function armClipboardClear(rawSeconds) {
+  const cfg = await chrome.storage.local.get({ clipboard_clear_sec: CLIP_DEFAULT_SEC });
+  const seconds = clipSeconds(
+    rawSeconds === undefined || rawSeconds === null ? cfg.clipboard_clear_sec : rawSeconds,
+  );
+  try {
+    if (chrome.alarms && typeof chrome.alarms.clear === "function") {
+      chrome.alarms.clear(CLIP_ALARM);
+    }
+  } catch (_) {}
+  if (!seconds) {
+    try { await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_token"]); } catch (_) {}
+    return { ok: true, armed: false, seconds: 0 };
+  }
+  const at = Date.now() + seconds * 1000;
+  try {
+    await chrome.storage.session.set({ pv_clip_clear_at: at });
+  } catch (_) {}
+  try {
+    if (chrome.alarms && typeof chrome.alarms.create === "function") {
+      chrome.alarms.create(CLIP_ALARM, { when: at });
+      return { ok: true, armed: true, seconds, at };
+    }
+  } catch (_) {}
+  // No alarms API: the popup's own timer is the only fallback.
+  return { ok: true, armed: false, seconds };
+}
+
+// A SW restart does not lose the deadline: re-arm a future one, clear a past
+// one immediately (the secret has already outlived its window).
+async function rearmClipboardClear() {
+  try {
+    const s = await chrome.storage.session.get({ pv_clip_clear_at: 0 });
+    const at = Number(s.pv_clip_clear_at) || 0;
+    if (!at) return;
+    if (at <= Date.now()) {
+      await clearClipboardNow();
+      return;
+    }
+    if (chrome.alarms && typeof chrome.alarms.create === "function") {
+      chrome.alarms.create(CLIP_ALARM, { when: at });
+    }
+  } catch (_) {}
+}
+rearmClipboardClear();
+
 // E5: a lock/timeout verdict discovered by ANY caller (popup, another tab,
 // native PING) must drop every content-script gate cache immediately — a warm
 // 30 s cache in a background tab must not keep authorizing page actions after
@@ -233,7 +343,12 @@ async function idleAlarmTick() {
 }
 if (chrome.alarms && chrome.alarms.onAlarm && chrome.alarms.onAlarm.addListener) {
   chrome.alarms.onAlarm.addListener((a) => {
-    if (!a || a.name !== IDLE_ALARM) return;
+    if (!a) return;
+    if (a.name === CLIP_ALARM) {
+      clearClipboardNow();
+      return;
+    }
+    if (a.name !== IDLE_ALARM) return;
     idleAlarmTick();
   });
 }
@@ -242,6 +357,9 @@ if (chrome.alarms && chrome.alarms.onAlarm && chrome.alarms.onAlarm.addListener)
 // After mutating calls (save/fill) the toolbar count may change, so the
 // originating tab's badge refreshes on the next tick.
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  // Offscreen clipboard document answers on its own channel; the router must
+  // not race it with an "unknown message" reply.
+  if (msg && msg.target === "offscreen") return false;
   (async () => {
     const retouchBadge = () => {
       try {
@@ -314,6 +432,57 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       // Popup Retry confirmed desktop presence — restart the idle clock.
       await touchActivity();
       return { ok: true };
+    }
+    // A4: clipboard auto-clear. Popup/content already wrote the secret; this
+    // only schedules the blank (never receives the secret itself).
+    if (msg.type === "PV_CLIP_ARM") {
+      return await armClipboardClear(msg.seconds);
+    }
+    if (msg.type === "PV_CLIP_CLEAR") {
+      return await clearClipboardNow();
+    }
+    // A3: item editor. Popup-only — a content script must never create, edit,
+    // or trash a vault row (its sender carries a tab).
+    function popupOnly() {
+      return !!(sender && sender.tab) ? "item edits are popup-only" : "";
+    }
+    if (msg.type === "PV_REPROMPT") {
+      const denied = popupOnly();
+      if (denied) return { ok: false, error: denied };
+      touchActivity();
+      return await hostRequest({ cmd: "verify_master", password: String(msg.password || "") });
+    }
+    if (msg.type === "PV_ITEM_CREATE" || msg.type === "PV_ITEM_UPDATE" || msg.type === "PV_ITEM_DELETE") {
+      const denied = popupOnly();
+      if (denied) return { ok: false, error: denied };
+      const cmd = msg.type === "PV_ITEM_CREATE"
+        ? "create_login"
+        : msg.type === "PV_ITEM_UPDATE" ? "update_login" : "delete_login";
+      const payload = {
+        cmd,
+        id: String(msg.id || ""),
+        title: String(msg.title || ""),
+        username: String(msg.username || ""),
+        password: String(msg.password || ""),
+        totp: String(msg.totp || ""),
+        folder: String(msg.folder || ""),
+        url: String(msg.url || ""),
+        urls: Array.isArray(msg.urls) ? msg.urls.filter((u) => typeof u === "string").slice(0, 10) : [],
+        reprompt: msg.reprompt === true,
+      };
+      if (msg.reprompt_token) payload.reprompt_token = String(msg.reprompt_token);
+      // Update is partial: only send fields the editor actually has.
+      if (msg.type === "PV_ITEM_UPDATE") {
+        for (const k of ["title", "username", "password", "totp", "folder", "url", "urls", "reprompt"]) {
+          if (!(k in msg)) delete payload[k];
+        }
+      }
+      if (msg.type === "PV_ITEM_DELETE") {
+        for (const k of ["title", "username", "password", "totp", "folder", "url", "urls", "reprompt"]) delete payload[k];
+      }
+      const r = await hostRequest(payload);
+      if (r && r.ok) { touchActivity(); retouchBadge(); }
+      return r;
     }
     // Quick-unlock PIN hash — sealed in the desktop app (DPAPI), managed in
     // its Settings. The extension NEVER sets/stores a PIN, only verifies.

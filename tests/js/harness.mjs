@@ -36,6 +36,10 @@ function makeChrome() {
     tabList: [],
     sentToTabs: [],
     alarms: [],
+    alarmsCleared: [],
+    runtimeMessages: [],
+    offscreenDocs: [],
+    offscreenPresent: false,
   };
   const port = () => {
     const handlers = { message: [], disconnect: [] };
@@ -60,6 +64,11 @@ function makeChrome() {
     runtime: {
       connectNative: () => port(),
       lastError: undefined,
+      sendMessage: async (msg) => {
+        state.runtimeMessages.push(msg);
+        return { ok: true };
+      },
+      getContexts: async () => (state.offscreenPresent ? [{ contextType: "OFFSCREEN_DOCUMENT" }] : []),
       onMessage: { addListener: (fn) => listeners.onMessage.push(fn) },
       onInstalled: { addListener: (fn) => listeners.onInstalled.push(fn) },
       onStartup: { addListener: (fn) => listeners.onStartup.push(fn) },
@@ -71,7 +80,7 @@ function makeChrome() {
           Object.assign(state.sessionStore, obj);
         },
         remove: async (k) => {
-          delete state.sessionStore[k];
+          for (const key of Array.isArray(k) ? k : [k]) delete state.sessionStore[key];
         },
         setAccessLevel: (opts) => {
           state.accessLevel = opts;
@@ -109,7 +118,16 @@ function makeChrome() {
       create: (name, info) => {
         state.alarms.push({ name, info });
       },
+      clear: (name) => {
+        state.alarmsCleared.push(name);
+      },
       onAlarm: { addListener: (fn) => listeners.onAlarm.push(fn) },
+    },
+    offscreen: {
+      createDocument: async (opts) => {
+        state.offscreenDocs.push(opts);
+        state.offscreenPresent = true;
+      },
     },
   };
   return chrome;

@@ -115,9 +115,28 @@
       white-space: nowrap; user-select: none; }
     .eye { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
       border-radius: 6px; padding: 3px 8px; cursor: pointer; font-size: 13px; }
-    #lockTimeout, #genLen { width: 100%; box-sizing: border-box; background: var(--bg);
+    #lockTimeout, #clipClear, #genLen { width: 100%; box-sizing: border-box; background: var(--bg);
       color: var(--text); border: 1px solid var(--border); border-radius: 8px;
       padding: 8px; margin-top: 6px; font-size: 12px; }
+    /* A3 item editor */
+    .pvmodal { position: fixed; inset: 0; z-index: 60; background: #000b;
+      display: flex; align-items: center; justify-content: center; padding: 10px; }
+    .pvmodal .card { width: 100%; max-width: 340px; max-height: 92vh; overflow-y: auto;
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 14px; box-sizing: border-box; }
+    .pvmodal h2 { font-size: 15px; margin: 0 0 10px; }
+    .pvmodal label { display: block; color: var(--muted); font-size: 11px; margin-top: 8px; }
+    .pvmodal input[type="text"], .pvmodal input[type="password"] { width: 100%; box-sizing: border-box;
+      background: var(--bg); color: var(--text); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px; margin-top: 4px; font-size: 12px; }
+    .pvmodal .checks { display: flex; align-items: center; gap: 8px; margin-top: 10px; color: var(--muted); font-size: 12px; }
+    .pvmodal .actions { display: flex; gap: 6px; margin-top: 14px; }
+    .pvmodal .actions button { flex: 1; border: 1px solid var(--accent); border-radius: 8px;
+      padding: 8px; background: var(--panel2); color: var(--text); cursor: pointer; }
+    .pvmodal .actions button.primary { background: var(--accent); color: var(--accent-fg); }
+    .pvmodal .actions button.danger { border-color: #fb7185; color: #fb7185; flex: 0 0 auto; }
+    .pvmodal .err { color: #fb7185; font-size: 11px; margin-top: 8px; min-height: 14px; }
+    .btns button.editBtn { flex: 0 0 auto; font-size: 11px; padding: 7px 9px; }
   </style>
 </head>
 <body>
@@ -139,6 +158,7 @@
     <button id="tabSettings">⚙️ Autofill Settings</button>
   </div>
   <div id="vaultPane">
+    <button id="addItemBtn" class="wide" style="width:100%;margin-bottom:8px">➕ Add login</button>
     <input id="vaultSearch" placeholder="🔍 Search" aria-label="Search vault" />
     <div class="filterrow">
       <select id="folderFilter" aria-label="Filter by folder"><option value="">📁 All folders</option></select>
@@ -192,6 +212,17 @@
         <option value="5">5 minutes</option>
         <option value="10" selected>10 minutes</option>
         <option value="15">15 minutes</option>
+        <option value="0">Never</option>
+      </select>
+    </div>
+    <div class="row">
+      <div class="t">📋 Clipboard auto-clear</div>
+      <div class="hint">Blank a copied password or 2FA code after this delay, even if the popup closes.</div>
+      <select id="clipClear">
+        <option value="15">15 seconds</option>
+        <option value="30" selected>30 seconds</option>
+        <option value="60">1 minute</option>
+        <option value="120">2 minutes</option>
         <option value="0">Never</option>
       </select>
     </div>

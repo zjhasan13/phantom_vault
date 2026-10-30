@@ -16,6 +16,7 @@
     match_mode: "base",
     auto_submit: false,
     blocked_domains: [],
+    clipboard_clear_sec: 30,
     lang: "en",
   };
   const TOGGLES = [
@@ -88,6 +89,14 @@
       copy_totp: "Copy TOTP automatically",
       ctx_menu: "Show context menu options (Right-click)",
       auto_submit: "Automatically submit form after autofill",
+      add_item: "➕ Add login", edit_item: "✏️ Edit", delete_item: "🗑️ Delete",
+      save_item: "💾 Save", cancel: "Cancel",
+      ed_title: "Title", ed_username: "Username / email", ed_password: "Password",
+      ed_url: "Website URL", ed_folder: "Folder", ed_totp: "2FA secret (optional)",
+      ed_reprompt: "Require master password to view or edit this item",
+      ed_new: "Add login", ed_edit: "Edit login", ed_need_user: "Username is required",
+      ed_saved: "✅ Saved.", ed_deleted: "🗑️ Moved to Trash.",
+      ed_delete_confirm: "Move this login to Trash?",
     },
     bn: {
       vault: "🔑 ভল্ট", stats: "📊 পরিসংখ্যান", settings: "⚙️ অটোফিল সেটিংস",
@@ -145,6 +154,14 @@
       copy_totp: "TOTP স্বয়ংক্রিয়ভাবে কপি করো",
       ctx_menu: "রাইট-ক্লিক মেনু দেখাও",
       auto_submit: "অটোফিলের পর ফর্ম সাবমিট করো",
+      add_item: "➕ লগইন যোগ করো", edit_item: "✏️ সম্পাদনা", delete_item: "🗑️ মুছো",
+      save_item: "💾 সংরক্ষণ", cancel: "বাতিল",
+      ed_title: "শিরোনাম", ed_username: "ইউজারনেম / ইমেইল", ed_password: "পাসওয়ার্ড",
+      ed_url: "ওয়েবসাইট URL", ed_folder: "ফোল্ডার", ed_totp: "2FA সিক্রেট (ঐচ্ছিক)",
+      ed_reprompt: "এই আইটেম দেখতে/সম্পাদনা করতে মাস্টার পাসওয়ার্ড লাগবে",
+      ed_new: "লগইন যোগ করো", ed_edit: "লগইন সম্পাদনা", ed_need_user: "ইউজারনেম লাগবে",
+      ed_saved: "✅ সংরক্ষিত।", ed_deleted: "🗑️ ট্র্যাশে সরানো হয়েছে।",
+      ed_delete_confirm: "এই লগইনটি ট্র্যাশে সরাবো?",
     },
   };
   let lang = "en";
@@ -255,6 +272,10 @@
     document.getElementById("matchLab").textContent = t("match_label");
     document.querySelector("#settingsPane .row .t").textContent = t("blocked_h");
     document.querySelector("#settingsPane .hint").textContent = t("blocked_hint");
+    const clipSel = document.getElementById("clipClear");
+    if (clipSel) clipSel.value = String(cur.clipboard_clear_sec ?? 30);
+    const addBtn = document.getElementById("addItemBtn");
+    if (addBtn) addBtn.textContent = t("add_item");
     for (const [key] of TOGGLES) inputs[key].checked = cur[key] !== false;
     modeSel.value = cur.match_mode || "base";
     blockedEl.value = (cur.blocked_domains || []).join("\n");
@@ -264,6 +285,8 @@
     for (const [key] of TOGGLES) out[key] = inputs[key].checked;
     out.match_mode = modeSel.value;
     out.blocked_domains = blockedEl.value.split("\n").map((d) => d.trim().toLowerCase()).filter(Boolean);
+    const clipSel = document.getElementById("clipClear");
+    if (clipSel) out.clipboard_clear_sec = Number(clipSel.value);
     await chrome.storage.local.set(out);
     const hint = document.getElementById("saveHint");
     hint.textContent = t("saved");
@@ -711,6 +734,7 @@
   // ---------- two-tier data: domain suggestions + full metadata ----------
   let suggEntries = []; // full login entries (with secrets) for this domain
   let allData = { logins: [], cards: [], identities: [], notes: [] };
+  let folderNames = [];
   const suggIds = new Set();
   const rows = [];
 
@@ -1032,6 +1056,7 @@
     suggEntries.forEach((e) => touch(e.folder));
     ["logins", "cards", "identities", "notes"].forEach((k) => allData[k].forEach((e) => touch(e.folder)));
     folders.sort((a, b) => a.localeCompare(b));
+    folderNames = folders.slice();
     const cur = folderSel.value;
     folderSel.innerHTML = "";
     const mk = (v, label) => {
@@ -1042,6 +1067,201 @@
     mk("", "📁 Folder");
     folders.forEach((f) => mk(f, "📁 " + f));
     if ([...folderSel.options].some((o) => o.value === cur)) folderSel.value = cur;
+  }
+
+  // ---------- A3: item editor (add / edit / delete / move folder) ----------
+  // Master reprompt: the host re-verifies the master password and mints a
+  // single-use token. The token never contains the password and cannot be
+  // replayed; armed rows require it for every mutation.
+  async function requestReprompt(title) {
+    const pwd = window.prompt(`🔒 Master password required to change "${title || "this item"}".`);
+    if (pwd === null || pwd === "") throw new Error("cancelled");
+    const r = await withTimeout(
+      chrome.runtime.sendMessage({ type: "PV_REPROMPT", password: pwd }),
+      QUERY_TIMEOUT_MS, "reprompt");
+    if (!r || !r.ok || !r.token) throw new Error((r && r.error) || "reprompt failed");
+    return r.token;
+  }
+
+  async function editEntryById(id) {
+    try {
+      openItemEditor(await fetchEntry(1, id));
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || err);
+    }
+  }
+
+  function editButton(id) {
+    const b = document.createElement("button");
+    b.className = "editBtn";
+    b.textContent = "✏️";
+    b.title = t("edit_item");
+    b.setAttribute("aria-label", t("edit_item"));
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      touchActivityPing();
+      editEntryById(id);
+    });
+    return b;
+  }
+
+  function openItemEditor(entry) {
+    const isNew = !entry || !entry.id;
+    const prev = document.querySelector(".pvmodal");
+    if (prev) prev.remove();
+    const bg = document.createElement("div");
+    bg.className = "pvmodal";
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h2");
+    h.textContent = isNew ? t("ed_new") : t("ed_edit");
+    card.append(h);
+
+    const mkField = (label, value, type = "text", autocomplete = "off") => {
+      const lab = document.createElement("label");
+      lab.textContent = label;
+      const inp = document.createElement("input");
+      inp.type = type;
+      inp.value = value || "";
+      inp.autocomplete = autocomplete;
+      card.append(lab, inp);
+      return inp;
+    };
+    const titleIn = mkField(t("ed_title"), entry && entry.title);
+    const userIn = mkField(t("ed_username"), entry && entry.username);
+    const passIn = mkField(t("ed_password"), entry && entry.password, "password", "new-password");
+    const urlIn = mkField(t("ed_url"), entry && entry.urls && entry.urls[0] ? urlText(entry.urls[0]) : (tabUrl || ""));
+    const folderIn = mkField(t("ed_folder"), (entry && entry.folder) || (folderNames[0] || "General"));
+    folderIn.setAttribute("list", "pvFolderList");
+    let dl = document.getElementById("pvFolderList");
+    if (!dl) {
+      dl = document.createElement("datalist");
+      dl.id = "pvFolderList";
+      document.body.append(dl);
+    }
+    dl.innerHTML = "";
+    folderNames.forEach((f) => {
+      const o = document.createElement("option");
+      o.value = f;
+      dl.append(o);
+    });
+    const totpIn = mkField(t("ed_totp"), "", "password", "off");
+    totpIn.placeholder = isNew ? "JBSWY3DPEHPK3PXP" : "Leave blank to keep current";
+
+    const checks = document.createElement("div");
+    checks.className = "checks";
+    const rp = document.createElement("input");
+    rp.type = "checkbox";
+    rp.id = "pvReprompt";
+    rp.checked = !!(entry && entry.reprompt);
+    const rpLab = document.createElement("label");
+    rpLab.htmlFor = "pvReprompt";
+    rpLab.style.margin = "0";
+    rpLab.textContent = t("ed_reprompt");
+    checks.append(rp, rpLab);
+    card.append(checks);
+
+    const showRow = document.createElement("div");
+    showRow.className = "checks";
+    const show = document.createElement("input");
+    show.type = "checkbox";
+    const showLab = document.createElement("label");
+    showLab.textContent = "Show password";
+    showLab.style.margin = "0";
+    show.addEventListener("change", () => { passIn.type = show.checked ? "text" : "password"; });
+    showRow.append(show, showLab);
+    card.append(showRow);
+
+    const errEl = document.createElement("div");
+    errEl.className = "err";
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    const cancelBtn = document.createElement("button");
+    cancelBtn.textContent = t("cancel");
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "primary";
+    saveBtn.textContent = t("save_item");
+    let delBtn = null;
+    if (!isNew) {
+      delBtn = document.createElement("button");
+      delBtn.className = "danger";
+      delBtn.textContent = t("delete_item");
+      actions.append(delBtn);
+    }
+    actions.append(cancelBtn, saveBtn);
+    card.append(actions, errEl);
+    bg.append(card);
+    document.body.append(bg);
+
+    const close = () => bg.remove();
+    cancelBtn.addEventListener("click", close);
+    bg.addEventListener("click", (ev) => { if (ev.target === bg) close(); });
+    bg.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
+    titleIn.focus();
+
+    const needsToken = () => (entry && entry.reprompt) || rp.checked;
+
+    saveBtn.addEventListener("click", async () => {
+      errEl.textContent = "";
+      const username = userIn.value.trim();
+      if (!username) { errEl.textContent = t("ed_need_user"); return; }
+      const title = titleIn.value.trim() || username;
+      saveBtn.disabled = true;
+      try {
+        const token = needsToken() ? await requestReprompt(title) : null;
+        const payload = {
+          type: isNew ? "PV_ITEM_CREATE" : "PV_ITEM_UPDATE",
+          id: isNew ? "" : entry.id,
+          title,
+          username,
+          password: passIn.value,
+          url: urlIn.value.trim(),
+          urls: urlIn.value.trim() ? [urlIn.value.trim()] : [],
+          folder: folderIn.value.trim() || "General",
+          reprompt: rp.checked,
+        };
+        if (token) payload.reprompt_token = token;
+        // Blank TOTP means "keep existing"; sending the fetched live code
+        // would overwrite the secret with a 6-digit OTP.
+        if (totpIn.value.trim()) payload.totp = totpIn.value.trim();
+        const res = await withTimeout(
+          chrome.runtime.sendMessage(payload), QUERY_TIMEOUT_MS, "item save");
+        if (!res || !res.ok) throw new Error((res && res.error) || "save failed");
+        close();
+        status.textContent = t("ed_saved");
+        await refresh();
+      } catch (err) {
+        saveBtn.disabled = false;
+        errEl.textContent = "⚠️ " + ((err && err.message) || err);
+      }
+    });
+
+    if (delBtn) {
+      delBtn.addEventListener("click", async () => {
+        if (!window.confirm(t("ed_delete_confirm"))) return;
+        errEl.textContent = "";
+        delBtn.disabled = true;
+        try {
+          const token = entry.reprompt ? await requestReprompt(entry.title || entry.username || "this item") : null;
+          const payload = { type: "PV_ITEM_DELETE", id: entry.id };
+          if (token) payload.reprompt_token = token;
+          const res = await withTimeout(
+            chrome.runtime.sendMessage(payload), QUERY_TIMEOUT_MS, "item delete");
+          if (!res || !res.ok) throw new Error((res && res.error) || "delete failed");
+          close();
+          status.textContent = t("ed_deleted");
+          await refresh();
+        } catch (err) {
+          delBtn.disabled = false;
+          errEl.textContent = "⚠️ " + ((err && err.message) || err);
+        }
+      });
+    }
+  }
+
+  const addItemBtn = document.getElementById("addItemBtn");
+  if (addItemBtn) {
+    addItemBtn.addEventListener("click", () => openItemEditor(null));
   }
 
   function currentFilter() {
@@ -1252,6 +1472,7 @@
     const btn = ev.currentTarget;
     try {
       await navigator.clipboard.writeText(genOut.textContent || "");
+      armClipboardClear();
       btn.textContent = "✅";
       btn.title = t("copied");
       btn.setAttribute("aria-label", t("copied"));
@@ -1501,8 +1722,20 @@
       else if (ev.key === "Escape") { window.close(); }
     });
   }
+  // A4: after the popup writes a secret, ask the service worker to arm the
+  // global auto-clear alarm. Fire-and-forget: the copy already succeeded.
+  function armClipboardClear() {
+    try {
+      const p = chrome.runtime.sendMessage({ type: "PV_CLIP_ARM" });
+      if (p && p.catch) p.catch(() => {});
+    } catch (_) {}
+  }
   async function clipText(text, btn) {
-    try { await navigator.clipboard.writeText(text || ""); btn.textContent = t("copied"); }
+    try {
+      await navigator.clipboard.writeText(text || "");
+      armClipboardClear();
+      btn.textContent = t("copied");
+    }
     catch (_) { btn.textContent = t("blocked_cb"); }
   }
   let lastActPing = 0;
@@ -1645,6 +1878,7 @@
         return;
       }
       await navigator.clipboard.writeText(live);
+      armClipboardClear();
       if (btn) {
         btn.textContent = t("copied");
         setTimeout(() => { btn.textContent = restore; }, 1500);
@@ -1745,6 +1979,7 @@
     }
     // Per-row Fill+Submit: fill, then the form's own submit path.
     if (btns) {
+      btns.append(editButton(e.id));
       const sb = document.createElement("button");
       sb.textContent = t("submit_btn");
       sb.title = "Fill + submit";
@@ -1797,6 +2032,7 @@
         if (!full.totp) { btn.textContent = "—"; return; }
         try {
           await navigator.clipboard.writeText(full.totp);
+          armClipboardClear();
           btn.textContent = full.totp;
           btn.dataset.hasCode = "1";
           setTimeout(() => {
@@ -1842,6 +2078,7 @@
         cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
         btns.append(cu);
       }
+      btns.append(editButton(e.id));
       const sb = document.createElement("button");
       sb.textContent = t("submit_btn");
       sb.title = "Fill + submit";
