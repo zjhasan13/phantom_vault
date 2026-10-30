@@ -5,6 +5,10 @@ installed Bitwarden Edge bundle `2026.2.0_0` used only for UI/flow parity.
 Every claim below cites a file and line in this tree. No claim is based on
 marketing copy.
 
+This file is the single source of truth for the public roadmap. Section 1a is
+the publishable "what still has to be built" board; sections 4 and 10 hold the
+evidence behind every row.
+
 ---
 
 ## 0. Method and honesty rules
@@ -43,6 +47,69 @@ four places:
 
 Enterprise items (SOC 2, SSO/SCIM, team vaults, admin console) are deliberately
 out of scope. They are a different product, not a missing feature.
+
+---
+
+## 1a. Action board â€” what still has to be built
+
+This is the publishable task list. Every row traces to a gap in section 4 or
+section 10. "Done when" is the acceptance test, not a vibe.
+
+### Shipped
+
+| ID | Task | Evidence | Done when |
+|---|---|---|---|
+| A0 | 2FA picker no longer opens on generic text fields | commit `72a220d`; `content.js` `isOtpField` / `otpSweepMayPrompt` | 83 tests pass, GitHub new-repo page stays quiet |
+| A1 | Proactive idle lock pushes `PV_GATE_LOCKED` | `background.js:219-240`; 5 new tests | Locked state reaches every tab within one alarm tick |
+| A2 | "Never save for this site" (content + background) | `content.js:2374-2378`, `background.js:594-611`; 4 new tests | Clicking Never silences save and update prompts for the registrable domain |
+
+### P0 â€” parity blockers (do first)
+
+| ID | Task | Gap | Effort | Done when |
+|---|---|---|---|---|
+| A3 | Extension item editor: add, edit, delete, move to folder | E6 | 1-2 wk | A login can be created and edited entirely from the popup, with reprompt enforced |
+| A4 | Extension clipboard auto-clear | E7 | 2 days | Copied secret is cleared after the configured timeout, even if the popup closes |
+| A5 | Master password change / rekey | C1 | 1-2 wk | Old password fails, new password unlocks, one rollback snapshot exists |
+| A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
+| A7 | README, LICENSE, SECURITY.md | T1 | 2 days | Disclosure address + PGP key published; license present at root |
+| A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
+| A9 | Edit-before-save in the save toast | E3 | 3 days | Username and password can be corrected before the item is stored |
+
+### P1 â€” close the structural gaps
+
+| ID | Task | Gap | Effort | Done when |
+|---|---|---|---|---|
+| A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
+| A11 | Encrypted offline extension cache | E9 | 2 wk | Popup lists items and fills them with the desktop app closed, after a Hello-backed unlock |
+| A12 | Shadow-DOM field scan and observer | E8 | 1 wk | A web-component login form gets a badge and fills |
+| A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
+| A14 | Argon2id extension PIN + attempt backoff | P4 | 1 wk | 10 wrong PINs trigger exponential delay; the stored verifier is not a bare SHA-256 |
+| A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
+| A16 | Signed container revision (`rev` + `prev_hash`) | C3 | 1 wk | A replayed older blob is refused with a visible warning |
+| A17 | Same-origin favicon fetch | P1 | 1 day | With the network off, no favicon request leaves the machine |
+| A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
+| A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
+
+### P2 â€” differentiators and polish
+
+| ID | Task | Gap | Effort | Done when |
+|---|---|---|---|---|
+| A20 | Serverless Send-style expiring share | E13 | 2-3 wk | A link opens once, expires, and the relay never sees the key |
+| A21 | Hardware security key unlock (FIDO2 hmac-secret) | E12 | 2-3 wk | Vault unlocks with key + PIN; password fallback still works |
+| A22 | PQ-paranoid profile (device-bound decapsulation key) | C4 | 2-3 wk | Correct password alone cannot open the container |
+| A23 | Loopback API + `pv` CLI | X1 | 3-4 wk | A script reads a secret only after explicit approval; tokens expire |
+| A24 | Chunked, separately encrypted attachments | E11 | 2 wk | A 50 MB attachment saves without re-encrypting the vault |
+| A25 | Desktop light/high-contrast theme | E15 | 1 wk | Palette switches without restarting; contrast passes WCAG AA |
+| A26 | Desktop Bengali localization | E16 | 2 wk | Every visible string has a Bengali entry; no clipped layouts |
+| A27 | Safari Web Extension wrapper | E17 | 2 wk | Fill and save work in Safari with the same native host |
+| A28 | Email-breach lookup (opt-in, k-anonymity) | E18 | 1 wk | Breached account is flagged only after consent |
+| A29 | ARM64 Windows build | T4 | 1 wk | Release matrix produces and tests an `aarch64` installer |
+
+### Sequence
+
+`A3-A9` in parallel where possible, then `A10` as the long pole, then `A11-A19`,
+then `A20-A29`. Anything in P0 that is not shipped blocks the claim "better than
+Bitwarden", because these are table stakes.
 
 ---
 
@@ -338,7 +405,7 @@ Select-String -Path installer.iss -Pattern 'SignTool'
 
 ---
 
-## 10. Addendum 2026-10-30 — second pass, app + extension
+## 10. Addendum 2026-10-30 ï¿½ second pass, app + extension
 
 A deeper pass over the desktop and extension surfaces found gaps that the first
 pass missed, and corrected three assumptions.
@@ -381,13 +448,13 @@ pass missed, and corrected three assumptions.
 
 ### 10.4 Revised priority for "beat both"
 
-1. **E6 + E7** — extension write access and clipboard auto-clear. Without these
+1. **E6 + E7** ï¿½ extension write access and clipboard auto-clear. Without these
    the extension is a viewer, not a manager. 1-2 weeks.
-2. **E14** — platform layer. Windows-only caps the addressable market and is the
+2. **E14** ï¿½ platform layer. Windows-only caps the addressable market and is the
    single largest structural gap. 6-10 weeks for macOS/Linux; mobile after.
-3. **C1 + C2** — rekey and separate backup passphrase. 2-3 weeks.
-4. **E8 + E9 + E10** — shadow DOM, offline cache, KDBX. 3 weeks.
-5. **T1-T3** — README/LICENSE/SECURITY, Authenticode, release provenance. 1 week.
-6. **E13 + E12 + C4** — serverless Send, hardware-key unlock, PQ-paranoid
+3. **C1 + C2** ï¿½ rekey and separate backup passphrase. 2-3 weeks.
+4. **E8 + E9 + E10** ï¿½ shadow DOM, offline cache, KDBX. 3 weeks.
+5. **T1-T3** ï¿½ README/LICENSE/SECURITY, Authenticode, release provenance. 1 week.
+6. **E13 + E12 + C4** ï¿½ serverless Send, hardware-key unlock, PQ-paranoid
    profile. These are the features that make "better than Bitwarden" true rather
    than argued. 4-6 weeks.
