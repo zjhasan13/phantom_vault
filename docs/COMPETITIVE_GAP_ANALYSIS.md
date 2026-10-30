@@ -335,3 +335,59 @@ Select-String -Path src\core\favicon.rs -Pattern 'DDG_ICON|GOOGLE_S2|unwrap_or\(
 Test-Path README.md, LICENSE, SECURITY.md
 Select-String -Path installer.iss -Pattern 'SignTool'
 ```
+
+---
+
+## 10. Addendum 2026-10-30 — second pass, app + extension
+
+A deeper pass over the desktop and extension surfaces found gaps that the first
+pass missed, and corrected three assumptions.
+
+### 10.1 Corrections
+
+| Earlier assumption | Reality | Evidence |
+|---|---|---|
+| Passkeys are metadata-only | Wrong. Full WebAuthn relay exists: page hook, background relay, native attest/assert | `browser_extension/hook.js:132-187`, `content.js:2888-2923`, `native_host.rs:660-830` |
+| Import coverage is thin | Wrong. 12 sniffed formats, including Bitwarden, 1Password, KeePass, Proton, Chrome, Safari, LastPass, generic CSV | `src/importer/sniffer.rs:6-37` |
+| Updates are unsigned | Partly wrong. The updater requires a detached Ed25519 signature plus SHA-256 before staging; only the installer itself lacks Authenticode | `src/sync/updater.rs:9-38,144-160` |
+
+### 10.2 New gaps
+
+| ID | Gap | Evidence | Impact | Fix | Sev |
+|---|---|---|---|---|---|
+| E6 | Extension cannot add, edit, or delete items | No write command in `browser_extension/popup.js`; host exposes only `save_login`, `save_card`, `save_identity` (`native_host.rs:1435,1514,1626`) | Every change requires the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
+| E7 | Extension copy never clears the clipboard | `popup.js:1504-1507` writes and stops; desktop has `copy_sensitive` with auto-clear (`main.rs:484-520`) | A copied password stays in the OS clipboard indefinitely, and the popup comment claims otherwise | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | S1 |
+| E8 | No shadow-DOM autofill | `content.js:450` is the extension's own UI shadow root; no traversal of page shadow roots | Web-component login forms (increasing share of modern sites) never get badges or fill | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
+| E9 | No offline extension cache | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
+| E10 | No KDBX (binary) import or export | KeePass support is XML/CSV only (`src/importer/keepass.rs:1-5`); exporters are CSV/Bitwarden JSON/native (`exporter.rs:83-412`) | Users cannot move to or from KeePass's real container; lock-in both ways | Read/write KDBX 4 with Argon2 + AES-KDF; keep XML path | S2 |
+| E11 | Attachments are 5 MB and inline in the vault blob | `src/models.rs:82`; attachments live on items (`models.rs:73-79,265`) | Any file save re-encrypts the whole vault and bloats sync; Bitwarden allows large separate attachments | Store attachments as separately encrypted chunks with their own keys and a size budget | S2 |
+| E12 | No hardware security key unlock | Only Windows Hello + TOTP gate exist; no FIDO2/HMAC-secret path | Bitwarden supports FIDO2 2FA; KeePassXC supports hardware-key unlock. A local vault with a hardware factor would be a differentiator | FIDO2 hmac-secret or CTAP2 key wrapping the vault key; fallback to password | S2 |
+| E13 | No secure sharing / expiring link | No share/send model or route in `src/models.rs` or `src/main.rs` | Bitwarden Send is a core workflow; users fall back to chat apps | Serverless Send: encrypted blob + key in URL fragment, GitHub/P2P relay, TTL and one-view | S2 |
+| E14 | Desktop is Windows-only | `#![windows_subsystem]` (`src/main.rs:3`), 13 Windows-gated sites, DPAPI/WinRT dependencies | No macOS/Linux, and no mobile at all; Bitwarden ships all of them | Split platform layer behind a trait: DPAPI/Hello on Windows, Keychain/Secure Enclave on macOS, libsecret on Linux | S1 |
+| E15 | Desktop has no light theme | Palette is hard-coded dark (`ui/appwindow.slint:110-124`) | Accessibility and daylight use; extension already supports `prefers-color-scheme` (`popup.html:6-17`) | Theme tokens with light/high-contrast variants | S3 |
+| E16 | Desktop is English-only | No i18n layer in `src/main.rs`; only the extension has BN/EN (`popup.js:2,19,92-210`) | Bengali users get a localized popup and an English desktop | String table + `lang` setting; reuse the extension glossary | S2 |
+| E17 | No Safari extension | Only Chromium and Firefox manifests exist | Safari users cannot use the product | Safari Web Extension wrapper around the same JS | S3 |
+| E18 | Vault health covers passwords only | `security/breach_check.rs` checks password hashes via HIBP ranges; no email-breach lookup | Bitwarden/1Password watchtower also flags breached accounts and weak 2FA coverage | Optional email-breach check with k-anonymity and explicit consent | S3 |
+
+### 10.3 What is genuinely ahead (keep and market)
+
+- Full passkey create/get relay, not just storage.
+- 12-format importer with fuzzy CSV fallback.
+- Ed25519-signed update assets plus SHA-256.
+- Shamir recovery shares and GitHub-relay emergency access.
+- Built-in Addy/SimpleLogin alias creation with a DPAPI-sealed token.
+- Breach check, reuse/weak/stale audit, and bulk rotation.
+- Bengali diceware wordlist and a BN/EN extension UI.
+
+### 10.4 Revised priority for "beat both"
+
+1. **E6 + E7** — extension write access and clipboard auto-clear. Without these
+   the extension is a viewer, not a manager. 1-2 weeks.
+2. **E14** — platform layer. Windows-only caps the addressable market and is the
+   single largest structural gap. 6-10 weeks for macOS/Linux; mobile after.
+3. **C1 + C2** — rekey and separate backup passphrase. 2-3 weeks.
+4. **E8 + E9 + E10** — shadow DOM, offline cache, KDBX. 3 weeks.
+5. **T1-T3** — README/LICENSE/SECURITY, Authenticode, release provenance. 1 week.
+6. **E13 + E12 + C4** — serverless Send, hardware-key unlock, PQ-paranoid
+   profile. These are the features that make "better than Bitwarden" true rather
+   than argued. 4-6 weeks.
