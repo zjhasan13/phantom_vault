@@ -8,6 +8,7 @@ use crate::models::Vault;
 use secrecy::SecretString;
 use std::fs;
 use std::path::Path;
+use zeroize::Zeroize;
 
 /// Automated scheduled backups (ciphertext snapshots + retention shred).
 pub mod backup_scheduler;
@@ -161,6 +162,71 @@ pub fn save_vault_secret<P: AsRef<Path>>(
 #[deprecated(note = "use save_vault_secret with a SecretString")]
 pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_path: P) -> Result<(), String> {
     save_vault_secret(vault, &SecretString::new(master_password.to_string()), file_path)
+}
+
+/// A5: master-password rotation (rekey).
+///
+/// Re-encrypts the whole container inside `file_path` under `new_password`.
+/// The portable save path already emits a fresh Argon2id salt and a fresh
+/// ML-KEM keypair, so no KDF parameter or container-layout change is needed.
+///
+/// Safety order (the live file is never touched until all proofs pass):
+/// 1. `old_password` must open the current container — otherwise no write.
+/// 2. Serialize once, encrypt under the new password.
+/// 3. Round-trip: the new container must decrypt to the exact same bytes.
+/// 4. The old password must NOT open the new container.
+/// 5. Lock, rotate backups (old container becomes `.bak.1.enc`, still sealed
+///    with the OLD password = deliberate rollback snapshot), atomic write.
+///
+/// Callers must update the in-memory master and re-seal Hello/App-PIN seals;
+/// backups, exports and printed shards stay on the old password by design.
+pub fn rekey_vault_secret<P: AsRef<Path>>(
+    vault: &Vault,
+    old_password: &SecretString,
+    new_password: &SecretString,
+    file_path: P,
+) -> Result<(), String> {
+    use secrecy::ExposeSecret;
+    if old_password.expose_secret() == new_password.expose_secret() {
+        return Err("New master password must differ from the current one.".to_string());
+    }
+    let path = file_path.as_ref();
+
+    // 1. Prove the caller knows the live password (no write on failure).
+    //    The proof vault is decrypted material — wipe it before dropping.
+    let (mut proof, _) = load_vault_versioned_secret(old_password, path)?;
+    proof.zeroize();
+
+    // 2. Encrypt with the new password (fresh salt + fresh PQ keypair).
+    let mut serialized =
+        serde_json::to_vec(vault).map_err(|e| format!("Serialization error: {}", e))?;
+    let encrypted_payload = encrypt_vault_portable_secret(new_password, &serialized)?;
+
+    // 3. Round-trip proof before replacing the only good copy.
+    let mut probe = decrypt_vault_portable_secret(new_password, &encrypted_payload)?;
+    let roundtrip_ok = probe == serialized;
+    probe.zeroize();
+    serialized.zeroize();
+    if !roundtrip_ok {
+        return Err("Rekey verification failed: the new container did not round-trip.".to_string());
+    }
+
+    // 4. Old password must not open the new container. Fresh salt makes this
+    //    true cryptographically; verify it so a future format change cannot
+    //    silently regress the promise.
+    if let Ok(mut leaked) = decrypt_vault_portable_secret(old_password, &encrypted_payload) {
+        leaked.zeroize();
+        return Err(
+            "Rekey refused: the old password still opens the new container.".to_string(),
+        );
+    }
+
+    // 5. Cross-process lock, one rollback generation, atomic write.
+    let _guard = FileLock::acquire(path)?;
+    rotate_backups(path)?;
+    crate::security::shredder::secure_write(path, &encrypted_payload)?;
+
+    Ok(())
 }
 
 /// Load with 3-way envelope dispatch (unchanged):
@@ -554,6 +620,100 @@ mod tests {
         let (vault2, needs_migration2) = load_vault_versioned("mig-pass-123", &v2_path).unwrap();
         assert!(!needs_migration2);
         assert_eq!(vault2.credentials[0].password, "s3cret!");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rekey_opens_with_new_password_and_refuses_old() {
+        let dir = std::env::temp_dir().join("pv_rekey_open_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let old = SecretString::new("old-master-pass-1".to_string());
+        let new = SecretString::new("new-master-pass-2".to_string());
+        save_vault_secret(&demo_vault(), &old, &path).unwrap();
+
+        rekey_vault_secret(&demo_vault(), &old, &new, &path).unwrap();
+
+        let reopened = load_vault_secret(&new, &path).unwrap();
+        assert_eq!(reopened.credentials[0].password, "s3cret!");
+        assert_eq!(reopened.credentials[0].username, "u@example.com");
+        assert!(load_vault_secret(&old, &path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rekey_keeps_one_old_password_rollback_snapshot() {
+        let dir = std::env::temp_dir().join("pv_rekey_rollback_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let old = SecretString::new("old-rollback-pass".to_string());
+        let new = SecretString::new("new-rollback-pass".to_string());
+        save_vault_secret(&demo_vault(), &old, &path).unwrap();
+
+        rekey_vault_secret(&demo_vault(), &old, &new, &path).unwrap();
+
+        let rollback = backup_name(&path, 1);
+        assert!(rollback.exists(), "rekey must leave .bak.1.enc");
+        let old_vault = load_vault_secret(&old, &rollback).unwrap();
+        assert_eq!(old_vault.credentials[0].password, "s3cret!");
+        // The rollback stays on the OLD password — a new-password open fails.
+        assert!(load_vault_secret(&new, &rollback).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rekey_wrong_old_password_leaves_live_file_untouched() {
+        let dir = std::env::temp_dir().join("pv_rekey_wrong_old_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let old = SecretString::new("right-old-pass-1".to_string());
+        let wrong = SecretString::new("wrong-old-pass-9".to_string());
+        let new = SecretString::new("new-wrong-test-2".to_string());
+        save_vault_secret(&demo_vault(), &old, &path).unwrap();
+        let before = std::fs::read(&path).unwrap();
+
+        let err = rekey_vault_secret(&demo_vault(), &wrong, &new, &path).unwrap_err();
+        assert!(!err.is_empty(), "wrong old password must be refused");
+        assert_eq!(std::fs::read(&path).unwrap(), before);
+        assert!(load_vault_secret(&old, &path).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rekey_fresh_salt_and_ciphertext_on_every_run() {
+        let dir = std::env::temp_dir().join("pv_rekey_fresh_salt_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let p1 = SecretString::new("fresh-old-pass-01".to_string());
+        let p2 = SecretString::new("fresh-new-pass-02".to_string());
+        let p3 = SecretString::new("fresh-new-pass-03".to_string());
+        save_vault_secret(&demo_vault(), &p1, &path).unwrap();
+        rekey_vault_secret(&demo_vault(), &p1, &p2, &path).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        rekey_vault_secret(&demo_vault(), &p2, &p3, &path).unwrap();
+        let second = std::fs::read(&path).unwrap();
+        // Same vault bytes, different container bytes: fresh salt + PQ keypair.
+        assert_ne!(first, second);
+        assert_ne!(first[4..20], second[4..20], "salt must not be reused");
+        assert!(load_vault_secret(&p3, &path).is_ok());
+        assert!(load_vault_secret(&p2, &path).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn rekey_refuses_identical_old_and_new_password() {
+        let dir = std::env::temp_dir().join("pv_rekey_same_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("same-password-123".to_string());
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let err = rekey_vault_secret(&demo_vault(), &pw, &pw, &path).unwrap_err();
+        assert!(err.contains("must differ"), "unexpected error: {err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

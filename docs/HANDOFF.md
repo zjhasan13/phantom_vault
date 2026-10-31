@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: import/export upgrade (native .pvx, previews, merge modes, undo; 0.4.0) after web 0.3.2.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A5 master password rekey (atomic swap + rollback snapshot), 0.4.0 still.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -25,6 +25,19 @@
   `675196E7EC550471`, excludes `browser_extension/dist`); exe 19.55 MB
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
+
+- **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
+  proves the old password against the live container, encrypts under the new
+  one (fresh Argon2id salt + fresh ML-KEM keypair, KDF params untouched),
+  round-trip-verifies, proves the old password no longer opens it, rotates the
+  previous container to `.bak.1.enc` (still old-password) and writes
+  atomically. Settings > Security gains the three-field card + two-tap
+  confirm (`change_master_password`). On success: RAM master replaced, Hello
+  token re-sealed, App PIN removed (PIN is unrecoverable), shard nudge reset,
+  metadata-only `rekey` access-log event, sync push. Deliberate: `.pvx`, old
+  backups and GitHub history stay on the old password. Tests: +6 →
+  `cargo test` **481 passed / 1 ignored**, `npm test` **118/118**. A4 hardware
+  clipboard QA still unverified (gap doc §5.7).
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
@@ -237,7 +250,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 460 passed / 1 ignored, `npm test` 71/71 (27 background + 31 jsdom content + 8 domain + 5 popup), `cargo check --all-targets` zero
+- Baselines: `cargo test` 481 passed / 1 ignored, `npm test` 118/118 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -328,9 +341,10 @@
    minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
    locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
    warm p50 ~5 ms. Record in release notes.
-3. **Master Password Rotation — Option A** (user-side, after C1 purge): export
-   Bitwarden JSON → fresh vault + new password → import → verify count → export
-   Recovery Sheet PDF → shred temp JSON → delete all `*.dpapi` → shred old backup.
+3. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
+   The old export/import rotation is no longer needed. After a rekey, reprint
+   the recovery shards and re-enroll the App PIN (both stay on the old secret
+   until redone).
 4. **GitHub cache check:** repo code-search `my_secure_vault` must return
    zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
@@ -380,3 +394,7 @@
 - Crate `Result<T>` alias collision: new String-error fns use
   `std::result::Result` or a local `StdResult<T>` alias — never bare
   `Result<_, String>` next to `use crate::error::Result`.
+- A5 rekey invariants: the rollback snapshot is the normal `.bak.1.enc`
+  (sealed with the OLD password); App PIN is removed on rotation because the
+  PIN cannot re-seal itself; old `.pvx` exports, backups and GitHub history
+  stay on the old password — never claim otherwise in UI or docs.

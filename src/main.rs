@@ -855,6 +855,25 @@ fn panic_wipe(vault_arc: &Arc<Mutex<Vault>>, master_arc: &Arc<Mutex<Option<Secre
 /// panic_wipe + unconditional clipboard flush (a copied secret must never
 /// outlive the session) + access-log line + lock-screen UI.
 ///
+/// A5: master-password rotation input gate. Pure so the rules are unit-tested
+/// without touching the vault file. Length counts characters, not bytes, so a
+/// Bengali-script password is not rejected on length alone.
+fn rekey_input_error(old: &str, new: &str, confirm: &str) -> Option<&'static str> {
+    if old.is_empty() {
+        return Some("⚠️ Enter the current master password.");
+    }
+    if new.chars().count() < 8 {
+        return Some("⚠️ New master password must be at least 8 characters.");
+    }
+    if new != confirm {
+        return Some("⚠️ New master passwords do not match.");
+    }
+    if new == old {
+        return Some("⚠️ New password must differ from the current one.");
+    }
+    None
+}
+
 /// Audit finding: the Rust vault was wiped but Slint-side models/props
 /// (detail secrets, history, form drafts, health badges) survived in UI-layer
 /// RAM — exactly what Mimikatz-style dumping hunts. Everything secret-shaped
@@ -12479,6 +12498,85 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_pin_available(false);
         ui.set_pin_status("App PIN removed from this PC.".into());
     });
+    // A5: master-password rotation. Worker thread + the vault mutex held across
+    // the whole rekey, so no edit can land between "serialize" and "swap".
+    let rekey_weak = main_window.as_weak();
+    let rekey_master = Arc::clone(&active_master_pw);
+    let rekey_vault = Arc::clone(&active_vault);
+    main_window.on_change_master_password(move |old, new, confirm| {
+        let Some(ui) = rekey_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_rekey_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if lock_master_pw(&rekey_master).is_none() {
+            ui.set_rekey_status("❌ Vault not unlocked!".into());
+            return;
+        }
+        if let Some(err) = rekey_input_error(old.as_str(), new.as_str(), confirm.as_str()) {
+            ui.set_rekey_status(err.into());
+            return;
+        }
+        ui.set_rekey_status("⏳ Re-encrypting vault (Argon2id)…".into());
+        let old_s = old.as_str().to_string();
+        let new_s = new.as_str().to_string();
+        let weak = rekey_weak.clone();
+        let weak_sync = rekey_weak.clone();
+        let master_arc = Arc::clone(&rekey_master);
+        let vault_arc = Arc::clone(&rekey_vault);
+        std::thread::spawn(move || {
+            let old_pw = SecretString::new(old_s);
+            let new_pw = SecretString::new(new_s);
+            let result = {
+                // Hold the vault lock across encrypt + verify + swap so a
+                // concurrent edit can never be silently dropped.
+                let vault = lock_vault(&vault_arc);
+                storage::rekey_vault_secret(&vault, &old_pw, &new_pw, VAULT_FILE)
+            };
+            match result {
+                Ok(()) => {
+                    // Re-seal the Hello token BEFORE moving the master into
+                    // the RAM store (one owner, no SecretString clone).
+                    // A failed re-seal leaves a stale token that would fail
+                    // closed, so drop it instead of keeping a broken shortcut.
+                    if !seal_hello_token(&new_pw) {
+                        let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
+                    }
+                    *lock_master_pw(&master_arc) = Some(new_pw);
+                    // pin.dpapi seals the OLD master with Argon2id(PIN); the PIN
+                    // is not recoverable here, so removal is the only honest
+                    // option (user re-enrolls with the new password).
+                    security::app_pin::disable(Path::new("."));
+                    // Printed Shamir shards recover the OLD password — re-nudge.
+                    let _ = std::fs::remove_file("shards_nudged.pref");
+                    security::access_log::log_event("rekey", "master rotated");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_pin_available(false);
+                            ui.set_rekey_status(
+                                "✅ Master password changed. Regenerate your recovery shards. App PIN was removed — re-enroll it.".into(),
+                            );
+                            ui.set_notification_text(
+                                "⚠️ Old backups, exports and printed shards still use the OLD password."
+                                    .into(),
+                            );
+                        }
+                    });
+                    // Push the re-encrypted container to the configured remote.
+                    trigger_sync_push(weak_sync);
+                }
+                Err(e) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_rekey_status(format!("❌ Rekey failed: {e}").into());
+                        }
+                    });
+                }
+            }
+        });
+    });
     // Extension PIN management (Settings is the ONLY writer — the extension
     // itself only reads the served hash). Unlocked + non-decoy required.
     // Raw PINs arrive here (Slint has no SHA-256); they are hashed then
@@ -14713,5 +14811,16 @@ mod grid_tests {
         assert_eq!(fav_flag(&v, 7, "pk"), Some(true));
         assert_eq!(fav_flag(&v, 7, "nope"), None);
         assert_eq!(fav_flag(&v, 9, "pk"), None);
+    }
+
+    #[test]
+    fn rekey_input_gate_rejects_short_mismatch_and_reuse() {
+        assert!(rekey_input_error("", "new-password-1", "new-password-1").is_some());
+        assert!(rekey_input_error("old-pass", "short", "short").is_some());
+        assert!(rekey_input_error("old-pass", "new-password-1", "other-password").is_some());
+        assert!(rekey_input_error("same-password", "same-password", "same-password").is_some());
+        assert!(rekey_input_error("old-pass", "new-password-1", "new-password-1").is_none());
+        // Bengali script counts characters, not bytes.
+        assert!(rekey_input_error("পুরনো-পাসওয়ার্ড", "নতুন-পাসওয়ার্ড", "নতুন-পাসওয়ার্ড").is_none());
     }
 }

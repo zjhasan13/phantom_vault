@@ -574,6 +574,7 @@ export component MainWindow inherits Window {
     // PIN-removal two-tap (downgrades unlock — confirm like deletes).
     in-out property <bool> confirm_pin_remove: false;
     in-out property <bool> confirm_ext_pin_remove: false;
+    in-out property <bool> confirm_rekey: false;
     // Form draft deletes (custom field / URL) two-tap — no undo there.
     in-out property <string> confirm_delete_field: "";
     in-out property <int> selected_count: 0;
@@ -652,6 +653,8 @@ export component MainWindow inherits Window {
     in-out property <string> ui_lang: "en";
     in-out property <string> pin_error: "";
     in-out property <string> pin_status: "";
+    // A5: master-password rotation status (Settings card).
+    in-out property <string> rekey_status: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -952,6 +955,8 @@ export component MainWindow inherits Window {
     callback request_pin_unlock(string);
     callback setup_app_pin(string, string);
     callback disable_app_pin();
+    // A5: master-password rotation (current, new, confirm).
+    callback change_master_password(string, string, string);
     callback setup_ext_pin(string, string);
     callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
@@ -1571,6 +1576,20 @@ export component MainWindow inherits Window {
                         if root.pin_available : AuraButton { label: root.confirm_pin_remove ? "Sure?" : "Remove PIN"; danger: true; width: root.confirm_pin_remove ? 110px : 130px; height: 34px; clicked => { if root.confirm_pin_remove { root.confirm_pin_remove = false; root.disable_app_pin(); } else { root.confirm_pin_remove = true; } } }
                     }
                     if root.pin_status != "" : Text { text: root.pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    // A5: master-password rotation (rekey). Old backups, exports
+                    // and printed shards stay on the OLD password by design.
+                    FieldLabel { text: "MASTER PASSWORD ROTATION"; }
+                    Text { text: "Re-encrypts the vault with a fresh salt. Old backups, exports and printed shards keep the OLD password. App PIN is removed after rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 6px;
+                        rekey_old := LineEdit { placeholder-text: "Current master password"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        rekey_new := LineEdit { placeholder-text: "New (8+ characters)"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        rekey_confirm := LineEdit { placeholder-text: "Confirm new"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: root.confirm_rekey ? "Sure? Re-encrypt" : "Change Master Password"; primary: !root.confirm_rekey; danger: root.confirm_rekey; width: root.confirm_rekey ? 190px : 220px; height: 34px; clicked => { if root.confirm_rekey { root.confirm_rekey = false; root.change_master_password(rekey_old.text, rekey_new.text, rekey_confirm.text); rekey_old.text = ""; rekey_new.text = ""; rekey_confirm.text = ""; } else { root.confirm_rekey = true; } } }
+                        if root.confirm_rekey : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.confirm_rekey = false; } }
+                    }
+                    if root.rekey_status != "" : Text { text: root.rekey_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }

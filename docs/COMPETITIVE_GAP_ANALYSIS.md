@@ -66,12 +66,12 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A3 | Extension item editor: add, edit, delete, move to folder | `popup.js` `openItemEditor`; `background.js` `PV_ITEM_*`; native `create_login`/`update_login`/`delete_login`; 6 new tests | A login can be created and edited entirely from the popup, with reprompt enforced |
 | A4 | Extension clipboard auto-clear | native `copy_secret` (`native_host.rs:3017`) with Windows exclusion formats; `pv_clip_hash` guard (`background.js:226-292`); `offscreen.js` SHA-256 check; popup `PV_COPY_SECRET`; 7 new tests | Copied secret is cleared after the configured timeout, even if the popup closes, and a newer user copy survives |
 | A4b | `verify_master` brute-force limiter | `VERIFY_MASTER_PER_MIN = 5` (`native_host.rs:220`), `verify_master_backoff_ms`, shared failure counter with `create_login`/`update_login`/`delete_login` | 6th attempt inside a minute is refused; failures delay the reply exponentially |
+| A5 | Master password change / rekey | `storage::rekey_vault_secret` (`storage.rs`); `rekey_input_error` + `on_change_master_password` (`main.rs`); Settings > Security card (`ui/appwindow.slint`) | Old password fails, new password unlocks, `.bak.1.enc` opens with the old password, 6 new tests |
 
 ### P0 — parity blockers (do first)
 
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
-| A5 | Master password change / rekey | C1 | 1-2 wk | Old password fails, new password unlocks, one rollback snapshot exists |
 | A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
 | A7 | README, LICENSE, SECURITY.md | T1 | 2 days | Disclosure address + PGP key published; license present at root |
 | A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
@@ -156,7 +156,7 @@ security or parity gap; **S3** = polish or ecosystem.
 
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
-| C1 | No master-password change/rekey | No rotate/change callback exists in `src/main.rs`; all saves re-seal with the in-memory password (`src/main.rs:3508`) | A leaked master password cannot be rotated without exporting and rebuilding the vault; `.pvx` backups stay sealed with the old password | Rekey flow: decrypt with old, re-encrypt with new salt + fresh KDF, atomic swap, keep one rollback snapshot, zeroize both | S1 |
+| C1 | Master-password change/rekey — **shipped (A5)** | `src/storage.rs` `rekey_vault_secret` (old-password proof, round-trip proof, atomic swap, `.bak.1.enc` rollback); Settings card + `main.rs` `on_change_master_password` | A leaked master password can now be rotated without exporting and rebuilding the vault; `.pvx` backups and printed shards stay on the old password by design | Rekey flow: decrypt with old, re-encrypt with new salt + fresh KDF, atomic swap, keep one rollback snapshot, zeroize both | S1 |
 | C2 | Backup `.pvx` shares the master password | Export uses the same secret path (`src/storage.rs:139-160`) | A backup stolen with a known/weak master password exposes the vault; no separate "backup passphrase" | Optional separate export passphrase, Argon2id with its own salt, explicit "cannot be opened with the vault password" warning | S1 |
 | C3 | No signed container revision / epoch | Container layout has no revision field (`src/crypto.rs:230-233`); GitHub sync has no expected-revision check on fresh restore (`src/main.rs:1151-1177`) | A fresh device (or a restore after local wipe) silently adopts whatever blob the remote holds; a forced-push of an old commit restores stale data and resurrects entries deleted after that point | Add `rev` + `prev_hash` inside the AEAD payload, sign with the vault key; refuse a lower `rev` and surface a loud warning | S1 |
 | C4 | Portable PQ profile is not a second factor | `src/crypto.rs:235-242`; portable form is the default save path (`src/storage.rs:149`) | "Post-quantum" is a hedge, not a factor. A guessed password yields the whole key chain | Opt-in "PQ-paranoid" profile: DPAPI/TPM-bound decapsulation key plus password (the old `V2Legacy` model). Keep portable for sync | S2 |
@@ -339,6 +339,34 @@ Three holes in `08dadd3` closed:
 
 `cargo test` and `npm test` (118) are green after the change.
 
+**Unverified on hardware (2026-10-31):** the seven manual clipboard checks were not run on a real machine. They remain open: (1) Win+V shows nothing after copy, (2) paste is empty after the TTL, (3) copying B survives A's alarm, (4) "Never" keeps the value past 2 minutes, (5) vault lock clears immediately, (6) closing the browser clears after the TTL, (7) closing the popup mid-window still clears on time.
+
+### 5.8 Master password rotation (A5)
+
+`storage::rekey_vault_secret` re-encrypts the whole container under the new
+password. It refuses a wrong old password before any write, proves the new
+container round-trips to the exact serialized bytes, proves the old password
+cannot open the new container, then writes atomically after the normal backup
+rotation. The previous container therefore survives as `.bak.1.enc`, sealed
+with the **old** password — the one rollback snapshot the action board asked
+for.
+
+The Settings card (`ui/appwindow.slint`, "MASTER PASSWORD ROTATION") gates the
+input (`rekey_input_error`: ≥8 characters, match, differs from current) and
+uses a two-tap confirm. On success the app:
+
+- re-seals `vault_hello.dpapi` with the new master (drops the token if DPAPI
+  fails, so Hello fails closed instead of using a stale secret);
+- removes the App PIN, because `pin.dpapi` seals the old master with
+  `Argon2id(PIN)` and the PIN itself is not recoverable;
+- resets `shards_nudged.pref`, so the recovery-shard nudge returns — printed
+  shards still recover the old password;
+- logs a metadata-only `rekey` event and pushes the new container if sync is
+  configured.
+
+Deliberate non-goals: `.pvx` exports, old backups and GitHub history keep the
+old password; users are told so in the card and the success toast.
+
 ---
 
 ## 6. Roadmap
@@ -355,8 +383,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 2 — Account lifecycle (2-3 weeks)
 
-1. Master-password change/rekey with atomic swap and a one-step rollback
-   snapshot (C1).
+1. **DONE (A5)** — master-password change/rekey with atomic swap and a
+   one-step rollback snapshot (C1).
 2. Optional separate backup passphrase for `.pvx` (C2).
 3. Header version bump carrying `rev` + `prev_hash` (C3).
 4. Exit test: rotate the password, unlock with the new one, verify the old one
@@ -426,7 +454,7 @@ competitors do not ship.
 | P2P / offline sync | Yes, open by default | No | No | **Lead**, but needs pairing |
 | Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
-| Master-password rotation | Missing | Yes | Yes | Behind |
+| Master-password rotation | Shipped (A5: old-password proof, atomic swap, `.bak.1.enc`) | Yes | Yes | Parity |
 | Backup passphrase | Missing | N/A (server) | Yes (Emergency Kit) | Behind |
 | Extension idle lock | Proactive (this batch) | Proactive | Proactive | Parity |
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
@@ -473,6 +501,11 @@ Select-String -Path src\windows_native\native_host.rs -Pattern 'create_login|upd
 Select-String -Path src\windows_native\native_host.rs -Pattern 'copy_secret|clip_until|VERIFY_MASTER_PER_MIN'
 Select-String -Path browser_extension\background.js -Pattern 'pv_clip_hash|PV_COPY_SECRET|pv_clip_clear'
 Select-String -Path browser_extension\offscreen.js -Pattern 'sha256Hex|skipped'
+
+# A5 master-password rekey
+Select-String -Path src\storage.rs -Pattern 'rekey_vault_secret'
+Select-String -Path src\main.rs -Pattern 'change_master_password|rekey_input_error'
+cargo test rekey
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6
