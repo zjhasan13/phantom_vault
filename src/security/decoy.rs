@@ -6,20 +6,56 @@
 //! and the real password never touches the decoy path.
 //! The duress-password verifier itself is DPAPI-sealed (`duress.dpapi`).
 
-use crate::core::memory::DpapiGuard;
 use crate::error::{Result, VaultError};
 use crate::models::{Credential, TotpAccount, Vault};
-use crate::storage::save_vault_secret;
-use secrecy::{ExposeSecret, SecretString};
-use std::path::Path;
+use crate::storage::save_vault_secret_flat;
+use secrecy::SecretString;
+use std::path::PathBuf;
 use zeroize::Zeroize;
 
-pub const DECOY_FILE: &str = "decoy_vault.enc";
-const DURESS_VERIFIER_FILE: &str = "duress.dpapi";
+/// A18: the decoy container intentionally looks like an extra backup
+/// generation. Rotation only touches `.bak.1`–`.bak.5`, so gen 0 is safe.
+pub const DECOY_FILE: &str = "my_secure_vault.enc.bak.0.enc";
+pub const LEGACY_DECOY_FILE: &str = "decoy_vault.enc";
+pub const LEGACY_VERIFIER_FILE: &str = "duress.dpapi";
+
+fn decoy_path() -> PathBuf {
+    std::env::var("PV_DECOY_FILE")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DECOY_FILE))
+}
+
+fn legacy_decoy_path() -> PathBuf {
+    PathBuf::from(LEGACY_DECOY_FILE)
+}
+
+/// Remove the old tell-tale files/backups after migration/provisioning.
+fn cleanup_legacy() {
+    let _ = std::fs::remove_file(legacy_decoy_path());
+    let _ = std::fs::remove_file(LEGACY_VERIFIER_FILE);
+    for gen in 1..=6 {
+        let _ = std::fs::remove_file(format!("{LEGACY_DECOY_FILE}.bak.{gen}.enc"));
+    }
+}
+
+/// A18 migration: an old `decoy_vault.enc` becomes the backup-like name; the
+/// separate duress verifier is deleted (the AEAD tag is the verifier now).
+fn migrate_legacy() {
+    let new = decoy_path();
+    if !new.exists() && legacy_decoy_path().exists() {
+        let _ = std::fs::rename(legacy_decoy_path(), &new);
+    }
+    if new.exists() {
+        let _ = std::fs::remove_file(LEGACY_VERIFIER_FILE);
+        for gen in 1..=6 {
+            let _ = std::fs::remove_file(format!("{LEGACY_DECOY_FILE}.bak.{gen}.enc"));
+        }
+    }
+}
 
 /// Is a decoy container provisioned on this device?
 pub fn decoy_exists() -> bool {
-    Path::new(DECOY_FILE).exists()
+    decoy_path().exists() || legacy_decoy_path().exists()
 }
 
 /// Set/rotate the duress password AND (re)provision the decoy container
@@ -90,50 +126,59 @@ pub fn provision_decoy(duress_password: &str) -> Result<()> {
         counter: 0,
         favorite: false,
     });
-    save_vault_secret(&vault, &SecretString::new(pw.clone()), DECOY_FILE)
+    save_vault_secret_flat(&vault, &SecretString::new(pw.clone()), decoy_path())
         .map_err(|e| VaultError::Security(format!("decoy seal failed: {e}")))?;
-    // Verifier LAST: only a persisted container gets a valid verifier.
-    let blob = DpapiGuard::protect(pw.as_bytes())
-        .map_err(|e| VaultError::Security(format!("duress seal failed: {e}")))?;
-    std::fs::write(DURESS_VERIFIER_FILE, blob)
-        .map_err(|e| VaultError::Security(format!("duress store failed: {e}")))?;
+    // A18: no separate duress verifier file — the AEAD tag is the verifier.
+    cleanup_legacy();
     pw.zeroize();
     Ok(())
 }
 
-/// Verify a candidate against the sealed duress verifier (no plaintext stored).
-fn verify_duress(candidate: &str) -> bool {
-    let blob = match std::fs::read(DURESS_VERIFIER_FILE) {
-        Ok(b) => b,
-        Err(_) => return false,
-    };
-    let secret = match DpapiGuard::unprotect(&blob) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    // Constant-time compare on the sealed bytes: no String alloc, and the
-    // length difference feeds the accumulator (no early-out length oracle).
-    let a = secret.expose();
-    let b = candidate.as_bytes();
-    let mut diff = (a.len() ^ b.len()) as u8;
-    for i in 0..a.len().max(b.len()) {
-        diff |= a.get(i).copied().unwrap_or(0) ^ b.get(i).copied().unwrap_or(0);
-    }
-    drop(secret);
-    diff == 0
-}
-
-/// Try the decoy path. Returns Some(vault) only if the duress password
-/// verifies AND the decoy container decrypts with it.
+/// Try the decoy path. The AEAD tag is the duress-password proof: a wrong
+/// candidate simply fails to decrypt (no separate verifier file).
 pub fn try_open_decoy(candidate: &str) -> Option<Vault> {
     try_open_decoy_secret(&SecretString::new(candidate.to_string()))
 }
 
 /// Secret-owning variant — the candidate never lingers as `&str` past this
-/// call (the DPAPI-seal comparison inside still exposes transiently).
+/// call.
 pub fn try_open_decoy_secret(candidate: &SecretString) -> Option<Vault> {
-    if !verify_duress(candidate.expose_secret()) {
-        return None;
+    migrate_legacy();
+    crate::storage::load_vault_secret(candidate, decoy_path()).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a18_decoy_is_padded_neutral_and_verifier_free() {
+        let dir = std::env::temp_dir().join(format!("pv-decoy-a18-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("my_secure_vault.enc.bak.0.enc");
+        std::env::set_var("PV_DECOY_FILE", &path);
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!decoy_exists());
+        provision_decoy("duress-pass-1").unwrap();
+        assert!(decoy_exists());
+        assert!(path.exists());
+        assert!(!PathBuf::from(LEGACY_VERIFIER_FILE).exists());
+        let len = std::fs::metadata(&path).unwrap().len();
+        // Same plaintext bucket → identical container size as the real vault.
+        let real = dir.join("my_secure_vault.enc");
+        crate::storage::save_vault_secret(
+            &Vault::new(),
+            &SecretString::new("master-pass-1".to_string()),
+            &real,
+        )
+        .unwrap();
+        assert_eq!(len, std::fs::metadata(&real).unwrap().len(), "decoy size must match the vault");
+        assert!(try_open_decoy("duress-pass-1").is_some());
+        assert!(try_open_decoy("wrong-pass-1").is_none());
+
+        let _ = std::fs::remove_file(&path);
+        std::env::remove_var("PV_DECOY_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
     }
-    crate::storage::load_vault_secret(candidate, DECOY_FILE).ok()
 }

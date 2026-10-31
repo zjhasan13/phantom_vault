@@ -111,6 +111,17 @@ pub fn parse_envelope(bytes: &[u8]) -> Option<(Vault, ContainerMeta)> {
     Some((env.vault, env.meta))
 }
 
+/// A18: pad every JSON payload to a 1 MiB bucket so the container size does not
+/// reveal whether a decoy exists (and hides small vault-vs-decoy differences).
+/// JSON parsers ignore trailing whitespace.
+const PAD_BUCKET: usize = 1024 * 1024;
+
+fn pad_payload(mut bytes: Vec<u8>) -> Vec<u8> {
+    let target = bytes.len().div_ceil(PAD_BUCKET).max(1) * PAD_BUCKET;
+    bytes.resize(target, b' ');
+    bytes
+}
+
 fn envelope_bytes(vault: &Vault, rev: u64, prev_hash: String) -> Result<Vec<u8>, String> {
     let meta = ContainerMeta {
         format: CONTAINER_FORMAT.to_string(),
@@ -118,8 +129,9 @@ fn envelope_bytes(vault: &Vault, rev: u64, prev_hash: String) -> Result<Vec<u8>,
         rev,
         prev_hash,
     };
-    serde_json::to_vec(&VaultEnvelopeRef { meta, vault })
-        .map_err(|e| format!("Serialization error: {e}"))
+    let json = serde_json::to_vec(&VaultEnvelopeRef { meta, vault })
+        .map_err(|e| format!("Serialization error: {e}"))?;
+    Ok(pad_payload(json))
 }
 
 /// A16 freshness verdict for an incoming (remote) container.
@@ -319,6 +331,26 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
+    save_vault_secret_inner(vault, master_password, file_path, true)
+}
+
+/// A18: save without rotating backups — used by the decoy container, whose
+/// name intentionally looks like an extra backup (`.bak.0.enc`). Creating
+/// `.bak.0.enc.bak.N.enc` siblings would be a tell.
+pub fn save_vault_secret_flat<P: AsRef<Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+) -> Result<(), String> {
+    save_vault_secret_inner(vault, master_password, file_path, false)
+}
+
+fn save_vault_secret_inner<P: AsRef<Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+    rotate: bool,
+) -> Result<(), String> {
     let path = file_path.as_ref();
     let _guard = FileLock::acquire(path)?;
     let old = fs::read(path).unwrap_or_default();
@@ -326,7 +358,9 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     let payload = envelope_bytes(vault, rev, prev_hash)?;
     let encrypted_payload = encrypt_vault_portable_secret(master_password, &payload)?;
 
-    rotate_backups(path)?;
+    if rotate {
+        rotate_backups(path)?;
+    }
     crate::security::shredder::secure_write(path, &encrypted_payload)?;
     remember_head(path, rev, sha256_hex(&encrypted_payload));
 
@@ -679,6 +713,21 @@ mod tests {
         assert_eq!(meta.rev, 1);
         assert!(meta.prev_hash.is_empty());
         assert_eq!(parsed.credentials[0].password, "s3cret!");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a18_container_is_padded_to_a_fixed_bucket() {
+        use crate::crypto::decrypt_vault_portable;
+        let dir = std::env::temp_dir().join("pv_a18_pad_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("a18-pad-pass-1".to_string());
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let inner = decrypt_vault_portable("a18-pad-pass-1", &std::fs::read(&path).unwrap()).unwrap();
+        assert_eq!(inner.len() % PAD_BUCKET, 0);
+        assert!(inner.len() >= PAD_BUCKET);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

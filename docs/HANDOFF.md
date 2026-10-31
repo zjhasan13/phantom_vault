@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A15b ephemeral P2P beacons + paired-device management (A15a+b complete), after A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A18 indistinguishable decoy provisioning (backup-like name, padded, verifier-free), after A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -144,6 +144,17 @@
   address) with **Forget**, which removes the key from `p2p_paired.dpapi` so the
   next request is 403. Tests +1 → `cargo test` **500 passed / 1 ignored + 4
   pv_sign**; `npm test` 132/132.
+
+- **A18 — indistinguishable decoy provisioning (this batch):** decoy moved from
+  `decoy_vault.enc` to `my_secure_vault.enc.bak.0.enc` (looks like an extra
+  backup; rotation only touches 1–5) and is written with
+  `save_vault_secret_flat` (no nested backups). The `duress.dpapi` verifier is
+  gone — the decoy AEAD tag is the password proof. `storage.rs` pads every JSON
+  payload to a 1 MiB bucket, so a typical vault and decoy share the same
+  container size. Legacy files migrate on first use and are in the factory-reset
+  list. Tests +2 → `cargo test` **504 passed / 1 ignored + 4 pv_sign**;
+  `npm test` 132/132. Honest limits: mtimes are not aligned, >1 MiB attachments
+  can change the size class, and the decoy is still a separate container.
 
 - **A15c — response signing, QR, A16 anchor (this batch):** every framed P2P
   response is signed with the host device key (`sign_response/verify_response`,
@@ -437,7 +448,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 502 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 504 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -606,6 +617,9 @@
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+- A18 decoy invariants: the duress verifier is the AEAD tag (never a sidecar);
+  the decoy uses the backup naming family and no rotation; every payload is
+  bucket-padded. Never reintroduce `decoy_vault.enc`/`duress.dpapi`.
 - A15a pairing invariants: the code never crosses the wire (HMAC proof only),
   is single-use/5-min, and every non-pair request requires a paired Ed25519
   signature + fresh timestamp. 403 is the default. A15b removes the head

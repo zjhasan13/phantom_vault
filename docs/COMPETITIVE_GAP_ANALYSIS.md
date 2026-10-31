@@ -78,6 +78,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A15a | Mandatory P2P pairing (device keys + signed requests) | `sync/p2p_pairing.rs` (Ed25519 device key, one-time 64-bit code, HMAC pair proof, DPAPI-sealed peer list, request signatures); `p2p_local.rs` 403 gate; UI shows the pairing code; 3 new tests | An unpaired client gets 403 and cannot pull/push; the code never crosses the wire; existing paired devices sync without re-entering it |
 | A15b | Ephemeral P2P beacons + paired-device management | `p2p_local.rs` beacon carries only `{app,name,version,port,id,ts}` (random per-process ID; legacy head fallback for parsing only); `p2p_pairing::list_pairs/forget`; Settings lists paired devices with Forget | Beacons no longer reveal the head hash/mtime; paired devices can be listed and forgotten |
 | A15c | Response signing, QR code, A16 anchor | `p2p_pairing::sign_response/verify_response`; `qr_svg` + Settings image; `PairedPeer.rev/hash` + `head_ok/update_peer_head`; pull refuses a peer rollback | Pull/push responses are signed by the host key; the pairing code renders as a QR; a pinned peer head refuses stale pulls |
+| A18 | Indistinguishable decoy provisioning | `decoy.rs` decoy stored as `my_secure_vault.enc.bak.0.enc` (backup-like, no rotation), no `duress.dpapi` verifier (AEAD tag is proof), payloads padded to a 1 MiB bucket in `storage.rs` | Listing has no duress filename; decoy and vault containers have the same size class |
 | A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
@@ -94,7 +95,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 |---|---|---|---|---|
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
-| A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
 | A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
 
 ### P2 — differentiators and polish
@@ -181,7 +181,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
 | P1 | Favicon prefetch sent every domain to DuckDuckGo/Google — **shipped (A17)** | Old `src/core/favicon.rs:21-22,346-351`; now `icon_url` builds only `https://{domain}/favicon.ico` and the DDG/Google constants are deleted | The set of sites in the vault leaked to two third parties; contradicted "no cloud, no tracking" | Fetch `/favicon.ico` same-origin from the site itself, or ship a bundled icon set; delete the DDG/Google paths | S2 |
-| P2 | Decoy vault is detectable by file presence | `src/security/decoy.rs:17,21-22` | `decoy_vault.enc` existing tells a coercer that duress mode is provisioned; file size/mtime differ | Always provision both containers, pad to a bucket, align mtimes; or hide the decoy inside the real container | S2 |
+| P2 | Decoy vault detectable by file presence — **shipped (A18)** | `decoy.rs` uses a backup-like `.bak.0.enc` name, removes the `duress.dpapi` verifier, pads to 1 MiB; `main.rs` nuke list covers legacy names | `decoy_vault.enc` no longer exists; decoy and vault containers share a size class | Always provision both containers, pad to a bucket, align mtimes; or hide the decoy inside the real container | S2 |
 | P3 | Canary alert is local-only | `src/security/canary.rs:7,13,58-69` | An attacker with disk access deletes `canary_alert.log`; the owner never learns the vault was opened | Send a signed alert to a paired device over P2P and/or an optional dead-drop (private repo, email) | S2 |
 | P4 | Extension PIN is a bare SHA-256 — **shipped (A14)** | `src/security/ext_pin.rs` now stores a salted Argon2id record (`PVPIN2`), verifies host-side (`ext_pin_verify`) and enforces a file-backed 30s→5min lockout; the verifier is never served | 10^4-10^8 offline candidates; a local attacker with the DPAPI blob on the same account can brute-force the UI gate | Argon2id/scrypt with a per-device salt, attempt counter with exponential backoff, Windows Hello fallback | S2 |
 | P5 | Plaintext password crosses to the extension per query | `src/windows_native/native_host.rs:397`; capped at 25 (`:409-410`) | Same model as Bitwarden, so not a parity gap, but the blast radius is larger than necessary | Per-fill one-time token, single-item scope, 10 s TTL; keep `query` for the popup only | S3 |
@@ -773,6 +773,31 @@ A15c finishes the polish:
 Remaining honest limits: push-side revision anchoring is not wired yet, and
 re-pairing is needed if a peer's LAN address changes.
 
+### 5.20 Indistinguishable decoy provisioning (A18)
+
+Old tells: `decoy_vault.enc` (name), a `duress.dpapi` verifier file, and a much
+smaller decoy container. A18 removes all three:
+
+- The decoy is stored as `my_secure_vault.enc.bak.0.enc`, matching the backup
+  naming family. Backup rotation only touches generations 1–5, and the decoy is
+  written with `save_vault_secret_flat` so it never creates nested backups.
+- No duress verifier file: the decoy's AEAD tag is the proof. A wrong candidate
+  simply fails to decrypt.
+- All saved payloads are padded with trailing JSON whitespace to a 1 MiB bucket,
+  so a typical vault and its decoy have identical container sizes. Legacy
+  `decoy_vault.enc`/`duress.dpapi` are migrated/removed on first use and included
+  in the factory-reset target list.
+
+Tests: decoy opens with the duress password and not another; its size equals a
+real vault's container; the verifier file is absent; storage payloads are
+bucket-aligned. Baselines: `cargo test` **504 passed / 1 ignored + 4 pv_sign
+tests**; `npm test` 132/132.
+
+Honest limits: padding is per 1 MiB bucket, so vaults with large attachments can
+still occupy a different size class; mtimes are not aligned, and a coercer with
+forensic tooling may still infer activity. The decoy remains a separate
+container (not hidden inside the real one).
+
 ---
 
 ## 6. Roadmap
@@ -813,7 +838,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 1. **DONE (A17)** — same-origin favicon fetch; the DDG/Google paths are deleted.
    A bundled icon set can come later without changing the privacy posture.
-2. Indistinguishable decoy provisioning (P2).
+2. **DONE (A18)** — indistinguishable decoy: backup-like name, no verifier
+   file, 1 MiB padded containers.
 3. Canary alert over P2P plus an optional dead-drop (P3).
 4. Exit test: with the network disabled, no favicon request leaves the machine;
    a decoy-provisioned profile is not distinguishable by file listing.
@@ -867,7 +893,7 @@ competitors do not ship.
 | Post-quantum story | Hybrid hedge, documented limit | None public | None public | Lead on mechanism, parity on honesty |
 | Sync integrity | Yes (A16: `rev` + `prev_hash` inside AEAD; merge refuses stale/forked) | Server-side versioning | Server-side versioning | Parity on replay, behind on fresh-device anchor |
 | P2P / offline sync | Yes, paired device keys + ephemeral beacons (A15a/b) | No | No | **Lead** |
-| Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
+| Duress / coercion | Decoy vault (A18: backup-like name, padded, no verifier file) | None | Travel Mode (partial) | **Lead** |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
 | Master-password rotation | Shipped (A5: old-password proof, atomic swap, `.bak.1.enc`) | Yes | Yes | Parity |
 | Backup passphrase | Yes (A6: `PVBK1`, independent of the master) | N/A (server) | Yes (Emergency Kit) | Parity |
@@ -964,6 +990,11 @@ cargo test a6
 Select-String -Path src\storage.rs -Pattern 'CONTAINER_FORMAT|fn check_incoming|prev_hash|remember_head'
 Select-String -Path src\main.rs -Pattern 'check_incoming'
 cargo test a16_
+
+# A18 indistinguishable decoy (backup-like name, padding, no verifier)
+Select-String -Path src\security\decoy.rs -Pattern 'bak\.0\.enc|save_vault_secret_flat|LEGACY_VERIFIER'
+Select-String -Path src\storage.rs -Pattern 'PAD_BUCKET|pad_payload'
+cargo test a18
 
 # A15a mandatory P2P pairing (device keys + signed requests)
 Select-String -Path src\sync\p2p_pairing.rs -Pattern 'accept_pair|verify_request|pair_request_proof|device_signing_key'

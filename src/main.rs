@@ -596,6 +596,8 @@ fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> 
         VAULT_FILE,
         &format!("{VAULT_FILE}.bak"),
         security::decoy::DECOY_FILE,
+        security::decoy::LEGACY_DECOY_FILE,
+        security::decoy::LEGACY_VERIFIER_FILE,
         HELLO_TOKEN_FILE,
         security::app_pin::PIN_FILE,
         security::app_pin::PIN_ATTEMPTS_FILE,
