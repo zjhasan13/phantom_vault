@@ -661,6 +661,7 @@ export component MainWindow inherits Window {
     in-out property <string> rekey_status: "";
     // A11: opt-in read-only offline extension cache.
     in-out property <bool> offline_cache_on: false;
+    in-out property <bool> offline_pin_on: false;
     in-out property <string> offline_cache_status: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
@@ -967,6 +968,7 @@ export component MainWindow inherits Window {
     // A5: master-password rotation (current, new, confirm).
     callback change_master_password(string, string, string);
     callback set_offline_cache(bool);
+    callback set_offline_cache_pin(bool);
     callback setup_ext_pin(string, string);
     callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
@@ -1608,6 +1610,7 @@ export component MainWindow inherits Window {
                     FieldLabel { text: "OFFLINE BROWSER CACHE (READ-ONLY)"; }
                     Text { text: "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: "Allow extension PIN unlock (weaker than Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_pin_on ? "ON" : "OFF"; primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
                     if root.offline_cache_status != "" : Text { text: root.offline_cache_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;

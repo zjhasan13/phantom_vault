@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A14 Argon2id host-verified extension PIN + lockout (after A11/0.4.1), following A6/A5/A7/A9/A8a.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A11b dual-gate offline cache (Hello or opt-in PIN) + A14 Argon2id PIN, after 0.4.1.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -122,6 +122,19 @@
   **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
+
+- **A11b — dual-gate offline cache (this batch):** the same DPAPI cache key can
+  now be opened by **Windows Hello** (`cache_get method:"hello"`) or the
+  **extension PIN** (`method:"pin"`), verified through A14's Argon2id record and
+  the same persistent lockout. `cache_status` is prompt-free
+  (`{enabled,pin_set,pin_allowed}`), so the popup's offline screen offers Hello
+  plus a PIN field only when the user separately enabled the PIN fallback
+  (`offline_cache_pin.pref`, default OFF). Background queries never prompt on
+  their own: they serve a warm 15-minute snapshot or return "locked". Replacing
+  or removing the PIN revokes the fallback (re-consent), and cache disable/decoy
+  erase the marker with the snapshot. Tests +1 Rust (PIN gate, consent required,
+  wrong PIN) and JS now 129. Honest limit: strength = min(Hello, PIN); a 4-digit
+  PIN is 10k candidates, so the fallback stays opt-in and is labelled weaker.
 
 - **A14 — Argon2id extension PIN (this batch):** `ext_pin.dpapi` no longer
   stores/serves a bare SHA-256. The record is `PVPIN2|salt|m|t|p|hash` with a
@@ -360,7 +373,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 491 passed / 1 ignored + 4 pv_sign tests, `npm test` 128/128 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 492 passed / 1 ignored + 4 pv_sign tests, `npm test` 129/129 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -524,6 +537,11 @@
   legacy master path, so pre-A6 `.pvx` files must never be broken. The export
   gate refuses a passphrase equal to the master (not a warning). Clearing the
   Slint fields happens on the event loop; property writes never cross threads.
+- A11b dual-gate invariants: one cache key, two gates — never duplicate the
+  ciphertext or wrap the key with the PIN. PIN unlock requires BOTH a set PIN
+  and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
+  revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
+  implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
 - A14 PIN invariants: the verifier never crosses the bridge (`ext_pin_status`
   is boolean only); Argon2id params live in the record; the lockout counter is
   file-backed and reset only by success/set/clear; a legacy SHA-256 record MUST

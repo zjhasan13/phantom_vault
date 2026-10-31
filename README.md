@@ -56,7 +56,7 @@ third-party audit. Those are tracked as concrete work in
 - **Edit-before-save**: the save prompt shows editable username/password fields in a closed shadow root
 - "Never save for this site", idle lock pushed to every tab, hash-guarded clipboard clear
 - Clipboard writes go through the native host so Windows can exclude them from history and cloud sync
-- **Opt-in offline cache**: with the desktop app closed, matching logins still fill after a Windows Hello prompt — logins only, read-only, 15-minute session, erased on decoy/disable/rekey
+- **Opt-in offline cache**: with the desktop app closed, matching logins still fill after Windows Hello **or** an extension PIN (separate opt-in) — logins only, read-only, 15-minute session, erased on decoy/disable/rekey
 
 **Sync (optional, ciphertext only)**
 - GitHub repository via API with a DPAPI-sealed token
@@ -101,11 +101,11 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 491 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 492 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
-npm test                         # 128/128 at 0.4.1
+npm test                         # 129/129 at 0.4.1
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
 

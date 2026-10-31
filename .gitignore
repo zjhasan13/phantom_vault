@@ -24,6 +24,8 @@ vault_cache.enc
 vault_cache.tmp
 vault_cache_key.dpapi
 vault_cache_key.tmp
+# A11b: explicit consent marker for PIN fallback (not secret, runtime state).
+offline_cache_pin.pref
 # A14 PIN attempt counter (not secret; runtime state).
 ext_pin_backoff
 sync_repo.txt

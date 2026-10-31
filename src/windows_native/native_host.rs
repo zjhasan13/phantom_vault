@@ -2845,8 +2845,26 @@ pub fn serve_cli() -> i32 {
             return 2;
         }
     };
-    if first_req.get("cmd").and_then(|c| c.as_str()) == Some("cache_get") {
-        let reply = match crate::security::offline_cache::handle_cache_get() {
+    let first_cmd = first_req.get("cmd").and_then(|c| c.as_str());
+    if first_cmd == Some("cache_status") {
+        let reply = crate::security::offline_cache::cache_status();
+        let frame = encode_frame(&reply);
+        let _ = output.write_all(&frame);
+        let _ = output.flush();
+        bridge_log("offline cache status served");
+        return 0;
+    }
+    if first_cmd == Some("cache_get") {
+        let method = first_req
+            .get("method")
+            .and_then(|v| v.as_str())
+            .unwrap_or("hello");
+        let pin = first_req.get("pin").and_then(|v| v.as_str());
+        let reply = match crate::security::offline_cache::handle_cache_get_at(
+            std::path::Path::new("."),
+            method,
+            pin,
+        ) {
             Ok(v) => v,
             Err(e) => err(&e),
         };
@@ -2855,7 +2873,7 @@ pub fn serve_cli() -> i32 {
         let _ = output.write_all(&frame);
         let _ = output.flush();
         bridge_log(if served {
-            "offline cache served (Hello)"
+            "offline cache served"
         } else {
             "offline cache refused"
         });

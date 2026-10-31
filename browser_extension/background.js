@@ -37,18 +37,25 @@ function filterCached(entries, q) {
     });
   });
 }
-async function ensureOfflineCache() {
+async function ensureOfflineCache(method = "hello", pin = "") {
   const now = Date.now();
-  if (offlineCache && offlineCache.until > now) return offlineCache;
-  // 130 s: the Windows Hello prompt is user-paced.
-  const r = await hostRequest({ cmd: "cache_get" }, 130000);
+  if (offlineCache && offlineCache.until > now && offlineCache.method === method) {
+    return offlineCache;
+  }
+  // 130 s: Hello/PIN entry are user-paced.
+  const payload = { cmd: "cache_get", method };
+  if (method === "pin") payload.pin = String(pin || "");
+  const r = await hostRequest(payload, 130000);
   if (!r || !r.ok || !Array.isArray(r.entries)) {
-    throw new Error((r && r.error) || "offline cache unavailable");
+    const err = new Error((r && r.error) || "offline cache unavailable");
+    if (r && r.retry_after) err.retry_after = Number(r.retry_after) || 0;
+    throw err;
   }
   const ttl = Math.max(60, Number(r.ttl_secs) || OFFLINE_TTL_SECS);
   offlineCache = {
     until: now + ttl * 1000,
     syncedAt: Number(r.created_at) || 0,
+    method,
     entries: r.entries,
   };
   return offlineCache;
@@ -59,14 +66,19 @@ async function queryWithCache(payload) {
     if (r && r.ok) return r;
     // A locked desktop is not an offline-cache case: never paper over it.
     if (r && /lock/i.test(String(r.error || ""))) return r;
-  } catch (_) { /* app closed / host refused — try the cache */ }
+  } catch (_) { /* app closed / host refused — use a warm cache if present */ }
   try {
-    const c = await ensureOfflineCache();
-    const entries = filterCached(c.entries, payload.app || payload.url || "")
+    // A11b: never prompt Hello implicitly from a background query; the popup
+    // chooses Hello or PIN on its offline unlock screen. Only a warm session
+    // (already unlocked this SW lifetime) serves here.
+    if (!offlineCache || offlineCache.until <= Date.now()) {
+      return { ok: false, error: "offline cache is locked" };
+    }
+    const entries = filterCached(offlineCache.entries, payload.app || payload.url || "")
       .slice(0, 25)
       .map((e) => ({ ...e, offline: true }));
     if (!entries.length) return { ok: false, error: "no offline cache match" };
-    return { ok: true, entries, cached: true, cache_synced_at: c.syncedAt };
+    return { ok: true, entries, cached: true, cache_synced_at: offlineCache.syncedAt };
   } catch (e) {
     return { ok: false, error: (e && e.message) || "offline cache unavailable" };
   }
@@ -466,14 +478,40 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       touchActivity();
       return await queryWithCache({ cmd: "query", app: msg.app || msg.url || "" });
     }
-    // A11: popup boot probe — asks the host for the Hello-gated cache when the
-    // desktop is unreachable. Returns status only, never entries.
+    // A11b: status is prompt-free; the popup then offers Hello or PIN.
     if (msg.type === "PV_CACHE_STATUS") {
       try {
-        const c = await ensureOfflineCache();
-        return { ok: true, cached: true, until: c.until, synced_at: c.syncedAt };
+        const r = await hostRequest({ cmd: "cache_status" }, 20000);
+        if (!r || !r.ok) {
+          return { ok: false, cached: false, error: (r && r.error) || "offline cache unavailable" };
+        }
+        const warm = !!(offlineCache && offlineCache.until > Date.now());
+        return {
+          ok: true,
+          enabled: !!r.enabled,
+          pin_set: !!r.pin_set,
+          pin_allowed: !!r.pin_allowed,
+          cached: warm,
+          until: warm ? offlineCache.until : 0,
+        };
       } catch (e) {
         return { ok: false, cached: false, error: (e && e.message) || "offline cache unavailable" };
+      }
+    }
+    if (msg.type === "PV_CACHE_HELLO" || msg.type === "PV_CACHE_PIN") {
+      const method = msg.type === "PV_CACHE_PIN" ? "pin" : "hello";
+      try {
+        const c = await ensureOfflineCache(method, msg.pin);
+        return {
+          ok: true, cached: true, method, until: c.until,
+          synced_at: c.syncedAt,
+        };
+      } catch (e) {
+        return {
+          ok: false, cached: false, method,
+          error: (e && e.message) || "offline cache unavailable",
+          retry_after: (e && e.retry_after) || 0,
+        };
       }
     }
     if (msg.type === "PV_LIST") {

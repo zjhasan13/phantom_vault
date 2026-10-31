@@ -3507,6 +3507,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }));
     let main_window = MainWindow::new()?;
     main_window.set_offline_cache_on(security::offline_cache::enabled());
+    main_window.set_offline_pin_on(security::offline_cache::pin_allowed_at(Path::new(".")));
     main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
     main_window.set_favicons_enabled(crate::core::favicon::show_favicons());
     // App PIN button shows iff a sealed PIN exists on this machine.
@@ -12264,7 +12265,43 @@ fn launch_url(ui: &MainWindow, url: &str) {
             "🗑️ Offline cache disabled and erased.".to_string()
         };
         ui.set_offline_cache_on(security::offline_cache::enabled());
+        if !security::offline_cache::enabled() {
+            ui.set_offline_pin_on(false);
+        }
         ui.set_offline_cache_status(msg.into());
+    });
+    let ocpin_weak = main_window.as_weak();
+    main_window.on_set_offline_cache_pin(move |on| {
+        let Some(ui) = ocpin_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_offline_cache_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if on && !security::offline_cache::enabled() {
+            ui.set_offline_cache_status("⚠️ Enable the offline cache first.".into());
+            return;
+        }
+        if on && !security::ext_pin::is_set(Path::new(".")) {
+            ui.set_offline_cache_status("⚠️ Set an extension PIN first.".into());
+            return;
+        }
+        match security::offline_cache::set_pin_allowed(on) {
+            Ok(()) => {
+                ui.set_offline_pin_on(on);
+                security::access_log::log_event(
+                    "offline-cache",
+                    if on { "pin on" } else { "pin off" },
+                );
+                ui.set_offline_cache_status(if on {
+                    "✅ PIN fallback enabled — cache strength is now the PIN.".into()
+                } else {
+                    "🔒 PIN fallback disabled — Windows Hello only.".into()
+                });
+            }
+            Err(e) => ui.set_offline_cache_status(format!("⚠️ {e}").into()),
+        }
     });
     // Close-to-tray preference toggle (persisted, default ON).
     let traypref_weak = main_window.as_weak();
@@ -12713,6 +12750,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
         match security::ext_pin::set(Path::new("."), &pin) {
             Ok(()) => {
                 ui.set_ext_pin_set(true);
+                // A11b: a new PIN always requires re-consent for cache unlock.
+                let _ = security::offline_cache::set_pin_allowed(false);
+                ui.set_offline_pin_on(false);
                 ui.set_ext_pin_status("✅ Extension PIN set — the host verifies it (Argon2id).".into());
             }
             Err(e) => {
@@ -12730,6 +12770,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         security::ext_pin::clear(Path::new("."));
+        // A11b: removing the PIN revokes the cache PIN fallback immediately.
+        let _ = security::offline_cache::set_pin_allowed(false);
+        ui.set_offline_pin_on(false);
         ui.set_ext_pin_set(false);
         ui.set_ext_pin_status("Extension PIN removed — browser is unmanaged.".into());
     });

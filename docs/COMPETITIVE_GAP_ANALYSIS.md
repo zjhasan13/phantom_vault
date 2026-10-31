@@ -73,7 +73,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
 | A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
 | A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
-| A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_STATUS`; Settings toggle; `popup.js` offline banner | The popup lists and fills matching logins with the desktop app closed, after a Windows Hello prompt; writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
+| A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
 ### P0 — parity blockers (do first)
@@ -591,6 +591,36 @@ process can read the DPAPI record and grind it at local CPU cost. Treat the PIN
 as shoulder-surfing protection, not vault-grade authentication — and prefer
 6–8 digits.
 
+### 5.15 Dual-gate offline cache: Hello or PIN (A11b)
+
+The cache now has **two independent gates over the same DPAPI-sealed key** — no
+second key slot, no duplicated ciphertext:
+
+- `cache_status` is prompt-free: `{enabled, pin_set, pin_allowed}` so the popup
+  can offer the right methods without flashing a Hello dialog.
+- `cache_get {method:"hello"}` is the original Windows Hello path.
+- `cache_get {method:"pin", pin}` verifies through the A14 Argon2id record and
+  the same persistent 30 s→5 min lockout. It is refused unless the user has set
+  **and** explicitly allowed the PIN fallback (`offline_cache_pin.pref`).
+- The popup's offline screen offers **Use Windows Hello** plus a PIN field only
+  when the fallback is allowed. Background `PV_QUERY` never prompts on its own —
+  it serves a warm 15-minute snapshot and otherwise returns "offline cache is
+  locked"; a service-worker restart re-asks.
+- Setting/replacing/removing the extension PIN revokes the PIN fallback
+  (re-consent required); disabling the cache erases the consent marker with the
+  rest of the files; decoy unlock still erases everything.
+
+Tests: the Rust PIN-gate test proves the same snapshot opens with the PIN,
+wrong PINs fail, the consent marker is required, and removing the PIN closes the
+path. Five JS tests cover prompt-free status, PIN unlock, warm-cache queries,
+lock clearing and the empty-query guard. Baselines: `cargo test` **492 passed /
+1 ignored + 4 pv_sign tests**; `npm test` **129/129**.
+
+Honest limit: the cache is now only as strong as **the weaker gate**. A 4-digit
+PIN is 10k candidates; enabling it is a deliberate convenience trade-off, shown
+as such in Settings. Leave it OFF unless the offline convenience is worth more
+than the PIN's entropy.
+
 ---
 
 ## 6. Roadmap
@@ -690,7 +720,7 @@ competitors do not ship.
 | Extension idle lock | Proactive (this batch) | Proactive | Proactive | Parity |
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
 | Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
-| Offline extension cache | Yes (A11: opt-in read-only, Hello-gated, 15 min) | Yes | Yes | Parity |
+| Offline extension cache | Yes (A11/A11b: opt-in read-only, Hello or PIN, 15 min) | Yes | Yes | Parity |
 | Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
 | Installer signing / provenance | Provenance shipped (A8a); Authenticode still missing (A8b) | Signed | Signed | Behind on Authenticode, parity on provenance |
 | Audit / disclosure docs | Shipped (A7: README, MIT LICENSE, SECURITY.md) | Yes | Yes | Parity |
@@ -748,9 +778,9 @@ cargo run --manifest-path tools\pv-sign\Cargo.toml -- verify installer-output\Ph
 
 # A11 offline extension cache (opt-in, Hello-gated, read-only)
 Select-String -Path src\security\offline_cache.rs -Pattern 'CACHE_MAGIC|handle_cache_get|SESSION_TTL_SECS'
-Select-String -Path src\windows_native\native_host.rs -Pattern 'cache_get'
-Select-String -Path browser_extension\background.js -Pattern 'queryWithCache|PV_CACHE_STATUS|OFFLINE_TTL_SECS'
-Select-String -Path browser_extension\popup.js -Pattern 'offline_banner|PV_CACHE_STATUS'
+Select-String -Path src\windows_native\native_host.rs -Pattern 'cache_get|cache_status'
+Select-String -Path browser_extension\background.js -Pattern 'queryWithCache|PV_CACHE_STATUS|PV_CACHE_PIN|OFFLINE_TTL_SECS'
+Select-String -Path browser_extension\popup.js -Pattern 'offline_banner|PV_CACHE_PIN|offline_unlock'
 cargo test offline_cache
 node --test tests/js/background.test.mjs
 

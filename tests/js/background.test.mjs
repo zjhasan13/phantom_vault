@@ -802,47 +802,65 @@ test("A4: unrelated alarms stay silent for the clipboard path", async () => {
 });
 
 // --- A11: Hello-gated offline cache -------------------------------------
+const OFFLINE_ENTRIES = [
+  { id: "1", title: "GitHub", username: "u", password: "p", urls: ["https://github.com"] },
+  { id: "2", title: "Other", username: "x", password: "y", urls: ["https://other.test"] },
+];
 function cacheFrame() {
   return {
     ok: true, cached: true, created_at: 42, ttl_secs: 900,
-    entries: [
-      { id: "1", title: "GitHub", username: "u", password: "p", urls: ["https://github.com"] },
-      { id: "2", title: "Other", username: "x", password: "y", urls: ["https://other.test"] },
-    ],
+    entries: OFFLINE_ENTRIES,
   };
 }
 
-test("A11: PV_QUERY falls back to the offline cache when the app is closed", async () => {
+test("A11b: cache status is prompt-free and reports both methods", async () => {
   const { chrome, onMessage } = fresh();
-  const p = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  const p = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
   await flushTicks();
-  assert.equal(chrome.__state.postedNative[0].cmd, "query");
-  const port = chrome.__state.ports[0];
-  port.handlers.message.forEach((fn) => fn({ ok: false, error: "desktop app closed" }));
-  await flushTicks();
-  assert.equal(chrome.__state.postedNative[1].cmd, "cache_get");
-  port.handlers.message.forEach((fn) => fn(cacheFrame()));
+  assert.equal(chrome.__state.postedNative[0].cmd, "cache_status");
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn({ ok: true, enabled: true, pin_set: true, pin_allowed: true, cached: false }));
   const r = await p;
   assert.equal(r.ok, true);
+  assert.equal(r.enabled, true);
+  assert.equal(r.pin_set, true);
+  assert.equal(r.pin_allowed, true);
+  assert.equal(r.cached, false);
+});
+
+test("A11b: PIN unlock uses cache_get method=pin, then queries serve cached rows", async () => {
+  const { chrome, onMessage } = fresh();
+  const unlock = sendMessage(onMessage, chrome, { type: "PV_CACHE_PIN", pin: "1234" });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "cache_get");
+  assert.equal(sent.method, "pin");
+  assert.equal(sent.pin, "1234");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
+  assert.equal((await unlock).ok, true);
+
+  const q = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[1].cmd, "query");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
+  const r = await q;
+  assert.equal(r.ok, true);
   assert.equal(r.cached, true);
-  assert.equal(r.entries.length, 1, "query filters to the matching login");
+  assert.equal(r.entries.length, 1);
   assert.equal(r.entries[0].password, "p");
   assert.equal(r.cache_synced_at, 42);
 });
 
-test("A11: a warm snapshot serves queries without a second Hello prompt", async () => {
+test("A11b: a warm snapshot serves queries without a second gate prompt", async () => {
   const { chrome, onMessage } = fresh();
-  const first = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  const first = sendMessage(onMessage, chrome, { type: "PV_CACHE_HELLO" });
   await flushTicks();
-  const port = chrome.__state.ports[0];
-  port.handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
-  await flushTicks();
-  port.handlers.message.forEach((fn) => fn(cacheFrame()));
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
   await first;
 
   const again = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
   await flushTicks();
-  port.handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
   const r = await again;
   assert.equal(r.cached, true);
   assert.equal(
@@ -852,32 +870,29 @@ test("A11: a warm snapshot serves queries without a second Hello prompt", async 
   );
 });
 
-test("A11: a lock verdict clears the decrypted snapshot", async () => {
+test("A11b: a lock verdict clears the decrypted snapshot", async () => {
   const { chrome, onMessage } = fresh();
-  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_HELLO" });
   await flushTicks();
   chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
-  assert.equal((await warm).cached, true);
+  await warm;
 
   chrome.__state.sessionStore.pv_last_active = Date.now() - 11 * 60 * 1000;
   chrome.__state.localStore.lock_timeout_min = 10;
   const st = await sendMessage(onMessage, chrome, { type: "PV_SESSION_STATE" });
   assert.equal(st.locked, true);
 
-  const next = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  const status = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
   await flushTicks();
-  assert.equal(
-    chrome.__state.postedNative.filter((x) => x.cmd === "cache_get").length,
-    2,
-    "lock forces a fresh Hello-gated read",
-  );
-  chrome.__state.ports[chrome.__state.ports.length - 1].handlers.message.forEach((fn) => fn(cacheFrame()));
-  await next;
+  assert.equal(chrome.__state.postedNative.filter((x) => x.cmd === "cache_status").length, 1);
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn({ ok: true, enabled: true, pin_set: true, cached: false }));
+  assert.equal((await status).cached, false, "lock dropped the warm snapshot");
 });
 
-test("A11: an empty query never dumps the cache", async () => {
+test("A11b: an empty query never dumps the cache", async () => {
   const { chrome, onMessage } = fresh();
-  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_HELLO" });
   await flushTicks();
   chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
   await warm;

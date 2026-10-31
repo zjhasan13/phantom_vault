@@ -23,6 +23,9 @@ use zeroize::Zeroize;
 
 pub const CACHE_FILE: &str = "vault_cache.enc";
 pub const KEY_FILE: &str = "vault_cache_key.dpapi";
+/// Presence = the user explicitly allowed the PIN fallback for the cache.
+/// Removed by disabling the cache, removing/replacing the PIN, or decoy.
+pub const PIN_ALLOWED_FILE: &str = "offline_cache_pin.pref";
 pub const CACHE_MAGIC: &[u8; 5] = b"PVOC1";
 /// How long the extension may hold the decrypted snapshot in memory.
 pub const SESSION_TTL_SECS: u64 = 15 * 60;
@@ -105,6 +108,27 @@ pub fn enabled_at(base: &Path) -> bool {
     base.join(CACHE_FILE).is_file() && base.join(KEY_FILE).is_file()
 }
 
+/// True when the user explicitly allowed PIN unlock for the cache.
+pub fn pin_allowed_at(base: &Path) -> bool {
+    base.join(PIN_ALLOWED_FILE).is_file()
+}
+
+/// Toggle the PIN fallback. Callers must also ensure the cache and a PIN are
+/// present before enabling; this is just the consent marker.
+pub fn set_pin_allowed_at(base: &Path, on: bool) -> CacheResult<()> {
+    let path = base.join(PIN_ALLOWED_FILE);
+    if on {
+        std::fs::write(&path, b"1").map_err(|e| format!("cannot write {}: {e}", path.display()))
+    } else {
+        let _ = std::fs::remove_file(&path);
+        Ok(())
+    }
+}
+
+pub fn set_pin_allowed(on: bool) -> CacheResult<()> {
+    set_pin_allowed_at(Path::new("."), on)
+}
+
 fn write_atomic(path: &Path, bytes: &[u8]) -> CacheResult<()> {
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, bytes).map_err(|e| format!("cannot write {}: {e}", tmp.display()))?;
@@ -155,6 +179,7 @@ pub fn clear_at(base: &Path) -> bool {
     let b = std::fs::remove_file(base.join(KEY_FILE)).is_ok();
     let _ = std::fs::remove_file(base.join(Path::new(CACHE_FILE).with_extension("tmp")));
     let _ = std::fs::remove_file(base.join(Path::new(KEY_FILE).with_extension("tmp")));
+    let _ = std::fs::remove_file(base.join(PIN_ALLOWED_FILE));
     a || b
 }
 
@@ -190,29 +215,81 @@ fn entry_json(item: &CachedLogin) -> serde_json::Value {
     })
 }
 
-/// Native-host `cache_get`: Hello prompt, then unseal + decrypt.
-/// Only this function may serve while the desktop app is closed.
-pub fn handle_cache_get() -> CacheResult<serde_json::Value> {
-    if !enabled() {
-        return Err("offline cache is not enabled".to_string());
-    }
-    let verified = crate::windows_native::hello::WindowsHello::authenticate_blocking(
-        "Unlock PhantomVault offline cache",
-    )
-    .map_err(|e| format!("Hello unavailable: {e}"))?;
-    if !verified {
-        return Err("Hello verification canceled".to_string());
-    }
-    let mut key = unseal_key_at(Path::new("."))?;
-    let blob = std::fs::read(Path::new(".").join(CACHE_FILE))
+/// Native-host `cache_status`: does a cache exist, and is a PIN enrolled?
+/// Never prompts and returns no secrets, so the popup can offer the right
+/// unlock methods while the desktop is closed.
+pub fn cache_status_at(base: &Path) -> serde_json::Value {
+    serde_json::json!({
+        "ok": true,
+        "enabled": enabled_at(base),
+        "pin_set": crate::security::ext_pin::is_set(base),
+        "pin_allowed": pin_allowed_at(base) && crate::security::ext_pin::is_set(base),
+    })
+}
+
+pub fn cache_status() -> serde_json::Value {
+    cache_status_at(Path::new("."))
+}
+
+fn read_snapshot_at(base: &Path) -> CacheResult<Snapshot> {
+    let mut key = unseal_key_at(base)?;
+    let blob = std::fs::read(base.join(CACHE_FILE))
         .map_err(|e| format!("cache file missing: {e}"))?;
     let snapshot = decode_snapshot(&key, &blob);
     key.zeroize();
-    let snapshot = snapshot?;
-    crate::security::access_log::log_event("offline-cache", "read");
+    snapshot
+}
+
+/// Native-host `cache_get`: unlock with Windows Hello (default) or the
+/// extension PIN, then unseal + decrypt. Only this path may serve while the
+/// desktop app is closed. Both gates are read-only and share the same cache.
+pub fn handle_cache_get_at(
+    base: &Path,
+    method: &str,
+    pin: Option<&str>,
+) -> CacheResult<serde_json::Value> {
+    if !enabled_at(base) {
+        return Err("offline cache is not enabled".to_string());
+    }
+    match method {
+        "hello" => {
+            let verified = crate::windows_native::hello::WindowsHello::authenticate_blocking(
+                "Unlock PhantomVault offline cache",
+            )
+            .map_err(|e| format!("Hello unavailable: {e}"))?;
+            if !verified {
+                return Err("Hello verification canceled".to_string());
+            }
+        }
+        "pin" => {
+            if !crate::security::ext_pin::is_set(base) {
+                return Err("no extension PIN set".to_string());
+            }
+            if !pin_allowed_at(base) {
+                return Err("PIN unlock is disabled for the offline cache".to_string());
+            }
+            match crate::security::ext_pin::verify(base, pin.unwrap_or("")) {
+                Ok(crate::security::ext_pin::PinCheck::Valid) => {}
+                Ok(crate::security::ext_pin::PinCheck::Invalid) => {
+                    return Err("wrong PIN".to_string());
+                }
+                Ok(crate::security::ext_pin::PinCheck::Locked(secs)) => {
+                    return Err(format!("too many attempts; retry in {secs}s"));
+                }
+                Err(e) => return Err(e),
+            }
+        }
+        _ => return Err("unknown offline cache unlock method".to_string()),
+    }
+    let snapshot = read_snapshot_at(base)?;
+    crate::security::access_log::log_event(
+        "offline-cache",
+        if method == "pin" { "read-pin" } else { "read-hello" },
+    );
     Ok(serde_json::json!({
         "ok": true,
         "cached": true,
+        "method": method,
         "created_at": snapshot.created_at,
         "ttl_secs": SESSION_TTL_SECS,
         "entries": snapshot.items.iter().map(entry_json).collect::<Vec<_>>(),
@@ -277,6 +354,37 @@ mod tests {
         tampered[last] ^= 0xff;
         assert!(decode_snapshot(&key, &tampered).is_err());
         assert!(decode_snapshot(&key, b"PVOC1short").is_err());
+    }
+
+    #[test]
+    fn pin_gate_reads_the_same_snapshot_and_rejects_wrong_pin() {
+        let dir = std::env::temp_dir().join(format!("pv-offline-pin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v = Vault::new();
+        v.credentials.push(login("pin1", "PIN Site"));
+        refresh_at(&dir, &v).unwrap();
+        crate::security::ext_pin::set(&dir, "1234").unwrap();
+        // A11b: PIN fallback is opt-in; without the consent marker it refuses.
+        assert!(handle_cache_get_at(&dir, "pin", Some("1234")).is_err());
+        set_pin_allowed_at(&dir, true).unwrap();
+
+        let status = cache_status_at(&dir);
+        assert_eq!(status["enabled"], true);
+        assert_eq!(status["pin_set"], true);
+        assert_eq!(status["pin_allowed"], true);
+
+        let ok = handle_cache_get_at(&dir, "pin", Some("1234")).unwrap();
+        assert_eq!(ok["ok"], true);
+        assert_eq!(ok["method"], "pin");
+        assert_eq!(ok["entries"][0]["title"], "PIN Site");
+        assert!(handle_cache_get_at(&dir, "pin", Some("9999")).is_err());
+        assert!(handle_cache_get_at(&dir, "nope", None).is_err());
+
+        crate::security::ext_pin::clear(&dir);
+        let err = handle_cache_get_at(&dir, "pin", Some("1234")).unwrap_err();
+        assert!(err.contains("no extension PIN"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

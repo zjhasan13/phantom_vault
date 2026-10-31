@@ -99,8 +99,9 @@ These are documented rather than secret; please do not report them as new findin
   and need **one manual reinstall** before in-app updates verify again.
 - The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.
   Windows Hello gates the host read, but a same-user process can unseal the
-  DPAPI-protected key without that prompt; treat the cache as a deliberate
-  convenience downgrade. Mutations and reprompt-armed items require the app.
+  DPAPI-protected key without that prompt. If the PIN fallback is enabled, the
+  cache is only as strong as the 4–8 digit PIN; both are deliberate convenience
+  downgrades. Mutations and reprompt-armed items require the app.
 - The extension PIN is 4–8 digits. Argon2id + a file-backed lockout make online
   guessing expensive, but a same-user process can read the DPAPI record and
   grind it offline at local CPU cost. Prefer 6–8 digits.

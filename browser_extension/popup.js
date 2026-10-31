@@ -61,6 +61,11 @@
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
       sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
       offline_banner: "🔌 Offline cache — read-only. Changes are refused until the desktop app is open.",
+      offline_unlock_title: "🔌 Offline cache",
+      offline_unlock_sub: "Read-only. Unlock with Windows Hello or your extension PIN.",
+      offline_pin_go: "🔓 Unlock with PIN",
+      offline_hello_go: "🪟 Use Windows Hello",
+      offline_unlock_failed: "❌ Could not unlock the offline cache.",
       retry_btn: "🔄 Retry",
       lock_timeout_h: "⏱️ Auto-Lock Timeout",
       lock_timeout_hint: "Lock after inactivity. A locked desktop app always locks instantly.",
@@ -128,6 +133,11 @@
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
       sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
       offline_banner: "🔌 অফলাইন ক্যাশ — শুধু পড়া যায়। ডেস্কটপ অ্যাপ চালু না হলে কোনো পরিবর্তন হবে না।",
+      offline_unlock_title: "🔌 অফলাইন ক্যাশ",
+      offline_unlock_sub: "শুধু পড়া যায়। Windows Hello অথবা extension PIN দিয়ে খোলো।",
+      offline_pin_go: "🔓 PIN দিয়ে খোলো",
+      offline_hello_go: "🪟 Windows Hello ব্যবহার করো",
+      offline_unlock_failed: "❌ অফলাইন ক্যাশ খোলা যায়নি।",
       retry_btn: "🔄 পুনরায়",
       lock_timeout_h: "⏱️ অটো-লক সময়",
       lock_timeout_hint: "নিষ্ক্রিয়তার পর লক হবে। ডেস্কটপ লক হলে সাথে সাথে লক হবে।",
@@ -827,23 +837,33 @@
   // (lock_timeout_min, background session state) overlays the same screen.
   // Retry re-confirms desktop presence and restarts the idle clock.
   let offlineMode = false; // A11: desktop unreachable, cache is serving
+  let offlineAvailable = false; // cache exists but this SW has not unlocked it
+  let offlinePinSet = false;
   async function desktopReachable() {
     try {
       const pong = await withTimeout(
         chrome.runtime.sendMessage({ type: "PV_PING" }), 5000, "ping");
       if (pong && pong.ok) {
         offlineMode = false;
+        offlineAvailable = false;
         return pong.unlocked !== false;
       }
-    } catch (_) { /* app closed — fall through to the offline cache */ }
-    // A11: Hello-gated read-only cache when the desktop app is closed. A locked
-    // desktop returns ok above (never papered over by the cache).
+    } catch (_) { /* app closed — probe the offline cache */ }
+    // A11b: prompt-free status; the popup chooses Hello or PIN on its own
+    // offline screen. Never paper over a locked desktop (handled above).
     try {
-      const c = await withTimeout(
-        chrome.runtime.sendMessage({ type: "PV_CACHE_STATUS" }), 130000, "offline cache");
-      offlineMode = !!(c && c.ok && c.cached);
-      return offlineMode;
-    } catch (_) { return false; }
+      const st = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_CACHE_STATUS" }), 8000, "cache status");
+      if (st && st.ok && st.cached) {
+        offlineMode = true;
+        return true;
+      }
+      if (st && st.ok && st.enabled) {
+        offlineAvailable = true;
+        offlinePinSet = !!st.pin_allowed;
+      }
+    } catch (_) { /* no cache / host missing */ }
+    return false;
   }
   // Single choke-point for the lock overlay (CSS-specificity lesson: always
   // set BOTH the class and the inline style, and log every transition).
@@ -863,6 +883,51 @@
     rb.textContent = t("retry_btn");
     document.getElementById("extLockMsg").textContent = "";
     setLockVisible(true, "desktop-lock");
+  }
+  // A11b: offline cache unlock screen — Windows Hello or the extension PIN.
+  function showOfflineLock() {
+    document.getElementById("extLockTitle").textContent = t("offline_unlock_title");
+    document.getElementById("extLockSub").textContent = t("offline_unlock_sub");
+    const input = document.getElementById("extPinInput");
+    const ub = document.getElementById("extUnlockBtn");
+    const rb = document.getElementById("extRetryBtn");
+    const msg = document.getElementById("extLockMsg");
+    msg.textContent = "";
+    msg.style.color = "";
+    input.value = "";
+    input.style.display = offlinePinSet ? "" : "none";
+    ub.style.display = offlinePinSet ? "" : "none";
+    ub.textContent = t("offline_pin_go");
+    rb.style.display = "";
+    rb.textContent = t("offline_hello_go");
+    setLockVisible(true, "offline-lock");
+
+    const finish = (ok, res) => {
+      if (ok) {
+        offlineMode = true;
+        setLockVisible(false, "offline-ok");
+        refresh();
+        return;
+      }
+      msg.style.color = "#ff6b6b";
+      msg.textContent = res && res.retry_after
+        ? t("quick_pin_wait", Number(res.retry_after))
+        : t("offline_unlock_failed");
+      input.value = "";
+      if (offlinePinSet) input.focus();
+    };
+    // The persistent Retry listener drives Windows Hello (one listener, no
+    // double-fire on the same button).
+    ub.onclick = async () => {
+      try {
+        const res = await withTimeout(
+          chrome.runtime.sendMessage({ type: "PV_CACHE_PIN", pin: input.value.trim() }),
+          130000, "offline pin");
+        finish(!!(res && res.ok), res);
+      } catch (_) { finish(false, null); }
+    };
+    input.onkeydown = (ev) => { if (ev.key === "Enter") ub.click(); };
+    if (offlinePinSet) input.focus();
   }
   async function extPinSet() {
     // A14: the host owns the Argon2id verifier; the popup only asks whether a
@@ -933,6 +998,11 @@
       inactive = !!(st && st.ok && st.locked);
     } catch (e) { console.log("PV session check failed:", (e && e.message) || e); }
     if (!(await desktopReachable())) {
+      if (offlineAvailable) {
+        console.log("PV desktop unreachable — offline cache unlock shown");
+        showOfflineLock();
+        return false;
+      }
       console.log("PV desktop unreachable — lock shown");
       showDesktopLock();
       return false;
@@ -956,6 +1026,27 @@
     const msg = document.getElementById("extLockMsg");
     msg.style.color = "";
     msg.textContent = "⏳ …";
+    // A11b: in offline mode the same button performs the Hello gate.
+    if (offlineAvailable) {
+      try {
+        const res = await withTimeout(
+          chrome.runtime.sendMessage({ type: "PV_CACHE_HELLO" }), 130000, "offline hello");
+        if (res && res.ok) {
+          offlineMode = true;
+          setLockVisible(false, "offline-ok");
+          refresh();
+          return;
+        }
+        msg.style.color = "#ff6b6b";
+        msg.textContent = res && res.retry_after
+          ? t("quick_pin_wait", Number(res.retry_after))
+          : t("offline_unlock_failed");
+      } catch (_) {
+        msg.style.color = "#ff6b6b";
+        msg.textContent = t("offline_unlock_failed");
+      }
+      return;
+    }
     if (await desktopReachable()) {
       // NOTE: no UNLOCKED_TOUCH here — it would clear the inactivity flag
       // before ensureUnlocked reads it, silently skipping the quick-PIN.
