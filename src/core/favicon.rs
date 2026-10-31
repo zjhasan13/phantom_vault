@@ -1,8 +1,10 @@
 //! Privacy-preserving website favicon engine.
 //!
-//! Source: `https://icons.duckduckgo.com/ip3/{domain}.ico` (no tracking,
-//! no cookies — a bare GET for a public icon). Permanent local disk cache
-//! under `%LOCALAPPDATA%\PhantomVault\favicons\{domain}.png`: disk is
+//! Source: **same-origin only** — `https://{domain}/favicon.ico`. The old
+//! DuckDuckGo/Google lookups leaked every domain to a third party; they are
+//! gone. The extension also harvests the page's declared `<link rel="icon">`
+//! with host permissions and pushes those bytes here. Permanent local disk
+//! cache under `%LOCALAPPDATA%\PhantomVault\favicons\{domain}.png`: disk is
 //! ALWAYS checked first, so repeat views never touch the network.
 //!
 //! Hard privacy gates (checked by the caller before any fetch):
@@ -18,8 +20,6 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 const PREF_FILE: &str = "favicons.pref";
-const DDG_ICON: &str = "https://icons.duckduckgo.com/ip3/";
-const GOOGLE_S2: &str = "https://www.google.com/s2/favicons?domain=";
 const MAX_ICON_BYTES: u64 = 256 * 1024;
 const MAX_DOMAINS_PER_PASS: usize = 200;
 /// Extension-harvested icons: strict 64 KB cap (disk-bloat/DoS guard).
@@ -340,15 +340,15 @@ fn hibp_style_client() -> Result<reqwest::Client, String> {
         .map_err(|e| format!("http client: {e}"))
 }
 
+/// The only URL this engine will ever request: the site's own icon. No
+/// third-party favicon service is contacted, ever.
+fn icon_url(domain: &str) -> String {
+    format!("https://{domain}/favicon.ico")
+}
+
 async fn fetch_icon_bytes(domain: &str) -> Result<Vec<u8>, String> {
     let client = hibp_style_client()?;
-    // Layer 3a: DuckDuckGo first (no tracking, no cookies).
-    let ddg = fetch_one(&client, &format!("{DDG_ICON}{domain}.ico")).await;
-    if let Ok(b) = ddg {
-        return Ok(b);
-    }
-    // Layer 3b: Google S2 fallback (?sz=64 keeps it favicon-scale).
-    fetch_one(&client, &format!("{GOOGLE_S2}{domain}&sz=64")).await
+    fetch_one(&client, &icon_url(domain)).await
 }
 
 async fn fetch_one(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
@@ -539,6 +539,16 @@ mod tests {
             None => std::env::remove_var("LOCALAPPDATA"),
         }
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn icon_url_is_same_origin_only() {
+        let u = icon_url("example.com");
+        assert_eq!(u, "https://example.com/favicon.ico");
+        assert_eq!(url::Url::parse(&u).unwrap().host_str(), Some("example.com"));
+        // A17: no third-party favicon services may ever reappear here.
+        assert!(!u.contains("duckduckgo"));
+        assert!(!u.contains("google"));
     }
 
     #[test]

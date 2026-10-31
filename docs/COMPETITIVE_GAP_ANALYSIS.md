@@ -73,6 +73,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
 | A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
 | A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
+| A17 | Same-origin favicon fetch | `src/core/favicon.rs` `icon_url`/`fetch_icon_bytes` (only `https://{domain}/favicon.ico`); DDG/Google constants deleted; extension harvest unchanged | With the network off, no favicon request leaves the machine; no third party sees vault domains |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
@@ -91,7 +92,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
 | A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
 | A16 | Signed container revision (`rev` + `prev_hash`) | C3 | 1 wk | A replayed older blob is refused with a visible warning |
-| A17 | Same-origin favicon fetch | P1 | 1 day | With the network off, no favicon request leaves the machine |
 | A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
 | A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
 
@@ -178,7 +178,7 @@ security or parity gap; **S3** = polish or ecosystem.
 
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
-| P1 | Favicon prefetch sends every domain to DuckDuckGo, then Google | `src/core/favicon.rs:21-22,346-351`; enabled by default (`:86-89`) | The set of sites in the vault leaks to two third parties; contradicts "no cloud, no tracking" | Fetch `/favicon.ico` same-origin from the site itself, or ship a bundled icon set; delete the DDG/Google paths | S2 |
+| P1 | Favicon prefetch sent every domain to DuckDuckGo/Google — **shipped (A17)** | Old `src/core/favicon.rs:21-22,346-351`; now `icon_url` builds only `https://{domain}/favicon.ico` and the DDG/Google constants are deleted | The set of sites in the vault leaked to two third parties; contradicted "no cloud, no tracking" | Fetch `/favicon.ico` same-origin from the site itself, or ship a bundled icon set; delete the DDG/Google paths | S2 |
 | P2 | Decoy vault is detectable by file presence | `src/security/decoy.rs:17,21-22` | `decoy_vault.enc` existing tells a coercer that duress mode is provisioned; file size/mtime differ | Always provision both containers, pad to a bucket, align mtimes; or hide the decoy inside the real container | S2 |
 | P3 | Canary alert is local-only | `src/security/canary.rs:7,13,58-69` | An attacker with disk access deletes `canary_alert.log`; the owner never learns the vault was opened | Send a signed alert to a paired device over P2P and/or an optional dead-drop (private repo, email) | S2 |
 | P4 | Extension PIN is a bare SHA-256 — **shipped (A14)** | `src/security/ext_pin.rs` now stores a salted Argon2id record (`PVPIN2`), verifies host-side (`ext_pin_verify`) and enforces a file-backed 30s→5min lockout; the verifier is never served | 10^4-10^8 offline candidates; a local attacker with the DPAPI blob on the same account can brute-force the UI gate | Argon2id/scrypt with a per-device salt, attempt counter with exponential backoff, Windows Hello fallback | S2 |
@@ -412,7 +412,7 @@ Three root files, written from the code rather than from marketing:
   build and test commands, repository map, doc index, and a "Known gaps and honest
   limits" section that lists the unsigned installer, the missing external audit,
   Windows-only scope, the PQ-is-not-a-second-factor caveat, the closed-shadow
-  keyboard limit, old-password backups after a rekey, favicon third parties, and
+  keyboard limit, old-password backups after a rekey, same-origin favicons, and
   the open P2P LAN default.
 - **`LICENSE`** — MIT (Copyright (c) 2026 Zahidul Islam), matching the new
   `Cargo.toml` `license = "MIT"` field.
@@ -621,6 +621,34 @@ PIN is 10k candidates; enabling it is a deliberate convenience trade-off, shown
 as such in Settings. Leave it OFF unless the offline convenience is worth more
 than the PIN's entropy.
 
+### 5.16 Same-origin favicons (A17)
+
+The favicon prefetch used to ask `icons.duckduckgo.com`, then Google, for every
+domain in the vault. That leaked the user's site set to two third parties — a
+direct contradiction of "no cloud, no tracking" (P1).
+
+A17 deletes both paths. `favicon.rs` now builds exactly one URL:
+
+```
+https://{domain}/favicon.ico
+```
+
+- The extension's existing harvest path (`PV_FAVICON_HARVEST`, page-declared
+  `<link rel="icon">` with host permissions) still wins when a page provides a
+  better icon; those bytes are validated and written to the same disk cache.
+- Disk cache → custom user icon → same-origin fetch → letter circle. Repeat
+  views never touch the network.
+- The toggle, offline kill-switch and per-call `can_net` closure are unchanged;
+  with the network off, no request is attempted.
+
+Test: `icon_url_is_same_origin_only` pins the URL to the site's own host and
+asserts the third-party names cannot reappear. Baselines: `cargo test` **493
+passed / 1 ignored + 4 pv_sign tests**; `npm test` **129/129**.
+
+Honest limits: the site itself sees a request for its own icon (unavoidable if
+you want its icon), and a site may redirect `/favicon.ico` to a CDN it controls.
+There is still no bundled icon set; the letter circle is the offline fallback.
+
 ---
 
 ## 6. Roadmap
@@ -657,8 +685,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 4 — Privacy defaults (1 week)
 
-1. Same-origin favicon fetch or a bundled icon set; delete DDG/Google paths
-   (P1).
+1. **DONE (A17)** — same-origin favicon fetch; the DDG/Google paths are deleted.
+   A bundled icon set can come later without changing the privacy posture.
 2. Indistinguishable decoy provisioning (P2).
 3. Canary alert over P2P plus an optional dead-drop (P3).
 4. Exit test: with the network disabled, no favicon request leaves the machine;
@@ -808,8 +836,10 @@ Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 
 # P2P open-LAN default and beacon fields
 Select-String -Path src\sync\p2p_local.rs -Pattern 'when none exists|head_sha|pin_required' -Context 0,3
 
-# Favicon third-party hosts and default
-Select-String -Path src\core\favicon.rs -Pattern 'DDG_ICON|GOOGLE_S2|unwrap_or\(true\)'
+# Favicons are same-origin only (no DDG/Google; the letter fallback stays)
+Select-String -Path src\core\favicon.rs -Pattern 'fn icon_url|favicon\.ico|unwrap_or\(true\)'
+Select-String -Path src\core\favicon.rs -Pattern 'DDG_ICON|GOOGLE_S2'   # must be empty
+cargo test icon_url_is_same_origin_only
 
 # Trust docs (A7) — all three must exist at root
 Test-Path README.md, LICENSE, SECURITY.md

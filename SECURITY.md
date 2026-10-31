@@ -107,7 +107,8 @@ These are documented rather than secret; please do not report them as new findin
   grind it offline at local CPU cost. Prefer 6–8 digits.
 - The post-quantum layer is a **hedge, not a second factor**: a correct master
   password still opens the portable container.
-- Favicon lookup currently contacts DuckDuckGo and then Google.
+- Favicon lookup is **same-origin only** (`/favicon.ico`); no third-party service
+  is contacted. The site itself naturally sees its own icon request.
 - P2P sync serves **ciphertext without pairing** if no PIN is configured.
 - Backups, `.pvx` exports and printed recovery shards keep the **old** password
   after a rekey.

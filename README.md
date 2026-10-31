@@ -101,7 +101,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 492 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 493 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -167,8 +167,9 @@ These are real today. They are listed here so nobody discovers them the hard way
   key events, exactly as it observes the original login typing.
 - **Backups, `.pvx` exports and printed shards keep the old password** after a
   rekey, by design. Rotate them separately.
-- **Favicon lookup** currently asks DuckDuckGo, then Google, for site icons
-  (known gap P1; same-origin fetch is planned).
+- **Favicons are same-origin only** (A17): the desktop requests `https://<site>/favicon.ico`
+  and the extension harvests the page's declared icon. No DuckDuckGo/Google lookup;
+  with the network off, the letter icon is used.
 - **P2P sync serves ciphertext without pairing** when no PIN is configured
   (A15). Keep it off on untrusted networks.
 - **No KDBX import/export** (A13), no hardware-key unlock (A21), no serverless

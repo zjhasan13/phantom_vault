@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A11b dual-gate offline cache (Hello or opt-in PIN) + A14 Argon2id PIN, after 0.4.1.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A17 same-origin favicons (after A11b/A14), following 0.4.1.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -122,6 +122,15 @@
   **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
+
+- **A17 — same-origin favicons (this batch):** deleted the DuckDuckGo and Google
+  fallbacks in `src/core/favicon.rs`. The only fetch is now
+  `https://{domain}/favicon.ico`; the extension's page-declared icon harvest is
+  unchanged and still preferred. Toggle/kill-switch/`can_net` gates untouched.
+  Test `icon_url_is_same_origin_only` pins the host and forbids the third-party
+  names from reappearing. `cargo test` **493 passed / 1 ignored + 4 pv_sign
+  tests**; `npm test` **129/129**. Honest limit: the site sees its own icon
+  request and may redirect to its CDN; no bundled icon set yet.
 
 - **A11b — dual-gate offline cache (this batch):** the same DPAPI cache key can
   now be opened by **Windows Hello** (`cache_get method:"hello"`) or the
@@ -373,7 +382,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 492 passed / 1 ignored + 4 pv_sign tests, `npm test` 129/129 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 493 passed / 1 ignored + 4 pv_sign tests, `npm test` 129/129 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -542,6 +551,9 @@
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+- A17 favicon invariant: the only network URL is `https://{domain}/favicon.ico`
+  (or the extension-harvested page icon). Never reintroduce a third-party
+  favicon service; the letter circle is the offline fallback.
 - A14 PIN invariants: the verifier never crosses the bridge (`ext_pin_status`
   is boolean only); Argon2id params live in the record; the lockout counter is
   file-backed and reset only by success/set/clear; a legacy SHA-256 record MUST
