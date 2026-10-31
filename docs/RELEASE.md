@@ -37,6 +37,12 @@
 Rule: P2P sync and bridge sync peers/extensions MUST run the same
 release. State the minimum peer version in the notes.
 
+**Vault format rev 2 (A16):** a vault saved by this build carries `rev` +
+`prev_hash` inside the AEAD payload. Builds before it cannot open that
+container, so the notes MUST require upgrading every device before syncing.
+Pre-A16 backups still load and migrate on the next save. A fresh device's first
+pull is TOFU; later stale pulls are refused.
+
 ## 3. Rollback plan (tag discipline)
 
 - `v0.4.1` is tagged + pushed and published — it is the current rollback

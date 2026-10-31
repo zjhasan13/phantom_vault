@@ -75,6 +75,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
 | A17 | Same-origin favicon fetch | `src/core/favicon.rs` `icon_url`/`fetch_icon_bytes` (only `https://{domain}/favicon.ico`); DDG/Google constants deleted; extension harvest unchanged | With the network off, no favicon request leaves the machine; no third party sees vault domains |
 | A12 | Shadow-DOM field scan and observer | `content.js` `deepRoots`/`deepQuery`/`deepActiveElement`, deep `findFields`/`scanForms`, per-root `pvScheduleScan` observers, shadow-scoped `badgeGroup`; 3 new tests | Open web-component login forms get badges/fill and save prompts; closed roots are skipped |
+| A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
@@ -91,7 +92,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
 | A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
-| A16 | Signed container revision (`rev` + `prev_hash`) | C3 | 1 wk | A replayed older blob is refused with a visible warning |
 | A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
 | A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
 
@@ -123,7 +123,7 @@ Bitwarden", because these are table stakes.
 | Earlier claim | Reality | Evidence |
 |---|---|---|
 | "Save prompt has no defer option." | Wrong. It has "✕ Not Now" plus a 30 s auto-dismiss. The real gap was the missing permanent opt-out and edit-before-save. | `browser_extension/content.js:2371-2373`, `:2385` |
-| "Sync has no rollback protection at all." | Too broad. P2P adopt has an mtime monotonic gate and a replay guard; GitHub sync previews merges and keeps local on divergence. What is missing is a signed epoch, so a fresh device adopts whatever remote exists without an expected-revision check. | `src/sync/p2p_local.rs:475-499`, `src/main.rs:1151-1177`, `src/main.rs:7739-7800` |
+| "Sync has no rollback protection at all." | Too broad. P2P adopt has an mtime monotonic gate and a replay guard; GitHub sync previews merges and keeps local on divergence. A16 now adds `rev` + `prev_hash` inside the AEAD payload and refuses stale/forked merges. What remains is the fresh-device first pull (TOFU) and P2P pairing. | `src/sync/p2p_local.rs:475-499`, `src/storage.rs` `check_incoming`, `src/main.rs` merge path |
 | "Post-quantum layer is a second factor." | Wrong, and the code says so itself. The DK is wrapped under the Argon2id key, so a guessed master password never touches ML-KEM. The honest description is a harvest-now-decrypt-later hedge on the container key. | `src/crypto.rs:235-242` |
 
 Corrections matter: an inflated claim in a security product is itself a
@@ -161,7 +161,7 @@ security or parity gap; **S3** = polish or ecosystem.
 |---|---|---|---|---|---|
 | C1 | Master-password change/rekey — **shipped (A5)** | `src/storage.rs` `rekey_vault_secret` (old-password proof, round-trip proof, atomic swap, `.bak.1.enc` rollback); Settings card + `main.rs` `on_change_master_password` | A leaked master password can now be rotated without exporting and rebuilding the vault; `.pvx` backups and printed shards stay on the old password by design | Rekey flow: decrypt with old, re-encrypt with new salt + fresh KDF, atomic swap, keep one rollback snapshot, zeroize both | S1 |
 | C2 | Backup `.pvx` shares the master password — **shipped (A6)** | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) tags new exports; `parse_import_any` (`mod.rs:211`) opens a `PVBK1` file only with the backup passphrase and routes untagged files to the legacy master-password path | A stolen backup no longer opens with the vault master password; exporting requires a separate 12+ character passphrase that differs from the master | Optional separate export passphrase, Argon2id with its own salt, explicit "cannot be opened with the vault password" warning | S1 |
-| C3 | No signed container revision / epoch | Container layout has no revision field (`src/crypto.rs:230-233`); GitHub sync has no expected-revision check on fresh restore (`src/main.rs:1151-1177`) | A fresh device (or a restore after local wipe) silently adopts whatever blob the remote holds; a forced-push of an old commit restores stale data and resurrects entries deleted after that point | Add `rev` + `prev_hash` inside the AEAD payload, sign with the vault key; refuse a lower `rev` and surface a loud warning | S1 |
+| C3 | No signed container revision — **shipped (A16)** | `storage.rs` rev-2 `VaultEnvelope` (`rev` + `prev_hash` inside the AEAD payload); `check_incoming` refuses lower revs/forks on merge | A replayed older blob is refused; legacy vaults migrate. Fresh-device first pull is still TOFU (no external anchor) | Add `rev` + `prev_hash` inside the AEAD payload, sign with the vault key; refuse a lower `rev` and surface a loud warning | S1 |
 | C4 | Portable PQ profile is not a second factor | `src/crypto.rs:235-242`; portable form is the default save path (`src/storage.rs:149`) | "Post-quantum" is a hedge, not a factor. A guessed password yields the whole key chain | Opt-in "PQ-paranoid" profile: DPAPI/TPM-bound decapsulation key plus password (the old `V2Legacy` model). Keep portable for sync | S2 |
 | C5 | Fixed Argon2id cost | `src/crypto.rs:51-56` (64 MiB, t=3, p=4) | Below current OWASP-recommended ceilings for a high-value vault; no per-device tuning | Version the KDF parameters in the header and raise defaults for new containers; keep legacy unlock path | S2 |
 
@@ -681,6 +681,49 @@ invisible (as they are to every extension). The traversal is capped, so a
 pathological page with hundreds of component roots may leave some unscanned
 until the next pass.
 
+### 5.18 Signed container revision (A16)
+
+A vault container was cryptographically authentic but **not ordered**: an old
+valid blob could be replayed over a newer one, and a post-unlock merge had no
+way to tell. A16 puts ordering inside the AEAD payload:
+
+```
+{ "meta": { "format": "phantom-vault", "version": 2,
+            "rev": 12, "prev_hash": "ab12…" },
+  "vault": { … } }
+```
+
+- On save, `rev = last_rev + 1` and `prev_hash = SHA-256(previous container)`.
+  The in-process revision head is keyed by vault path; a save also refuses when
+  the file changed underneath it ("unlock again"), so two writers cannot reset
+  the chain.
+- On the post-unlock merge path, `check_incoming` refuses:
+  - `remote.rev < local.rev` — stale restore;
+  - equal rev with a different container hash — conflict, keep local;
+  - newer rev whose `prev_hash` is not the local container hash — fork or
+    skipped revision.
+- Legacy plain-Vault payloads still load as rev 0 and migrate to rev 1 on the
+  next save; the old container becomes `.bak.1.enc` as usual.
+- Rekey keeps the chain: the new container is rev N+1 with `prev_hash` pointing
+  at the container it replaced.
+
+Tests: rev increments + `prev_hash` equals the previous container's SHA-256;
+legacy migration + stale/forked refusal; save refuses an externally replaced
+file. Baselines: `cargo test` **496 passed / 1 ignored + 4 pv_sign tests**;
+`npm test` **132/132**.
+
+Honest limits:
+
+- **Fresh-device first pull is TOFU.** With no local revision there is nothing
+  to compare against; A16 records the adopted rev, and later stale pulls are
+  refused. A second device/P2P anchor (A15) or an explicit expected-rev input
+  is the real fix.
+- **Container format break.** Builds before this change parse the payload as a
+  plain `Vault` and cannot open a rev-2 container; upgrade every device before
+  syncing. The next release notes must say so.
+- **P2P adopt still uses the mtime/SHA guard** (`adopt_rollback_blocked`); the
+  pair-based A15 work replaces it with the revision chain.
+
 ---
 
 ## 6. Roadmap
@@ -711,7 +754,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 ### Phase 3 — Sync integrity and pairing (2-3 weeks)
 
 1. P2P pairing mandatory, PAKE-based, ephemeral beacon IDs (S1, S2).
-2. Refuse a lower `rev` on restore; warn instead of silently adopting (S3).
+2. **DONE (A16)** — refuse a lower `rev`/wrong `prev_hash` on the post-unlock
+   merge path; fresh-device first pull remains TOFU (S3).
 3. Exit test: an unpaired LAN client gets 403 and cannot pull bytes; a replayed
    older blob is refused with a visible warning.
 
@@ -771,7 +815,7 @@ competitors do not ship.
 | Server-side vault exposure | None by default | Hosted blob | Hosted blob | **Lead** |
 | Client crypto transparency | Source + in-code threat notes | Source | Closed | **Lead** |
 | Post-quantum story | Hybrid hedge, documented limit | None public | None public | Lead on mechanism, parity on honesty |
-| Sync integrity | SHA CAS + mtime/tombstones, no signed epoch | Server-side versioning | Server-side versioning | Behind |
+| Sync integrity | Yes (A16: `rev` + `prev_hash` inside AEAD; merge refuses stale/forked) | Server-side versioning | Server-side versioning | Parity on replay, behind on fresh-device anchor |
 | P2P / offline sync | Yes, open by default | No | No | **Lead**, but needs pairing |
 | Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
@@ -865,6 +909,11 @@ Select-String -Path src\importer\mod.rs -Pattern 'fn parse_import_any|PhantomBac
 Select-String -Path src\main.rs -Pattern 'fn backup_pass_error|on_reprompt_confirm'
 Select-String -Path ui\appwindow.slint -Pattern 'rp_backup_pass|import_backup_pass'
 cargo test a6
+
+# A16 signed container revision (rev + prev_hash inside AEAD)
+Select-String -Path src\storage.rs -Pattern 'CONTAINER_FORMAT|fn check_incoming|prev_hash|remember_head'
+Select-String -Path src\main.rs -Pattern 'check_incoming'
+cargo test a16_
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6

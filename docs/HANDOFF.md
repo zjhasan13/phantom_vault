@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A12 shadow-DOM scan/observer (after A17), following 0.4.1.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A16 signed container revision (rev + prev_hash), after A12/A17/A11b/A14, following 0.4.1.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -122,6 +122,19 @@
   **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
+
+- **A16 — signed container revision (this batch):** the AEAD payload is now a
+  rev-2 envelope `{meta:{format,version,rev,prev_hash}, vault}`. Save increments
+  `rev` and sets `prev_hash = SHA-256(previous container)`; a per-path
+  in-process head also refuses a save when the file changed underneath
+  ("unlock again"). `check_incoming` refuses a lower rev, equal-rev/different
+  hash, or a newer rev that does not chain to the local hash; the GitHub merge
+  path calls it before merging. Legacy plain-Vault payloads load as rev 0 and
+  migrate to rev 1 on the next save; rekey writes rev N+1 chained to the old
+  container. Tests +3 → `cargo test` **496 passed / 1 ignored + 4 pv_sign**;
+  `npm test` **132/132**. Honest limits: fresh-device first pull is TOFU (no
+  local anchor), P2P still uses the mtime/SHA guard (A15), and **older builds
+  cannot open rev-2 vaults** — upgrade every device before syncing.
 
 - **A12 — shadow-DOM scan/observer (this batch):** `content.js` gains
   `deepRoots`/`deepQuery`/`deepActiveElement` (open roots only, 200-root/20k-node
@@ -393,7 +406,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 493 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 496 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -562,6 +575,12 @@
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+- A16 revision invariants: `rev`/`prev_hash` live INSIDE the AEAD payload and
+  every save increments the chain; never reset a revision when the file merely
+  disappeared (refuse). `check_incoming` is the only freshness gate: lower rev =
+  stale, equal rev + different hash = conflict, newer rev without the local hash
+  as `prev_hash` = fork. Fresh-device first pull is TOFU — never claim otherwise.
+  Rev-2 containers are unreadable by older builds; release notes must say so.
 - A12 shadow-DOM invariants: traverse OPEN roots only (closed roots are
   inaccessible by design); every shadow observer must call the same debounced
   `pvScheduleScan`; submit listeners attach to the form itself (submit is not

@@ -260,7 +260,10 @@ pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String
 /// Decrypt a remote vault blob (as fetched by `pull_remote`) with the
 /// unlocked master. JSON-era only — pre-JSON bincode payloads refuse LOUD
 /// (the normal pull path owns that migration, not merge preview).
-pub fn decrypt_blob_to_vault(master: &SecretString, bytes: &[u8]) -> Result<Vault, String> {
+pub fn decrypt_blob_to_envelope(
+    master: &SecretString,
+    bytes: &[u8],
+) -> Result<(Vault, crate::storage::ContainerMeta), String> {
     use crate::crypto::{
         decrypt_vault_hybrid_legacy_secret, decrypt_vault_portable_secret, decrypt_vault_secret,
         detect_version, VaultVersion,
@@ -286,8 +289,19 @@ pub fn decrypt_blob_to_vault(master: &SecretString, bytes: &[u8]) -> Result<Vaul
         }
         VaultVersion::V1Classical => decrypt_vault_secret(master, bytes)?,
     };
-    serde_json::from_slice::<Vault>(&decrypted)
-        .map_err(|_| "remote blob is not a JSON-era vault — pull normally first".to_string())
+    // A16: rev-2 envelope, else a legacy plain Vault (rev 0).
+    if let Some((vault, meta)) = crate::storage::parse_envelope(&decrypted) {
+        return Ok((vault, meta));
+    }
+    let vault = serde_json::from_slice::<Vault>(&decrypted)
+        .map_err(|_| "remote blob is not a JSON-era vault - pull normally first".to_string())?;
+    Ok((vault, crate::storage::ContainerMeta::default()))
+}
+
+/// Back-compat wrapper for callers/tests that only need the vault.
+#[allow(dead_code)]
+pub fn decrypt_blob_to_vault(master: &SecretString, bytes: &[u8]) -> Result<Vault, String> {
+    decrypt_blob_to_envelope(master, bytes).map(|(v, _)| v)
 }
 
 #[cfg(test)]

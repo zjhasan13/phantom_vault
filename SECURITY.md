@@ -67,7 +67,7 @@ tell us the date in the report so the advisory can land first.
 - Extension: credential capture, autofill origin checks, save prompt (including the
   closed shadow root), clipboard clear ownership, idle lock, never-save list
 - Sync: GitHub ciphertext push/pull, P2P LAN authentication, replay/rollback of an
-  older blob, audit-log chain and head anchor
+  older blob (A16 `rev` + `prev_hash`), audit-log chain and head anchor
 - Release integrity: the pinned Ed25519 release key, `<asset>.sig` verification,
   checksum sidecars, and the SBOM/provenance publish path
 - Offline read-only cache: the Hello gate, the DPAPI-sealed cache key, the
@@ -97,6 +97,9 @@ These are documented rather than secret; please do not report them as new findin
   GitHub build-provenance attestation; verification steps are in `docs/RELEASE.md`.
 - Installs built before the 2026-10-31 signing-key rotation pin the old public key
   and need **one manual reinstall** before in-app updates verify again.
+- A16 adds a rev-2 container envelope. Older builds cannot open it — upgrade all
+  devices before syncing. A fresh device's first pull is TOFU (no local revision);
+  later stale pulls are refused.
 - The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.
   Windows Hello gates the host read, but a same-user process can unseal the
   DPAPI-protected key without that prompt. If the PIN fallback is enabled, the

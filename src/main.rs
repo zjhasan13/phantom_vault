@@ -7808,13 +7808,26 @@ fn launch_url(ui: &MainWindow, url: &str) {
             };
             use zeroize::Zeroize;
             token.zeroize();
-            let remote_vault = match sync::crdt_merge::decrypt_blob_to_vault(&master, &blob) {
-                Ok(v) => v,
-                Err(e) => {
-                    report(format!("⚠️ Remote unreadable: {e}"));
-                    return;
-                }
-            };
+            let (remote_vault, remote_meta) =
+                match sync::crdt_merge::decrypt_blob_to_envelope(&master, &blob) {
+                    Ok(v) => v,
+                    Err(e) => {
+                        report(format!("⚠️ Remote unreadable: {e}"));
+                        return;
+                    }
+                };
+            // A16: refuse a stale or forked remote before merging anything.
+            let (local_rev, local_hash) =
+                storage::container_head(std::path::Path::new(VAULT_FILE)).unwrap_or((0, String::new()));
+            if let Err(e) = storage::check_incoming(
+                &remote_meta,
+                &storage::sha256_hex(&blob),
+                local_rev,
+                &local_hash,
+            ) {
+                report(format!("⚠️ {e}"));
+                return;
+            }
             let local = lock_vault(&vault_clone).clone();
             let rep = match sync::crdt_merge::merge_vaults(&local, &remote_vault) {
                 Ok(r) => r,

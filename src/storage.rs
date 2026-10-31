@@ -6,9 +6,157 @@ use crate::crypto::{
 };
 use crate::models::Vault;
 use secrecy::SecretString;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, OnceLock};
 use zeroize::Zeroize;
+
+/// A16: container envelope format. `rev`/`prev_hash` live INSIDE the AEAD
+/// payload, so a replayed old container cannot forge them without the master
+/// password.
+pub const CONTAINER_FORMAT: &str = "phantom-vault";
+pub const CONTAINER_VERSION: u32 = 2;
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ContainerMeta {
+    pub format: String,
+    pub version: u32,
+    pub rev: u64,
+    #[serde(default)]
+    pub prev_hash: String,
+}
+
+impl Default for ContainerMeta {
+    fn default() -> Self {
+        Self {
+            format: CONTAINER_FORMAT.to_string(),
+            version: CONTAINER_VERSION,
+            rev: 0,
+            prev_hash: String::new(),
+        }
+    }
+}
+
+#[derive(Serialize)]
+struct VaultEnvelopeRef<'a> {
+    meta: ContainerMeta,
+    vault: &'a Vault,
+}
+
+#[derive(Deserialize)]
+struct VaultEnvelope {
+    meta: ContainerMeta,
+    vault: Vault,
+}
+
+#[derive(Debug, Clone)]
+struct Head {
+    rev: u64,
+    /// SHA-256 of the container bytes the head describes.
+    hash: String,
+}
+
+fn heads() -> &'static Mutex<HashMap<PathBuf, Head>> {
+    static HEADS: OnceLock<Mutex<HashMap<PathBuf, Head>>> = OnceLock::new();
+    HEADS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Stable key for the in-process revision map (relative and absolute callers
+/// must agree; the file may not exist yet on the first save).
+fn path_key(path: &Path) -> PathBuf {
+    if let Ok(p) = std::fs::canonicalize(path) {
+        return p;
+    }
+    let parent = path.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let base = std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf());
+    match path.file_name() {
+        Some(name) => base.join(name),
+        None => base,
+    }
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
+fn remember_head(path: &Path, rev: u64, hash: String) {
+    heads()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .insert(path_key(path), Head { rev, hash });
+}
+
+/// A16: the last-known revision/hash for a container in this process. Used by
+/// sync merge/restore to refuse stale or forked blobs.
+pub fn container_head(path: &Path) -> Option<(u64, String)> {
+    heads()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .get(&path_key(path))
+        .map(|h| (h.rev, h.hash.clone()))
+}
+
+/// Parse a rev-2 envelope. `None` = a legacy JSON vault (no envelope).
+pub fn parse_envelope(bytes: &[u8]) -> Option<(Vault, ContainerMeta)> {
+    let env: VaultEnvelope = serde_json::from_slice(bytes).ok()?;
+    if env.meta.format != CONTAINER_FORMAT {
+        return None;
+    }
+    Some((env.vault, env.meta))
+}
+
+fn envelope_bytes(vault: &Vault, rev: u64, prev_hash: String) -> Result<Vec<u8>, String> {
+    let meta = ContainerMeta {
+        format: CONTAINER_FORMAT.to_string(),
+        version: CONTAINER_VERSION,
+        rev,
+        prev_hash,
+    };
+    serde_json::to_vec(&VaultEnvelopeRef { meta, vault })
+        .map_err(|e| format!("Serialization error: {e}"))
+}
+
+/// A16 freshness verdict for an incoming (remote) container.
+pub fn check_incoming(
+    remote: &ContainerMeta,
+    remote_hash: &str,
+    local_rev: u64,
+    local_hash: &str,
+) -> Result<(), String> {
+    if remote.rev < local_rev {
+        return Err(format!(
+            "remote is older (rev {} < local rev {}) — refusing stale restore",
+            remote.rev, local_rev
+        ));
+    }
+    if remote.rev == local_rev {
+        if !local_hash.is_empty() && remote_hash != local_hash {
+            return Err(
+                "remote has the same revision but different content — conflict; keep local"
+                    .to_string(),
+            );
+        }
+        return Ok(());
+    }
+    // remote.rev > local_rev
+    if local_hash.is_empty() {
+        return Ok(()); // fresh device: TOFU (documented A16 limit)
+    }
+    if remote.prev_hash != local_hash {
+        return Err(
+            "remote does not continue this vault (fork or skipped revision) — refusing"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
 
 /// Automated scheduled backups (ciphertext snapshots + retention shred).
 pub mod backup_scheduler;
@@ -128,12 +276,41 @@ pub fn rotate_backups(path: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// A16: next revision + the hash of the container it must chain from.
+fn next_meta(path: &Path, old: &[u8], master: &SecretString) -> Result<(u64, String), String> {
+    if old.is_empty() {
+        if container_head(path).is_some() {
+            return Err(
+                "vault file disappeared — refusing to reset the revision chain".to_string(),
+            );
+        }
+        return Ok((1, String::new()));
+    }
+    let hash = sha256_hex(old);
+    if let Some((rev, head_hash)) = container_head(path) {
+        if head_hash != hash {
+            return Err("vault file changed on disk — unlock again before saving".to_string());
+        }
+        return Ok((rev + 1, hash));
+    }
+    // Fresh process (or first save in a test): read the current revision once.
+    let _ = load_vault_versioned_secret(master, path)?;
+    let Some((rev, head_hash)) = container_head(path) else {
+        return Err("could not establish the vault revision head".to_string());
+    };
+    if head_hash != hash {
+        return Err("vault file changed on disk — unlock again before saving".to_string());
+    }
+    Ok((rev + 1, hash))
+}
+
 /// Save as the portable self-contained v2 container (fresh PQ keypair + DK
 /// wrapped by the password key, every save). No sidecar is created.
 ///
-/// Inner format is JSON-first: field-name encoding means `#[serde(default)]`
-/// fires reliably, so future appended fields can NEVER break old vaults
-/// again (the bincode-EOF class of bug is retired at the source).
+/// A16: the inner payload is a rev-2 JSON envelope (`meta` + `vault`). `rev`
+/// increments on every save and `prev_hash` is the SHA-256 of the container
+/// being replaced, so a stale/replayed blob can be refused on restore. Legacy
+/// plain-Vault payloads still load; the next save migrates them.
 ///
 /// Secret-owning variant — the password never materializes as `&str`.
 /// Same shape as [`save_vault`]; legacy callers migrate one by one.
@@ -142,17 +319,16 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
-    // ১. JSON-এ সিরিয়ালাইজ করা (field names + defaults = future-proof)
-    let serialized_bytes = serde_json::to_vec(vault)
-        .map_err(|e| format!("Serialization error: {}", e))?;
+    let path = file_path.as_ref();
+    let _guard = FileLock::acquire(path)?;
+    let old = fs::read(path).unwrap_or_default();
+    let (rev, prev_hash) = next_meta(path, &old, master_password)?;
+    let payload = envelope_bytes(vault, rev, prev_hash)?;
+    let encrypted_payload = encrypt_vault_portable_secret(master_password, &payload)?;
 
-    // ২. পোর্টেবল হাইব্রিড এনক্রিপ্ট (Argon2id × ML-KEM-768 → HKDF-SHA256 → XChaCha20)
-    let encrypted_payload = encrypt_vault_portable_secret(master_password, &serialized_bytes)?;
-
-    // ৩. Cross-process lock, backup rotation, তারপর shredder-guarded রাইট
-    let _guard = FileLock::acquire(std::path::Path::new(file_path.as_ref()))?;
-    rotate_backups(std::path::Path::new(file_path.as_ref()))?;
-    crate::security::shredder::secure_write(std::path::Path::new(file_path.as_ref()), &encrypted_payload)?;
+    rotate_backups(path)?;
+    crate::security::shredder::secure_write(path, &encrypted_payload)?;
+    remember_head(path, rev, sha256_hex(&encrypted_payload));
 
     Ok(())
 }
@@ -191,15 +367,20 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
         return Err("New master password must differ from the current one.".to_string());
     }
     let path = file_path.as_ref();
+    // A16: hold the save lock across read → proof → write so the revision chain
+    // cannot be raced by another instance.
+    let _guard = FileLock::acquire(path)?;
 
     // 1. Prove the caller knows the live password (no write on failure).
     //    The proof vault is decrypted material — wipe it before dropping.
     let (mut proof, _) = load_vault_versioned_secret(old_password, path)?;
     proof.zeroize();
 
-    // 2. Encrypt with the new password (fresh salt + fresh PQ keypair).
-    let mut serialized =
-        serde_json::to_vec(vault).map_err(|e| format!("Serialization error: {}", e))?;
+    // 2. Encrypt with the new password (fresh salt + fresh PQ keypair) and the
+    //    next revision, chained to the old container.
+    let old = fs::read(path).map_err(|e| format!("File read error: {e}"))?;
+    let (rev, prev_hash) = next_meta(path, &old, old_password)?;
+    let mut serialized = envelope_bytes(vault, rev, prev_hash)?;
     let encrypted_payload = encrypt_vault_portable_secret(new_password, &serialized)?;
 
     // 3. Round-trip proof before replacing the only good copy.
@@ -221,10 +402,10 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
         );
     }
 
-    // 5. Cross-process lock, one rollback generation, atomic write.
-    let _guard = FileLock::acquire(path)?;
+    // 5. One rollback generation + atomic write (lock already held).
     rotate_backups(path)?;
     crate::security::shredder::secure_write(path, &encrypted_payload)?;
+    remember_head(path, rev, sha256_hex(&encrypted_payload));
 
     Ok(())
 }
@@ -274,9 +455,15 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
         }
         VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
     };
-    // JSON-first: appended fields resolve via #[serde(default)], and unknown
-    // fields are ignored — forward-compatible in both directions.
+    // A16 rev-2 envelope (meta + vault). The meta is inside the AEAD payload.
+    if let Some((vault, meta)) = parse_envelope(&decrypted) {
+        remember_head(file_path.as_ref(), meta.rev, sha256_hex(&payload));
+        return Ok((vault, false));
+    }
+    // JSON-first legacy payload: a plain `Vault` (pre-A16). Appended fields
+    // resolve via #[serde(default)]; unknown fields are ignored.
     if let Ok(vault) = serde_json::from_slice::<Vault>(&decrypted) {
+        remember_head(file_path.as_ref(), 0, sha256_hex(&payload));
         return Ok((vault, false));
     }
     // Legacy bincode Gen-chain (pre-JSON vaults), NARROWEST-first (C11):
@@ -300,6 +487,8 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     if decrypted.len() > 16 * 1024 * 1024 {
         return Err("Deserialization error: payload too large".to_string());
     }
+    // Any bincode hit is a pre-A16 legacy vault (rev 0).
+    remember_head(file_path.as_ref(), 0, sha256_hex(&payload));
     if let Ok(legacy) = opts.deserialize::<crate::models::VaultLegacy>(&decrypted) {
         let v: Vault = legacy.into();
         return Ok((v, true));
@@ -484,10 +673,86 @@ mod tests {
         // Envelope untouched (still self-contained portable v2).
         assert_eq!(crate::crypto::detect_version(&file_bytes), VaultVersion::V2Portable);
         let inner = decrypt_vault_portable("json-proof-1", &file_bytes).unwrap();
-        // JSON-first proof: object syntax, parses as a Vault.
+        // A16: JSON object envelope (meta + vault), never bincode.
         assert_eq!(inner.first(), Some(&b'{'));
-        let parsed: Vault = serde_json::from_slice(&inner).unwrap();
+        let (parsed, meta) = parse_envelope(&inner).expect("rev-2 envelope");
+        assert_eq!(meta.rev, 1);
+        assert!(meta.prev_hash.is_empty());
         assert_eq!(parsed.credentials[0].password, "s3cret!");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a16_rev_increments_and_chains_prev_hash() {
+        let dir = std::env::temp_dir().join("pv_a16_chain_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("a16-chain-pass-1".to_string());
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let first = std::fs::read(&path).unwrap();
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let second = std::fs::read(&path).unwrap();
+        assert_ne!(first, second);
+
+        use crate::crypto::decrypt_vault_portable;
+        let inner1 = decrypt_vault_portable("a16-chain-pass-1", &first).unwrap();
+        let (_, meta1) = parse_envelope(&inner1).unwrap();
+        let inner2 = decrypt_vault_portable("a16-chain-pass-1", &second).unwrap();
+        let (_, meta2) = parse_envelope(&inner2).unwrap();
+        assert_eq!(meta1.rev, 1);
+        assert_eq!(meta2.rev, 2);
+        assert_eq!(meta2.prev_hash, sha256_hex(&first));
+        assert_eq!(container_head(&path).unwrap().0, 2);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a16_legacy_plain_vault_migrates_and_stale_restore_is_refused() {
+        use crate::crypto::encrypt_vault_portable;
+        let dir = std::env::temp_dir().join("pv_a16_legacy_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("a16-legacy-pass-1".to_string());
+        // Pre-A16 container: plain Vault JSON inside the portable envelope.
+        let legacy = serde_json::to_vec(&demo_vault()).unwrap();
+        let blob = encrypt_vault_portable("a16-legacy-pass-1", &legacy).unwrap();
+        std::fs::write(&path, &blob).unwrap();
+
+        let (vault, _) = load_vault_versioned_secret(&pw, &path).unwrap();
+        assert_eq!(vault.credentials[0].password, "s3cret!");
+        assert_eq!(container_head(&path).unwrap().0, 0, "legacy is rev 0");
+
+        save_vault_secret(&vault, &pw, &path).unwrap();
+        let inner = crate::crypto::decrypt_vault_portable("a16-legacy-pass-1", &std::fs::read(&path).unwrap()).unwrap();
+        let (_, meta) = parse_envelope(&inner).unwrap();
+        assert_eq!(meta.rev, 1);
+        assert_eq!(meta.prev_hash, sha256_hex(&blob));
+
+        // A stale remote (rev 0) must never be adopted over rev 1.
+        assert!(check_incoming(&ContainerMeta::default(), "old", 1, "local").is_err());
+        // A newer container must chain to the local hash.
+        let good = ContainerMeta { rev: 2, prev_hash: "local".into(), ..Default::default() };
+        assert!(check_incoming(&good, "new", 1, "local").is_ok());
+        let forked = ContainerMeta { rev: 2, prev_hash: "other".into(), ..Default::default() };
+        assert!(check_incoming(&forked, "new", 1, "local").is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a16_save_refuses_a_file_changed_under_us() {
+        let dir = std::env::temp_dir().join("pv_a16_external_test");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("vault.enc");
+        let pw = SecretString::new("a16-external-pass-1".to_string());
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        let _ = load_vault_versioned_secret(&pw, &path).unwrap(); // establish head
+        // Simulate another process replacing the file with a valid container.
+        std::fs::write(&path, b"not-the-same-container").unwrap();
+        let err = save_vault_secret(&demo_vault(), &pw, &path).unwrap_err();
+        assert!(err.contains("changed on disk"), "{err}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
