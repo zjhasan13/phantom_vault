@@ -29,7 +29,8 @@ function makeChrome(store) {
     if (msg.type === "PV_QUERY" || msg.type === "PV_LIST") {
       return { ok: true, entries: store.entries };
     }
-    if (msg.type === "PV_EXT_PIN") return { ok: true, hash: "a".repeat(64) };
+    if (msg.type === "PV_EXT_PIN_STATUS") return { ok: true, set: true };
+  if (msg.type === "PV_EXT_PIN_VERIFY") return { ok: true, valid: true };
     if (msg.type === "PV_SESSION_STATE") {
       return { ok: true, locked: !!store.sessionLocked, reason: store.sessionLocked ? "inactive" : "active" };
     }

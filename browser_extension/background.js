@@ -602,8 +602,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     // Quick-unlock PIN hash — sealed in the desktop app (DPAPI), managed in
     // its Settings. The extension NEVER sets/stores a PIN, only verifies.
-    if (msg.type === "PV_EXT_PIN") {
-      return await hostRequest({ cmd: "ext_pin_hash" });
+    if (msg.type === "PV_EXT_PIN_STATUS") {
+      return await hostRequest({ cmd: "ext_pin_status" });
+    }
+    if (msg.type === "PV_EXT_PIN_VERIFY") {
+      // A14: the host derives Argon2id and enforces the attempt lockout; the
+      // verifier never crosses the bridge.
+      return await hostRequest({ cmd: "ext_pin_verify", pin: String(msg.pin || "") }, 20000);
     }
     // Hybrid favicon harvest (engine layer 2): fetch the page's icon with
     // extension host permissions (page-CORS-proof), cap 64KB, push bytes to

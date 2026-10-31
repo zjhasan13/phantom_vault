@@ -33,7 +33,7 @@ test("PV_SESSION_STATE reports active with idleMs, locked past timeout", async (
   assert.equal(r.ok, true);
   assert.equal(r.locked, false);
   assert.ok(typeof r.idleMs === "number");
-  // 11 minutes idle > 10-minute timeout ⇒ locked.
+  // 11 minutes idle > 10-minute timeout â‡’ locked.
   chrome.__state.sessionStore.pv_last_active = Date.now() - 11 * 60 * 1000;
   r = await sendMessage(onMessage, chrome, { type: "PV_SESSION_STATE" });
   assert.equal(r.locked, true);
@@ -48,21 +48,27 @@ test("timeout 0 (Never) never locks", async () => {
   assert.equal(r.locked, false);
 });
 
-test("PV_EXT_PIN proxies ext_pin_hash to the native host", async () => {
+test("A14: PV_EXT_PIN_STATUS/VERIFY never carry the PIN verifier", async () => {
   const { chrome, onMessage } = fresh();
-  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN" });
-  // One host spawn per query; answer it like the desktop would.
-  assert.equal(chrome.__state.postedNative.length, 1);
-  assert.equal(chrome.__state.postedNative[0].cmd, "ext_pin_hash");
-  const port = chrome.__state.ports[0];
-  port.handlers.message.forEach((fn) => fn({ ok: true, hash: "a".repeat(64) }));
-  const r = await pending;
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "ext_pin_status");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
+  assert.equal((await pending).set, true);
+
+  const verify = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_VERIFY", pin: "1234" });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[1];
+  assert.equal(sent.cmd, "ext_pin_verify");
+  assert.equal(sent.pin, "1234");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, valid: true }));
+  const r = await verify;
   assert.equal(r.ok, true);
-  assert.equal(r.hash, "a".repeat(64));
+  assert.equal(r.valid, true);
 });
 
 // The router suspends at the first await (fetch), so postedNative only
-// fills after microtasks drain — flush before asserting on spawns.
+// fills after microtasks drain â€” flush before asserting on spawns.
 async function flushTicks(n = 5) {
   for (let i = 0; i < n; i++) await new Promise((r) => setImmediate(r));
 }
@@ -71,7 +77,7 @@ async function flushTicks(n = 5) {
 // + size gates are the trust boundary (the host re-validates after).
 function tinyIcon() {
   // Minimal valid PNG bytes (signature + IHDR + IEND); content is never
-  // decoded here — only measured.
+  // decoded here â€” only measured.
   return new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3, 4]);
 }
 
@@ -138,13 +144,13 @@ test("PV_FAVICON_HARVEST stores once, then serves cached without refetch", async
 
 test("persistent port: sequential queries share one host process", async () => {
   const { chrome, onMessage } = fresh();
-  const p1 = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN" });
+  const p1 = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
   await flushTicks();
   assert.equal(chrome.__state.ports.length, 1);
-  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, hash: "h" }));
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
   const r1 = await p1;
   assert.equal(r1.ok, true);
-  // Second query must reuse the same port — no new host spawn.
+  // Second query must reuse the same port â€” no new host spawn.
   const p2 = sendMessage(onMessage, chrome, { type: "PV_PING" });
   await flushTicks();
   assert.equal(chrome.__state.ports.length, 1);
@@ -156,7 +162,7 @@ test("persistent port: sequential queries share one host process", async () => {
 
 test("port disconnect fails pending and reconnects on next query", async () => {
   const { chrome, onMessage } = fresh();
-  const p1 = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN" });
+  const p1 = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
   await flushTicks();
   assert.equal(chrome.__state.ports.length, 1);
   // Host dies mid-request: pending fails closed, port dropped. (The
@@ -177,7 +183,7 @@ test("port disconnect fails pending and reconnects on next query", async () => {
 test("PV_ASSERT relay removed: fails closed, never reaches the host", async () => {
   // Merge repair: the other line removed the ceremony relay (no content.js /
   // popup.js sender remains). The router must fail closed with zero host
-  // spawn — NOT silently drop or partially relay.
+  // spawn â€” NOT silently drop or partially relay.
   const { chrome, onMessage } = fresh();
   const r = await sendMessage(onMessage, chrome, {
     type: "PV_ASSERT",
@@ -204,7 +210,7 @@ test("PV_FAVICON_HARVEST failure leaves no pushed marker (retries later)", async
   };
   const r1 = await sendMessage(onMessage, chrome, msg);
   assert.equal(r1.ok, false);
-  // Marker absent ⇒ a later page load retries the fetch instead of
+  // Marker absent â‡’ a later page load retries the fetch instead of
   // blackholing the domain for the SW lifetime.
   let fetched = 0;
   sandbox.__fetch = async () => {
@@ -286,7 +292,7 @@ test("PV_ATTEST_SIGN: proxies attest with uv token", async () => {
 
 test("K2: SW grants content-script access to chrome.storage.session on load", async () => {
   // Without this, content.js cannot read the multi-page carry (`pvCaptureCarry`)
-  // or `pvPending` — chrome.storage.session defaults to trusted contexts only.
+  // or `pvPending` â€” chrome.storage.session defaults to trusted contexts only.
   const { chrome } = fresh();
   assert.equal(
     chrome.__state.accessLevel && chrome.__state.accessLevel.accessLevel,

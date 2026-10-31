@@ -499,18 +499,44 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
         // The extension keeps zero PIN state and enforces against this hash.
         // Gated on unlocked like stats: a locked vault reveals nothing,
         // and the extension already gates on lock separately.
-        // NOTE: the old `ext_pin_state` command was removed (no caller in any
-        // extension file) — one command, one purpose.
-        "ext_pin_hash" => {
+        // A14: the verifier never leaves the host. The extension asks the host
+        // to check the PIN after an Argon2id derivation + attempt lockout.
+        "ext_pin_status" => {
             if !unlocked {
                 return no("vault locked");
             }
-            match crate::security::ext_pin::read_hash(std::path::Path::new(".")) {
-                Some(h) => Answer {
-                    reply: serde_json::json!({"ok": true, "hash": h}),
+            Answer {
+                reply: serde_json::json!({
+                    "ok": true,
+                    "set": crate::security::ext_pin::is_set(std::path::Path::new(".")),
+                }),
+                persist: false,
+            }
+        }
+        "ext_pin_verify" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let pin = req.get("pin").and_then(|v| v.as_str()).unwrap_or("");
+            match crate::security::ext_pin::verify(std::path::Path::new("."), pin) {
+                Ok(crate::security::ext_pin::PinCheck::Valid) => Answer {
+                    reply: serde_json::json!({"ok": true, "valid": true}),
                     persist: false,
                 },
-                None => no("no extension PIN set"),
+                Ok(crate::security::ext_pin::PinCheck::Invalid) => Answer {
+                    reply: serde_json::json!({"ok": false, "valid": false, "error": "wrong PIN"}),
+                    persist: false,
+                },
+                Ok(crate::security::ext_pin::PinCheck::Locked(secs)) => Answer {
+                    reply: serde_json::json!({
+                        "ok": false,
+                        "valid": false,
+                        "error": format!("too many attempts; retry in {secs}s"),
+                        "retry_after": secs,
+                    }),
+                    persist: false,
+                },
+                Err(e) => no(&e),
             }
         }
         "query" => {

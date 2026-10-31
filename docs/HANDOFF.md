@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A11 opt-in Hello-gated offline extension cache (after 0.4.1), following A6/A5/A7/A9/A8a.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A14 Argon2id host-verified extension PIN + lockout (after A11/0.4.1), following A6/A5/A7/A9/A8a.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -122,6 +122,19 @@
   **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
+
+- **A14 — Argon2id extension PIN (this batch):** `ext_pin.dpapi` no longer
+  stores/serves a bare SHA-256. The record is `PVPIN2|salt|m|t|p|hash` with a
+  16-byte salt and Argon2id (32 MiB, t=3, p=4), sealed with DPAPI. The host
+  verifies (`ext_pin_verify`) and the bridge returns only `set: true/false`
+  (`ext_pin_status`); the popup no longer hashes or compares anything. A
+  file-backed attempt counter (`ext_pin_backoff`) survives restarts: 5 failures
+  → 30 s, then 60/120/300 s; success/set resets it. A legacy SHA-256 record is
+  refused with "re-set the PIN in Settings", never silently honoured.
+  Tests +2 → `cargo test` **491 passed / 1 ignored + 4 pv_sign tests**;
+  `npm test` **128/128**. Honest limit: 4-digit PIN entropy is 10k; Argon2id +
+  lockout raise the cost but same-user malware can grind the DPAPI record
+  offline.
 
 - **A7 — trust documentation (this batch):** three files at the repo root, written
   from the code, not from marketing. `README.md` (features, container/KEM summary,
@@ -347,7 +360,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 489 passed / 1 ignored + 4 pv_sign tests, `npm test` 128/128 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 491 passed / 1 ignored + 4 pv_sign tests, `npm test` 128/128 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -511,6 +524,11 @@
   legacy master path, so pre-A6 `.pvx` files must never be broken. The export
   gate refuses a passphrase equal to the master (not a warning). Clearing the
   Slint fields happens on the event loop; property writes never cross threads.
+- A14 PIN invariants: the verifier never crosses the bridge (`ext_pin_status`
+  is boolean only); Argon2id params live in the record; the lockout counter is
+  file-backed and reset only by success/set/clear; a legacy SHA-256 record MUST
+  fail closed. 4-digit PINs are shoulder-surfing protection — never call them
+  vault-grade.
 - A11 cache invariants: the snapshot is logins-only, read-only, refreshed at
   unlock; the key is DPAPI-sealed and the host requires a Hello prompt; the
   extension keeps plaintext only in SW memory (never `storage`) for 15 min.

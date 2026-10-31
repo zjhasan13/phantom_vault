@@ -12710,16 +12710,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_ext_pin_status("❌ Vault not unlocked!".into());
             return;
         }
-        use sha2::Digest;
-        let mut hasher = sha2::Sha256::new();
-        hasher.update(pin.as_bytes());
-        let hash_hex: String = hasher.finalize().iter().map(|b| format!("{b:02x}")).collect();
-        drop(pin);
-        drop(confirm);
-        match security::ext_pin::set(Path::new("."), &hash_hex) {
+        match security::ext_pin::set(Path::new("."), &pin) {
             Ok(()) => {
                 ui.set_ext_pin_set(true);
-                ui.set_ext_pin_status("✅ Extension PIN set — browser will ask for it.".into());
+                ui.set_ext_pin_status("✅ Extension PIN set — the host verifies it (Argon2id).".into());
             }
             Err(e) => {
                 ui.set_ext_pin_status(format!("⚠️ {e}").into());

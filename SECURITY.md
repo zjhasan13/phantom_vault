@@ -61,7 +61,7 @@ tell us the date in the report so the advisory can land first.
 - Container cryptography: Argon2id parameters, XChaCha20-Poly1305, ML-KEM/X25519
   hybrid, salt/keypair reuse, nonce handling, version detection and migration
 - Key handling: zeroization, page locking, DPAPI seals, Hello token, App PIN,
-  extension PIN, master-password rekey, rollback snapshot
+  extension PIN (Argon2id, host-side verification, attempt lockout), master-password rekey, rollback snapshot
 - Native-messaging bridge: origin pinning, frame MAC, request caps, `verify_master`
   limiter, command surface reachable from a compromised page or extension
 - Extension: credential capture, autofill origin checks, save prompt (including the
@@ -101,6 +101,9 @@ These are documented rather than secret; please do not report them as new findin
   Windows Hello gates the host read, but a same-user process can unseal the
   DPAPI-protected key without that prompt; treat the cache as a deliberate
   convenience downgrade. Mutations and reprompt-armed items require the app.
+- The extension PIN is 4–8 digits. Argon2id + a file-backed lockout make online
+  guessing expensive, but a same-user process can read the DPAPI record and
+  grind it offline at local CPU cost. Prefer 6–8 digits.
 - The post-quantum layer is a **hedge, not a second factor**: a correct master
   password still opens the portable container.
 - Favicon lookup currently contacts DuckDuckGo and then Google.

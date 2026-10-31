@@ -72,6 +72,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A9 | Edit-before-save in the save toast | `content.js` `credentialToast` (shared builder, closed shadow root), `toastField`, `saverToast`/`updateToast`; 6 new tests; harness `shadowOf` | Username and password can be corrected before the item is stored; empty pairs and already-known pairs never reach the host |
 | A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
 | A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
+| A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_STATUS`; Settings toggle; `popup.js` offline banner | The popup lists and fills matching logins with the desktop app closed, after a Windows Hello prompt; writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
@@ -88,7 +89,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
 | A12 | Shadow-DOM field scan and observer | E8 | 1 wk | A web-component login form gets a badge and fills |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
-| A14 | Argon2id extension PIN + attempt backoff | P4 | 1 wk | 10 wrong PINs trigger exponential delay; the stored verifier is not a bare SHA-256 |
 | A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
 | A16 | Signed container revision (`rev` + `prev_hash`) | C3 | 1 wk | A replayed older blob is refused with a visible warning |
 | A17 | Same-origin favicon fetch | P1 | 1 day | With the network off, no favicon request leaves the machine |
@@ -181,7 +181,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | P1 | Favicon prefetch sends every domain to DuckDuckGo, then Google | `src/core/favicon.rs:21-22,346-351`; enabled by default (`:86-89`) | The set of sites in the vault leaks to two third parties; contradicts "no cloud, no tracking" | Fetch `/favicon.ico` same-origin from the site itself, or ship a bundled icon set; delete the DDG/Google paths | S2 |
 | P2 | Decoy vault is detectable by file presence | `src/security/decoy.rs:17,21-22` | `decoy_vault.enc` existing tells a coercer that duress mode is provisioned; file size/mtime differ | Always provision both containers, pad to a bucket, align mtimes; or hide the decoy inside the real container | S2 |
 | P3 | Canary alert is local-only | `src/security/canary.rs:7,13,58-69` | An attacker with disk access deletes `canary_alert.log`; the owner never learns the vault was opened | Send a signed alert to a paired device over P2P and/or an optional dead-drop (private repo, email) | S2 |
-| P4 | Extension PIN is a bare SHA-256 of a 4-8 digit PIN | `src/security/ext_pin.rs:9-11,21-24`; hash is served to the extension (`browser_extension/background.js:319-320`) | 10^4-10^8 offline candidates; a local attacker with the DPAPI blob on the same account can brute-force the UI gate | Argon2id/scrypt with a per-device salt, attempt counter with exponential backoff, Windows Hello fallback | S2 |
+| P4 | Extension PIN is a bare SHA-256 — **shipped (A14)** | `src/security/ext_pin.rs` now stores a salted Argon2id record (`PVPIN2`), verifies host-side (`ext_pin_verify`) and enforces a file-backed 30s→5min lockout; the verifier is never served | 10^4-10^8 offline candidates; a local attacker with the DPAPI blob on the same account can brute-force the UI gate | Argon2id/scrypt with a per-device salt, attempt counter with exponential backoff, Windows Hello fallback | S2 |
 | P5 | Plaintext password crosses to the extension per query | `src/windows_native/native_host.rs:397`; capped at 25 (`:409-410`) | Same model as Bitwarden, so not a parity gap, but the blast radius is larger than necessary | Per-fill one-time token, single-item scope, 10 s TTL; keep `query` for the popup only | S3 |
 
 ### 4.4 Extension
@@ -558,6 +558,39 @@ the price of reading with the app closed; the feature is opt-in, read-only and
 logins-only. The snapshot is refreshed at unlock, so edits made later are
 visible offline only after the next unlock.
 
+### 5.14 Argon2id extension PIN (A14)
+
+The old extension PIN was a bare SHA-256 of a 4–8 digit PIN, and the hash was
+served over the bridge so the popup could compare it (`ext_pin.rs`). Both were
+wrong: 10k candidates are reversible in seconds, and serving the verifier hands
+the attacker the comparison target.
+
+A14 replaces the record with `PVPIN2|salt|m|t|p|hash`:
+
+- 16-byte random salt, Argon2id (32 MiB, t=3, p=4), 32-byte output, all
+  DPAPI-sealed. Parameters live in the record so a future cost bump can still
+  verify old PINs.
+- **Verification moved into the host** (`ext_pin_verify`); `ext_pin_status`
+  returns only `set: true/false`. The extension never sees the verifier.
+- **Lockout** is file-backed (`ext_pin_backoff`) and survives host/app
+  restarts: failures 0–4 are free, 5 → 30 s, 6 → 60 s, 7 → 120 s, 8+ → 300 s.
+  `set`/success resets the counter; `clear` removes both files.
+- **Migration:** a legacy 64-hex SHA-256 record is refused with
+  "re-set the PIN in Settings" — it can never silently gate anything again.
+- Popup quick-PIN sends the PIN to the host and displays the retry delay on a
+  lockout; no local SHA-256 code remains.
+
+Tests: set/verify/clear, digit/length validation, legacy-record refusal,
+lockout persistence across calls, and corrupt-record fail-closed. Baselines:
+`cargo test` **491 passed / 1 ignored + 4 pv_sign tests**; `npm test`
+**128/128**.
+
+Honest limit: a 4-digit PIN is still only 10k candidates. Argon2id makes an
+offline sweep expensive and the lockout stops online guessing, but a same-user
+process can read the DPAPI record and grind it at local CPU cost. Treat the PIN
+as shoulder-surfing protection, not vault-grade authentication — and prefer
+6–8 digits.
+
 ---
 
 ## 6. Roadmap
@@ -605,7 +638,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 1. **DONE (A9)** — edit-before-save in the toast (E3).
 2. Settings UI for the never-save list (E5).
-3. Argon2id extension PIN with backoff (P4).
+3. **DONE (A14)** — Argon2id extension PIN with host-side verification and a
+   persistent 30s→5min lockout (P4).
 4. **DONE (A11)** — opt-in, Hello-gated **read-only** offline cache (E9).
    The roadmap's "separate PIN" idea was replaced by Windows Hello presence +
    DPAPI, because a second PIN would be one more secret to lose.
@@ -719,6 +753,12 @@ Select-String -Path browser_extension\background.js -Pattern 'queryWithCache|PV_
 Select-String -Path browser_extension\popup.js -Pattern 'offline_banner|PV_CACHE_STATUS'
 cargo test offline_cache
 node --test tests/js/background.test.mjs
+
+# A14 Argon2id extension PIN + lockout (host-side verify)
+Select-String -Path src\security\ext_pin.rs -Pattern 'PVPIN2|Argon2id|delay_for_failures'
+Select-String -Path src\windows_native\native_host.rs -Pattern 'ext_pin_verify|ext_pin_status'
+Select-String -Path browser_extension\popup.js -Pattern 'PV_EXT_PIN_VERIFY|quick_pin_wait'
+cargo test ext_pin
 
 # A9 edit-before-save (closed shadow fields, re-classify, empty guard)
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'

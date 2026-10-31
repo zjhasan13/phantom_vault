@@ -4879,6 +4879,7 @@ dependencies = [
  "slint",
  "slint-build",
  "ssh-key",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "totp-rs",

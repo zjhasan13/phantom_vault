@@ -68,6 +68,7 @@
       quick_pin_sub: "Enter your extension PIN (set in the desktop app).",
       quick_pin_go: "🔓 Unlock",
       quick_pin_wrong: "❌ Invalid PIN. Please try again.",
+      quick_pin_wait: (s) => `⏳ Too many attempts — retry in ${s}s.`,
       copy2fa: "📋 Copy 2FA", no_match: (h) => `No credentials match “${h}”.`,
       empty_title: "No credentials match this domain",
       empty_save: "➕ Save login for this site",
@@ -134,6 +135,7 @@
       quick_pin_sub: "এক্সটেনশন PIN দাও (ডেস্কটপ অ্যাপে সেট করা)।",
       quick_pin_go: "🔓 আনলক",
       quick_pin_wrong: "❌ ভুল PIN। আবার চেষ্টা করো।",
+      quick_pin_wait: (s) => `⏳ অনেকবার ভুল হয়েছে — ${s} সেকেন্ড পরে আবার চেষ্টা করো।`,
       copy2fa: "📋 2FA কপি", no_match: (h) => `“${h}” এর কোনো তথ্য নেই।`,
       empty_title: "এই ডোমেইনের কোনো তথ্য নেই",
       empty_save: "➕ এই সাইটের লগইন সংরক্ষণ করো",
@@ -862,18 +864,14 @@
     document.getElementById("extLockMsg").textContent = "";
     setLockVisible(true, "desktop-lock");
   }
-  async function extPinHash() {
-    // Verify-only: hash sealed in the desktop app, managed in its Settings.
-    // Empty when unset/unreachable/locked — no PIN enrolled, no PIN asked.
+  async function extPinSet() {
+    // A14: the host owns the Argon2id verifier; the popup only asks whether a
+    // PIN is enrolled. No hash ever reaches this context.
     try {
       const res = await withTimeout(
-        chrome.runtime.sendMessage({ type: "PV_EXT_PIN" }), 5000, "ext pin");
-      return (res && res.ok && res.hash) || "";
-    } catch (_) { return ""; }
-  }
-  async function sha256hex(s) {
-    const b = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(s));
-    return [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
+        chrome.runtime.sendMessage({ type: "PV_EXT_PIN_STATUS" }), 5000, "ext pin");
+      return !!(res && res.ok && res.set);
+    } catch (_) { return false; }
   }
   function showPinLock() {
     document.getElementById("extLockTitle").textContent = t("quick_pin_h");
@@ -896,15 +894,17 @@
         try {
           const entered = input.value.trim();
           console.log("PV quick-PIN attempt");
-          const hash = await extPinHash();
-          const ok = !!hash && (await sha256hex(entered)) === hash;
-          if (!ok) console.log("PV quick-PIN mismatch");
-          finish(ok);
-        } catch (err) { console.log("PV quick-PIN error:", err); finish(false); }
+          const res = await withTimeout(
+            chrome.runtime.sendMessage({ type: "PV_EXT_PIN_VERIFY", pin: entered }),
+            20000, "ext pin verify");
+          const ok = !!(res && res.ok && res.valid);
+          if (!ok) console.log("PV quick-PIN mismatch", res && res.retry_after);
+          finish(ok, res);
+        } catch (err) { console.log("PV quick-PIN error:", err); finish(false, null); }
       };
       input.onkeydown = (ev) => { if (ev.key === "Enter") ub.click(); };
     };
-    const finish = async (ok) => {
+    const finish = async (ok, res) => {
       ub.onclick = null;
       input.onkeydown = null;
       if (ok) {
@@ -915,7 +915,9 @@
         return;
       }
       msg.style.color = "#ff6b6b";
-      msg.textContent = t("quick_pin_wrong");
+      msg.textContent = res && res.retry_after
+        ? t("quick_pin_wait", Number(res.retry_after))
+        : t("quick_pin_wrong");
       input.value = "";
       input.focus();
       arm(); // loop: next attempt works
@@ -938,7 +940,7 @@
     if (inactive && !offlineMode) {
       // Inactivity lock: quick-PIN when enrolled, else desktop presence
       // alone re-opens (a lock without PIN would be pure theater).
-      if (await extPinHash()) {
+      if (await extPinSet()) {
         console.log("PV session inactive — PIN shown");
         showPinLock();
         return false;
