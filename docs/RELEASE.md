@@ -63,8 +63,9 @@ release. State the minimum peer version in the notes.
   both extension manifests (the workflow and `package_release.ps1` fail on drift)
 - [ ] **No UPX.** It was only ever used for v0.2.0; it inflates AV false
   positives on an unsigned binary. Record the real size instead (v0.4.0:
-  19.55 MB exe, 8.54 MB installer). If size becomes a goal, treat UPX as a new
-  decision with a measured AV/SmartScreen comparison, not an assumed default.
+  19.55 MB exe, 8.54 MB installer; v0.4.1: 19.63 MB exe). If size becomes a
+  goal, treat UPX as a new decision with a measured AV/SmartScreen comparison,
+  not an assumed default.
 - [ ] `exe_integrity.dpapi` reset (fresh seal on first launch)
 - [ ] Native-host pipe smoke test on the PACKED binary (ping/query/assert)
 - [ ] Installer build (Inno) smoke on clean profile

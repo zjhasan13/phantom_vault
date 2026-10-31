@@ -418,7 +418,7 @@ Three root files, written from the code rather than from marketing:
   `Cargo.toml` `license = "MIT"` field.
 - **`SECURITY.md`** — GitHub private advisory as the only channel (no invented
   email or PGP key), supported-version table, 7/14-day response targets, 90-day
-  coordinated disclosure, explicit in-scope and out-of-scope lists, the 0.4.0
+  coordinated disclosure, explicit in-scope and out-of-scope lists, the 0.4.1
   known limitations, and a safe-harbor statement.
 
 Acceptance: `Test-Path README.md, LICENSE, SECURITY.md` is true for all three;
@@ -496,9 +496,10 @@ A8a closes the loop without an Authenticode certificate:
 - **Provenance** `actions/attest-build-provenance` attests the exe and zips;
   users verify with `gh attestation verify <file> --repo zjhasan13/phantom_vault`.
 - **No UPX.** The old "sub-8MB" target came from the v0.2.0 6.7 MB build; at
-  0.4.0 the exe is 19.55 MB and the installer 8.54 MB (`docs/HANDOFF.md`).
-  Compressing an unsigned binary raises AV false positives, so the checklist now
-  records the real size instead of asserting an unmet target.
+  0.4.0 the exe was 19.55 MB and the installer 8.54 MB (`docs/HANDOFF.md`);
+  0.4.1 is 19.63 MB. Compressing an unsigned binary raises AV false
+  positives, so the checklist now records the real size instead of asserting
+  an unmet target.
 
 Key custody: the 2026-10-31 rotation generated a new key because the original
 pinned key had no available private half. The seed lives only in the Actions
@@ -667,7 +668,7 @@ Select-String -Path src\release_pubkey.rs -Pattern 'UPDATER_PUBLIC_KEY'
 Select-String -Path src\sync\updater.rs -Pattern 'check_signature|release_pubkey'
 Select-String -Path .github\workflows\release.yml -Pattern 'attest-build-provenance|package_release'
 cargo test --manifest-path tools\pv-sign\Cargo.toml
-cargo run --manifest-path tools\pv-sign\Cargo.toml -- verify installer-output\PhantomVault-Setup-0.4.0.exe
+cargo run --manifest-path tools\pv-sign\Cargo.toml -- verify installer-output\PhantomVault-Setup-0.4.1.exe
 
 # A9 edit-before-save (closed shadow fields, re-classify, empty guard)
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'

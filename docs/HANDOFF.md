@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A8a certificate-free release pipeline (signer + CI + SBOM + provenance), after A6/A5/A7/A9, 0.4.0 still.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: 0.4.1 release cut (A8a pipeline live; Authenticode deliberately deferred), after A6/A5/A7/A9.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -84,8 +84,9 @@
   `setup`/`installer` names and refuses an installer-only release, so the
   updater can never swap the installer over the live app. The workflow
   publishes the release and a GitHub build-provenance attestation. **No UPX** —
-  the old sub-8MB target came from v0.2.0 (6.7 MB); 0.4.0 is 19.55 MB exe /
-  8.54 MB installer, so `docs/RELEASE.md` now records the real size instead.
+  the old sub-8MB target came from v0.2.0 (6.7 MB); 0.4.1 is 19.63 MB exe
+  (0.4.0 was 19.55 MB) and the installer is ~8.5 MB, so `docs/RELEASE.md` now
+  records the real size instead.
   **Key rotation:** the old pinned key had no available private half, so a new
   key was generated. Seed: `%USERPROFILE%\.phantomvault\release_signing.key`
   (user-only ACL, never printed by keygen). The GitHub secret `PV_SIGNING_KEY`

@@ -27,7 +27,7 @@ encrypted channel, use the advisory — it is private and stored by GitHub.
 
 Please include:
 
-- PhantomVault version (`0.4.0`), Windows build, and architecture (x64/ARM64)
+- PhantomVault version (`0.4.1`), Windows build, and architecture (x64/ARM64)
 - Whether the extension, the desktop app, the native host, or the sync path is affected
 - Minimal reproduction steps or a proof of concept
 - Impact: what an attacker gains, and what preconditions they need
@@ -86,7 +86,7 @@ tell us the date in the report so the advisory can land first.
   keys, signing, reproducible builds, PQ-paranoid profile)
 - Third-party services you explicitly configure (your GitHub account, your LAN)
 
-## Known limitations at 0.4.0
+## Known limitations at 0.4.1
 
 These are documented rather than secret; please do not report them as new findings.
 

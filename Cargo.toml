@@ -1,6 +1,6 @@
 [package]
 name = "phantom_vault"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2021"
 description = "Local-first post-quantum-hybrid password manager with a Windows autofill bridge"
 license = "MIT"

@@ -8,7 +8,7 @@ enable sync, the ciphertext goes to storage *you* control.
 - **Desktop:** Rust + [Slint](https://slint.dev) (software renderer — no WebView, no Electron)
 - **Extension:** Manifest V3 (Chrome, Edge, Firefox) over the native-messaging bridge
 - **Container:** Argon2id → XChaCha20-Poly1305 → ML-KEM-768 + X25519 hybrid
-- **Status:** **0.4.0, pre-1.0.** Windows 10/11 x64. Binaries are **not signed yet**.
+- **Status:** **0.4.1, pre-1.0.** Windows 10/11 x64. Binaries are **not signed yet**.
 
 > Read [Security model](#security-model) and [Known gaps](#known-gaps-and-honest-limits)
 > before trusting it with anything that matters. This project documents its own
@@ -99,11 +99,11 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 485 passed / 1 ignored + 4 pv_sign tests at 0.4.0
+cargo test                       # 485 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
-npm test                         # 124/124 at 0.4.0
+npm test                         # 124/124 at 0.4.1
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
 
