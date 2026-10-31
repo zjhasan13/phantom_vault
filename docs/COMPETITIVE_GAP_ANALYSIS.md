@@ -67,6 +67,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A4 | Extension clipboard auto-clear | native `copy_secret` (`native_host.rs:3017`) with Windows exclusion formats; `pv_clip_hash` guard (`background.js:226-292`); `offscreen.js` SHA-256 check; popup `PV_COPY_SECRET`; 7 new tests | Copied secret is cleared after the configured timeout, even if the popup closes, and a newer user copy survives |
 | A4b | `verify_master` brute-force limiter | `VERIFY_MASTER_PER_MIN = 5` (`native_host.rs:220`), `verify_master_backoff_ms`, shared failure counter with `create_login`/`update_login`/`delete_login` | 6th attempt inside a minute is refused; failures delay the reply exponentially |
 | A5 | Master password change / rekey | `storage::rekey_vault_secret` (`storage.rs`); `rekey_input_error` + `on_change_master_password` (`main.rs`); Settings > Security card (`ui/appwindow.slint`) | Old password fails, new password unlocks, `.bak.1.enc` opens with the old password, 6 new tests |
+| A9 | Edit-before-save in the save toast | `content.js` `credentialToast` (shared builder, closed shadow root), `toastField`, `saverToast`/`updateToast`; 6 new tests; harness `shadowOf` | Username and password can be corrected before the item is stored; empty pairs and already-known pairs never reach the host |
 
 ### P0 — parity blockers (do first)
 
@@ -75,7 +76,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
 | A7 | README, LICENSE, SECURITY.md | T1 | 2 days | Disclosure address + PGP key published; license present at root |
 | A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
-| A9 | Edit-before-save in the save toast | E3 | 3 days | Username and password can be corrected before the item is stored |
 
 ### P1 — close the structural gaps
 
@@ -187,7 +187,7 @@ security or parity gap; **S3** = polish or ecosystem.
 |---|---|---|---|---|---|
 | E1 | Idle lock was lazy, evaluated only on the next message | `browser_extension/background.js:176-190` before this batch; popup polled every 15 s (`popup.js:941`) | Up to 15 s of the UI claiming "unlocked" after the deadline; background tabs kept a warm gate cache for 30 s | `chrome.alarms` tick + push `PV_GATE_LOCKED` to all tabs | **Shipped** |
 | E2 | No "Never save for this site" | `content.js:2371-2378` had only Save / Not Now | Users who never want a login stored for a site were re-prompted forever | Third button, persisted registrable-domain list, background refusal | **Shipped** |
-| E3 | No edit-before-save | `content.js:2352-2412` stores the page's username/password verbatim | A typo or a masked field is saved as-is; users must open the desktop app to fix it | Inline edit fields in the toast before Save | S2 |
+| E3 | Edit-before-save | `content.js:2352-2412` stored the page's username/password verbatim | A typo or a masked field was saved as-is; users had to open the desktop app to fix it | **Shipped (A9)** — `credentialToast` renders editable fields in a closed shadow root and re-classifies the corrected pair before the host call | — |
 | E4 | No offline cache in the extension | `background.js:140-168` requires a live native port; popup shows Retry when the desktop is closed (`popup.js:57`) | Extension is useless when the desktop app is not running, unlike Bitwarden's local cache | Encrypted read-only cache with a short TTL, unlocked by a separate extension PIN | S2 |
 | E5 | No settings UI for never-save list | This batch writes `never_save_domains` (`content.js:36,2344-2351`) but no popup surface exists | Users cannot review or undo a "Never" decision | Settings list with per-domain remove | S3 |
 
@@ -367,6 +367,40 @@ uses a two-tap confirm. On success the app:
 Deliberate non-goals: `.pvx` exports, old backups and GitHub history keep the
 old password; users are told so in the card and the success toast.
 
+### 5.9 Edit-before-save (A9)
+
+The save prompt used to carry the submitted username and password in a closure
+only: the user could save the pair or dismiss it, never correct it. Both login
+prompts now share one builder (`content.js` `credentialToast`), so a browser
+that autofilled the wrong account or a stale password is fixable in place.
+
+- The username (`type=text`) and password (`type=password`) inputs are
+  pre-filled from the submit, `autocomplete=off`, `spellcheck=false`,
+  `autocapitalize=off`, and carry no `name`, so the page's own form logic
+  cannot claim them.
+- The fields and buttons live in a **closed** shadow root. `host.shadowRoot` is
+  `null` and `host.querySelector("input")` finds nothing, so a page script
+  cannot read a corrected secret out of the DOM. The title/subtitle stay in
+  light DOM (non-secret, and the page already knows the site).
+- This is a DOM boundary, not a keyboard boundary: a hostile page can still
+  observe key events that bubble out of the shadow tree, exactly as it observes
+  the original typing. The doc claims nothing stronger.
+- Save reads the edited values: username is trimmed, password is not (the
+  native `save_login` path does not trim either). An empty either-way pair
+  shows an inline error and never reaches the host.
+- Before the host round-trip the corrected pair is re-classified with
+  `existingSync(pageBase())` + `classifySubmitted`. A pair equal to a cached
+  entry stops with "This login is already saved." and no `PV_SAVE_LOGIN`.
+- Timer: 30 s as before, but typing/re-focusing re-arms it, and the timer
+  refuses to close the prompt while one of the two fields has focus — an edit
+  in progress is never eaten. Dismissing clears both input values.
+- Escape inside a field means "keep editing"; Escape anywhere else dismisses.
+  The old capture handler could not tell the difference.
+
+`npm test` is **124/124** (6 new A9 tests). The harness gains `shadowOf()`, an
+`attachShadow` spy that lives only in `tests/js/content-harness.mjs` — the
+extension itself never publishes the root.
+
 ---
 
 ## 6. Roadmap
@@ -408,7 +442,7 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 5 — Extension completion (1-2 weeks)
 
-1. Edit-before-save in the toast (E3).
+1. **DONE (A9)** — edit-before-save in the toast (E3).
 2. Settings UI for the never-save list (E5).
 3. Argon2id extension PIN with backoff (P4).
 4. Optional encrypted offline cache with a separate PIN (E4).
@@ -458,7 +492,7 @@ competitors do not ship.
 | Backup passphrase | Missing | N/A (server) | Yes (Emergency Kit) | Behind |
 | Extension idle lock | Proactive (this batch) | Proactive | Proactive | Parity |
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
-| Edit-before-save | Missing | Yes | Yes | Behind |
+| Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
 | Offline extension cache | Missing | Yes | Yes | Behind |
 | Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
 | Installer signing / provenance | Missing | Signed | Signed | Behind |
@@ -486,7 +520,7 @@ paperwork would repeat the "PQ second factor" mistake at a larger scale.
 ## 9. How to verify this document
 
 ```powershell
-# Extension test suite (111 tests)
+# Extension test suite (124 tests)
 npm test
 
 # Idle-lock and never-save code
@@ -506,6 +540,10 @@ Select-String -Path browser_extension\offscreen.js -Pattern 'sha256Hex|skipped'
 Select-String -Path src\storage.rs -Pattern 'rekey_vault_secret'
 Select-String -Path src\main.rs -Pattern 'change_master_password|rekey_input_error'
 cargo test rekey
+
+# A9 edit-before-save (closed shadow fields, re-classify, empty guard)
+Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'
+node --test tests/js/content.test.mjs
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6

@@ -13,6 +13,15 @@ const DOMAIN = fs.readFileSync(
 const CONTENT = fs.readFileSync(
   path.join(ROOT, "..", "..", "browser_extension", "content.js"), "utf8");
 
+// host -> closed shadow root, populated by the attachShadow spy in loadContent.
+const shadowRoots = new WeakMap();
+
+/// Test-only handle on a closed shadow root (falls back to the host itself when
+/// an element has no shadow tree, e.g. the card/identity toasts).
+export function shadowOf(host) {
+  return host ? (shadowRoots.get(host) || host) : null;
+}
+
 function makeChrome(store) {
   const listeners = { onMessage: [], changed: [] };
   const sendMessage = async (msg) => {
@@ -96,6 +105,18 @@ export function loadContent(html, url = "https://example.com/login", entries = [
     url, runScripts: "outside-only", pretendToBeVisual: true, virtualConsole,
   });
   const { window } = dom;
+  // The save prompt keeps its inputs in a closed shadow root, which the page
+  // (and `host.shadowRoot`) cannot reach by design. The harness still needs a
+  // handle, so capture every root the extension creates. The spy stays in the
+  // test harness — content.js never publishes the root itself.
+  const attachShadow = window.Element.prototype.attachShadow;
+  if (typeof attachShadow === "function") {
+    window.Element.prototype.attachShadow = function (init) {
+      const root = attachShadow.call(this, init);
+      shadowRoots.set(this, root);
+      return root;
+    };
+  }
   // jsdom has no layout: every element reports 0×0, which fails isVisible().
   // Force non-zero dimensions on the prototypes so field detection behaves as
   // it would on a real page.

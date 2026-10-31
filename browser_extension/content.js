@@ -2369,52 +2369,135 @@
     settings.never_save_domains = list;
     try { await chrome.storage.local.set({ never_save_domains: list }); } catch (_) {}
   }
-  function saverToast(username, password) {
+  // A9: both login prompts share one editable builder. The username and
+  // password are real inputs pre-filled from the submit, so a browser that
+  // autofilled the wrong account (or a stale password) can be corrected before
+  // anything is written to the vault.
+  //
+  // The fields live in a CLOSED shadow root: the page can still see the host
+  // and its title text, but `host.shadowRoot` is null, `host.querySelector`
+  // cannot reach the corrected secret, and no input node is reachable from the
+  // page tree. This is a DOM boundary, not a keyboard boundary — a hostile page
+  // can still observe key events that bubble out of the shadow tree, exactly as
+  // it can observe the original typing. Do not claim more than that.
+  const PV_FIELD_CSS = "input{width:100%;box-sizing:border-box;margin:0 0 8px;" +
+    "background:#070b12;color:#eef1ff;border:1px solid #26315c;border-radius:8px;" +
+    "padding:8px 10px;font:13px system-ui}" +
+    "input::placeholder{color:#5b6589}";
+  function toastField(type, value, placeholder) {
+    const el = document.createElement("input");
+    el.type = type;
+    el.value = value || "";
+    el.placeholder = placeholder;
+    el.autocomplete = "off";
+    el.autocapitalize = "off";
+    el.spellcheck = false;
+    return el;
+  }
+  function credentialToast(opts) {
     if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
-      "background:#0d131f;border:1px solid #8b7cf6;border-radius:12px;padding:12px 14px;" +
+      "background:#0d131f;border:1px solid " + opts.accent + ";border-radius:12px;padding:12px 14px;" +
       "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
     const t = document.createElement("div");
     t.style.cssText = "font-weight:700;margin-bottom:8px;";
-    t.textContent = "🛡️ Save to PhantomVault?";
+    t.textContent = opts.title;
     const sub = document.createElement("div");
     sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
-    sub.textContent = `New login for ${pageBase()} — store it encrypted.`;
+    sub.textContent = opts.sub;
+    // Title/subtitle stay in light DOM (non-secret, and the page already knows
+    // the site). Everything that carries or mutates the secret hides.
+    box.append(t, sub);
+
+    const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
+    const root = shadow || box;
+    if (shadow) root.append(document.createElement("slot"));
+    const style = document.createElement("style");
+    style.textContent = PV_FIELD_CSS;
+    const user = toastField("text", opts.username, "Username");
+    const pass = toastField("password", opts.password, "Password");
+    const err = document.createElement("div");
+    err.style.cssText = "color:#ffb4ab;font-size:11px;margin-bottom:8px;display:none;";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;flex-wrap:wrap;";
     const save = document.createElement("button");
-    save.textContent = "💾 Save";
-    save.style.cssText = "flex:1;background:#8b7cf6;color:#fff;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    save.textContent = opts.saveLabel;
+    save.style.cssText = "flex:1;background:" + opts.accent + ";color:" + opts.accentInk +
+      ";border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
     const no = document.createElement("button");
     no.textContent = "✕ Not Now";
     no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
-    const never = document.createElement("button");
-    never.textContent = "🚫 Never";
-    never.title = "Never offer to save logins for this site";
-    never.style.cssText = "flex:1;background:#1a2450;color:#ffb4ab;border:1px solid #5a2530;border-radius:8px;padding:8px;font-size:11px;cursor:pointer;";
-    row.append(save, no, never);
-    box.append(t, sub, row);
+    row.append(save, no);
+    if (opts.allowNever) {
+      const never = document.createElement("button");
+      never.textContent = "🚫 Never";
+      never.title = "Never offer to save logins for this site";
+      never.style.cssText = "flex:1;background:#1a2450;color:#ffb4ab;border:1px solid #5a2530;border-radius:8px;padding:8px;font-size:11px;cursor:pointer;";
+      row.append(never);
+      never.addEventListener("click", async () => {
+        try { await markNeverSave(); } catch (_) {}
+        dismiss(true);
+        toast(`Save prompt disabled for ${pageBase()}. Re-enable in Settings.`);
+      });
+    }
+    root.append(style, user, pass, err, row);
     document.documentElement.append(box);
-    const dismissSave = () => { document.removeEventListener("keydown", escSave, true); box.remove(); };
-    const escSave = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissSave(); } };
-    document.addEventListener("keydown", escSave, true);
-    no.addEventListener("click", dismissSave);
-    never.addEventListener("click", async () => {
-      try { await markNeverSave(); } catch (_) {}
-      dismissSave();
-      toast(`Save prompt disabled for ${pageBase()}. Re-enable in Settings.`);
-    });
-    setTimeout(dismissSave, 30000);
+
+    let timer = 0;
+    function arm() {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => dismiss(false), 30000);
+    }
+    const fieldFocused = () => !!shadow && (root.activeElement === user || root.activeElement === pass);
+    function dismiss(force) {
+      // A9: never eat an edit that is still being typed — re-arm instead.
+      if (!force && fieldFocused()) { arm(); return; }
+      if (timer) clearTimeout(timer);
+      document.removeEventListener("keydown", esc, true);
+      user.value = "";
+      pass.value = "";
+      box.remove();
+    }
+    function esc(e) {
+      if (e.key !== "Escape") return;
+      // Escape inside a field means "let me keep editing", not "discard".
+      if (fieldFocused()) return;
+      e.stopPropagation();
+      dismiss(true);
+    }
+    document.addEventListener("keydown", esc, true);
+    for (const el of [user, pass]) el.addEventListener("input", arm);
+    no.addEventListener("click", () => dismiss(true));
+    arm();
+    // Focus the action, not the secret: typing only starts once the user
+    // deliberately clicks a field.
     save.focus();
     save.addEventListener("click", async () => {
-      save.textContent = "⏳ Saving…";
+      const u = user.value.trim();
+      const p = pass.value;
+      if (!u || !p) {
+        err.textContent = !u ? "⚠️ Enter a username first." : "⚠️ Enter a password first.";
+        err.style.display = "block";
+        return;
+      }
+      // A9: the corrected pair may already be stored — don't spend a host
+      // round-trip on a no-op.
+      const cached = existingSync(pageBase());
+      if (cached && classifySubmitted(cached, u, p) === "known") {
+        err.textContent = "⚠️ This login is already saved.";
+        err.style.display = "block";
+        return;
+      }
+      err.style.display = "none";
+      save.textContent = opts.busyLabel;
       try {
         const res = await chrome.runtime.sendMessage({
           type: "PV_SAVE_LOGIN",
-          username, password,
+          username: u,
+          password: p,
           url: captureUrl(),
           title: captureTitle(),
         });
@@ -2422,7 +2505,7 @@
           toast(res.updated ? "✅ Login updated in PhantomVault." : "✅ Login saved to PhantomVault.");
           pvCarryClear();
           pvExistingCache = null; // next prompt re-reads the fresh vault
-          dismissSave();
+          dismiss(true);
         } else {
           save.textContent = "⚠️ " + ((res && res.error) || "failed");
         }
@@ -2431,61 +2514,32 @@
       }
     });
   }
+  function saverToast(username, password) {
+    credentialToast({
+      accent: "#8b7cf6",
+      accentInk: "#fff",
+      title: "🛡️ Save to PhantomVault?",
+      sub: `New login for ${pageBase()} — correct anything before saving.`,
+      saveLabel: "💾 Save",
+      busyLabel: "⏳ Saving…",
+      allowNever: true,
+      username, password,
+    });
+  }
   // Update prompt: same username, different password on a known site.
   // "Update" reuses the bridge upsert (PV_SAVE_LOGIN matches username +
   // domain → rotates into history, returns updated:true). Never auto-saves:
   // explicit click only, Not Now + 30s auto-dismiss like the save prompt.
   function updateToast(username, password) {
-    if (neverSaveHit()) return;
-    if (document.getElementById("__pv_saver")) return;
-    const box = document.createElement("div");
-    box.id = "__pv_saver";
-    box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
-      "background:#0d131f;border:1px solid #fbbf24;border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
-    const t = document.createElement("div");
-    t.style.cssText = "font-weight:700;margin-bottom:8px;";
-    t.textContent = "🔄 Update existing?";
-    const sub = document.createElement("div");
-    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
-    sub.textContent = `New password submitted for ${username} on ${pageBase()} — replace the stored one? (old kept in history)`;
-    const row = document.createElement("div");
-    row.style.cssText = "display:flex;gap:8px;";
-    const save = document.createElement("button");
-    save.textContent = "🔄 Update";
-    save.style.cssText = "flex:1;background:#fbbf24;color:#080c14;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
-    const no = document.createElement("button");
-    no.textContent = "✕ Not Now";
-    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
-    row.append(save, no);
-    box.append(t, sub, row);
-    document.documentElement.append(box);
-    const dismissUpd = () => { document.removeEventListener("keydown", escUpd, true); box.remove(); };
-    const escUpd = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissUpd(); } };
-    document.addEventListener("keydown", escUpd, true);
-    no.addEventListener("click", dismissUpd);
-    setTimeout(dismissUpd, 30000);
-    save.focus();
-    save.addEventListener("click", async () => {
-      save.textContent = "⏳ Updating…";
-      try {
-        const res = await chrome.runtime.sendMessage({
-          type: "PV_SAVE_LOGIN",
-          username, password,
-          url: captureUrl(),
-          title: captureTitle(),
-        });
-        if (res && res.ok) {
-          toast("✅ Login updated in PhantomVault (old kept in history).");
-          pvCarryClear();
-          pvExistingCache = null; // next prompt re-reads the fresh vault
-          dismissUpd();
-        } else {
-          save.textContent = "⚠️ " + ((res && res.error) || "failed");
-        }
-      } catch (_) {
-        save.textContent = "⚠️ Bridge unreachable";
-      }
+    credentialToast({
+      accent: "#fbbf24",
+      accentInk: "#080c14",
+      title: "🔄 Update existing?",
+      sub: `New password submitted for ${pageBase()} — edit, then update. The old value is kept in history.`,
+      saveLabel: "🔄 Update",
+      busyLabel: "⏳ Updating…",
+      allowNever: false,
+      username, password,
     });
   }
   // C1: a warm credential-list cache lets the submit handler decide + prompt

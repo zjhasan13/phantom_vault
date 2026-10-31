@@ -2,9 +2,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadContent, submit, flush, runtimeMessage } from "./content-harness.mjs";
+import { loadContent, submit, flush, runtimeMessage, shadowOf } from "./content-harness.mjs";
 
 const saver = (window) => window.document.getElementById("__pv_saver");
+// A9: the login prompts keep their fields and buttons in a closed shadow root,
+// so tests reach them through the harness spy rather than the page tree.
+// Card/identity prompts have no shadow tree; shadowOf() falls back to the host.
+const saverRoot = (window) => shadowOf(saver(window));
+const saverButton = (window, re) =>
+  [...saverRoot(window).querySelectorAll("button")].find((b) => re.test(b.textContent));
 
 // Each jsdom window must be closed or its 30 s toast-dismiss timers keep the
 // test process alive long after the assertions pass.
@@ -167,7 +173,7 @@ test("card form submit offers to save the card", async (t) => {
   const banner = saver(window);
   assert.ok(banner, "card save banner should appear");
   assert.match(banner.textContent, /Save card/i);
-  const save = [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent));
+  const save = saverButton(window, /Save/);
   save.click();
   await flush();
   assert.equal(store.cardSaves.length, 1);
@@ -188,7 +194,7 @@ test("split expiry selects are normalized before save", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner);
-  [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent)).click();
+  saverButton(window, /Save/).click();
   await flush();
   assert.equal(store.cardSaves[0].exp_month, "12");
   assert.equal(store.cardSaves[0].exp_year, "30");
@@ -205,7 +211,7 @@ test("card[...] names and YYYY-MM expiry save correctly", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner);
-  [...banner.querySelectorAll("button")].find((b) => /Save/.test(b.textContent)).click();
+  saverButton(window, /Save/).click();
   await flush();
   assert.equal(store.cardSaves[0].exp_month, "12");
   assert.equal(store.cardSaves[0].exp_year, "30");
@@ -473,7 +479,7 @@ test("P1: save stores canonical URL + site brand (og:site_name)", async (t) => {
   </form>`, "https://example.com/login?token=secret#frag");
   submit(window, window.document.querySelector("form"));
   await flush();
-  saver(window).querySelector("button").click();
+  saverButton(window, /Save/).click();
   await flush();
   assert.equal(store.saves.length, 1, "one bridge save");
   assert.equal(store.saves[0].url, "https://example.com/login",
@@ -490,7 +496,7 @@ test("P1: title suffix heuristic + root URL normalization", async (t) => {
   </form>`, "https://example.org/?next=%2F#top");
   submit(window, window.document.querySelector("form"));
   await flush();
-  saver(window).querySelector("button").click();
+  saverButton(window, /Save/).click();
   await flush();
   assert.equal(store.saves[0].url, "https://example.org");
   assert.equal(store.saves[0].title, "Example",
@@ -599,7 +605,7 @@ test("save banner offers Never and stores the registrable domain", async (t) => 
   await flush();
   const banner = saver(window);
   assert.ok(banner, "banner first");
-  const never = [...banner.querySelectorAll("button")].find((b) => /Never/.test(b.textContent));
+  const never = saverButton(window, /Never/);
   assert.ok(never, "Never button must exist");
   never.click();
   await flush();
@@ -616,7 +622,7 @@ test("after Never, a later submit on the same site stays silent", async (t) => {
   submit(window, window.document.querySelector("form"));
   await flush();
   const banner = saver(window);
-  [...banner.querySelectorAll("button")].find((b) => /Never/.test(b.textContent)).click();
+  saverButton(window, /Never/).click();
   await flush();
   // Second submit (e.g. a failed login retried) must not re-open the prompt.
   submit(window, window.document.querySelector("form"));
@@ -647,6 +653,110 @@ test("Never also silences the password-update prompt for that site", async (t) =
   await flush();
   assert.equal(saver(window), null);
 });
+// ---- A9: edit before save ------------------------------------------------
+// The prompt must show the submitted pair and let it be corrected before a
+// single byte reaches the vault. The fields live in a closed shadow root, so a
+// page script cannot read a corrected secret out of the page tree.
+
+const loginForm = (u, p) => `<form>
+    <input type="text" name="username" value="${u}">
+    <input type="password" name="password" value="${p}">
+  </form>`;
+
+test("A9: save prompt pre-fills editable fields in a closed shadow root", async (t) => {
+  const { window } = env(t, loginForm("alice", "pw123"));
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const host = saver(window);
+  assert.ok(host, "save prompt first");
+  assert.equal(host.shadowRoot, null, "root must be closed to page scripts");
+  assert.equal(host.querySelector("input"), null, "no input leaks into light DOM");
+  const root = saverRoot(window);
+  const user = root.querySelector('input[type="text"]');
+  const pass = root.querySelector('input[type="password"]');
+  assert.equal(user.value, "alice");
+  assert.equal(pass.value, "pw123");
+  assert.equal(pass.autocomplete, "off");
+  assert.equal(pass.spellcheck, false);
+});
+
+test("A9: corrected fields are what gets saved", async (t) => {
+  const { window, store } = env(t, loginForm("alice", "wrongpw"));
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  root.querySelector('input[type="text"]').value = "alice@corp.example";
+  root.querySelector('input[type="password"]').value = "RightPass!1";
+  saverButton(window, /Save/).click();
+  await flush();
+  assert.equal(store.saves.length, 1);
+  assert.equal(store.saves[0].username, "alice@corp.example");
+  assert.equal(store.saves[0].password, "RightPass!1");
+  assert.equal(saver(window), null, "prompt closes after a successful save");
+});
+
+test("A9: blank fields block the save instead of writing garbage", async (t) => {
+  const { window, store } = env(t, loginForm("alice", "pw123"));
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  root.querySelector('input[type="text"]').value = "   ";
+  root.querySelector('input[type="password"]').value = "";
+  saverButton(window, /Save/).click();
+  await flush();
+  assert.equal(store.saves.length, 0, "no host call for an empty pair");
+  assert.ok(saver(window), "prompt stays open so the user can fix it");
+  assert.match(root.textContent, /username/i);
+});
+
+test("A9: editing back to the stored password stops the update", async (t) => {
+  const { window, store } = env(t, loginForm("bob", "newpw"), "https://example.com/login",
+    [{ id: "e1", username: "bob", password: "oldpw", urls: ["example.com"] }]);
+  await flush(); // boot warm fills the credential cache
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  assert.ok(saver(window), "a changed password opens the update prompt");
+  const root = saverRoot(window);
+  assert.equal(root.querySelector('input[type="password"]').value, "newpw");
+  root.querySelector('input[type="password"]').value = "oldpw";
+  saverButton(window, /Update/).click();
+  await flush();
+  assert.equal(store.saves.length, 0, "known pair must not hit the host");
+  assert.ok(saver(window), "prompt stays open");
+  assert.match(root.textContent, /already saved/i);
+});
+
+test("A9: update prompt saves corrected username and password", async (t) => {
+  const { window, store } = env(t, loginForm("bob", "newpw"), "https://example.com/login",
+    [{ id: "e1", username: "bob", password: "oldpw", urls: ["example.com"] }]);
+  await flush();
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  root.querySelector('input[type="text"]').value = "bob@example.com";
+  root.querySelector('input[type="password"]').value = "EvenNewer1";
+  saverButton(window, /Update/).click();
+  await flush();
+  assert.equal(store.saves.length, 1);
+  assert.equal(store.saves[0].username, "bob@example.com");
+  assert.equal(store.saves[0].password, "EvenNewer1");
+});
+
+test("A9: Escape inside a field keeps the edit, Escape elsewhere dismisses", async (t) => {
+  const { window } = env(t, loginForm("alice", "pw123"));
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  const pass = root.querySelector('input[type="password"]');
+  pass.focus();
+  pass.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+  assert.ok(saver(window), "in-field Escape must not discard the edit");
+  const save = saverButton(window, /Save/);
+  save.focus();
+  save.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true, composed: true }));
+  assert.equal(saver(window), null, "Escape outside a field still closes the prompt");
+});
+
 // ---- A4: hash-guarded clipboard clear ----
 
 test("A4: content arms the clipboard clear with a hash and verifies it before blanking", () => {

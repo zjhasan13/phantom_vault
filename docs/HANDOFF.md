@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A5 master password rekey (atomic swap + rollback snapshot), 0.4.0 still.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A9 edit-before-save in the save toast, 0.4.0 still.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -38,6 +38,20 @@
   backups and GitHub history stay on the old password. Tests: +6 →
   `cargo test` **481 passed / 1 ignored**, `npm test` **118/118**. A4 hardware
   clipboard QA still unverified (gap doc §5.7).
+
+- **A9 — edit-before-save (this batch):** `content.js` now has one
+  `credentialToast` builder behind `saverToast`/`updateToast`. The prompt shows
+  the submitted username and password in real inputs (password masked) inside a
+  **closed** shadow root, so the pair can be corrected before anything is
+  stored and a page script cannot read it back out of the DOM. Save reads the
+  edited values, trims the username only, blocks an empty pair with an inline
+  error, and re-classifies against `existingSync` so a pair equal to a stored
+  entry stops with "already saved" instead of a host round-trip. The 30 s timer
+  re-arms on typing and refuses to close while a field is focused; Escape
+  inside a field keeps the edit, elsewhere it dismisses. Tests: +6 →
+  `npm test` **124/124**, `cargo test` 481 unchanged. Honest limit: a closed
+  shadow root is a DOM boundary, not a keyboard boundary — the page can still
+  see key events, as it can for the original typing.
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
@@ -250,7 +264,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 481 passed / 1 ignored, `npm test` 118/118 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 481 passed / 1 ignored, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
