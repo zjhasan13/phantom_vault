@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A6 separate backup passphrase (`PVBK1`), after A5/A7/A9, 0.4.0 still.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A8a certificate-free release pipeline (signer + CI + SBOM + provenance), after A6/A5/A7/A9, 0.4.0 still.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -68,6 +68,32 @@
   Import screen, both cleared once Rust owns the secret. `crypto.rs` unchanged;
   fresh salt per export (asserted). Tests +4 → `cargo test` **485 passed / 1
   ignored**, `npm test` **124/124**.
+
+- **A8a — certificate-free release pipeline (this batch):**
+  `.github/workflows/release.yml` runs on `v*` tags: verifies tag == Cargo
+  version, refuses without `PV_SIGNING_KEY`, then calls
+  `scripts/package_release.ps1` (the same script used locally) to run
+  `cargo test` + `npm test`, build the release exe, compile `installer.iss`,
+  zip both extensions, write a CycloneDX SBOM, hash every asset
+  (`<asset>.sha256` + `SHA256SUMS.txt`) and sign every `.exe`/`.zip`.
+  `tools/pv-sign/src/main.rs` (its own crate, no app dependency graph)
+  produces raw 64-byte Ed25519 `<asset>.sig` and refuses a
+  key that does not match the pinned key; `src/release_pubkey.rs` is now the
+  single source of truth (updater re-exports it). Releases ship both the Inno
+  installer and `PhantomVault-<ver>-windows-x64.exe`; `pick_asset` now skips
+  `setup`/`installer` names and refuses an installer-only release, so the
+  updater can never swap the installer over the live app. The workflow
+  publishes the release and a GitHub build-provenance attestation. **No UPX** —
+  the old sub-8MB target came from v0.2.0 (6.7 MB); 0.4.0 is 19.55 MB exe /
+  8.54 MB installer, so `docs/RELEASE.md` now records the real size instead.
+  **Key rotation:** the old pinned key had no available private half, so a new
+  key was generated. Seed: `%USERPROFILE%\.phantomvault\release_signing.key`
+  (user-only ACL, never printed by keygen). The GitHub secret `PV_SIGNING_KEY`
+  is set and verified via `gh secret list` (the maintainer's stored OAuth token
+  was used; the seed was piped through stdin, never echoed). Clients built
+  before this change must reinstall once manually.
+  Tests +4 → `cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
+  Authenticode (A8b) remains open — no certificate.
 
 - **A7 — trust documentation (this batch):** three files at the repo root, written
   from the code, not from marketing. `README.md` (features, container/KEM summary,
@@ -293,7 +319,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 485 passed / 1 ignored, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 485 passed / 1 ignored + 4 pv_sign tests, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -375,27 +401,36 @@
 
 ## 3. Pending queue (ordered)
 
-1. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
+1. **First signed release (A8a):** bump `Cargo.toml` + `installer.iss` + both
+   manifests to the next patch, run `scripts/package_release.ps1 -SignKeyPath
+   ...` locally once, then tag `vX.Y.Z` and let `.github/workflows/release.yml`
+   publish. Verify the release has `.sig`, `.sha256`, `SHA256SUMS.txt`, the SBOM
+   and that `gh attestation verify <setup>.exe --repo zjhasan13/phantom_vault`
+   passes. Do not reuse an existing tag.
+2. **A8b Authenticode:** needs a code-signing certificate (user decision). The
+   workflow already has one place to insert `signtool` after packaging and
+   before hashing; do not sign before the final bytes are fixed.
+3. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
    next physical pass (X → process stays as background tray process; Access
    Log close-path lines present). If it regresses, suspects in order:
    handler never fires (Slint close-request path) → panic=abort in handler →
    env-specific tray failure.
-2. **Live measurements (partial, needs the user's machine):** observed
+4. **Live measurements (partial, needs the user's machine):** observed
    minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
    locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
    warm p50 ~5 ms. Record in release notes.
-3. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
+5. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
    The old export/import rotation is no longer needed. After a rekey, reprint
    the recovery shards and re-enroll the App PIN (both stay on the old secret
    until redone).
-4. **GitHub cache check:** repo code-search `my_secure_vault` must return
+6. **GitHub cache check:** repo code-search `my_secure_vault` must return
    zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
    `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
    works too). The 0.4.0 installer + browser zips are built locally; the user
    uploads the Release in the web UI (device login is not usable from the
    agent shell).
-5. **Follow-ups for the other line:** legacy host `assert` unreachable from
+7. **Follow-ups for the other line:** legacy host `assert` unreachable from
    extension (fails-closed test pinned — relay now uses
    `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH
    adopt paths (`serve_conn`, `sync_with_peer`) and the guard is now a tested
@@ -447,3 +482,13 @@
   legacy master path, so pre-A6 `.pvx` files must never be broken. The export
   gate refuses a passphrase equal to the master (not a warning). Clearing the
   Slint fields happens on the event loop; property writes never cross threads.
+- A8a release invariants: `src/release_pubkey.rs` is the ONLY definition of
+  the pinned key (updater + signer both consume it). `pv-sign` fails closed on
+  a key mismatch and never prints the seed. CI and local builds call the same
+  `scripts/package_release.ps1`. The updater asset is the portable
+  `PhantomVault-<ver>-windows-x64.exe`, never the Inno installer — `pick_asset`
+  skips `setup`/`installer` and returns `None` when only an installer exists.
+  Sign AFTER the installer/zip bytes are final; hash after signing. Never
+  rebuild/overwrite a published tag — the workflow refuses an existing release
+  on manual dispatch. No UPX: the sub-8MB target was v0.2.0-only and
+  compressing an unsigned binary raises AV false positives.

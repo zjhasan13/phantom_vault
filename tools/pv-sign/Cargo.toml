@@ -1,0 +1,15 @@
+[package]
+name = "pv-sign"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Detached Ed25519 signer/verifier for PhantomVault release assets"
+license = "MIT"
+
+# Its own workspace so the release tool never depends on the app's dependency
+# graph (a key-handling tool should be small and auditable).
+[workspace]
+
+[dependencies]
+ed25519-dalek = "2"
+rand = "0.8"

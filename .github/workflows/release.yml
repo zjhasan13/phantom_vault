@@ -1,0 +1,142 @@
+name: release
+
+# Certificate-free trust pipeline (A8a): build the installer + extension zips,
+# test, generate a CycloneDX SBOM, Ed25519-sign every binary the updater may
+# download, attach SHA-256 sums, publish the GitHub Release, and mint a build
+# provenance attestation. Authenticode (A8b) still needs a code-signing cert.
+#
+# Required repository secret: PV_SIGNING_KEY = 64 hex chars (32-byte Ed25519
+# seed). The matching public key is pinned in src/release_pubkey.rs; this
+# workflow refuses to publish if the secret is missing or derives another key.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to rebuild (e.g. v0.4.1)"
+        required: true
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      CARGO_TERM_COLOR: always
+      PV_SIGNING_KEY: ${{ secrets.PV_SIGNING_KEY }}
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      PV_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # For a manual rebuild, build the requested TAG, not the branch.
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+            tools/pv-sign -> tools/pv-sign/target
+
+      - name: Resolve and verify the tag
+        shell: pwsh
+        run: |
+          if ($env:PV_REF -notmatch '^v\d+\.\d+\.\d+$') {
+            throw "release tags must look like v1.2.3, got '$env:PV_REF'"
+          }
+          $ver = (Select-String -Path Cargo.toml -Pattern '^version\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          if ($env:PV_REF -ne "v$ver") {
+            throw "tag $env:PV_REF does not match Cargo.toml version $ver - bump both, never reuse a tag"
+          }
+          "PV_VERSION=$ver" >> $env:GITHUB_ENV
+          "PV_TAG=$env:PV_REF" >> $env:GITHUB_ENV
+
+      - name: Refuse to publish without the signing key
+        shell: pwsh
+        run: |
+          if (-not $env:PV_SIGNING_KEY) {
+            throw "PV_SIGNING_KEY is not set. Add the Ed25519 seed (64 hex chars) under Settings > Secrets and variables > Actions, then re-run."
+          }
+
+      - name: Refuse to overwrite an existing release
+        if: github.event_name == 'workflow_dispatch'
+        shell: pwsh
+        run: |
+          $headers = @{ Authorization = "Bearer $env:GITHUB_TOKEN"; Accept = "application/vnd.github+json" }
+          $exists = $false
+          try {
+            Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/tags/$env:PV_TAG" -Headers $headers | Out-Null
+            $exists = $true
+          } catch {
+            if ($_.Exception.Response.StatusCode.value__ -ne 404) { throw }
+          }
+          if ($exists) { throw "release $env:PV_TAG already exists; published releases are immutable - bump the patch version instead" }
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-cyclonedx
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Get-Command iscc -ErrorAction SilentlyContinue) -and
+              -not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Install JS test deps
+        run: npm ci
+
+      - name: Test, build, sign, hash, SBOM
+        shell: pwsh
+        run: ./scripts/package_release.ps1 -SignKeyEnv PV_SIGNING_KEY
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: |
+            dist/release-${{ env.PV_VERSION }}/*.exe
+            dist/release-${{ env.PV_VERSION }}/*.zip
+
+      - name: Publish the GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.PV_TAG }}
+          name: PhantomVault ${{ env.PV_TAG }}
+          fail_on_unmatched_files: true
+          files: dist/release-${{ env.PV_VERSION }}/*
+          body: |
+            **Unsigned Authenticode.** Windows SmartScreen will warn on first launch.
+            Verify the SHA-256 in `SHA256SUMS.txt` before running:
+            *More info -> Run anyway* is expected for an unsigned build.
+
+            **Updater signature.** Every `.exe`/`.zip` ships a detached Ed25519
+            `<asset>.sig`, checked by the in-app updater against
+            `src/release_pubkey.rs`. A missing or mismatched signature is refused.
+
+            **Which exe?** `PhantomVault-Setup-<version>.exe` installs the app.
+            `PhantomVault-<version>-windows-x64.exe` is the portable binary the
+            in-app updater swaps in — do not run it as an installer.
+
+            **Verify locally (PowerShell):**
+            ```powershell
+            Get-FileHash .\PhantomVault-Setup-<version>.exe -Algorithm SHA256
+            # compare with SHA256SUMS.txt
+            gh attestation verify .\PhantomVault-Setup-<version>.exe --repo zjhasan13/phantom_vault
+            ```
+
+            **One-time migration:** installs built before the 2026-10-31 signing-key
+            rotation cannot verify this release's signature. Reinstall once manually;
+            later releases update normally.

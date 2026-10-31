@@ -36,10 +36,11 @@ canary credential, and a native host that refuses unknown origins.
 It does **not** yet beat them "in every respect". The remaining gaps cluster in
 four places:
 
-1. **Trust surface** — docs shipped (A7: README, MIT LICENSE, SECURITY.md), but
-   the installer is still unsigned and there is no release provenance. A security
-   product that cannot be verified end-to-end is not competitive, regardless of
-   crypto.
+1. **Trust surface** — docs shipped (A7: README, MIT LICENSE, SECURITY.md) and
+   releases now carry checksums, an Ed25519 updater signature, an SBOM and a
+   provenance attestation (A8a), but the installer is still not Authenticode-signed
+   (A8b). A security product that cannot be verified end-to-end is not competitive,
+   regardless of crypto.
 2. **Account lifecycle** — no signed container revision (separate backup
    passphrase shipped as A6, master-password change as A5).
 3. **Extension hardening** — fixed in this batch (proactive idle lock and
@@ -70,13 +71,14 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A5 | Master password change / rekey | `storage::rekey_vault_secret` (`storage.rs`); `rekey_input_error` + `on_change_master_password` (`main.rs`); Settings > Security card (`ui/appwindow.slint`) | Old password fails, new password unlocks, `.bak.1.enc` opens with the old password, 6 new tests |
 | A9 | Edit-before-save in the save toast | `content.js` `credentialToast` (shared builder, closed shadow root), `toastField`, `saverToast`/`updateToast`; 6 new tests; harness `shadowOf` | Username and password can be corrected before the item is stored; empty pairs and already-known pairs never reach the host |
 | A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
+| A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
 ### P0 — parity blockers (do first)
 
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
-| A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
+| A8b | Authenticode signing | T2 | 1 wk | A downloaded installer verifies against the release checksum and the Authenticode signature |
 
 ### P1 — close the structural gaps
 
@@ -197,8 +199,8 @@ security or parity gap; **S3** = polish or ecosystem.
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
 | T1 | No README, LICENSE, or SECURITY.md | **Shipped (A7)** — `README.md`, `LICENSE` (MIT), `SECURITY.md` | The files were absent at repo root: no audit trail for users, no legal reuse, no disclosure channel | Root docs are now present; `SECURITY.md` documents the GitHub private advisory channel, 90-day window, in/out of scope and the 0.4.0 limitations | — |
-| T2 | Installer is unsigned | `installer.iss` has no `SignTool`/`SignedUninstaller` directive | SmartScreen warns; enterprise deployment blocked; tampering is undetectable | Authenticode sign the installer and the binary in CI | S1 |
-| T3 | No release/provenance workflow | Only `.github/workflows/security.yml` exists | Users cannot verify that a release matches the source | Add a build workflow with checksums, SBOM, and a signed release attestation | S1 |
+| T2 | Installer is not Authenticode-signed | `installer.iss` still has no `SignTool`/`SignedUninstaller` directive | SmartScreen warns; enterprise deployment blocked; Authenticode tamper evidence is absent | Authenticode sign the installer and the binary in CI (needs a certificate, A8b) | S1 |
+| T3 | No release/provenance workflow — **shipped (A8a)** | `.github/workflows/release.yml` builds, tests, signs, hashes, SBOMs and attests on `v*` tags; `scripts/package_release.ps1` mirrors it locally | Users can now verify a release against source: checksums, detached Ed25519 signature, SBOM and GitHub provenance | Add a build workflow with checksums, SBOM, and a signed release attestation | S1 |
 | T4 | No ARM64 build | No ARM64 target in the tree | Windows-on-ARM users (increasing share) run under emulation or not at all | Add `aarch64-pc-windows-msvc` to the release matrix | S2 |
 | T5 | No reproducible-build documentation | Absent | Cannot independently verify binaries | Document toolchain pinning and hash comparison | S3 |
 
@@ -460,6 +462,61 @@ Honest limits: the passphrase is only as good as what the user types, there is
 no recovery if it is lost, and a backup file still carries its own salt and
 container — losing the file loses the data regardless of the passphrase.
 
+### 5.12 Certificate-free release pipeline (A8a)
+
+The trust gap was not "no CI" but "the verification half existed with nothing
+producing its inputs": `updater.rs` has always refused assets without a valid
+`<asset>.sig` and a checksum, while every published release shipped neither.
+v0.4.0's assets prove the point — setup exe + two zips, no `.sig`, no sums — so
+the in-app updater fails closed today.
+
+A8a closes the loop without an Authenticode certificate:
+
+- **Workflow** `.github/workflows/release.yml` runs on `v*` tags (or a manual
+  dispatch that refuses an existing release). It verifies the tag equals the
+  `Cargo.toml` version, refuses to run without `PV_SIGNING_KEY`, then calls one
+  packaging implementation so CI and local builds cannot drift.
+- **Packaging** `scripts/package_release.ps1` runs `cargo test` + `npm test`,
+  builds the release binary, compiles `installer.iss`, zips both extension
+  builds, and writes a CycloneDX SBOM from cargo metadata. It hashes every
+  distributable as `<asset>.sha256` (bare hash, the updater's preferred form)
+  and `SHA256SUMS.txt` (GNU format, humans and the release page).
+- **Signing** `tools/pv-sign/src/main.rs` (its own small crate) writes a raw
+  64-byte Ed25519 signature per
+  `.exe`/`.zip`. It refuses any key whose public half differs from
+  `src/release_pubkey.rs`, so a wrong secret fails before upload. The pinned
+  key moved to `src/release_pubkey.rs` so the signer and verifier share one
+  source of truth.
+- **Updater asset split.** The updater swaps a portable binary over the live
+  exe, so a release ships both `PhantomVault-Setup-<ver>.exe` (humans) and
+  `PhantomVault-<ver>-windows-x64.exe` (updater). `pick_asset` now skips
+  `setup`/`installer` names and refuses an installer-only release instead of
+  replacing the app with the installer — the old behaviour would have bricked
+  the next launch.
+- **Provenance** `actions/attest-build-provenance` attests the exe and zips;
+  users verify with `gh attestation verify <file> --repo zjhasan13/phantom_vault`.
+- **No UPX.** The old "sub-8MB" target came from the v0.2.0 6.7 MB build; at
+  0.4.0 the exe is 19.55 MB and the installer 8.54 MB (`docs/HANDOFF.md`).
+  Compressing an unsigned binary raises AV false positives, so the checklist now
+  records the real size instead of asserting an unmet target.
+
+Key custody: the 2026-10-31 rotation generated a new key because the original
+pinned key had no available private half. The seed lives only in the Actions
+secret `PV_SIGNING_KEY` and an offline backup under the maintainer's profile;
+it is never printed by `pv_sign keygen`. Consequence, stated in the README and
+`SECURITY.md`: installs built before that date cannot verify new signatures and
+need one manual reinstall.
+
+Tests: `pv-sign` covers sign/verify round-trip, tamper and wrong-key rejection,
+hex/raw key parsing, and the pinned array/hex agreement; the updater test
+`asset_pick_skips_installer_and_prefers_update_exe` pins the installer-refusal
+rule. Baselines after A8a:
+`cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
+
+Honest limits: Authenticode is still missing (A8b), so SmartScreen still warns;
+the provenance attestation covers the uploaded bytes, not a reproducible build;
+and losing the offline key means another rotation plus one manual reinstall.
+
 ---
 
 ## 6. Roadmap
@@ -470,10 +527,12 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 1. **DONE (A7)** — `README.md`, `LICENSE` (MIT), `SECURITY.md` with the GitHub
    private advisory channel and a 90-day disclosure window.
-2. Authenticode signing in `installer.iss` + CI.
-3. Release workflow: checksums, SBOM, signed attestation.
+2. Authenticode signing in `installer.iss` + CI (**A8b** — needs a certificate).
+3. **DONE (A8a)** — release workflow: checksums, Ed25519 updater signatures,
+   SBOM, provenance attestation, one packaging implementation for CI + local.
 4. Exit test: a fresh clone can verify a downloaded installer's hash and
-   signature against the release page.
+   signature against the release page. Hash + Ed25519 + attestation: **yes**
+   after A8a; Authenticode: **still pending** (A8b).
 
 ### Phase 2 — Account lifecycle (2-3 weeks)
 
@@ -556,7 +615,7 @@ competitors do not ship.
 | Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
 | Offline extension cache | Missing | Yes | Yes | Behind |
 | Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
-| Installer signing / provenance | Missing | Signed | Signed | Behind |
+| Installer signing / provenance | Provenance shipped (A8a); Authenticode still missing (A8b) | Signed | Signed | Behind on Authenticode, parity on provenance |
 | Audit / disclosure docs | Shipped (A7: README, MIT LICENSE, SECURITY.md) | Yes | Yes | Parity |
 | Light theme / Bengali | Missing | Theme yes, Bengali partial | Theme yes, Bengali no | Behind on fit |
 
@@ -602,6 +661,14 @@ Select-String -Path src\storage.rs -Pattern 'rekey_vault_secret'
 Select-String -Path src\main.rs -Pattern 'change_master_password|rekey_input_error'
 cargo test rekey
 
+# A8a release pipeline (checksums, Ed25519 signatures, SBOM, provenance)
+Test-Path .github\workflows\release.yml, scripts\package_release.ps1, tools\pv-sign\src\main.rs
+Select-String -Path src\release_pubkey.rs -Pattern 'UPDATER_PUBLIC_KEY'
+Select-String -Path src\sync\updater.rs -Pattern 'check_signature|release_pubkey'
+Select-String -Path .github\workflows\release.yml -Pattern 'attest-build-provenance|package_release'
+cargo test --manifest-path tools\pv-sign\Cargo.toml
+cargo run --manifest-path tools\pv-sign\Cargo.toml -- verify installer-output\PhantomVault-Setup-0.4.0.exe
+
 # A9 edit-before-save (closed shadow fields, re-classify, empty guard)
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'
 node --test tests/js/content.test.mjs
@@ -643,7 +710,7 @@ pass missed, and corrected three assumptions.
 |---|---|---|
 | Passkeys are metadata-only | Wrong. Full WebAuthn relay exists: page hook, background relay, native attest/assert | `browser_extension/hook.js:132-187`, `content.js:2888-2923`, `native_host.rs:660-830` |
 | Import coverage is thin | Wrong. 12 sniffed formats, including Bitwarden, 1Password, KeePass, Proton, Chrome, Safari, LastPass, generic CSV | `src/importer/sniffer.rs:6-37` |
-| Updates are unsigned | Partly wrong. The updater requires a detached Ed25519 signature plus SHA-256 before staging; only the installer itself lacks Authenticode | `src/sync/updater.rs:9-38,144-160` |
+| Updates are unsigned | Partly wrong. The updater requires a detached Ed25519 signature plus SHA-256 before staging; only the installer itself lacks Authenticode | `src/sync/updater.rs:9-38,144-160` (signer + CI added in A8a) |
 
 ### 10.2 New gaps
 
@@ -681,7 +748,7 @@ pass missed, and corrected three assumptions.
    single largest structural gap. 6-10 weeks for macOS/Linux; mobile after.
 3. **C1 + C2** — rekey and separate backup passphrase (**both done as A5 + A6**).
 4. **E8 + E9 + E10** � shadow DOM, offline cache, KDBX. 3 weeks.
-5. **T1-T3** - README/LICENSE/SECURITY (**T1 done as A7**), Authenticode, release provenance. 1 week remaining.
+5. **T1-T3** - README/LICENSE/SECURITY (**T1 done as A7**), Authenticode (**T2, A8b — needs a certificate**), release provenance (**T3 done as A8a**).
 6. **E13 + E12 + C4** � serverless Send, hardware-key unlock, PQ-paranoid
    profile. These are the features that make "better than Bitwarden" true rather
    than argued. 4-6 weeks.

@@ -17,6 +17,7 @@ mod core;
 mod developer;
 mod error;
 mod importer;
+mod release_pubkey;
 mod security;
 mod sync;
 mod windows_native;

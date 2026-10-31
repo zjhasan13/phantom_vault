@@ -5,9 +5,10 @@
 //! [Restart to Update] → batch script swaps the binary after exit.
 //!
 //! Honesty notes: Windows locks the running exe, so replacement happens
-//! post-exit via a temp `.bat` (written to %TEMP%, self-deleting). No
-//! code-signature verification exists yet — trust root is TLS + the pinned
-//! `zjhasan13/phantom_vault` repo; releases SHOULD be signed in future.
+//! post-exit via a temp `.bat` (written to %TEMP%, self-deleting). Every
+//! download is gated by a SHA-256 sidecar and a detached Ed25519 signature
+//! (`<asset>.sig`) against the key pinned in `src/release_pubkey.rs`; the
+//! installer itself still lacks Authenticode.
 
 use crate::error::{Result, VaultError};
 
@@ -15,14 +16,13 @@ pub const RELEASES_URL: &str =
     "https://api.github.com/repos/zjhasan13/phantom_vault/releases/latest";
 const USER_AGENT: &str = "phantom-vault-updater";
 
-/// Release-signing public key (Ed25519). The matching PRIVATE key lives ONLY
-/// as a GitHub Actions secret — it is NEVER in this repo. Every release
-/// asset must ship `<asset>.sig` (raw 64-byte detached signature); binaries
-/// without a valid signature are refused, no exceptions.
-pub const UPDATER_PUBLIC_KEY: [u8; 32] = [
-    199, 62, 33, 33, 153, 183, 61, 17, 153, 186, 193, 81, 125, 98, 44, 26,
-    217, 109, 183, 126, 115, 189, 59, 210, 175, 22, 68, 21, 44, 2, 169, 139,
-];
+/// Release-signing public key (Ed25519), defined once in
+/// [`crate::release_pubkey`] so the signer (`pv_sign`) and the updater can
+/// never drift. The private seed lives in the maintainer's offline backup and
+/// in the GitHub Actions secret `PV_SIGNING_KEY` — never in this repo. Every
+/// release asset must ship `<asset>.sig` (raw 64-byte detached signature);
+/// binaries without a valid signature are refused, no exceptions.
+pub use crate::release_pubkey::UPDATER_PUBLIC_KEY;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ReleaseInfo {
@@ -63,21 +63,26 @@ pub fn is_newer(latest: &str, current: &str) -> bool {
     }
 }
 
-/// Pick the Windows binary: `.exe` with a platform/installer hint wins,
-/// any other `.exe` is the fallback. Pure — unit tested.
+/// Pick the portable app `.exe` the updater can swap in, never the Inno
+/// installer: replacing the live app with `Setup.exe` would brick the update.
+/// Preference: an explicit update/portable name, then a windows/win64 hint,
+/// then any non-installer exe. Pure — unit tested.
 pub fn pick_asset(names_urls: &[(String, String, u64)]) -> Option<(String, String, u64)> {
-    let exes: Vec<_> = names_urls
+    fn has_any(name: &str, needles: &[&str]) -> bool {
+        let l = name.to_lowercase();
+        needles.iter().any(|n| l.contains(n))
+    }
+    let updatable: Vec<_> = names_urls
         .iter()
         .filter(|(n, _, _)| n.to_lowercase().ends_with(".exe"))
+        .filter(|(n, _, _)| !has_any(n, &["setup", "installer"]))
         .collect();
-    if exes.is_empty() {
-        return None;
-    }
-    let hinted = exes.iter().find(|(n, _, _)| {
-        let l = n.to_lowercase();
-        l.contains("windows") || l.contains("win64") || l.contains("setup") || l.contains("installer") || l.contains("phantom")
-    });
-    hinted.copied().or(exes.first().copied()).map(|(n, u, s)| (n.clone(), u.clone(), *s))
+    let picked = updatable
+        .iter()
+        .find(|(n, _, _)| has_any(n, &["update", "portable"]))
+        .or_else(|| updatable.iter().find(|(n, _, _)| has_any(n, &["windows", "win64"])))
+        .or_else(|| updatable.first());
+    picked.map(|(n, u, s)| (n.clone(), u.clone(), *s))
 }
 
 fn client() -> Result<reqwest::Client> {
@@ -475,18 +480,22 @@ mod tests {
     }
 
     #[test]
-    fn asset_pick_prefers_windows_exe() {
+    fn asset_pick_skips_installer_and_prefers_update_exe() {
         let assets = vec![
             ("app-linux.tar.gz".to_string(), "u1".to_string(), 10u64),
-            ("app.exe".to_string(), "u2".to_string(), 20u64),
-            ("phantom-vault-windows-setup.exe".to_string(), "u3".to_string(), 30u64),
+            ("PhantomVault-Setup-0.4.1.exe".to_string(), "u2".to_string(), 20u64),
+            ("PhantomVault-0.4.1-windows-x64.exe".to_string(), "u3".to_string(), 30u64),
         ];
         let picked = pick_asset(&assets).unwrap();
-        assert_eq!(picked.0, "phantom-vault-windows-setup.exe");
+        assert_eq!(picked.0, "PhantomVault-0.4.1-windows-x64.exe");
         assert_eq!(picked.1, "u3");
-        // No hint → first exe fallback.
+        // A plain exe is still acceptable when it is not an installer.
         let plain = vec![("app.exe".to_string(), "u2".to_string(), 20u64)];
         assert_eq!(pick_asset(&plain).unwrap().1, "u2");
+        // Installer-only releases are refused: swapping it over the app would
+        // replace the binary with the installer, not upgrade it.
+        let setup_only = vec![("PhantomVault-Setup-0.4.1.exe".to_string(), "u3".to_string(), 30u64)];
+        assert!(pick_asset(&setup_only).is_none());
         // No exe at all → None (honest "no windows binary" error upstream).
         let none: Vec<(String, String, u64)> = vec![("app.tar.gz".to_string(), "u".to_string(), 1)];
         assert!(pick_asset(&none).is_none());

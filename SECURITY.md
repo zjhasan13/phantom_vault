@@ -68,6 +68,8 @@ tell us the date in the report so the advisory can land first.
   closed shadow root), clipboard clear ownership, idle lock, never-save list
 - Sync: GitHub ciphertext push/pull, P2P LAN authentication, replay/rollback of an
   older blob, audit-log chain and head anchor
+- Release integrity: the pinned Ed25519 release key, `<asset>.sig` verification,
+  checksum sidecars, and the SBOM/provenance publish path
 - Local attack surface: decoy vault, canary, shredder, installer, update path
 - Dependency vulnerabilities that are actually reachable from this code
 
@@ -89,6 +91,10 @@ tell us the date in the report so the advisory can land first.
 These are documented rather than secret; please do not report them as new findings.
 
 - Binaries are **not Authenticode-signed**; SmartScreen warns on first run.
+  Releases do ship detached Ed25519 `<asset>.sig` files for the updater, and a
+  GitHub build-provenance attestation; verification steps are in `docs/RELEASE.md`.
+- Installs built before the 2026-10-31 signing-key rotation pin the old public key
+  and need **one manual reinstall** before in-app updates verify again.
 - The post-quantum layer is a **hedge, not a second factor**: a correct master
   password still opens the portable container.
 - Favicon lookup currently contacts DuckDuckGo and then Google.

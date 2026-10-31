@@ -69,8 +69,10 @@ third-party audit. Those are tracked as concrete work in
 
 1. Download `PhantomVault-Setup-<version>.exe` and `SHA256SUMS.txt` from Releases.
 2. Verify the SHA-256, then run the installer.
-   Windows SmartScreen will warn because the build is **unsigned** —
+   Windows SmartScreen will warn because the installer is **not Authenticode-signed** —
    *More info → Run anyway* is expected, but only after the hash matches.
+   Every `.exe`/`.zip` also ships a detached Ed25519 `<asset>.sig` that the in-app
+   updater verifies against the key pinned in `src/release_pubkey.rs`.
 3. Launch PhantomVault and create a master password. There is no recovery:
    the password derives the key. Back up the vault file and your recovery shards.
 
@@ -97,12 +99,16 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 481 passed / 1 ignored at 0.4.0
+cargo test                       # 485 passed / 1 ignored + 4 pv_sign tests at 0.4.0
+cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
 npm test                         # 124/124 at 0.4.0
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
+
+# Full signed release (tests, installer, zips, SBOM, hashes, .sig):
+.\scripts\package_release.ps1 -SignKeyPath "$env:USERPROFILE\.phantomvault\release_signing.key"
 ```
 
 Extension zips: `powershell -File browser_extension\build.ps1 -Browser all`.
@@ -144,8 +150,11 @@ relay, no telemetry, no analytics, and no analytics SDK in either binary.
 
 These are real today. They are listed here so nobody discovers them the hard way.
 
-- **Unsigned binaries.** No Authenticode certificate yet (roadmap A8). Windows
-  SmartScreen warns on every fresh download. Verify `SHA256SUMS.txt`.
+- **Unsigned installer.** No Authenticode certificate yet (roadmap A8b). Windows
+  SmartScreen warns on every fresh download. Verify `SHA256SUMS.txt`; releases also
+  carry Ed25519 `<asset>.sig` files and a GitHub build-provenance attestation.
+  Installs from before the 2026-10-31 key rotation need one manual reinstall
+  (see `docs/RELEASE.md` §5).
 - **No third-party security audit.** `docs/AUDIT.md` is an internal, reproducible
   review; it is not a substitute for an external audit.
 - **Windows only.** No macOS, Linux or mobile client (A10).
