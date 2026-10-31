@@ -36,11 +36,12 @@ canary credential, and a native host that refuses unknown origins.
 It does **not** yet beat them "in every respect". The remaining gaps cluster in
 four places:
 
-1. **Trust surface** — no README, no LICENSE, no SECURITY.md, an unsigned
-   installer, and no release provenance. A security product that cannot be
-   audited or verified is not competitive, regardless of crypto.
-2. **Account lifecycle** — no master-password change, no separate backup
-   passphrase, no signed container revision.
+1. **Trust surface** — docs shipped (A7: README, MIT LICENSE, SECURITY.md), but
+   the installer is still unsigned and there is no release provenance. A security
+   product that cannot be verified end-to-end is not competitive, regardless of
+   crypto.
+2. **Account lifecycle** — no separate backup passphrase, no signed container
+   revision (master-password change shipped as A5).
 3. **Extension hardening** — fixed in this batch (proactive idle lock and
    "Never save for this site"); a few smaller items remain.
 4. **Ecosystem** — no local API or CLI, so editor/CI/Terraform workflows that
@@ -74,7 +75,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
 | A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
-| A7 | README, LICENSE, SECURITY.md | T1 | 2 days | Disclosure address + PGP key published; license present at root |
+| A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 | A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
 
 ### P1 — close the structural gaps
@@ -195,7 +196,7 @@ security or parity gap; **S3** = polish or ecosystem.
 
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
-| T1 | No README, LICENSE, or SECURITY.md | Files absent at repo root | Cannot audit, cannot legally reuse, no disclosure channel; a security product with no disclosure policy is a red flag | Add all three; SECURITY.md with a PGP key and a 90-day disclosure window | S1 |
+| T1 | No README, LICENSE, or SECURITY.md | **Shipped (A7)** — `README.md`, `LICENSE` (MIT), `SECURITY.md` | The files were absent at repo root: no audit trail for users, no legal reuse, no disclosure channel | Root docs are now present; `SECURITY.md` documents the GitHub private advisory channel, 90-day window, in/out of scope and the 0.4.0 limitations | — |
 | T2 | Installer is unsigned | `installer.iss` has no `SignTool`/`SignedUninstaller` directive | SmartScreen warns; enterprise deployment blocked; tampering is undetectable | Authenticode sign the installer and the binary in CI | S1 |
 | T3 | No release/provenance workflow | Only `.github/workflows/security.yml` exists | Users cannot verify that a release matches the source | Add a build workflow with checksums, SBOM, and a signed release attestation | S1 |
 | T4 | No ARM64 build | No ARM64 target in the tree | Windows-on-ARM users (increasing share) run under emulation or not at all | Add `aarch64-pc-windows-msvc` to the release matrix | S2 |
@@ -401,6 +402,27 @@ that autofilled the wrong account or a stale password is fixable in place.
 `attachShadow` spy that lives only in `tests/js/content-harness.mjs` — the
 extension itself never publishes the root.
 
+### 5.10 Trust documentation (A7)
+
+Three root files, written from the code rather than from marketing:
+
+- **`README.md`** — what it is, honest differentiators, container/KEM summary,
+  build and test commands, repository map, doc index, and a "Known gaps and honest
+  limits" section that lists the unsigned installer, the missing external audit,
+  Windows-only scope, the PQ-is-not-a-second-factor caveat, the closed-shadow
+  keyboard limit, old-password backups after a rekey, favicon third parties, and
+  the open P2P LAN default.
+- **`LICENSE`** — MIT (Copyright (c) 2026 Zahidul Islam), matching the new
+  `Cargo.toml` `license = "MIT"` field.
+- **`SECURITY.md`** — GitHub private advisory as the only channel (no invented
+  email or PGP key), supported-version table, 7/14-day response targets, 90-day
+  coordinated disclosure, explicit in-scope and out-of-scope lists, the 0.4.0
+  known limitations, and a safe-harbor statement.
+
+Acceptance: `Test-Path README.md, LICENSE, SECURITY.md` is true for all three;
+`Cargo.toml` declares the license; the advisory URL resolves for a repository
+maintainer. No code changed in this batch.
+
 ---
 
 ## 6. Roadmap
@@ -409,7 +431,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 1 — Trust (1 week)
 
-1. `README.md`, `LICENSE`, `SECURITY.md` with a disclosure address and PGP key.
+1. **DONE (A7)** — `README.md`, `LICENSE` (MIT), `SECURITY.md` with the GitHub
+   private advisory channel and a 90-day disclosure window.
 2. Authenticode signing in `installer.iss` + CI.
 3. Release workflow: checksums, SBOM, signed attestation.
 4. Exit test: a fresh clone can verify a downloaded installer's hash and
@@ -496,7 +519,7 @@ competitors do not ship.
 | Offline extension cache | Missing | Yes | Yes | Behind |
 | Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
 | Installer signing / provenance | Missing | Signed | Signed | Behind |
-| Audit / disclosure docs | Missing | Yes | Yes | Behind |
+| Audit / disclosure docs | Shipped (A7: README, MIT LICENSE, SECURITY.md) | Yes | Yes | Parity |
 | Light theme / Bengali | Missing | Theme yes, Bengali partial | Theme yes, Bengali no | Behind on fit |
 
 Net: strong differentiation on privacy architecture, behind on lifecycle,
@@ -554,8 +577,10 @@ Select-String -Path src\sync\p2p_local.rs -Pattern 'when none exists|head_sha|pi
 # Favicon third-party hosts and default
 Select-String -Path src\core\favicon.rs -Pattern 'DDG_ICON|GOOGLE_S2|unwrap_or\(true\)'
 
-# Missing trust files
+# Trust docs (A7) — all three must exist at root
 Test-Path README.md, LICENSE, SECURITY.md
+Select-String -Path SECURITY.md -Pattern 'security/advisories/new|90-day'
+Select-String -Path Cargo.toml -Pattern '^license'
 Select-String -Path installer.iss -Pattern 'SignTool'
 ```
 
@@ -610,7 +635,7 @@ pass missed, and corrected three assumptions.
    single largest structural gap. 6-10 weeks for macOS/Linux; mobile after.
 3. **C1 + C2** � rekey and separate backup passphrase. 2-3 weeks.
 4. **E8 + E9 + E10** � shadow DOM, offline cache, KDBX. 3 weeks.
-5. **T1-T3** � README/LICENSE/SECURITY, Authenticode, release provenance. 1 week.
+5. **T1-T3** - README/LICENSE/SECURITY (**T1 done as A7**), Authenticode, release provenance. 1 week remaining.
 6. **E13 + E12 + C4** � serverless Send, hardware-key unlock, PQ-paranoid
    profile. These are the features that make "better than Bitwarden" true rather
    than argued. 4-6 weeks.

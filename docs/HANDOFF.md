@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A9 edit-before-save in the save toast, 0.4.0 still.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A7 trust documentation (README, MIT LICENSE, SECURITY.md), 0.4.0 still.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -52,6 +52,19 @@
   `npm test` **124/124**, `cargo test` 481 unchanged. Honest limit: a closed
   shadow root is a DOM boundary, not a keyboard boundary — the page can still
   see key events, as it can for the original typing.
+
+- **A7 — trust documentation (this batch):** three files at the repo root, written
+  from the code, not from marketing. `README.md` (features, container/KEM summary,
+  build/test commands, repo map, doc index, and a "Known gaps and honest limits"
+  section that names the unsigned installer, the missing external audit, Windows-only
+  scope, PQ-is-not-a-factor, the closed-shadow keyboard limit, old-password backups
+  after a rekey, the favicon third parties and the open P2P LAN default). `LICENSE`
+  is MIT (Copyright (c) 2026 Zahidul Islam) and `Cargo.toml` now declares
+  `license = "MIT"` plus repository/description/readme. `SECURITY.md` uses GitHub
+  private advisories as the only channel (no invented email or PGP key), with
+  supported versions, 7/14-day response targets, a 90-day coordinated window,
+  explicit in/out-of-scope lists, the 0.4.0 limitations and a safe-harbor statement.
+  No code changed; `cargo check` and `npm test` (124) stay green.
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).

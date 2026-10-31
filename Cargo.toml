@@ -2,6 +2,10 @@
 name = "phantom_vault"
 version = "0.4.0"
 edition = "2021"
+description = "Local-first post-quantum-hybrid password manager with a Windows autofill bridge"
+license = "MIT"
+repository = "https://github.com/zjhasan13/phantom_vault"
+readme = "README.md"
 
 [dependencies]
 # Cryptography
