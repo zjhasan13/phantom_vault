@@ -77,6 +77,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A12 | Shadow-DOM field scan and observer | `content.js` `deepRoots`/`deepQuery`/`deepActiveElement`, deep `findFields`/`scanForms`, per-root `pvScheduleScan` observers, shadow-scoped `badgeGroup`; 3 new tests | Open web-component login forms get badges/fill and save prompts; closed roots are skipped |
 | A15a | Mandatory P2P pairing (device keys + signed requests) | `sync/p2p_pairing.rs` (Ed25519 device key, one-time 64-bit code, HMAC pair proof, DPAPI-sealed peer list, request signatures); `p2p_local.rs` 403 gate; UI shows the pairing code; 3 new tests | An unpaired client gets 403 and cannot pull/push; the code never crosses the wire; existing paired devices sync without re-entering it |
 | A15b | Ephemeral P2P beacons + paired-device management | `p2p_local.rs` beacon carries only `{app,name,version,port,id,ts}` (random per-process ID; legacy head fallback for parsing only); `p2p_pairing::list_pairs/forget`; Settings lists paired devices with Forget | Beacons no longer reveal the head hash/mtime; paired devices can be listed and forgotten |
+| A15c | Response signing, QR code, A16 anchor | `p2p_pairing::sign_response/verify_response`; `qr_svg` + Settings image; `PairedPeer.rev/hash` + `head_ok/update_peer_head`; pull refuses a peer rollback | Pull/push responses are signed by the host key; the pairing code renders as a QR; a pinned peer head refuses stale pulls |
 | A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
@@ -745,7 +746,7 @@ over plaintext HTTP; an unpaired client could pull ciphertext. A15a closes that:
 
 Tests: device key stability + pairing roundtrip + single-use code; wrong
 proof/unpaired request refused; signed request verifies and rejects tampered
-body/path/stale time. Baselines: `cargo test` **500 passed / 1 ignored + 4
+body/path/stale time. Baselines: `cargo test` **502 passed / 1 ignored + 4
 pv_sign tests**; `npm test` 132/132.
 
 A15b finishes the privacy/management half:
@@ -757,9 +758,20 @@ A15b finishes the privacy/management half:
   **Forget** action (`p2p_pairing::list_pairs/forget`); forgetting removes the
   key from the DPAPI-sealed list, so the next request from that device is 403.
 
-Remaining honest limits: response bodies are not signed yet, the pairing code
-is copyable text rather than a QR, and A16's fresh-device anchor is not wired to
-the paired head. Re-pair if a peer's LAN address changes.
+A15c finishes the polish:
+
+- **Response signing:** every framed response carries `X-PV-Key/Time/Sig`;
+  the client verifies against the paired host key before parsing (tampered or
+  stale responses are refused).
+- **QR:** `qr_svg` renders the one-time code as a self-contained SVG shown in
+  Settings (no external service); the text code remains for copy/paste.
+- **A16 anchor:** pairing records the host `rev`/`hash`; each pull carries the
+  host head and `head_ok` refuses a lower revision or same-rev/different-hash.
+  A successful pull updates the pinned head. (Push-side check still relies on
+  the paired key + mtime guard.)
+
+Remaining honest limits: push-side revision anchoring is not wired yet, and
+re-pairing is needed if a peer's LAN address changes.
 
 ---
 
@@ -959,7 +971,9 @@ Select-String -Path src\sync\p2p_local.rs -Pattern '/p2p/pair|pair this device|r
 # A15b ephemeral beacons + paired-device management
 Select-String -Path src\sync\p2p_local.rs -Pattern 'fn ephemeral_id|"id"|head_sha'
 Select-String -Path src\sync\p2p_pairing.rs -Pattern 'fn list_pairs|fn forget'
-Select-String -Path ui\appwindow.slint -Pattern 'p2p_paired|forget_p2p_peer'
+# A15c response signing + QR + A16 anchor
+Select-String -Path src\sync\p2p_pairing.rs -Pattern 'sign_response|verify_response|fn qr_svg|fn head_ok'
+Select-String -Path ui\appwindow.slint -Pattern 'p2p_qr|p2p_paired|forget_p2p_peer'
 cargo test p2p
 
 # Container layout and the honest PQ note

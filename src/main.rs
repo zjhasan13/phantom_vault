@@ -8537,6 +8537,16 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .collect();
         ui.set_p2p_paired(ModelRc::new(VecModel::from(rows)));
     }
+    fn p2p_qr_image(code: &str) -> slint::Image {
+        let Some(svg) = sync::p2p_pairing::qr_svg(code) else {
+            return slint::Image::default();
+        };
+        let path = std::env::temp_dir().join(format!("pv-pair-qr-{}.svg", std::process::id()));
+        if std::fs::write(&path, svg).is_err() {
+            return slint::Image::default();
+        }
+        slint::Image::load_from_path(&path).unwrap_or_default()
+    }
     let p2p_stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let p2p_weak = main_window.as_weak();
     main_window.on_set_p2p(move |on| {
@@ -8556,12 +8566,14 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             // A15: one-time pairing code (HMAC; never sent over the wire).
             let code = sync::p2p_pairing::open_session();
+            ui.set_p2p_qr(p2p_qr_image(&code));
             ui.set_p2p_pin(code.into());
             refresh_paired_p2p(&ui);
             ui.set_p2p_status("📡 Discovery ON — port 52199. Enter this pairing code on the other device.".into());
             security::access_log::log_event("p2p", "discovery enabled");
         } else {
             p2p_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+            ui.set_p2p_qr(slint::Image::default());
             ui.set_p2p_peers(ModelRc::new(VecModel::from(Vec::<PeerView>::new())));
             ui.set_p2p_status("P2P discovery is OFF — enable to find LAN devices.".into());
             security::access_log::log_event("p2p", "discovery disabled");
@@ -8609,6 +8621,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         sync::p2p_pairing::revoke_session();
         let pin = sync::p2p_pairing::open_session();
+        ui.set_p2p_qr(p2p_qr_image(&pin));
         ui.set_p2p_pin(pin.into());
         ui.set_p2p_status("🔑 New pairing code — enter it on the other device.".into());
         security::access_log::log_event("p2p", "pairing code regenerated");

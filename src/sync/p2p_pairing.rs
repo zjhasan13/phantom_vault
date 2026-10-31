@@ -96,6 +96,11 @@ pub struct PairedPeer {
     /// Last address used for this peer (LAN only; re-pair if it changes).
     #[serde(default)]
     pub addr: String,
+    /// A16 anchor: the peer's last observed container revision/hash.
+    #[serde(default)]
+    pub rev: u64,
+    #[serde(default)]
+    pub hash: String,
 }
 
 fn load_pairs() -> Vec<PairedPeer> {
@@ -119,7 +124,18 @@ fn save_pairs(pairs: &[PairedPeer]) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(dead_code)]
 pub fn add_peer(name: &str, pubkey_hex: &str, addr: &str) -> Result<(), String> {
+    add_peer_with_head(name, pubkey_hex, addr, 0, "")
+}
+
+pub fn add_peer_with_head(
+    name: &str,
+    pubkey_hex: &str,
+    addr: &str,
+    rev: u64,
+    hash: &str,
+) -> Result<(), String> {
     if pubkey_hex.len() != 64 || !pubkey_hex.bytes().all(|c| c.is_ascii_hexdigit()) {
         return Err("invalid device public key".to_string());
     }
@@ -129,8 +145,35 @@ pub fn add_peer(name: &str, pubkey_hex: &str, addr: &str) -> Result<(), String> 
         name: name.trim().to_string(),
         pubkey: pubkey_hex.to_lowercase(),
         addr: addr.to_string(),
+        rev,
+        hash: hash.to_string(),
     });
     save_pairs(&pairs)
+}
+
+/// Update the stored head after a successful pull/push.
+pub fn update_peer_head(pubkey_hex: &str, rev: u64, hash: &str) -> Result<(), String> {
+    let key = pubkey_hex.trim().to_lowercase();
+    let mut pairs = load_pairs();
+    let Some(p) = pairs.iter_mut().find(|p| p.pubkey == key) else {
+        return Err("device is not paired".to_string());
+    };
+    p.rev = rev;
+    p.hash = hash.to_string();
+    save_pairs(&pairs)
+}
+
+/// A16 anchor check for a peer's announced head.
+pub fn head_ok(pinned_rev: u64, pinned_hash: &str, remote_rev: u64, remote_hash: &str) -> Result<(), String> {
+    if remote_rev < pinned_rev {
+        return Err(format!(
+            "peer is rolling back (rev {remote_rev} < {pinned_rev}) — refusing"
+        ));
+    }
+    if remote_rev == pinned_rev && !pinned_hash.is_empty() && remote_hash != pinned_hash {
+        return Err("peer has the same revision but different content — conflict".to_string());
+    }
+    Ok(())
 }
 
 pub fn is_paired(pubkey_hex: &str) -> bool {
@@ -228,6 +271,24 @@ pub fn revoke_session() {
     *session().lock().unwrap_or_else(|p| p.into_inner()) = None;
 }
 
+/// A15c: a self-contained SVG QR for the pairing code (no external service).
+pub fn qr_svg(text: &str) -> Option<String> {
+    let code = qrcode::QrCode::new(text.as_bytes()).ok()?;
+    let width = code.width();
+    let colors = code.to_colors();
+    let mut path = String::new();
+    for (i, c) in colors.iter().enumerate() {
+        if *c == qrcode::Color::Dark {
+            let x = i % width;
+            let y = i / width;
+            path.push_str(&format!("M{x} {y}h1v1h-1z"));
+        }
+    }
+    Some(format!(
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 {width} {width}' shape-rendering='crispEdges'><rect width='100%' height='100%' fill='white'/><path d='{path}' fill='black'/></svg>"
+    ))
+}
+
 // ---- HMAC proofs ----------------------------------------------------------
 
 type HmacSha256 = Hmac<Sha256>;
@@ -259,13 +320,15 @@ pub fn accept_pair(
     nonce: &str,
     proof: &str,
     client_addr: &str,
+    client_rev: u64,
+    client_hash: &str,
 ) -> Result<(String, String), String> {
     let code = current_code().ok_or_else(|| "no active pairing code".to_string())?;
     if !mac_ok(&code, &format!("pair|{client_pub}|{nonce}"), proof) {
         return Err("pairing proof rejected".to_string());
     }
     let host_pub = device_pub_hex()?;
-    add_peer(client_name, client_pub, client_addr)?;
+    add_peer_with_head(client_name, client_pub, client_addr, client_rev, client_hash)?;
     // The code is single-use: consume only after the peer is stored.
     consume_code(&code);
     Ok((
@@ -330,6 +393,61 @@ pub fn verify_request(
     .map_err(|_| "bad request signature".to_string())
 }
 
+fn response_canonical(status: u16, body: &[u8], time: u64) -> String {
+    format!("response\n{status}\n{}\n{time}", sha_hex(body))
+}
+
+/// A15c: sign a response with our device key (client verifies against the
+/// paired host key).
+pub fn sign_response(status: u16, body: &[u8]) -> Option<(String, String, String)> {
+    use ed25519_dalek::Signer as _;
+    let sk = device_signing_key().ok()?;
+    let time = now_secs();
+    let sig = sk.sign(response_canonical(status, body, time).as_bytes());
+    Some((
+        hex(sk.verifying_key().as_bytes()),
+        time.to_string(),
+        hex(&sig.to_bytes()),
+    ))
+}
+
+pub fn verify_response(
+    status: u16,
+    body: &[u8],
+    key_hex: &str,
+    time_str: &str,
+    sig_hex: &str,
+    expected_key: &str,
+) -> Result<(), String> {
+    use ed25519_dalek::{Signature, VerifyingKey};
+    let key = key_hex.trim().to_lowercase();
+    if !key.eq_ignore_ascii_case(expected_key.trim()) {
+        return Err("response signed by an unexpected device".to_string());
+    }
+    let time = time_str.parse::<u64>().map_err(|_| "bad response time".to_string())?;
+    if time.abs_diff(now_secs()) > CLOCK_SKEW_SECS {
+        return Err("stale response".to_string());
+    }
+    let kb = unhex(&key).ok_or_else(|| "bad device key".to_string())?;
+    if kb.len() != 32 {
+        return Err("bad device key length".to_string());
+    }
+    let mut karr = [0u8; 32];
+    karr.copy_from_slice(&kb);
+    let vk = VerifyingKey::from_bytes(&karr).map_err(|_| "bad device key".to_string())?;
+    let sb = unhex(sig_hex).ok_or_else(|| "bad signature".to_string())?;
+    if sb.len() != 64 {
+        return Err("bad signature length".to_string());
+    }
+    let mut sarr = [0u8; 64];
+    sarr.copy_from_slice(&sb);
+    vk.verify_strict(
+        response_canonical(status, body, time).as_bytes(),
+        &Signature::from_bytes(&sarr),
+    )
+    .map_err(|_| "bad response signature".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,12 +474,12 @@ mod tests {
         let client_pub = "11".repeat(32);
         let nonce = "abcd";
         let proof = pair_request_proof(&code, &client_pub, nonce);
-        let (host_pub, ack) = accept_pair("laptop", &client_pub, nonce, &proof, "192.0.2.5").unwrap();
+        let (host_pub, ack) = accept_pair("laptop", &client_pub, nonce, &proof, "192.0.2.5", 3, "abc").unwrap();
         assert_eq!(host_pub, pub1);
         assert!(mac_ok(&code, &format!("ack|{host_pub}|{client_pub}|{nonce}"), &ack));
         assert!(is_paired(&client_pub));
         // Single-use: a second pairing with the old code is refused.
-        assert!(accept_pair("x", &client_pub, nonce, &proof, "192.0.2.6").is_err());
+        assert!(accept_pair("x", &client_pub, nonce, &proof, "192.0.2.6", 0, "").is_err());
         let _ = std::fs::remove_file(device_path());
         let _ = std::fs::remove_file(paired_path());
     }
@@ -376,7 +494,7 @@ mod tests {
         revoke_session();
         open_session();
         let client_pub = "22".repeat(32);
-        assert!(accept_pair("x", &client_pub, "n", "deadbeef", "192.0.2.7").is_err());
+        assert!(accept_pair("x", &client_pub, "n", "deadbeef", "192.0.2.7", 0, "").is_err());
         assert!(!is_paired(&client_pub));
         let (k, t, s) = sign_request("GET", "/p2p/pull", b"").unwrap();
         assert!(verify_request("GET", "/p2p/pull", b"", &k, &t, &s).is_err());
@@ -419,7 +537,29 @@ mod tests {
         // Stale timestamp.
         let old = (now_secs() - 999).to_string();
         assert!(verify_request("POST", "/p2p/sync", b"{}", &k, &old, &s).is_err());
+        // A15c: response signing binds status+body+time to the host key.
+        let (rk, rt, rs) = sign_response(200, b"{}").unwrap();
+        assert!(verify_response(200, b"{}", &rk, &rt, &rs, &k).is_ok());
+        assert!(verify_response(200, b"{\"x\":1}", &rk, &rt, &rs, &k).is_err());
+        assert!(verify_response(403, b"{}", &rk, &rt, &rs, &k).is_err());
         let _ = std::fs::remove_file(device_path());
         let _ = std::fs::remove_file(paired_path());
+    }
+
+    #[test]
+    fn head_anchor_rejects_rollback_and_conflict() {
+        assert!(head_ok(5, "aa", 4, "bb").is_err());
+        assert!(head_ok(5, "aa", 5, "bb").is_err());
+        assert!(head_ok(5, "aa", 5, "aa").is_ok());
+        assert!(head_ok(5, "aa", 6, "bb").is_ok());
+        assert!(head_ok(0, "", 1, "bb").is_ok());
+    }
+
+    #[test]
+    fn qr_svg_is_self_contained() {
+        let svg = qr_svg("0123456789abcdef").expect("qr");
+        assert!(svg.starts_with("<svg"));
+        assert!(svg.contains("<path"));
+        assert!(!svg.contains("http://") || svg.contains("www.w3.org"));
     }
 }

@@ -101,8 +101,8 @@ These are documented rather than secret; please do not report them as new findin
 - A16 adds a rev-2 container envelope. Older builds cannot open it — upgrade all
   devices before syncing. A fresh device's first pull is TOFU (no local revision);
   later stale pulls are refused.
-- P2P requests require a paired device key and beacons carry only an ephemeral
-  ID (A15a/b); response bodies are not signed and the pairing code is not a QR.
+- P2P requests/responses are signed by paired device keys (A15a/c) and beacons
+  carry only an ephemeral ID; push-side revision anchoring remains open.
 - The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.
   Windows Hello gates the host read, but a same-user process can unseal the
   DPAPI-protected key without that prompt. If the PIN fallback is enabled, the

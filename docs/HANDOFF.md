@@ -145,6 +145,15 @@
   next request is 403. Tests +1 → `cargo test` **500 passed / 1 ignored + 4
   pv_sign**; `npm test` 132/132.
 
+- **A15c — response signing, QR, A16 anchor (this batch):** every framed P2P
+  response is signed with the host device key (`sign_response/verify_response`,
+  `X-PV-Key/Time/Sig`); clients verify before parsing. The one-time code renders
+  as a self-contained SVG QR (`qr_svg`, Settings image) alongside the text.
+  Pairing pins the host `rev`/`hash`, pull responses carry it, and `head_ok`
+  refuses a lower revision / same-rev different hash; a successful pull updates
+  the pin. Tests +2 → `cargo test` **502 passed / 1 ignored + 4 pv_sign**.
+  Remaining: push-side revision anchoring and re-pair on address change.
+
 - **A16 — signed container revision (this batch):** the AEAD payload is now a
   rev-2 envelope `{meta:{format,version,rev,prev_hash}, vault}`. Save increments
   `rev` and sets `prev_hash = SHA-256(previous container)`; a per-path
@@ -428,7 +437,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 500 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 502 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).

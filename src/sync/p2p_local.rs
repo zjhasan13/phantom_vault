@@ -431,8 +431,12 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
         405 => "Method Not Allowed",
         _ => "Error",
     };
+    let mut extra = String::new();
+    if let Some((k, t, s)) = crate::sync::p2p_pairing::sign_response(status, body.as_bytes()) {
+        extra = format!("X-PV-Key: {k}\r\nX-PV-Time: {t}\r\nX-PV-Sig: {s}\r\n");
+    }
     format!(
-        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\n{extra}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
     .into_bytes()
@@ -456,7 +460,7 @@ pub fn route(
     peer_ip: &str,
 ) -> (u16, String, Option<PendingAdopt>) {
     route_authed(
-        method, path, body, local_blob, local_sha, local_mtime, peer_ip, false,
+        method, path, body, local_blob, local_sha, local_mtime, peer_ip, false, 0, "",
     )
 }
 
@@ -472,6 +476,8 @@ pub fn route_authed(
     local_mtime: u64,
     peer_ip: &str,
     auth_ok: bool,
+    local_rev: u64,
+    local_hash: &str,
 ) -> (u16, String, Option<PendingAdopt>) {
     // Split query string (?pin=â€¦) â€” minimal HTTP only.
     let (clean_path, query_pin) = match path.split_once('?') {
@@ -499,6 +505,8 @@ pub fn route_authed(
         let body = serde_json::json!({
             "sha": local_sha,
             "mtime": local_mtime,
+            "rev": local_rev,
+            "hash": local_hash,
             "blob_b64": base64_encode(local_blob),
         })
         .to_string();
@@ -719,11 +727,20 @@ fn serve_conn_inner(
         let client_pub = v.get("pub").and_then(|x| x.as_str()).unwrap_or("");
         let nonce = v.get("nonce").and_then(|x| x.as_str()).unwrap_or("");
         let proof = v.get("proof").and_then(|x| x.as_str()).unwrap_or("");
-        match crate::sync::p2p_pairing::accept_pair(name, client_pub, nonce, proof, &peer_ip) {
+        let client_rev = v.get("rev").and_then(|x| x.as_u64()).unwrap_or(0);
+        let client_hash = v.get("hash").and_then(|x| x.as_str()).unwrap_or("");
+        match crate::sync::p2p_pairing::accept_pair(
+            name, client_pub, nonce, proof, &peer_ip, client_rev, client_hash,
+        ) {
             Ok((host_pub, ack)) => {
                 let host_name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PhantomVault".into());
+                let (host_rev, host_hash) = crate::storage::container_head(
+                    std::path::Path::new(crate::developer::vault_run::VAULT_FILE),
+                )
+                .unwrap_or((0, String::new()));
                 let body = serde_json::json!({
                     "ok": true, "name": host_name, "pub": host_pub, "proof": ack,
+                    "rev": host_rev, "hash": host_hash,
                 })
                 .to_string();
                 crate::security::access_log::log_event("p2p", "device paired");
@@ -750,8 +767,12 @@ fn serve_conn_inner(
         ));
         return;
     }
+    let (local_rev, local_hash) = crate::storage::container_head(std::path::Path::new(
+        crate::developer::vault_run::VAULT_FILE,
+    ))
+    .unwrap_or((0, String::new()));
     let (status, resp_body, adopt) = route_authed(
-        &method, &path, &body, blob, local_sha, local_mtime, &peer_ip, true,
+        &method, &path, &body, blob, local_sha, local_mtime, &peer_ip, true, local_rev, &local_hash,
     );
     if let Some((sha, mtime, data)) = adopt {
         // Newer-or-different remote head: adopt atomically. mtime comparison
@@ -857,14 +878,16 @@ fn local_name() -> String {
     std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PhantomVault".to_string())
 }
 
-/// Minimal HTTP call; returns (status, body). `extra` carries signature headers.
+type HttpResponse = (u16, Vec<u8>, std::collections::HashMap<String, String>);
+
+/// Minimal HTTP call; returns (status, body, headers). `extra` carries signature headers.
 fn http_call(
     addr: SocketAddr,
     method: &str,
     path: &str,
     body: &str,
     extra: &[(String, String)],
-) -> Result<(u16, Vec<u8>), String> {
+) -> Result<HttpResponse, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
     let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
@@ -886,12 +909,20 @@ fn http_call(
         .position(|w| w == b"\r\n\r\n")
         .map(|i| i + 4)
         .unwrap_or(0);
-    let status = std::str::from_utf8(&raw[..body_start.min(raw.len())])
-        .ok()
+    let head_text = std::str::from_utf8(&raw[..body_start.min(raw.len())]).unwrap_or("");
+    let status = head_text
+        .lines()
+        .next()
         .and_then(|s| s.split_whitespace().nth(1))
         .and_then(|s| s.parse::<u16>().ok())
         .unwrap_or(0);
-    Ok((status, raw[body_start..].to_vec()))
+    let mut headers = std::collections::HashMap::new();
+    for line in head_text.lines().skip(1) {
+        if let Some((k, v)) = line.split_once(':') {
+            headers.insert(k.trim().to_lowercase(), v.trim().to_string());
+        }
+    }
+    Ok((status, raw[body_start..].to_vec(), headers))
 }
 
 fn signed_headers(method: &str, path: &str, body: &str) -> Result<Vec<(String, String)>, String> {
@@ -901,6 +932,21 @@ fn signed_headers(method: &str, path: &str, body: &str) -> Result<Vec<(String, S
         ("X-PV-Time".to_string(), time),
         ("X-PV-Sig".to_string(), sig),
     ])
+}
+
+fn verify_peer_response(
+    addr: SocketAddr,
+    status: u16,
+    body: &[u8],
+    headers: &std::collections::HashMap<String, String>,
+) -> Result<(), String> {
+    let ip = addr.ip().to_string();
+    let peer = crate::sync::p2p_pairing::peer_for_addr(&ip)
+        .ok_or_else(|| "peer is not paired".to_string())?;
+    let key = headers.get("x-pv-key").map(String::as_str).unwrap_or("");
+    let time = headers.get("x-pv-time").map(String::as_str).unwrap_or("");
+    let sig = headers.get("x-pv-sig").map(String::as_str).unwrap_or("");
+    crate::sync::p2p_pairing::verify_response(status, body, key, time, sig, &peer.pubkey)
 }
 
 /// Pair with a host using its one-time code (HMAC; code never sent). No-op when
@@ -920,11 +966,16 @@ fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
     rand_core::OsRng.fill_bytes(&mut n);
     let nonce = pairing::hex(&n);
     let proof = pairing::pair_request_proof(code.trim(), &client_pub, &nonce);
+    let (client_rev, client_hash) = crate::storage::container_head(std::path::Path::new(
+        crate::developer::vault_run::VAULT_FILE,
+    ))
+    .unwrap_or((0, String::new()));
     let body = serde_json::json!({
         "name": local_name(), "pub": client_pub, "nonce": nonce, "proof": proof,
+        "rev": client_rev, "hash": client_hash,
     })
     .to_string();
-    let (status, resp) = http_call(addr, "POST", "/p2p/pair", &body, &[])?;
+    let (status, resp, _) = http_call(addr, "POST", "/p2p/pair", &body, &[])?;
     let v: serde_json::Value = serde_json::from_slice(&resp)
         .map_err(|e| format!("bad pairing response: {e}"))?;
     if status != 200 || !v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
@@ -942,7 +993,9 @@ fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
         return Err("pairing acknowledgement failed".to_string());
     }
     let host_name = v.get("name").and_then(|x| x.as_str()).unwrap_or("PhantomVault peer");
-    pairing::add_peer(host_name, host_pub, &ip)?;
+    let host_rev = v.get("rev").and_then(|x| x.as_u64()).unwrap_or(0);
+    let host_hash = v.get("hash").and_then(|x| x.as_str()).unwrap_or("");
+    pairing::add_peer_with_head(host_name, host_pub, &ip, host_rev, host_hash)?;
     crate::security::access_log::log_event("p2p", "paired with peer");
     Ok(())
 }
@@ -951,7 +1004,8 @@ fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
 pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>), String> {
     ensure_paired(addr, code)?;
     let headers = signed_headers("GET", "/p2p/pull", "")?;
-    let (status, resp) = http_call(addr, "GET", "/p2p/pull", "", &headers)?;
+    let (status, resp, rh) = http_call(addr, "GET", "/p2p/pull", "", &headers)?;
+    verify_peer_response(addr, status, &resp, &rh)?;
     if status != 200 {
         return Err(format!("pull refused (HTTP {status})"));
     }
@@ -959,11 +1013,18 @@ pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>),
         serde_json::from_slice(&resp).map_err(|e| format!("bad pull body: {e}"))?;
     let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
     let mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0);
+    let remote_rev = v.get("rev").and_then(|r| r.as_u64()).unwrap_or(0);
+    let remote_hash = v.get("hash").and_then(|h| h.as_str()).unwrap_or("");
+    let ip = addr.ip().to_string();
+    let peer = crate::sync::p2p_pairing::peer_for_addr(&ip)
+        .ok_or_else(|| "peer is not paired".to_string())?;
+    crate::sync::p2p_pairing::head_ok(peer.rev, &peer.hash, remote_rev, remote_hash)?;
     let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("");
     let blob = base64_decode(blob_b64).ok_or_else(|| "bad pull blob".to_string())?;
     if blob.len() > MAX_BLOB_BYTES || sha_hex(&blob) != sha {
         return Err("pull integrity failed".to_string());
     }
+    crate::sync::p2p_pairing::update_peer_head(&peer.pubkey, remote_rev, remote_hash)?;
     Ok((sha, mtime, blob))
 }
 
@@ -972,7 +1033,8 @@ pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], code: &st
     ensure_paired(addr, code)?;
     let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string();
     let headers = signed_headers("POST", "/p2p/sync", &body)?;
-    let (status, resp) = http_call(addr, "POST", "/p2p/sync", &body, &headers)?;
+    let (status, resp, rh) = http_call(addr, "POST", "/p2p/sync", &body, &headers)?;
+    verify_peer_response(addr, status, &resp, &rh)?;
     if status != 200 {
         return Err(format!("push refused (HTTP {status})"));
     }
