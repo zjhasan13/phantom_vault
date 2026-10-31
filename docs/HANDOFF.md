@@ -410,27 +410,34 @@
 2. **A8b Authenticode:** needs a code-signing certificate (user decision). The
    workflow already has one place to insert `signtool` after packaging and
    before hashing; do not sign before the final bytes are fixed.
-3. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
+3. **Dependency advisories (separate pass):** `rustsec/audit-check` reports 9
+   vulnerabilities (2026-10-31). Compatible patch bumps exist for `rustls`,
+   `rustls-webpki`, `webpki-roots`, `pulldown-cmark` and `tokio`; `rsa` has no
+   fix (RUSTSEC-2023-0071) and `crypto-bigint 0.5.5` is pinned through it.
+   Upgrade the patchable set, then document/ignore the rest with a rationale —
+   do not blanket-ignore. `security.yml` now grants `checks: write` so the
+   action can file its check run.
+4. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
    next physical pass (X → process stays as background tray process; Access
    Log close-path lines present). If it regresses, suspects in order:
    handler never fires (Slint close-request path) → panic=abort in handler →
    env-specific tray failure.
-4. **Live measurements (partial, needs the user's machine):** observed
+5. **Live measurements (partial, needs the user's machine):** observed
    minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
    locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
    warm p50 ~5 ms. Record in release notes.
-5. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
+6. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
    The old export/import rotation is no longer needed. After a rekey, reprint
    the recovery shards and re-enroll the App PIN (both stay on the old secret
    until redone).
-6. **GitHub cache check:** repo code-search `my_secure_vault` must return
+7. **GitHub cache check:** repo code-search `my_secure_vault` must return
    zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
    `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
    works too). The 0.4.0 installer + browser zips are built locally; the user
    uploads the Release in the web UI (device login is not usable from the
    agent shell).
-7. **Follow-ups for the other line:** legacy host `assert` unreachable from
+8. **Follow-ups for the other line:** legacy host `assert` unreachable from
    extension (fails-closed test pinned — relay now uses
    `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH
    adopt paths (`serve_conn`, `sync_with_peer`) and the guard is now a tested
@@ -463,7 +470,8 @@
   paths, access log metadata-only.
 - Do NOT "fix" the 2 `manual_clamp` clippy warnings with `.clamp()` — NaN
   propagation semantics differ from `.max().min()`; layout sizing must not
-  change silently.
+  change silently. An `#[allow(clippy::manual_clamp)]` on `push_hub_width`
+  keeps CI's `-D warnings` green without changing behaviour.
 - Test hygiene (proven twice): env-mutating tests sharing one process-global
   var MUST serialize via a static `Mutex` (see `browser_direct` ENV_LOCK
   precedent); single-use token consume MUST check-then-remove (failed

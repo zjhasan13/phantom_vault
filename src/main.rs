@@ -3288,6 +3288,9 @@ fn qb_rank_score(q: &str, title: &str, username: &str, fav: bool) -> i32 {
 /// the layout formula cannot observe the window, but Rust can — this makes
 /// the 2FA grid self-healing across resizes. Sidebar + hub padding deducted,
 /// clamped sane for narrow windows.
+// `clamp()` returns NaN if the input is NaN; `.max().min()` keeps the layout
+// at its previous size instead of collapsing. Do not "simplify" this.
+#[allow(clippy::manual_clamp)]
 fn push_hub_width(ui: &MainWindow) {
     let sz = ui.window().size();
     let scale = ui.window().scale_factor();
