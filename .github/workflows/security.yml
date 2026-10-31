@@ -11,9 +11,13 @@ jobs:
     runs-on: windows-latest
     # audit-check creates a check run; without `checks: write` it fails with
     # "Resource not accessible by integration" even when the database works.
+    # The two ignores are optional ssh-key deps that are NOT in the build
+    # graph (see audit.toml); the action needs them as an input, it does not
+    # read the repo config file.
     permissions:
       contents: read
       checks: write
+      issues: write
     steps:
       # TODO(SHA-pin): pin checkout to an immutable commit SHA (Dependabot
       # can't open PRs against SHA pins without automation; tag + weekly
@@ -22,6 +26,7 @@ jobs:
       - uses: rustsec/audit-check@v2
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          ignore: RUSTSEC-2023-0071,RUSTSEC-2026-0387
 
   build-and-test:
     runs-on: windows-latest

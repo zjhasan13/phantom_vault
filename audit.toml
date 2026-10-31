@@ -1,4 +1,6 @@
-# RustSec configuration (read by cargo-audit / rustsec/audit-check).
+# RustSec configuration (read by local `cargo-audit`). The CI action does NOT
+# read this file: the same two IDs are passed via `with.ignore` in
+# .github/workflows/security.yml. Keep both lists in sync.
 [advisories]
 # Both advisories are on optional `ssh-key` dependencies that are NOT enabled
 # in any build of this crate (verified 2026-10-31 with `cargo tree -i rsa` and
