@@ -55,6 +55,7 @@ third-party audit. Those are tracked as concrete work in
 - **Edit-before-save**: the save prompt shows editable username/password fields in a closed shadow root
 - "Never save for this site", idle lock pushed to every tab, hash-guarded clipboard clear
 - Clipboard writes go through the native host so Windows can exclude them from history and cloud sync
+- **Opt-in offline cache**: with the desktop app closed, matching logins still fill after a Windows Hello prompt — logins only, read-only, 15-minute session, erased on decoy/disable/rekey
 
 **Sync (optional, ciphertext only)**
 - GitHub repository via API with a DPAPI-sealed token
@@ -99,11 +100,11 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 485 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 489 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
-npm test                         # 124/124 at 0.4.1
+npm test                         # 128/128 at 0.4.1
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
 
@@ -171,7 +172,10 @@ These are real today. They are listed here so nobody discovers them the hard way
   (A15). Keep it off on untrusted networks.
 - **No KDBX import/export** (A13), no hardware-key unlock (A21), no serverless
   Send-style share (A20), no reproducible builds yet (T5).
-- **Extension offline mode** requires the desktop app for secrets (A11).
+- **Offline cache is opt-in and read-only** (A11). It weakens closed-app
+  isolation: a same-user process can unseal the DPAPI key without the Hello
+  prompt, and the snapshot refreshes only at unlock. Mutations and
+  reprompt-armed items still require the desktop app.
 
 The full register, with file/line evidence and acceptance tests, is
 [`docs/COMPETITIVE_GAP_ANALYSIS.md`](docs/COMPETITIVE_GAP_ANALYSIS.md).

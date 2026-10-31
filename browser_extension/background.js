@@ -8,6 +8,70 @@
 // mutations land on the bridge after the TTL window (documented, not a bug).
 const HOST_PORT = "com.phantomvault.host";
 
+// A11: read-only offline cache. Decrypted entries live ONLY in this service
+// worker's memory (never chrome.storage); the host grants a 15-minute session
+// after a Windows Hello prompt. Cleared on lock signals and SW restart.
+const OFFLINE_TTL_SECS = 15 * 60;
+let offlineCache = null; // { until, syncedAt, entries }
+function clearOfflineCache() {
+  offlineCache = null;
+}
+function hostLike(a, b) {
+  const x = String(a || "").toLowerCase().replace(/\.$/, "");
+  const y = String(b || "").toLowerCase().replace(/\.$/, "");
+  if (!x || !y) return false;
+  return x === y || x.endsWith("." + y) || y.endsWith("." + x);
+}
+function filterCached(entries, q) {
+  const needle = String(q || "").toLowerCase().trim();
+  if (!needle) return []; // an empty query never dumps the cache
+  return (entries || []).filter((e) => {
+    if (!e) return false;
+    const hay = `${e.title || ""} ${e.username || ""} ${(e.urls || []).join(" ")}`.toLowerCase();
+    if (hay.includes(needle)) return true;
+    return (e.urls || []).some((u) => {
+      try {
+        const h = new URL(String(u).includes("://") ? String(u) : `https://${u}`).hostname;
+        return hostLike(h, needle);
+      } catch (_) { return false; }
+    });
+  });
+}
+async function ensureOfflineCache() {
+  const now = Date.now();
+  if (offlineCache && offlineCache.until > now) return offlineCache;
+  // 130 s: the Windows Hello prompt is user-paced.
+  const r = await hostRequest({ cmd: "cache_get" }, 130000);
+  if (!r || !r.ok || !Array.isArray(r.entries)) {
+    throw new Error((r && r.error) || "offline cache unavailable");
+  }
+  const ttl = Math.max(60, Number(r.ttl_secs) || OFFLINE_TTL_SECS);
+  offlineCache = {
+    until: now + ttl * 1000,
+    syncedAt: Number(r.created_at) || 0,
+    entries: r.entries,
+  };
+  return offlineCache;
+}
+async function queryWithCache(payload) {
+  try {
+    const r = await hostRequest(payload);
+    if (r && r.ok) return r;
+    // A locked desktop is not an offline-cache case: never paper over it.
+    if (r && /lock/i.test(String(r.error || ""))) return r;
+  } catch (_) { /* app closed / host refused — try the cache */ }
+  try {
+    const c = await ensureOfflineCache();
+    const entries = filterCached(c.entries, payload.app || payload.url || "")
+      .slice(0, 25)
+      .map((e) => ({ ...e, offline: true }));
+    if (!entries.length) return { ok: false, error: "no offline cache match" };
+    return { ok: true, entries, cached: true, cache_synced_at: c.syncedAt };
+  } catch (e) {
+    return { ok: false, error: (e && e.message) || "offline cache unavailable" };
+  }
+}
+
 // E1/E2: shared registrable-domain + equivalent-cluster helpers. A classic
 // MV3 service worker, so importScripts() runs synchronously before any use.
 importScripts("domain.js");
@@ -324,6 +388,8 @@ rearmClipboardClear();
 // 30 s cache in a background tab must not keep authorizing page actions after
 // the vault locked. Content treats this as "re-probe on next action".
 function broadcastGateLocked() {
+  // A11: a lock verdict also drops the decrypted offline snapshot.
+  clearOfflineCache();
   // A4: a lock verdict is an immediate-clear event for the web fallback path
   // too (hash-guarded, so it only fires when our secret is still on top).
   try { clearClipboardNow().catch(() => {}); } catch (_) {}
@@ -398,7 +464,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     if (msg.type === "PV_QUERY") {
       touchActivity();
-      return await hostRequest({ cmd: "query", app: msg.app || msg.url || "" });
+      return await queryWithCache({ cmd: "query", app: msg.app || msg.url || "" });
+    }
+    // A11: popup boot probe — asks the host for the Hello-gated cache when the
+    // desktop is unreachable. Returns status only, never entries.
+    if (msg.type === "PV_CACHE_STATUS") {
+      try {
+        const c = await ensureOfflineCache();
+        return { ok: true, cached: true, until: c.until, synced_at: c.syncedAt };
+      } catch (e) {
+        return { ok: false, cached: false, error: (e && e.message) || "offline cache unavailable" };
+      }
     }
     if (msg.type === "PV_LIST") {
       touchActivity();

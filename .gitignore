@@ -19,6 +19,11 @@ test_vault.enc
 *.enc.bak
 my_secure_vault.*
 vault_hello.dpapi
+# A11 offline cache: ciphertext + DPAPI-sealed key. Never commit either.
+vault_cache.enc
+vault_cache.tmp
+vault_cache_key.dpapi
+vault_cache_key.tmp
 sync_repo.txt
 sync_head.sha
 crash.log

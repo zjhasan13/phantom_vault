@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: 0.4.1 published through the new signed A8a pipeline (Authenticode deliberately deferred), after A6/A5/A7/A9.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A11 opt-in Hello-gated offline extension cache (after 0.4.1), following A6/A5/A7/A9/A8a.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -102,6 +102,26 @@
   `security.yml` is green on the tag commit too.
   Tests +4 → `cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
   Authenticode (A8b) remains open — no certificate.
+
+- **A11 — offline read-only extension cache (this batch):** Settings > Security
+  gains an opt-in toggle. On enable (and at every unlock while enabled) the app
+  writes a **logins-only** snapshot (`vault_cache.enc`, `PVOC1` +
+  XChaCha20-Poly1305) under a fresh 32-byte key sealed with DPAPI
+  (`vault_cache_key.dpapi`). The native host answers exactly one command,
+  `cache_get`, while the desktop is closed: it prompts **Windows Hello**, then
+  unseals and returns the snapshot. Every other command still requires the P1
+  heartbeat. The extension keeps the decrypted entries only in service-worker
+  memory for 15 minutes (`OFFLINE_TTL_SECS`), clears them on `PV_GATE_LOCKED`,
+  and serves `PV_QUERY` from the cache with `cached: true` + a visible banner.
+  Read-only: mutations hit the closed host and fail; reprompt-armed items are
+  refused offline in both popup and content paths. Decoy unlock **deletes** the
+  cache; rekey refreshes it; disabling deletes both files.
+  Tests +4 Rust (Trash exclusion, AEAD tamper/wrong key, DPAPI disk round-trip,
+  clear) and +4 JS (fallback, TTL reuse, lock clearing, empty-query guard) →
+  `cargo test` **489 passed / 1 ignored + 4 pv_sign tests**; `npm test`
+  **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
+  same-user process can unseal DPAPI without it, and the snapshot refreshes
+  only at unlock.
 
 - **A7 — trust documentation (this batch):** three files at the repo root, written
   from the code, not from marketing. `README.md` (features, container/KEM summary,
@@ -327,7 +347,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 485 passed / 1 ignored + 4 pv_sign tests, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 489 passed / 1 ignored + 4 pv_sign tests, `npm test` 128/128 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -491,6 +511,13 @@
   legacy master path, so pre-A6 `.pvx` files must never be broken. The export
   gate refuses a passphrase equal to the master (not a warning). Clearing the
   Slint fields happens on the event loop; property writes never cross threads.
+- A11 cache invariants: the snapshot is logins-only, read-only, refreshed at
+  unlock; the key is DPAPI-sealed and the host requires a Hello prompt; the
+  extension keeps plaintext only in SW memory (never `storage`) for 15 min.
+  `cache_get` is the ONLY command allowed before the heartbeat gate. Decoy
+  unlock MUST clear the cache (deniability), and reprompt-armed items MUST NOT
+  fill from the cache. Hello is presence UI, not a key factor — never claim the
+  cache is tamper-proof against same-user malware.
 - A8a release invariants: `src/release_pubkey.rs` is the ONLY definition of
   the pinned key (updater + signer both consume it). `pv-sign` fails closed on
   a key mismatch and never prints the seed. CI and local builds call the same

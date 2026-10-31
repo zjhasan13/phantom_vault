@@ -72,6 +72,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A9 | Edit-before-save in the save toast | `content.js` `credentialToast` (shared builder, closed shadow root), `toastField`, `saverToast`/`updateToast`; 6 new tests; harness `shadowOf` | Username and password can be corrected before the item is stored; empty pairs and already-known pairs never reach the host |
 | A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
 | A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
+| A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_STATUS`; Settings toggle; `popup.js` offline banner | The popup lists and fills matching logins with the desktop app closed, after a Windows Hello prompt; writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
 ### P0 — parity blockers (do first)
@@ -85,7 +86,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
-| A11 | Encrypted offline extension cache | E9 | 2 wk | Popup lists items and fills them with the desktop app closed, after a Hello-backed unlock |
 | A12 | Shadow-DOM field scan and observer | E8 | 1 wk | A web-component login form gets a badge and fills |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
 | A14 | Argon2id extension PIN + attempt backoff | P4 | 1 wk | 10 wrong PINs trigger exponential delay; the stored verifier is not a bare SHA-256 |
@@ -518,6 +518,46 @@ Honest limits: Authenticode is still missing (A8b), so SmartScreen still warns;
 the provenance attestation covers the uploaded bytes, not a reproducible build;
 and losing the offline key means another rotation plus one manual reinstall.
 
+### 5.13 Encrypted offline extension cache (A11)
+
+Until now the bridge was deliberately closed-app-blind: the heartbeat stops and
+the Hello token is deleted on exit (`main.rs:56-83`), so a leftover token could
+never serve (`native_host.rs` P1 gate). A11 adds a **separate, opt-in,
+read-only** path rather than weakening that gate for the live vault:
+
+- **Opt-in toggle** (Settings > Security) builds a **logins-only** snapshot at
+  unlock. Trash and non-login kinds never enter it. It is capped at 1000 rows.
+- **At rest:** the snapshot is XChaCha20-Poly1305 (`PVOC1` + nonce + tag) under
+  a fresh 32-byte key; the key is DPAPI-sealed for the current Windows user.
+  No master password is stored.
+- **Read:** the extension asks `cache_get`; the native host prompts **Windows
+  Hello** before unsealing the key and returns the snapshot. The host answers
+  this one command while the desktop app is closed; every other command still
+  requires a live heartbeat.
+- **In the browser:** decrypted entries live only in the service-worker's
+  memory, never `chrome.storage`. A 15-minute TTL bounds the session; a lock
+  verdict (`PV_GATE_LOCKED`) clears it immediately; a service-worker restart
+  loses it and the next popup prompts Hello again.
+- **Read-only by construction:** mutations still go to the host, which is not
+  reachable when the app is closed; the popup renders a visible offline banner;
+  reprompt-armed items are refused in both the popup and content-script fill
+  paths because master presence cannot be proven offline.
+- **Hygiene:** a decoy unlock **erases** the cache (a coerced session must not
+  leave the real snapshot readable), a rekey refreshes it, and disabling the
+  toggle deletes both files.
+
+Tests: four Rust tests cover Trash exclusion, the full-field round-trip,
+AEAD tamper/wrong-key rejection and the DPAPI on-disk refresh/clear cycle; four
+JS tests cover the closed-app fallback, TTL reuse (one Hello prompt), lock
+clearing and the empty-query guard. Baselines after A11: `cargo test`
+**489 passed / 1 ignored + 4 pv_sign tests**; `npm test` **128/128**.
+
+Honest limits: Windows Hello here is a **presence prompt**, not a key factor —
+a same-user process can call DPAPI and decrypt the cache without it. That is
+the price of reading with the app closed; the feature is opt-in, read-only and
+logins-only. The snapshot is refreshed at unlock, so edits made later are
+visible offline only after the next unlock.
+
 ---
 
 ## 6. Roadmap
@@ -566,7 +606,9 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 1. **DONE (A9)** — edit-before-save in the toast (E3).
 2. Settings UI for the never-save list (E5).
 3. Argon2id extension PIN with backoff (P4).
-4. Optional encrypted offline cache with a separate PIN (E4).
+4. **DONE (A11)** — opt-in, Hello-gated **read-only** offline cache (E9).
+   The roadmap's "separate PIN" idea was replaced by Windows Hello presence +
+   DPAPI, because a second PIN would be one more secret to lose.
 5. Exit test: save a login with an edited username from the toast; remove a
    never-save domain from settings and see the prompt return.
 
@@ -614,7 +656,7 @@ competitors do not ship.
 | Extension idle lock | Proactive (this batch) | Proactive | Proactive | Parity |
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
 | Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
-| Offline extension cache | Missing | Yes | Yes | Behind |
+| Offline extension cache | Yes (A11: opt-in read-only, Hello-gated, 15 min) | Yes | Yes | Parity |
 | Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
 | Installer signing / provenance | Provenance shipped (A8a); Authenticode still missing (A8b) | Signed | Signed | Behind on Authenticode, parity on provenance |
 | Audit / disclosure docs | Shipped (A7: README, MIT LICENSE, SECURITY.md) | Yes | Yes | Parity |
@@ -670,6 +712,14 @@ Select-String -Path .github\workflows\release.yml -Pattern 'attest-build-provena
 cargo test --manifest-path tools\pv-sign\Cargo.toml
 cargo run --manifest-path tools\pv-sign\Cargo.toml -- verify installer-output\PhantomVault-Setup-0.4.1.exe
 
+# A11 offline extension cache (opt-in, Hello-gated, read-only)
+Select-String -Path src\security\offline_cache.rs -Pattern 'CACHE_MAGIC|handle_cache_get|SESSION_TTL_SECS'
+Select-String -Path src\windows_native\native_host.rs -Pattern 'cache_get'
+Select-String -Path browser_extension\background.js -Pattern 'queryWithCache|PV_CACHE_STATUS|OFFLINE_TTL_SECS'
+Select-String -Path browser_extension\popup.js -Pattern 'offline_banner|PV_CACHE_STATUS'
+cargo test offline_cache
+node --test tests/js/background.test.mjs
+
 # A9 edit-before-save (closed shadow fields, re-classify, empty guard)
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'
 node --test tests/js/content.test.mjs
@@ -720,7 +770,7 @@ pass missed, and corrected three assumptions.
 | E6 | Extension cannot add, edit, or delete items | ~~No write command in `browser_extension/popup.js`~~ — shipped in 5.4 (`openItemEditor`, `create_login`/`update_login`/`delete_login`) | Every change used to require the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
 | E7 | Extension copy never clears the clipboard | ~~`popup.js:1504-1507` writes and stops~~ - shipped: native `copy_secret` + `pv_clip_hash` guard (5.5, 5.7) | A copied password used to stay in the OS clipboard indefinitely, and reached Win+V | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | **Shipped** |
 | E8 | No shadow-DOM autofill | `content.js:450` is the extension's own UI shadow root; no traversal of page shadow roots | Web-component login forms (increasing share of modern sites) never get badges or fill | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
-| E9 | No offline extension cache | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
+| E9 | No offline extension cache — **shipped (A11)** | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
 | E10 | No KDBX (binary) import or export | KeePass support is XML/CSV only (`src/importer/keepass.rs:1-5`); exporters are CSV/Bitwarden JSON/native (`exporter.rs:83-412`) | Users cannot move to or from KeePass's real container; lock-in both ways | Read/write KDBX 4 with Argon2 + AES-KDF; keep XML path | S2 |
 | E11 | Attachments are 5 MB and inline in the vault blob | `src/models.rs:82`; attachments live on items (`models.rs:73-79,265`) | Any file save re-encrypts the whole vault and bloats sync; Bitwarden allows large separate attachments | Store attachments as separately encrypted chunks with their own keys and a size budget | S2 |
 | E12 | No hardware security key unlock | Only Windows Hello + TOTP gate exist; no FIDO2/HMAC-secret path | Bitwarden supports FIDO2 2FA; KeePassXC supports hardware-key unlock. A local vault with a hardware factor would be a differentiator | FIDO2 hmac-secret or CTAP2 key wrapping the vault key; fallback to password | S2 |

@@ -10,6 +10,7 @@ pub mod decoy;
 pub mod emergency;
 pub mod ext_pin;
 pub mod integrity;
+pub mod offline_cache;
 pub mod pdf_sheet;
 pub mod secure_send;
 pub mod shamir;

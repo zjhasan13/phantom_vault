@@ -794,3 +794,92 @@ test("A4: unrelated alarms stay silent for the clipboard path", async () => {
   assert.equal(chrome.__state.offscreenDocs.length, 0);
   assert.equal(chrome.__state.runtimeMessages.length, 0);
 });
+
+// --- A11: Hello-gated offline cache -------------------------------------
+function cacheFrame() {
+  return {
+    ok: true, cached: true, created_at: 42, ttl_secs: 900,
+    entries: [
+      { id: "1", title: "GitHub", username: "u", password: "p", urls: ["https://github.com"] },
+      { id: "2", title: "Other", username: "x", password: "y", urls: ["https://other.test"] },
+    ],
+  };
+}
+
+test("A11: PV_QUERY falls back to the offline cache when the app is closed", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "query");
+  const port = chrome.__state.ports[0];
+  port.handlers.message.forEach((fn) => fn({ ok: false, error: "desktop app closed" }));
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[1].cmd, "cache_get");
+  port.handlers.message.forEach((fn) => fn(cacheFrame()));
+  const r = await p;
+  assert.equal(r.ok, true);
+  assert.equal(r.cached, true);
+  assert.equal(r.entries.length, 1, "query filters to the matching login");
+  assert.equal(r.entries[0].password, "p");
+  assert.equal(r.cache_synced_at, 42);
+});
+
+test("A11: a warm snapshot serves queries without a second Hello prompt", async () => {
+  const { chrome, onMessage } = fresh();
+  const first = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  await flushTicks();
+  const port = chrome.__state.ports[0];
+  port.handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
+  await flushTicks();
+  port.handlers.message.forEach((fn) => fn(cacheFrame()));
+  await first;
+
+  const again = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "github.com" });
+  await flushTicks();
+  port.handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
+  const r = await again;
+  assert.equal(r.cached, true);
+  assert.equal(
+    chrome.__state.postedNative.filter((x) => x.cmd === "cache_get").length,
+    1,
+    "TTL snapshot is reused, not re-prompted",
+  );
+});
+
+test("A11: a lock verdict clears the decrypted snapshot", async () => {
+  const { chrome, onMessage } = fresh();
+  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  await flushTicks();
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
+  assert.equal((await warm).cached, true);
+
+  chrome.__state.sessionStore.pv_last_active = Date.now() - 11 * 60 * 1000;
+  chrome.__state.localStore.lock_timeout_min = 10;
+  const st = await sendMessage(onMessage, chrome, { type: "PV_SESSION_STATE" });
+  assert.equal(st.locked, true);
+
+  const next = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  await flushTicks();
+  assert.equal(
+    chrome.__state.postedNative.filter((x) => x.cmd === "cache_get").length,
+    2,
+    "lock forces a fresh Hello-gated read",
+  );
+  chrome.__state.ports[chrome.__state.ports.length - 1].handlers.message.forEach((fn) => fn(cacheFrame()));
+  await next;
+});
+
+test("A11: an empty query never dumps the cache", async () => {
+  const { chrome, onMessage } = fresh();
+  const warm = sendMessage(onMessage, chrome, { type: "PV_CACHE_STATUS" });
+  await flushTicks();
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn(cacheFrame()));
+  await warm;
+
+  const p = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "" });
+  await flushTicks();
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: false, error: "closed" }));
+  const r = await p;
+  assert.equal(r.ok, false);
+  assert.equal(r.entries, undefined);
+});

@@ -70,6 +70,8 @@ tell us the date in the report so the advisory can land first.
   older blob, audit-log chain and head anchor
 - Release integrity: the pinned Ed25519 release key, `<asset>.sig` verification,
   checksum sidecars, and the SBOM/provenance publish path
+- Offline read-only cache: the Hello gate, the DPAPI-sealed cache key, the
+  15-minute extension TTL, decoy erasure and the read-only boundary
 - Local attack surface: decoy vault, canary, shredder, installer, update path
 - Dependency vulnerabilities that are actually reachable from this code
 
@@ -95,6 +97,10 @@ These are documented rather than secret; please do not report them as new findin
   GitHub build-provenance attestation; verification steps are in `docs/RELEASE.md`.
 - Installs built before the 2026-10-31 signing-key rotation pin the old public key
   and need **one manual reinstall** before in-app updates verify again.
+- The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.
+  Windows Hello gates the host read, but a same-user process can unseal the
+  DPAPI-protected key without that prompt; treat the cache as a deliberate
+  convenience downgrade. Mutations and reprompt-armed items require the app.
 - The post-quantum layer is a **hedge, not a second factor**: a correct master
   password still opens the portable container.
 - Favicon lookup currently contacts DuckDuckGo and then Google.

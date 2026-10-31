@@ -146,6 +146,26 @@ pub fn decrypt_vault(master_password: &str, encrypted_payload: &[u8]) -> Result<
     decrypt_vault_secret(&SecretString::new(master_password.to_string()), encrypted_payload)
 }
 
+/// A11: seal arbitrary bytes with a raw 32-byte key. Returns
+/// `nonce (24) || ciphertext+tag`, the same primitive used for the vault DK.
+pub fn seal_with_raw_key(key: &[u8; 32], plaintext: &[u8]) -> Result<Vec<u8>, String> {
+    let (nonce, ct) = wrap_with_key(key, plaintext)?;
+    let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+/// A11: open bytes sealed by [`seal_with_raw_key`]. A wrong key or a tampered
+/// blob fails the AEAD tag.
+pub fn open_with_raw_key(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, String> {
+    if payload.len() < NONCE_LEN {
+        return Err("cache payload is truncated".to_string());
+    }
+    let (nonce, ct) = payload.split_at(NONCE_LEN);
+    unwrap_with_key(key, nonce, ct)
+}
+
 /// Phase 17: wrap arbitrary bytes (the DK) with a raw 32B key + fresh nonce.
 /// Returns (nonce, ciphertext+tag). Caller packs both into the container.
 fn wrap_with_key(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<([u8; NONCE_LEN], Vec<u8>), String> {

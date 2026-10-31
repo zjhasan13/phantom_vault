@@ -659,6 +659,9 @@ export component MainWindow inherits Window {
     in-out property <string> pin_status: "";
     // A5: master-password rotation status (Settings card).
     in-out property <string> rekey_status: "";
+    // A11: opt-in read-only offline extension cache.
+    in-out property <bool> offline_cache_on: false;
+    in-out property <string> offline_cache_status: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -963,6 +966,7 @@ export component MainWindow inherits Window {
     callback disable_app_pin();
     // A5: master-password rotation (current, new, confirm).
     callback change_master_password(string, string, string);
+    callback set_offline_cache(bool);
     callback setup_ext_pin(string, string);
     callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
@@ -1599,6 +1603,12 @@ export component MainWindow inherits Window {
                         if root.confirm_rekey : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.confirm_rekey = false; } }
                     }
                     if root.rekey_status != "" : Text { text: root.rekey_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    // A11: read-only snapshot for the extension, opened with
+                    // Windows Hello even when the desktop app is closed.
+                    FieldLabel { text: "OFFLINE BROWSER CACHE (READ-ONLY)"; }
+                    Text { text: "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
+                    if root.offline_cache_status != "" : Text { text: root.offline_cache_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }

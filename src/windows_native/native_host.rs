@@ -2806,6 +2806,35 @@ pub fn serve_cli() -> i32 {
         let _ = std::io::stdout().write_all(&frame);
         let _ = std::io::stdout().flush();
     };
+    // A11: the extension may ask for the read-only offline cache while the
+    // desktop app is closed. That path is the ONLY one allowed before the
+    // heartbeat gate, and it requires a Windows Hello prompt + DPAPI unseal.
+    let stdin = std::io::stdin();
+    let mut input = stdin.lock();
+    let mut output = std::io::stdout();
+    let first_req = match decode_frame(&mut input) {
+        Ok(v) => v,
+        Err(e) => {
+            emit_err(&format!("bad frame: {e}"));
+            return 2;
+        }
+    };
+    if first_req.get("cmd").and_then(|c| c.as_str()) == Some("cache_get") {
+        let reply = match crate::security::offline_cache::handle_cache_get() {
+            Ok(v) => v,
+            Err(e) => err(&e),
+        };
+        let served = reply.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+        let frame = encode_frame(&reply);
+        let _ = output.write_all(&frame);
+        let _ = output.flush();
+        bridge_log(if served {
+            "offline cache served (Hello)"
+        } else {
+            "offline cache refused"
+        });
+        return if served { 0 } else { 2 };
+    }
     // P1 (closed-app serving): a leftover Hello token file is NOT enough —
     // the desktop app must be alive (fresh heartbeat) or we serve nothing.
     // Checked BEFORE the backoff sleep + vault decrypt (no wasted Argon2id).
@@ -2865,9 +2894,6 @@ pub fn serve_cli() -> i32 {
             }
         },
     };
-    let stdin = std::io::stdin();
-    let mut input = stdin.lock();
-    let mut output = std::io::stdout();
     let start = std::time::Instant::now();
     let mut last_active = std::time::Instant::now();
     // A3: per-session failed master-reprompt counter (exponential delay only,
@@ -2920,6 +2946,9 @@ pub fn serve_cli() -> i32 {
             std::process::exit(0);
         }
     });
+    // The first frame was consumed before the heartbeat gate so `cache_get`
+    // could be answered while closed; hand it to the normal serve loop.
+    let mut pending_req = Some(first_req);
     loop {
         // Live lock state: token deleted (app locked) / idle / max lifetime
         // → zeroize + exit instead of serving secrets indefinitely.
@@ -2944,19 +2973,22 @@ pub fn serve_cli() -> i32 {
             bridge_log("host session expired/locked — exiting");
             break;
         }
-        let req = match decode_frame(&mut input) {
-            Ok(v) => v,
-            Err(e) => {
-                let msg = e.to_string();
-                if msg.contains("frame read") {
-                    break; // EOF / browser gone — clean exit, code 0.
+        let req = match pending_req.take() {
+            Some(r) => r,
+            None => match decode_frame(&mut input) {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("frame read") {
+                        break; // EOF / browser gone — clean exit, code 0.
+                    }
+                    let frame = encode_frame(&err(format!("bad frame: {msg}")));
+                    if output.write_all(&frame).and(output.flush()).is_err() {
+                        break;
+                    }
+                    continue;
                 }
-                let frame = encode_frame(&err(format!("bad frame: {msg}")));
-                if output.write_all(&frame).and(output.flush()).is_err() {
-                    break;
-                }
-                continue;
-            }
+            },
         };
         // Cover integrity (H9): a coerced session must never write into the
         // decoy — refuse every persisting command, not just save_login

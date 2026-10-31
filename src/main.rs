@@ -1261,6 +1261,11 @@ fn publish_unlocked_vault(
     ui.set_folder_filter("All".into());
     let mut vault = vault;
     vault.ensure_folders();
+    // A11: refresh the opt-in read-only extension cache at every unlock.
+    // Failures are non-fatal — the bridge never depends on this file.
+    if let Some(Err(e)) = crate::security::offline_cache::refresh_if_enabled(&vault) {
+        eprintln!("offline cache refresh failed: {e}");
+    }
     sync_folders_to_ui(&vault, ui);
     let items = vault_to_items(&vault, &FilterState::default());
     ui.set_credentials(items.clone());
@@ -1715,6 +1720,9 @@ fn unlock_with_password(    pass: SecretString,
                     // Duress path: verified decoy opens a believable fake vault.
                     // No migration, no Hello cache, no sync — pure read-mostly cover.
                     if let Some(decoy) = decoy_vault {
+                        // A11: a decoy session must never leave the REAL
+                        // read-only cache behind for the browser to read.
+                        let _ = security::offline_cache::clear();
                         // Decoy-aware bridge: seal the duress passphrase so the
                         // extension host serves ONLY the decoy container while
                         // this cover is active. The next real-password unlock
@@ -3498,6 +3506,7 @@ fn main() -> Result<(), slint::PlatformError> {
         eprintln!("{msg}");
     }));
     let main_window = MainWindow::new()?;
+    main_window.set_offline_cache_on(security::offline_cache::enabled());
     main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
     main_window.set_favicons_enabled(crate::core::favicon::show_favicons());
     // App PIN button shows iff a sealed PIN exists on this machine.
@@ -12226,6 +12235,37 @@ fn launch_url(ui: &MainWindow, url: &str) {
         security::access_log::log_event("exit", "manual");
         std::process::exit(0);
     });
+    // A11: opt-in, read-only offline cache for the extension.
+    let oc_weak = main_window.as_weak();
+    let oc_vault = Arc::clone(&active_vault);
+    main_window.on_set_offline_cache(move |on| {
+        let Some(ui) = oc_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_offline_cache_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let msg = if on {
+            let n = {
+                let vault = lock_vault(&oc_vault);
+                security::offline_cache::refresh(&vault)
+            };
+            match n {
+                Ok(count) => {
+                    security::access_log::log_event("offline-cache", "enable");
+                    format!("✅ Enabled — {count} logins cached. Windows Hello opens it; 15-minute session.")
+                }
+                Err(e) => format!("⚠️ Could not enable: {e}"),
+            }
+        } else {
+            let _ = security::offline_cache::clear();
+            security::access_log::log_event("offline-cache", "disable");
+            "🗑️ Offline cache disabled and erased.".to_string()
+        };
+        ui.set_offline_cache_on(security::offline_cache::enabled());
+        ui.set_offline_cache_status(msg.into());
+    });
     // Close-to-tray preference toggle (persisted, default ON).
     let traypref_weak = main_window.as_weak();
     main_window.on_set_tray_minimize(move |on| {
@@ -12602,6 +12642,14 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
                     }
                     *lock_master_pw(&master_arc) = Some(new_pw);
+                    // A11: rebuild the offline cache under the rotated vault.
+                    let refreshed = {
+                        let v = lock_vault(&vault_arc);
+                        security::offline_cache::refresh_if_enabled(&v)
+                    };
+                    if let Some(Err(e)) = refreshed {
+                        eprintln!("offline cache refresh after rekey failed: {e}");
+                    }
                     // pin.dpapi seals the OLD master with Argon2id(PIN); the PIN
                     // is not recoverable here, so removal is the only honest
                     // option (user re-enrolls with the new password).

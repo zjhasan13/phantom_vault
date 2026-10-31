@@ -1295,6 +1295,12 @@
     }
   }
   async function fillLogin(entry, fields) {
+    // A11: cached rows cannot prove master presence; reprompt items stay
+    // blocked until the desktop app is open.
+    if (entry.reprompt && entry.offline) {
+      toast("🔒 Offline cache is read-only — open PhantomVault to use this protected login.");
+      return;
+    }
     if (entry.reprompt) {
       const ok = await confirmSensitive(entry);
       if (!ok) return;

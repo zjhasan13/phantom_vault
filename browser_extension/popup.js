@@ -60,6 +60,7 @@
       sync_locked_sub: "Unlock PhantomVault desktop app.",
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
       sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
+      offline_banner: "🔌 Offline cache — read-only. Changes are refused until the desktop app is open.",
       retry_btn: "🔄 Retry",
       lock_timeout_h: "⏱️ Auto-Lock Timeout",
       lock_timeout_hint: "Lock after inactivity. A locked desktop app always locks instantly.",
@@ -125,6 +126,7 @@
       sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
       sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
+      offline_banner: "🔌 অফলাইন ক্যাশ — শুধু পড়া যায়। ডেস্কটপ অ্যাপ চালু না হলে কোনো পরিবর্তন হবে না।",
       retry_btn: "🔄 পুনরায়",
       lock_timeout_h: "⏱️ অটো-লক সময়",
       lock_timeout_hint: "নিষ্ক্রিয়তার পর লক হবে। ডেস্কটপ লক হলে সাথে সাথে লক হবে।",
@@ -564,6 +566,12 @@
     return frameHosts.some((fh) => PVDomain.isPunycodeHost(fh) && entryMatchesHost(entry, fh));
   }
   async function fillGuards(entry) {
+    // A11: an offline (cache) row cannot prove master presence. Reprompt-armed
+    // items stay blocked until the desktop app is open.
+    if (entry.reprompt && entry.offline) {
+      status.textContent = t("offline_banner");
+      return false;
+    }
     // Reprompt needs explicit presence; mismatched domains refuse like the
     // page path.
     if (entry.reprompt) {
@@ -816,11 +824,23 @@
   // UNLOCKED whenever the desktop vault is reachable. Inactivity auto-lock
   // (lock_timeout_min, background session state) overlays the same screen.
   // Retry re-confirms desktop presence and restarts the idle clock.
+  let offlineMode = false; // A11: desktop unreachable, cache is serving
   async function desktopReachable() {
     try {
       const pong = await withTimeout(
         chrome.runtime.sendMessage({ type: "PV_PING" }), 5000, "ping");
-      return !!(pong && pong.ok && pong.unlocked !== false);
+      if (pong && pong.ok) {
+        offlineMode = false;
+        return pong.unlocked !== false;
+      }
+    } catch (_) { /* app closed — fall through to the offline cache */ }
+    // A11: Hello-gated read-only cache when the desktop app is closed. A locked
+    // desktop returns ok above (never papered over by the cache).
+    try {
+      const c = await withTimeout(
+        chrome.runtime.sendMessage({ type: "PV_CACHE_STATUS" }), 130000, "offline cache");
+      offlineMode = !!(c && c.ok && c.cached);
+      return offlineMode;
     } catch (_) { return false; }
   }
   // Single choke-point for the lock overlay (CSS-specificity lesson: always
@@ -915,7 +935,7 @@
       showDesktopLock();
       return false;
     }
-    if (inactive) {
+    if (inactive && !offlineMode) {
       // Inactivity lock: quick-PIN when enrolled, else desktop presence
       // alone re-opens (a lock without PIN would be pure theater).
       if (await extPinHash()) {
@@ -992,12 +1012,15 @@
     try {
       // Fast lock gate: a 3s ping short-circuits the 10s query wait when
       // the desktop vault is locked (bridge errors fall through to the
-      // normal path — a dead bridge reports itself below).
-      try {
-        const pong = await withTimeout(
-          chrome.runtime.sendMessage({ type: "PV_PING" }), 3000, "ping");
-        if (pong && pong.ok && pong.unlocked === false) { console.log("PV refresh: ping says locked"); showLocked(); return; }
-      } catch (e) { console.log("PV refresh: ping failed:", (e && e.message) || e); }
+      // normal path — a dead bridge reports itself below). Skipped in A11
+      // offline mode: the cache path already proved the desktop is closed.
+      if (!offlineMode) {
+        try {
+          const pong = await withTimeout(
+            chrome.runtime.sendMessage({ type: "PV_PING" }), 3000, "ping");
+          if (pong && pong.ok && pong.unlocked === false) { console.log("PV refresh: ping says locked"); showLocked(); return; }
+        } catch (e) { console.log("PV refresh: ping failed:", (e && e.message) || e); }
+      }
       try {
         const bs = await chrome.storage.local.get({ blocked_domains: [] });
         blockedDomains = bs.blocked_domains || [];
@@ -1016,7 +1039,9 @@
       }
       const [q, l, ...extraQs] = await Promise.all([
         host ? withTimeout(chrome.runtime.sendMessage({ type: "PV_QUERY", app: host }), QUERY_TIMEOUT_MS, "vault bridge") : Promise.resolve(null),
-        withTimeout(chrome.runtime.sendMessage({ type: "PV_LIST" }), QUERY_TIMEOUT_MS, "vault list"),
+        offlineMode
+          ? Promise.resolve({ ok: false, error: "offline" })
+          : withTimeout(chrome.runtime.sendMessage({ type: "PV_LIST" }), QUERY_TIMEOUT_MS, "vault list"),
         ...queryApps.map((app) => withTimeout(
           chrome.runtime.sendMessage({ type: "PV_QUERY", app }), QUERY_TIMEOUT_MS, "frame bridge")
           .catch(() => null)),
@@ -1033,6 +1058,12 @@
         if (/lock/i.test(err)) { showLocked(); return; }
       }
       suggEntries = (q && q.ok && q.entries) || [];
+      const offline = !!(q && q.ok && q.cached);
+      const banner = document.getElementById("offlineBanner");
+      if (banner) {
+        banner.style.display = offline ? "block" : "none";
+        if (offline) banner.textContent = t("offline_banner");
+      }
       for (const r of extraQs) {
         if (!r || !r.ok) continue;
         for (const e of r.entries || []) {
