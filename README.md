@@ -62,7 +62,7 @@ third-party audit. Those are tracked as concrete work in
 **Sync (optional, ciphertext only)**
 - GitHub repository via API with a DPAPI-sealed token
 - **Revision chain (A16)**: every save increments `rev` and chains `prev_hash` inside the AEAD payload; stale or forked merges are refused
-- Peer-to-peer over LAN with challenge-response pairing
+- Peer-to-peer over LAN with **mandatory device pairing** (one-time code, HMAC proof, Ed25519-signed requests)
 - Import/export: Bitwarden JSON, CSV, native `.pvx` (with previews, merge modes, undo)
 
 ---
@@ -103,7 +103,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 496 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 499 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -172,8 +172,9 @@ These are real today. They are listed here so nobody discovers them the hard way
 - **Favicons are same-origin only** (A17): the desktop requests `https://<site>/favicon.ico`
   and the extension harvests the page's declared icon. No DuckDuckGo/Google lookup;
   with the network off, the letter icon is used.
-- **P2P sync serves ciphertext without pairing** when no PIN is configured
-  (A15). Keep it off on untrusted networks.
+- **P2P is paired by default** (A15a): unpaired clients get 403. Beacons still
+  advertise a head hash/mtime and there is no paired-device management UI yet
+  (A15b); re-pair when a device's LAN address changes.
 - **A16 vault format is rev 2**: builds before this change cannot open it, so
   upgrade every device before syncing. On a fresh device the first pull is
   TOFU — there is no local revision to compare against.

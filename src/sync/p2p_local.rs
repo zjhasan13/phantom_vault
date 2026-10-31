@@ -1,11 +1,11 @@
 //! Local Wi-Fi P2P sync (offline LAN, LocalSend-style). std-only: UDP
-//! beacons + minimal HTTP/1.1 over TCP — no internet, no cloud, no new deps.
+//! beacons + minimal HTTP/1.1 over TCP â€” no internet, no cloud, no new deps.
 //!
 //! Safety contract (zero-knowledge preserved):
 //! - Only CIPHERTEXT (`my_secure_vault.enc` bytes) crosses the Wi-Fi. Keys,
 //!   passwords, and plaintext never touch the socket.
 //! - Conflict guard: blobs carry SHA-256 + file mtime. Newer mtime wins;
-//!   equal mtime with different SHA = conflict → keep local, report loudly,
+//!   equal mtime with different SHA = conflict â†’ keep local, report loudly,
 //!   never auto-merge ciphertext.
 //! - Binds LAN port 52199 only while the user enables discovery (default OFF).
 
@@ -60,6 +60,7 @@ pub fn pin_required() -> bool {
 ///
 /// `Absent` is the ONLY state that legitimately leaves the LAN open. `Unusable`
 /// is a broken pairing and must never be downgraded to it.
+#[allow(dead_code)]
 enum PinState {
     /// No PIN file: pairing was never enabled. Open LAN, unchanged behaviour.
     Absent,
@@ -93,6 +94,7 @@ fn read_pin() -> PinState {
 /// Write to a sibling temp file, then rename over the target. Rename is atomic
 /// on NTFS, so a crash, a full disk or a seal failure leaves the PREVIOUS PIN
 /// intact rather than no PIN at all.
+#[allow(dead_code)]
 fn write_pin_atomic(blob: &[u8]) -> Result<(), String> {
     let target = pin_path();
     let tmp = target.with_extension("dpapi.tmp");
@@ -103,6 +105,7 @@ fn write_pin_atomic(blob: &[u8]) -> Result<(), String> {
     })
 }
 
+#[allow(dead_code)]
 fn new_pin() -> String {
     // H13: rejection sampling removes the `% 1_000_000` modulo bias
     // (2^32 % 1M != 0). NOTE residual: pairing HTTP is still plaintext LAN
@@ -123,13 +126,14 @@ fn new_pin() -> String {
 }
 
 /// Fetch the sealed PIN, generating + sealing one on first call.
+#[allow(dead_code)]
 pub fn get_or_create_pin() -> Result<String, String> {
     match read_pin() {
         PinState::Loaded(pin) => return Ok(pin),
         // Fail closed. Do NOT mint a replacement over an existing file: that
         // turned a corrupted blob into "authentication off", and handing the
         // fresh PIN back to the caller turned it into an unauthenticated
-        // takeover. Resetting pairing is an explicit user act — regenerate_pin.
+        // takeover. Resetting pairing is an explicit user act â€” regenerate_pin.
         PinState::Unusable(why) => {
             return Err(format!(
                 "pairing PIN is unusable ({why}); regenerate or delete {} to reset pairing",
@@ -148,13 +152,14 @@ pub fn get_or_create_pin() -> Result<String, String> {
 /// Regenerate the PIN (old pairings break immediately).
 ///
 /// An explicit rotate, deliberately NOT delete-then-create. Removing the file
-/// first meant any failure in the gap left no PIN file at all — which
+/// first meant any failure in the gap left no PIN file at all â€” which
 /// `pin_required()` read as "never configured" and `verify_pin()` honoured as
 /// "accept anything", so a failed rotation silently opened the LAN. The atomic
 /// rename keeps the old PIN usable until the new one is fully in place.
 ///
 /// Unlike `get_or_create_pin` this deliberately does not care about
 /// `Unusable`: rotating is how a user recovers from a corrupted blob.
+#[allow(dead_code)]
 pub fn regenerate_pin() -> Result<String, String> {
     let pin = new_pin();
     let blob = crate::core::memory::DpapiGuard::protect(pin.as_bytes())
@@ -166,7 +171,7 @@ pub fn regenerate_pin() -> Result<String, String> {
 /// Length-first + full compare (interactive-attempt-rate path).
 pub fn verify_pin(candidate: &str) -> bool {
     let expected = match read_pin() {
-        // Never configured → pairing check disabled (open LAN).
+        // Never configured â†’ pairing check disabled (open LAN).
         PinState::Absent => return true,
         // Pairing is configured but the PIN cannot be read. Accepting anything
         // here is the fail-open that let a lost/corrupted blob disable auth.
@@ -186,7 +191,7 @@ pub fn verify_pin(candidate: &str) -> bool {
 // ---------------------------------------------------------------------------
 // PIN brute-force brake: 5 consecutive failures from one IP lock it out for
 // 30 seconds (429/403 + loud log). Success resets the counter. Successive
-// legitimate typos (≤4) never trigger. In-memory only — restarts clear it.
+// legitimate typos (â‰¤4) never trigger. In-memory only â€” restarts clear it.
 // ---------------------------------------------------------------------------
 
 /// Consecutive-failure budget per IP before lockout.
@@ -255,7 +260,7 @@ pub(crate) fn pin_throttle_test_clear() {
 /// Presence beacon. `head_sha`/`mtime` describe the CIPHERTEXT only.
 /// M5: carries a `ts` send-time; receivers reject beacons older than 120 s
 /// so stale replays die. Residual: live LAN spoofing is still possible on
-/// plaintext UDP — the UI must show peer IP+name for out-of-band check and
+/// plaintext UDP â€” the UI must show peer IP+name for out-of-band check and
 /// the PIN stays plaintext-checked + throttled (full mDNS/TLS tracked sep).
 pub fn beacon_json(version: &str, head_sha: &str) -> String {
     let name = std::env::var("COMPUTERNAME")
@@ -290,7 +295,7 @@ pub fn parse_beacon(text: &str, from_ip: &str) -> Option<Peer> {
             return None;
         }
     }
-    // M5: freshness — replayed beacons older than 120 s (or clock-skewed
+    // M5: freshness â€” replayed beacons older than 120 s (or clock-skewed
     // future stamps) are dropped. Beacons without `ts` are pre-upgrade and
     // accepted once (interim compat).
     if let Some(ts) = v.get("ts").and_then(|t| t.as_u64()) {
@@ -314,7 +319,7 @@ pub fn parse_beacon(text: &str, from_ip: &str) -> Option<Peer> {
 /// Best-effort local IPv4s (for self-echo filtering). Pure-ish, never fails.
 fn local_lan_ips() -> Result<Vec<String>, String> {
     let sock = UdpSocket::bind("0.0.0.0:0").map_err(|e| e.to_string())?;
-    // No packet is sent — connect() only picks the outbound interface.
+    // No packet is sent â€” connect() only picks the outbound interface.
     sock.connect("8.8.8.8:80").map_err(|e| e.to_string())?;
     let ip = sock.local_addr().map_err(|e| e.to_string())?.ip().to_string();
     Ok(vec![ip, "127.0.0.1".to_string(), "::1".to_string()])
@@ -336,7 +341,7 @@ fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
-/// Local ciphertext head: (sha, mtime_secs). Missing file → ("", 0).
+/// Local ciphertext head: (sha, mtime_secs). Missing file â†’ ("", 0).
 pub fn local_head() -> (String, u64) {
     let path = std::path::Path::new(crate::developer::vault_run::VAULT_FILE);
     let bytes = std::fs::read(path).unwrap_or_default();
@@ -354,8 +359,20 @@ pub fn local_head() -> (String, u64) {
 // Minimal HTTP/1.1 framing (server + client share these)
 // ---------------------------------------------------------------------------
 
-/// Split a raw HTTP request into (method, path, body). Pure — unit tested.
+/// Split a raw HTTP request into (method, path, body). Pure â€” unit tested.
 pub fn parse_http_request(raw: &[u8]) -> Option<(String, String, Vec<u8>)> {
+    parse_http_request_headers(raw).map(|(m, p, b, _)| (m, p, b))
+}
+
+pub type HttpRequest = (
+    String,
+    String,
+    Vec<u8>,
+    std::collections::HashMap<String, String>,
+);
+
+/// A15: same parser, plus lowercased headers for the signature gate.
+pub fn parse_http_request_headers(raw: &[u8]) -> Option<HttpRequest> {
     let head_end = raw.windows(4).position(|w| w == b"\r\n\r\n")?;
     let head = std::str::from_utf8(&raw[..head_end]).ok()?;
     let mut lines = head.lines();
@@ -364,10 +381,17 @@ pub fn parse_http_request(raw: &[u8]) -> Option<(String, String, Vec<u8>)> {
     let method = parts.next()?.to_uppercase();
     let path = parts.next().unwrap_or("/").to_string();
     let mut content_len = 0usize;
+    let mut headers = std::collections::HashMap::new();
     for line in lines {
-        if let Some(v) = line.strip_prefix("Content-Length:").or_else(|| line.strip_prefix("content-length:")) {
-            content_len = v.trim().parse().unwrap_or(0);
+        let Some((k, v)) = line.split_once(':') else {
+            continue;
+        };
+        let key = k.trim().to_lowercase();
+        let val = v.trim().to_string();
+        if key == "content-length" {
+            content_len = val.parse().unwrap_or(0);
         }
+        headers.insert(key, val);
     }
     if content_len > MAX_BLOB_BYTES {
         return None;
@@ -376,7 +400,12 @@ pub fn parse_http_request(raw: &[u8]) -> Option<(String, String, Vec<u8>)> {
     if body.len() < content_len {
         return None; // caller keeps reading
     }
-    Some((method, path, body[..content_len.min(body.len())].to_vec()))
+    Some((
+        method,
+        path,
+        body[..content_len.min(body.len())].to_vec(),
+        headers,
+    ))
 }
 
 fn http_response(status: u16, body: &str) -> Vec<u8> {
@@ -394,13 +423,14 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
     .into_bytes()
 }
 
-/// Route one request. Pure decision surface (no FS here — the caller adopts).
+/// Route one request. Pure decision surface (no FS here â€” the caller adopts).
 /// Returns (status, body, optional adoption). Pairing PIN (when configured)
 /// gates BOTH endpoints: GET reads `?pin=`, POST reads the `pin` field.
-/// `peer_ip` feeds the brute-force brake (5 fails → 30s lockout, 429).
+/// `peer_ip` feeds the brute-force brake (5 fails â†’ 30s lockout, 429).
 /// Pending adoption from `route`: verified (sha, mtime, blob).
 type PendingAdopt = (String, u64, Vec<u8>);
 
+#[allow(dead_code)]
 pub fn route(
     method: &str,
     path: &str,
@@ -410,7 +440,25 @@ pub fn route(
     local_mtime: u64,
     peer_ip: &str,
 ) -> (u16, String, Option<PendingAdopt>) {
-    // Split query string (?pin=…) — minimal HTTP only.
+    route_authed(
+        method, path, body, local_blob, local_sha, local_mtime, peer_ip, false,
+    )
+}
+
+/// A15: `auth_ok` = the request carried a valid paired-device signature, so
+/// the legacy PIN gate is skipped. Unauthenticated callers still hit it.
+#[allow(clippy::too_many_arguments)]
+pub fn route_authed(
+    method: &str,
+    path: &str,
+    body: &[u8],
+    local_blob: &[u8],
+    local_sha: &str,
+    local_mtime: u64,
+    peer_ip: &str,
+    auth_ok: bool,
+) -> (u16, String, Option<PendingAdopt>) {
+    // Split query string (?pin=â€¦) â€” minimal HTTP only.
     let (clean_path, query_pin) = match path.split_once('?') {
         Some((p, q)) => {
             let pin = q.split('&').find_map(|kv| {
@@ -422,9 +470,9 @@ pub fn route(
         None => (path, None),
     };
     if method == "GET" && clean_path == "/p2p/pull" {
-        if pin_required() {
+        if !auth_ok && pin_required() {
             if pin_locked_out(peer_ip) {
-                return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
+                return (429, r#"{"ok":false,"error":"too many bad PINs â€” retry in 30s"}"#.into(), None);
             }
             let ok = verify_pin(query_pin.as_deref().unwrap_or(""));
             pin_record(peer_ip, ok);
@@ -446,9 +494,9 @@ pub fn route(
             Ok(v) => v,
             Err(_) => return (400, r#"{"ok":false,"error":"bad json"}"#.into(), None),
         };
-        if pin_required() {
+        if !auth_ok && pin_required() {
             if pin_locked_out(peer_ip) {
-                return (429, r#"{"ok":false,"error":"too many bad PINs — retry in 30s"}"#.into(), None);
+                return (429, r#"{"ok":false,"error":"too many bad PINs â€” retry in 30s"}"#.into(), None);
             }
             let ok = verify_pin(v.get("pin").and_then(|p| p.as_str()).unwrap_or(""));
             pin_record(peer_ip, ok);
@@ -473,8 +521,8 @@ pub fn route(
             return (200, r#"{"ok":true,"adopted":false,"reason":"already in sync"}"#.into(), None);
         }
         // Server-side freshness gate: adopt ONLY strictly-newer pushes.
-        // Older-or-equal mtime = stale replay or same-age divergence → 409,
-        // local kept. (A LAN attacker can still lie about mtime — pairing
+        // Older-or-equal mtime = stale replay or same-age divergence â†’ 409,
+        // local kept. (A LAN attacker can still lie about mtime â€” pairing
         // trusts the LAN; enable discovery only on networks you trust.)
         let remote_mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0);
         if remote_mtime == 0 {
@@ -487,7 +535,7 @@ pub fn route(
             return (400, r#"{"ok":false,"error":"mtime in future"}"#.into(), None);
         }
         if remote_mtime <= local_mtime {
-            return (409, r#"{"ok":false,"error":"stale or conflicting head — local kept"}"#.into(), None);
+            return (409, r#"{"ok":false,"error":"stale or conflicting head â€” local kept"}"#.into(), None);
         }
         // Monotonicity: never adopt a blob whose mtime goes backwards relative
         // to the last blob we actually adopted (even if local was rolled back).
@@ -498,7 +546,7 @@ pub fn route(
         // sandbox), so tests keep passing; in production this is a guardrail.
         let last = read_adopted_head();
         if !p2p_test_mode() && adopt_rollback_blocked(last.mtime, &last.sha, remote_mtime, &sha) {
-            return (409, r#"{"ok":false,"error":"replay or rollback attempted — local kept"}"#.into(), None);
+            return (409, r#"{"ok":false,"error":"replay or rollback attempted â€” local kept"}"#.into(), None);
         }
         return (200, r#"{"ok":true,"adopted":true}"#.into(), Some((sha, remote_mtime, blob)));
     }
@@ -556,14 +604,14 @@ fn read_adopted_head() -> AdoptedHead {
     let p = adopted_head_path();
     match std::fs::read_to_string(&p) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_else(|_| {
-            crate::security::access_log::log_event("p2p", "adopted-head corrupt — guard reset");
+            crate::security::access_log::log_event("p2p", "adopted-head corrupt â€” guard reset");
             AdoptedHead::default()
         }),
         Err(_) => AdoptedHead::default(),
     }
 }
 
-/// Monotonic adopt guard writer — call on EVERY adopt path (serve_conn +
+/// Monotonic adopt guard writer â€” call on EVERY adopt path (serve_conn +
 /// sync_with_peer). Atomic tmp+rename so a torn write never resets the guard.
 fn write_adopted_head(mtime: u64, sha: &str) {
     let p = adopted_head_path();
@@ -594,7 +642,7 @@ fn read_full_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
                 if let Some((_, _, _)) = parse_http_request(&buf) {
                     break;
                 }
-                // Header not complete yet — keep reading (body check inside).
+                // Header not complete yet â€” keep reading (body check inside).
                 if buf.windows(4).any(|w| w == b"\r\n\r\n") {
                     // Headers done but body short: wait for more.
                     continue;
@@ -612,9 +660,21 @@ fn read_full_request(stream: &mut TcpStream) -> Option<Vec<u8>> {
     Some(buf)
 }
 
-/// Serve ONE connection: route, optionally adopt via secure_write, respond.
-fn serve_conn(mut stream: TcpStream) {
-    // Peer IP for the PIN brake; unresolvable → throttle key falls back.
+/// Production entry: read the live blob, then serve one connection.
+fn serve_conn(stream: TcpStream) {
+    let blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
+    let (local_sha, local_mtime) = local_head();
+    serve_conn_inner(stream, &blob, &local_sha, local_mtime);
+}
+
+/// Serve ONE connection with an injected head (also used by loopback tests).
+fn serve_conn_inner(
+    mut stream: TcpStream,
+    blob: &[u8],
+    local_sha: &str,
+    local_mtime: u64,
+) {
+    // Peer IP for the PIN brake; unresolvable â†’ throttle key falls back.
     let peer_ip = stream
         .peer_addr()
         .map(|a| a.ip().to_string())
@@ -623,16 +683,61 @@ fn serve_conn(mut stream: TcpStream) {
         Some(r) => r,
         None => return,
     };
-    let (method, path, body) = match parse_http_request(&raw) {
+    let (method, path, body, headers) = match parse_http_request_headers(&raw) {
         Some(t) => t,
         None => {
             let _ = stream.write_all(&http_response(400, r#"{"ok":false}"#));
             return;
         }
     };
-    let blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
-    let (local_sha, local_mtime) = local_head();
-    let (status, resp_body, adopt) = route(&method, &path, &body, &blob, &local_sha, local_mtime, &peer_ip);
+    // A15: pairing is the ONLY unauthenticated endpoint. The code never
+    // crosses the wire â€” the client proves it with an HMAC.
+    if method == "POST" && path == "/p2p/pair" {
+        let v: serde_json::Value = match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = stream.write_all(&http_response(400, r#"{"ok":false,"error":"bad json"}"#));
+                return;
+            }
+        };
+        let name = v.get("name").and_then(|x| x.as_str()).unwrap_or("peer");
+        let client_pub = v.get("pub").and_then(|x| x.as_str()).unwrap_or("");
+        let nonce = v.get("nonce").and_then(|x| x.as_str()).unwrap_or("");
+        let proof = v.get("proof").and_then(|x| x.as_str()).unwrap_or("");
+        match crate::sync::p2p_pairing::accept_pair(name, client_pub, nonce, proof, &peer_ip) {
+            Ok((host_pub, ack)) => {
+                let host_name = std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PhantomVault".into());
+                let body = serde_json::json!({
+                    "ok": true, "name": host_name, "pub": host_pub, "proof": ack,
+                })
+                .to_string();
+                crate::security::access_log::log_event("p2p", "device paired");
+                let _ = stream.write_all(&http_response(200, &body));
+            }
+            Err(e) => {
+                crate::security::access_log::log_event("p2p", &format!("pair refused from {peer_ip}"));
+                let _ = stream.write_all(&http_response(403, &format!(
+                    r#"{{"ok":false,"error":"{e}"}}"#
+                )));
+            }
+        }
+        return;
+    }
+    // A15: every other request must be signed by a paired device.
+    let key = headers.get("x-pv-key").cloned().unwrap_or_default();
+    let time = headers.get("x-pv-time").cloned().unwrap_or_default();
+    let sig = headers.get("x-pv-sig").cloned().unwrap_or_default();
+    if crate::sync::p2p_pairing::verify_request(&method, &path, &body, &key, &time, &sig).is_err() {
+        crate::security::access_log::log_event("p2p", &format!("unpaired request from {peer_ip}"));
+        let _ = stream.write_all(&http_response(
+            403,
+            r#"{"ok":false,"error":"pair this device first"}"#,
+        ));
+        return;
+    }
+    let (status, resp_body, adopt) = route_authed(
+        &method, &path, &body, blob, local_sha, local_mtime, &peer_ip, true,
+    );
     if let Some((sha, mtime, data)) = adopt {
         // Newer-or-different remote head: adopt atomically. mtime comparison
         // happens client-side (sync_with_peer); the listener trusts the
@@ -671,7 +776,7 @@ pub fn run_listener(stop: Arc<AtomicBool>) {
     run_listener_on(stop, SocketAddr::from(([0, 0, 0, 0], P2P_PORT)));
 }
 
-/// UDP beacon broadcaster (presence only — no secrets, ever).
+/// UDP beacon broadcaster (presence only â€” no secrets, ever).
 pub fn run_beacon(stop: Arc<AtomicBool>) {
     let sock = match UdpSocket::bind("0.0.0.0:0") {
         Ok(s) => s,
@@ -693,7 +798,7 @@ pub fn run_beacon(stop: Arc<AtomicBool>) {
 pub fn run_discover_responder(stop: Arc<AtomicBool>) {
     let sock = match UdpSocket::bind(format!("0.0.0.0:{P2P_PORT}")) {
         Ok(s) => s,
-        Err(_) => return, // port busy (listener up?) — discovery still works via beacons
+        Err(_) => return, // port busy (listener up?) â€” discovery still works via beacons
     };
     let _ = sock.set_read_timeout(Some(Duration::from_millis(500)));
     let mut buf = [0u8; 2048];
@@ -735,18 +840,32 @@ pub fn scan_peers(wait: Duration) -> Vec<Peer> {
     peers
 }
 
-/// Pull a peer's ciphertext head + blob (PIN sent as query when set).
-pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), String> {
+fn local_name() -> String {
+    std::env::var("COMPUTERNAME").unwrap_or_else(|_| "PhantomVault".to_string())
+}
+
+/// Minimal HTTP call; returns (status, body). `extra` carries signature headers.
+fn http_call(
+    addr: SocketAddr,
+    method: &str,
+    path: &str,
+    body: &str,
+    extra: &[(String, String)],
+) -> Result<(u16, Vec<u8>), String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(20)));
-    let target = if pin.trim().is_empty() {
-        "/p2p/pull".to_string()
-    } else {
-        format!("/p2p/pull?pin={}", pin.trim())
-    };
-    let req = format!("GET {target} HTTP/1.1\r\nHost: pv\r\nConnection: close\r\n\r\n");
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
+    let mut head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
+        body.len()
+    );
+    for (k, v) in extra {
+        head.push_str(&format!("{k}: {v}\r\n"));
+    }
+    head.push_str("\r\n");
+    let mut req = head.into_bytes();
+    req.extend_from_slice(body.as_bytes());
+    stream.write_all(&req).map_err(|e| e.to_string())?;
     let mut raw = Vec::new();
     stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
     let body_start = raw
@@ -754,8 +873,77 @@ pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), 
         .position(|w| w == b"\r\n\r\n")
         .map(|i| i + 4)
         .unwrap_or(0);
+    let status = std::str::from_utf8(&raw[..body_start.min(raw.len())])
+        .ok()
+        .and_then(|s| s.split_whitespace().nth(1))
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(0);
+    Ok((status, raw[body_start..].to_vec()))
+}
+
+fn signed_headers(method: &str, path: &str, body: &str) -> Result<Vec<(String, String)>, String> {
+    let (key, time, sig) = crate::sync::p2p_pairing::sign_request(method, path, body.as_bytes())?;
+    Ok(vec![
+        ("X-PV-Key".to_string(), key),
+        ("X-PV-Time".to_string(), time),
+        ("X-PV-Sig".to_string(), sig),
+    ])
+}
+
+/// Pair with a host using its one-time code (HMAC; code never sent). No-op when
+/// this address is already paired.
+fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
+    use crate::sync::p2p_pairing as pairing;
+    let ip = addr.ip().to_string();
+    if pairing::peer_for_addr(&ip).is_some() {
+        return Ok(());
+    }
+    if code.trim().is_empty() {
+        return Err("enter the pairing code shown on the other device".to_string());
+    }
+    let client_pub = pairing::device_pub_hex()?;
+    use rand_core::RngCore as _;
+    let mut n = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut n);
+    let nonce = pairing::hex(&n);
+    let proof = pairing::pair_request_proof(code.trim(), &client_pub, &nonce);
+    let body = serde_json::json!({
+        "name": local_name(), "pub": client_pub, "nonce": nonce, "proof": proof,
+    })
+    .to_string();
+    let (status, resp) = http_call(addr, "POST", "/p2p/pair", &body, &[])?;
+    let v: serde_json::Value = serde_json::from_slice(&resp)
+        .map_err(|e| format!("bad pairing response: {e}"))?;
+    if status != 200 || !v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+        return Err(v
+            .get("error")
+            .and_then(|e| e.as_str())
+            .unwrap_or("pairing refused")
+            .to_string());
+    }
+    let host_pub = v.get("pub").and_then(|x| x.as_str()).unwrap_or("");
+    let ack = v.get("proof").and_then(|x| x.as_str()).unwrap_or("");
+    let want = pairing::pair_ack_proof(code.trim(), host_pub, &client_pub, &nonce);
+    use subtle::ConstantTimeEq as _;
+    if want.as_bytes().ct_eq(ack.as_bytes()).unwrap_u8() != 1 {
+        return Err("pairing acknowledgement failed".to_string());
+    }
+    let host_name = v.get("name").and_then(|x| x.as_str()).unwrap_or("PhantomVault peer");
+    pairing::add_peer(host_name, host_pub, &ip)?;
+    crate::security::access_log::log_event("p2p", "paired with peer");
+    Ok(())
+}
+
+/// Pull a peer's ciphertext head + blob (paired device signature).
+pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>), String> {
+    ensure_paired(addr, code)?;
+    let headers = signed_headers("GET", "/p2p/pull", "")?;
+    let (status, resp) = http_call(addr, "GET", "/p2p/pull", "", &headers)?;
+    if status != 200 {
+        return Err(format!("pull refused (HTTP {status})"));
+    }
     let v: serde_json::Value =
-        serde_json::from_slice(&raw[body_start..]).map_err(|e| format!("bad pull body: {e}"))?;
+        serde_json::from_slice(&resp).map_err(|e| format!("bad pull body: {e}"))?;
     let sha = v.get("sha").and_then(|s| s.as_str()).unwrap_or("").to_string();
     let mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0);
     let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("");
@@ -766,26 +954,17 @@ pub fn pull_peer(addr: SocketAddr, pin: &str) -> Result<(String, u64, Vec<u8>), 
     Ok((sha, mtime, blob))
 }
 
-/// Push our ciphertext blob to a peer (it SHA-verifies + freshness-gates).
-pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], pin: &str) -> Result<bool, String> {
-    let mut stream =
-        TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
-    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob), "pin": pin.trim()}).to_string();
-    let req = format!(
-        "POST /p2p/sync HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-        body.len()
-    );
-    stream.write_all(req.as_bytes()).map_err(|e| e.to_string())?;
-    let mut raw = Vec::new();
-    stream.read_to_end(&mut raw).map_err(|e| e.to_string())?;
-    let body_start = raw
-        .windows(4)
-        .position(|w| w == b"\r\n\r\n")
-        .map(|i| i + 4)
-        .unwrap_or(0);
+/// Push our ciphertext blob to a paired peer (it SHA-verifies + freshness-gates).
+pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], code: &str) -> Result<bool, String> {
+    ensure_paired(addr, code)?;
+    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string();
+    let headers = signed_headers("POST", "/p2p/sync", &body)?;
+    let (status, resp) = http_call(addr, "POST", "/p2p/sync", &body, &headers)?;
+    if status != 200 {
+        return Err(format!("push refused (HTTP {status})"));
+    }
     let v: serde_json::Value =
-        serde_json::from_slice(&raw[body_start..]).map_err(|e| format!("bad push body: {e}"))?;
+        serde_json::from_slice(&resp).map_err(|e| format!("bad push body: {e}"))?;
     if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
         Ok(v.get("adopted").and_then(|a| a.as_bool()).unwrap_or(false))
     } else {
@@ -810,20 +989,20 @@ pub fn sync_with_peer(
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
     let (remote_sha, remote_mtime, remote_blob) = pull_peer(addr, pin)?;
     if remote_sha == local_sha {
-        return Ok("📡 Already in sync (identical heads).".to_string());
+        return Ok("ðŸ“¡ Already in sync (identical heads).".to_string());
     }
     if remote_mtime > local_mtime {
         adopt_local(remote_blob)?;
         write_adopted_head(remote_mtime, &remote_sha);
         crate::security::access_log::log_event("p2p", &format!("adopted {remote_sha} from {ip}"));
-        return Ok("📡 Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
+        return Ok("ðŸ“¡ Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
     }
     if local_mtime > remote_mtime {
         push_peer(addr, &local_sha, local_mtime, &local_blob, pin)?;
         crate::security::access_log::log_event("p2p", &format!("pushed {local_sha} to {ip}"));
-        return Ok("📡 Synced with local peer via Wi-Fi! (pushed newer local)".to_string());
+        return Ok("ðŸ“¡ Synced with local peer via Wi-Fi! (pushed newer local)".to_string());
     }
-    Err("⚠️ Sync CONFLICT: same age, different vaults — local kept. Resolve manually.".to_string())
+    Err("âš ï¸ Sync CONFLICT: same age, different vaults â€” local kept. Resolve manually.".to_string())
 }
 
 #[cfg(test)]
@@ -833,7 +1012,7 @@ mod tests {
     #[test]
     fn beacon_roundtrips_and_rejects_foreign() {
         let b = beacon_json("1.2.3", "abc123");
-        // Loopback is self → filtered (echo guard). Use a fake LAN IP instead.
+        // Loopback is self â†’ filtered (echo guard). Use a fake LAN IP instead.
         let p = parse_beacon(&b, "192.168.1.99").unwrap();
         assert_eq!(p.version, "1.2.3");
         assert_eq!(p.head_sha, "abc123");
@@ -870,12 +1049,12 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
         assert_eq!(v["sha"], sha);
         assert_eq!(v["mtime"], 99);
-        // Same-sha push → no adopt.
+        // Same-sha push â†’ no adopt.
         let push = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", push.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 200);
         assert!(adopt.is_none());
-        // Newer blob → adopt with verified SHA (mtime must be strictly newer).
+        // Newer blob â†’ adopt with verified SHA (mtime must be strictly newer).
         let blob2 = b"newer-ciphertext";
         let sha2 = sha_hex(blob2);
         let push2 = serde_json::json!({"sha": sha2, "mtime": 2, "blob_b64": base64_encode(blob2)}).to_string();
@@ -885,20 +1064,20 @@ mod tests {
         assert_eq!(got_sha, sha2);
         assert_eq!(got_mtime, 2);
         assert_eq!(got_blob, blob2);
-        // Stale push (older mtime) → 409, local kept.
+        // Stale push (older mtime) â†’ 409, local kept.
         let stale = serde_json::json!({"sha": sha2, "mtime": 1, "blob_b64": base64_encode(blob2)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", stale.as_bytes(), blob, &sha, 5, "192.0.2.10");
         assert_eq!(st, 409);
         assert!(adopt.is_none());
-        // Missing mtime → 400.
+        // Missing mtime â†’ 400.
         let no_ts = serde_json::json!({"sha": sha2, "blob_b64": base64_encode(blob2)}).to_string();
         assert_eq!(route("POST", "/p2p/sync", no_ts.as_bytes(), blob, &sha, 1, "192.0.2.10").0, 400);
-        // Tampered body (sha lies) → 400, nothing adopted.
+        // Tampered body (sha lies) â†’ 400, nothing adopted.
         let evil = serde_json::json!({"sha": sha, "blob_b64": base64_encode(blob2)}).to_string();
         let (st, _, adopt) = route("POST", "/p2p/sync", evil.as_bytes(), blob, &sha, 1, "192.0.2.10");
         assert_eq!(st, 400);
         assert!(adopt.is_none());
-        // Oversize body → refused at framing.
+        // Oversize body â†’ refused at framing.
         let mut big = b"POST /p2p/sync HTTP/1.1\r\nContent-Length: 999999999\r\n\r\n".to_vec();
         big.extend_from_slice(b"{}");
         assert!(parse_http_request(&big).is_none());
@@ -916,49 +1095,44 @@ mod tests {
         let sha = sha_hex(&blob);
         let server = std::thread::spawn(move || {
             let _ = listener.set_nonblocking(false);
-            if let Ok((stream, _)) = listener.accept() {
-                serve_conn_with_blob(stream, blob, sha, 7);
+            for _ in 0..2 {
+                if let Ok((stream, _)) = listener.accept() {
+                    serve_conn_with_blob(stream, blob.clone(), sha.clone(), 7);
+                }
             }
         });
         let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
-        let (got_sha, mtime, got_blob) = pull_peer(addr, "").unwrap();
+        let dev = std::env::temp_dir().join(format!("pv-p2p-dev-e2e-{}", std::process::id()));
+        let paired = std::env::temp_dir().join(format!("pv-p2p-paired-e2e-{}", std::process::id()));
+        std::env::set_var("PV_P2P_DEVICE_FILE", &dev);
+        std::env::set_var("PV_P2P_PAIRED_FILE", &paired);
+        let _ = std::fs::remove_file(&dev);
+        let _ = std::fs::remove_file(&paired);
+        crate::sync::p2p_pairing::revoke_session();
+        let code = crate::sync::p2p_pairing::open_session();
+        let (got_sha, mtime, got_blob) = pull_peer(addr, &code).unwrap();
         assert_eq!(mtime, 7);
         assert_eq!(got_blob, b"loopback-ct");
         assert!(!got_sha.is_empty());
+        assert!(crate::sync::p2p_pairing::paired_count() >= 1);
         let _ = server.join();
+        let _ = std::fs::remove_file(&dev);
+        let _ = std::fs::remove_file(&paired);
     }
 
     /// Test-only serve with an injected blob (production serve_conn reads disk).
-    fn serve_conn_with_blob(mut stream: TcpStream, blob: Vec<u8>, sha: String, mtime: u64) {
-        let mut raw = Vec::new();
-        let mut tmp = [0u8; 4096];
-        let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
-        loop {
-            match stream.read(&mut tmp) {
-                Ok(0) => break,
-                Ok(n) => {
-                    raw.extend_from_slice(&tmp[..n]);
-                    if parse_http_request(&raw).is_some() {
-                        break;
-                    }
-                }
-                Err(_) => break,
-            }
-        }
-        let (status, body, _) = match parse_http_request(&raw) {
-            Some((m, p, b)) => route(&m, &p, &b, &blob, &sha, mtime, "127.0.0.1"),
-            None => (400, r#"{"ok":false}"#.into(), None),
-        };
-        let _ = stream.write_all(&http_response(status, &body));
+    fn serve_conn_with_blob(stream: TcpStream, blob: Vec<u8>, sha: String, mtime: u64) {
+        serve_conn_inner(stream, &blob, &sha, mtime);
     }
 
     /// Hermetic PIN sandbox: point PV_P2P_PIN_FILE at a temp path.
     /// Serialized: tests share one process env, so PIN tests take this lock.
     /// Non-PIN route tests take `pin_env_lock()` to exclude the window where
     /// a PIN test has the env pointed at a LIVE pin file (else ambient 403s).
-    static PIN_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
     fn pin_env_lock() -> std::sync::MutexGuard<'static, ()> {
-        PIN_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner())
+        crate::sync::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
     }
     fn with_pin_file(path: &str) -> std::sync::MutexGuard<'static, ()> {
         let guard = pin_env_lock();
@@ -977,7 +1151,7 @@ mod tests {
         let pinfile = sandbox.join("p2p_pin.dpapi");
         let _ = std::fs::remove_file(&pinfile);
         let _guard = with_pin_file(pinfile.to_str().unwrap());
-        // No PIN configured yet → open (verify-all) AND not required.
+        // No PIN configured yet â†’ open (verify-all) AND not required.
         assert!(!pin_required());
         assert!(verify_pin("anything"));
         let pin = get_or_create_pin().unwrap();
@@ -996,7 +1170,7 @@ mod tests {
     /// A PIN file that exists but cannot be turned into a PIN is a BROKEN
     /// pairing, not an absent one. The old `load_pin() -> Option<String>`
     /// returned `None` for every failure, so a corrupted or un-unsealable blob
-    /// made `pin_required()` false and `verify_pin()` accept ANY string — i.e.
+    /// made `pin_required()` false and `verify_pin()` accept ANY string â€” i.e.
     /// losing the DPAPI file silently disabled authentication and opened the LAN.
     #[test]
     fn corrupt_pin_file_fails_closed() {
@@ -1090,11 +1264,11 @@ mod tests {
         let pin = get_or_create_pin().unwrap();
         let blob = b"gate-ct";
         let sha = sha_hex(blob);
-        // GET without pin → 403; with pin → 200.
+        // GET without pin â†’ 403; with pin â†’ 200.
         assert_eq!(route("GET", "/p2p/pull", b"", blob, &sha, 1, "192.0.2.20").0, 403);
         let (st, _, _) = route("GET", &format!("/p2p/pull?pin={pin}"), b"", blob, &sha, 1, "192.0.2.20");
         assert_eq!(st, 200);
-        // POST without pin → 403; wrong pin → 403; right pin → proceeds.
+        // POST without pin â†’ 403; wrong pin â†’ 403; right pin â†’ proceeds.
         let mk = |pin_val: &str| {
             serde_json::json!({"sha": sha_hex(b"x"), "mtime": 9, "blob_b64": base64_encode(b"x"), "pin": pin_val}).to_string()
         };
@@ -1114,7 +1288,7 @@ mod tests {
         assert!(adopt_rollback_blocked(10, "abc", 10, "def"));
         // Same blob at the same age is idempotent, not an attack.
         assert!(!adopt_rollback_blocked(10, "abc", 10, "abc"));
-        // Never adopted anything yet → guard must not block.
+        // Never adopted anything yet â†’ guard must not block.
         assert!(!adopt_rollback_blocked(0, "", 1, "abc"));
         // Strictly newer head always wins.
         assert!(!adopt_rollback_blocked(10, "abc", 11, "def"));

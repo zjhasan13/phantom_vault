@@ -56,3 +56,6 @@ project_dir.txt
 com.phantomvault.host.json
 # P2P pairing PIN seal (per-device secret).
 p2p_pin.dpapi
+# A15: per-device Ed25519 key + DPAPI-sealed paired-device list.
+p2p_device.dpapi
+p2p_paired.dpapi

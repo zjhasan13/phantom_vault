@@ -8534,12 +8534,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let stop = Arc::clone(&p2p_stop);
                 std::thread::spawn(move || runner(stop));
             }
-            // Pairing PIN is created lazily and shown for cross-device entry.
-            match sync::p2p_local::get_or_create_pin() {
-                Ok(pin) => ui.set_p2p_pin(pin.into()),
-                Err(e) => ui.set_p2p_status(format!("⚠️ PIN unavailable: {e}").into()),
-            }
-            ui.set_p2p_status("📡 Discovery ON — port 52199. Scan to find peers.".into());
+            // A15: one-time pairing code (HMAC; never sent over the wire).
+            let code = sync::p2p_pairing::open_session();
+            ui.set_p2p_pin(code.into());
+            ui.set_p2p_status("📡 Discovery ON — port 52199. Enter this pairing code on the other device.".into());
             security::access_log::log_event("p2p", "discovery enabled");
         } else {
             p2p_stop.store(true, std::sync::atomic::Ordering::SeqCst);
@@ -8587,14 +8585,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = regen_weak.upgrade() else {
             return;
         };
-        match sync::p2p_local::regenerate_pin() {
-            Ok(pin) => {
-                ui.set_p2p_pin(pin.into());
-                ui.set_p2p_status("🔑 New pairing PIN — re-pair your devices.".into());
-                security::access_log::log_event("p2p", "pin regenerated");
-            }
-            Err(e) => ui.set_p2p_status(format!("⚠️ PIN regen failed: {e}").into()),
-        }
+        sync::p2p_pairing::revoke_session();
+        let pin = sync::p2p_pairing::open_session();
+        ui.set_p2p_pin(pin.into());
+        ui.set_p2p_status("🔑 New pairing code — enter it on the other device.".into());
+        security::access_log::log_event("p2p", "pairing code regenerated");
     });
     let syncpeer_weak = main_window.as_weak();
     let syncpeer_vault = Arc::clone(&active_vault);

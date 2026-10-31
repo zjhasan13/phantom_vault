@@ -75,6 +75,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
 | A17 | Same-origin favicon fetch | `src/core/favicon.rs` `icon_url`/`fetch_icon_bytes` (only `https://{domain}/favicon.ico`); DDG/Google constants deleted; extension harvest unchanged | With the network off, no favicon request leaves the machine; no third party sees vault domains |
 | A12 | Shadow-DOM field scan and observer | `content.js` `deepRoots`/`deepQuery`/`deepActiveElement`, deep `findFields`/`scanForms`, per-root `pvScheduleScan` observers, shadow-scoped `badgeGroup`; 3 new tests | Open web-component login forms get badges/fill and save prompts; closed roots are skipped |
+| A15a | Mandatory P2P pairing (device keys + signed requests) | `sync/p2p_pairing.rs` (Ed25519 device key, one-time 64-bit code, HMAC pair proof, DPAPI-sealed peer list, request signatures); `p2p_local.rs` 403 gate; UI shows the pairing code; 3 new tests | An unpaired client gets 403 and cannot pull/push; the code never crosses the wire; existing paired devices sync without re-entering it |
 | A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
@@ -91,7 +92,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 |---|---|---|---|---|
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
-| A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
+| A15b | Ephemeral P2P beacons + paired-device management | S2 | 1 day | Beacons carry only an ephemeral ID (no head SHA/mtime); Settings lists and forgets paired devices |
 | A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
 | A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
 
@@ -724,6 +725,34 @@ Honest limits:
 - **P2P adopt still uses the mtime/SHA guard** (`adopt_rollback_blocked`); the
   pair-based A15 work replaces it with the revision chain.
 
+### 5.19 Mandatory P2P pairing (A15a)
+
+P2P used to be open unless the user set an optional 6-digit PIN, which was sent
+over plaintext HTTP; an unpaired client could pull ciphertext. A15a closes that:
+
+- Each device has an Ed25519 key (DPAPI-sealed seed, `p2p_device.dpapi`).
+- Enabling discovery shows a **one-time 64-bit code** (5 min, single-use). The
+  client proves knowledge with `HMAC-SHA256(code, "pair|pub|nonce")`; the code
+  never crosses the LAN.
+- On success both sides store each other's public key in a DPAPI-sealed list
+  (`p2p_paired.dpapi`).
+- Every `GET /p2p/pull` and `POST /p2p/sync` must carry
+  `X-PV-Key` + `X-PV-Time` + `X-PV-Sig` (Ed25519 over
+  `method\npath\nsha256(body)\ntime`). Unpaired, tampered, or >120 s stale
+  requests get **403**.
+- The existing per-peer sync action treats the entered code as the pairing
+  secret: first sync pairs, later syncs reuse the pinned device key.
+
+Tests: device key stability + pairing roundtrip + single-use code; wrong
+proof/unpaired request refused; signed request verifies and rejects tampered
+body/path/stale time. Baselines: `cargo test` **499 passed / 1 ignored + 4
+pv_sign tests**; `npm test` 132/132.
+
+Honest limits (A15b): beacons still advertise the head SHA/mtime (no ephemeral
+ID yet), there is no paired-device list/forget UI, response bodies are not
+signed, and the pairing code is displayed as copyable text rather than a QR.
+Re-pair if a peer's LAN address changes.
+
 ---
 
 ## 6. Roadmap
@@ -816,7 +845,7 @@ competitors do not ship.
 | Client crypto transparency | Source + in-code threat notes | Source | Closed | **Lead** |
 | Post-quantum story | Hybrid hedge, documented limit | None public | None public | Lead on mechanism, parity on honesty |
 | Sync integrity | Yes (A16: `rev` + `prev_hash` inside AEAD; merge refuses stale/forked) | Server-side versioning | Server-side versioning | Parity on replay, behind on fresh-device anchor |
-| P2P / offline sync | Yes, open by default | No | No | **Lead**, but needs pairing |
+| P2P / offline sync | Yes, paired device keys (A15a) | No | No | **Lead**; ephemeral beacons pending (A15b) |
 | Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
 | Master-password rotation | Shipped (A5: old-password proof, atomic swap, `.bak.1.enc`) | Yes | Yes | Parity |
@@ -914,6 +943,11 @@ cargo test a6
 Select-String -Path src\storage.rs -Pattern 'CONTAINER_FORMAT|fn check_incoming|prev_hash|remember_head'
 Select-String -Path src\main.rs -Pattern 'check_incoming'
 cargo test a16_
+
+# A15a mandatory P2P pairing (device keys + signed requests)
+Select-String -Path src\sync\p2p_pairing.rs -Pattern 'accept_pair|verify_request|pair_request_proof|device_signing_key'
+Select-String -Path src\sync\p2p_local.rs -Pattern '/p2p/pair|pair this device|route_authed'
+cargo test p2p
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6
