@@ -299,6 +299,10 @@ harness (`tests/js/content-harness.mjs`).
 - **Linger.** A successful copy stores `now + ttl + 2 s` in `clip_until`; the
   host's shutdown path waits for that deadline before exiting, so closing the
   browser does not leave a secret behind when the port dies.
+- **The setting is honoured.** The popup sends its `clipboard_clear_sec` value
+  with every copy. The host clamps 5-120 s; `0` ("Never") still sets the
+  exclusion formats but drops the deadline, and the host is then free to exit
+  immediately instead of lingering.
 - **Web fallback.** Firefox, or a host that refuses the copy, falls back to
   `navigator.clipboard` plus the `pv_clip_clear` alarm. The popup states that
   the exclusion formats are unavailable on that path.
@@ -331,6 +335,7 @@ Three holes in `08dadd3` closed:
 | No Win+V exclusion | popup used `navigator.clipboard.writeText`, which cannot set exclusion formats | host `copy_secret` -> `copy_sensitive`, with `ttl+2 s` linger |
 | Unconditional clear | alarm blanked the clipboard with no ownership check, destroying a newer user copy | `pv_clip_hash` written at arm time; clear only on SHA-256 match |
 | Unbounded `verify_master` | unlimited constant-time comparisons = offline master-password oracle | 5 attempts/minute plus exponential backoff, shared failure counter with the item mutations |
+| Auto-clear setting ignored | native path always used the host default 30 s, and "Never" was clamped to 5 s | popup sends `clipboard_clear_sec` on every copy; host maps `0` to `CLIP_TTL_NEVER` (exclusion flags kept, deadline dropped) |
 
 `cargo test` and `npm test` (118) are green after the change.
 

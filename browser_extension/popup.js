@@ -19,6 +19,9 @@
     clipboard_clear_sec: 30,
     lang: "en",
   };
+  // Live copy of the auto-clear setting. The native host owns the timer, so it
+  // must be told the user's choice on every copy; 0 means "Never".
+  let clipClearSec = 30;
   const TOGGLES = [
     ["show_suggestions", "suggest_show", "Show autofill suggestions on form fields"],
     ["show_suggestions_on_icon_click_only", "suggest_icon_only", "Show suggestions only when icon is clicked"],
@@ -274,6 +277,8 @@
     document.querySelector("#settingsPane .hint").textContent = t("blocked_hint");
     const clipSel = document.getElementById("clipClear");
     if (clipSel) clipSel.value = String(cur.clipboard_clear_sec ?? 30);
+    clipClearSec = Number.isFinite(Number(cur.clipboard_clear_sec))
+      ? Number(cur.clipboard_clear_sec) : 30;
     const addBtn = document.getElementById("addItemBtn");
     if (addBtn) addBtn.textContent = t("add_item");
     for (const [key] of TOGGLES) inputs[key].checked = cur[key] !== false;
@@ -286,7 +291,10 @@
     out.match_mode = modeSel.value;
     out.blocked_domains = blockedEl.value.split("\n").map((d) => d.trim().toLowerCase()).filter(Boolean);
     const clipSel = document.getElementById("clipClear");
-    if (clipSel) out.clipboard_clear_sec = Number(clipSel.value);
+    if (clipSel) {
+      out.clipboard_clear_sec = Number(clipSel.value);
+      clipClearSec = out.clipboard_clear_sec;
+    }
     await chrome.storage.local.set(out);
     const hint = document.getElementById("saveHint");
     hint.textContent = t("saved");
@@ -1752,9 +1760,11 @@
   async function copySecret(text, seconds) {
     const t = String(text || "");
     if (!t) return false;
+    // Honour the settings choice on both paths: the host clamps 5-120 s and
+    // treats 0 as "Never"; the web fallback arms the same number.
+    const secs = Number.isFinite(Number(seconds)) ? Number(seconds) : clipClearSec;
     try {
-      const msg = { type: "PV_COPY_SECRET", text: t };
-      if (seconds !== undefined) msg.seconds = seconds;
+      const msg = { type: "PV_COPY_SECRET", text: t, seconds: secs };
       const r = await withTimeout(
         chrome.runtime.sendMessage(msg), QUERY_TIMEOUT_MS, "copy");
       if (r && r.ok) return true;

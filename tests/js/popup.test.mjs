@@ -113,6 +113,12 @@ test("A4: popup copies through the native host before the web clipboard", () => 
     "native path is tried before the web fallback");
   assert.match(body, /armClipboardClear\(await sha256Hex\(t\)\)/,
     "web fallback arms the hash-guarded clear");
+  assert.match(body, /seconds: secs/,
+    "native copy carries the configured auto-clear timeout");
+  assert.match(body, /clipClearSec/,
+    "the settings value is the fallback for the timeout");
+  assert.ok(!/msg\.seconds = seconds/.test(body),
+    "the timeout is always sent, never omitted");
   // Every popup copy surface goes through copySecret.
   assert.match(SRC, /await copySecret\(text\);\s*\n\s*btn\.textContent = t\("copied"\)/);
   assert.match(SRC, /await copySecret\(genOut\.textContent \|\| ""\)/);

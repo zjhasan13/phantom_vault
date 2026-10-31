@@ -252,9 +252,17 @@ pub(crate) const CLIP_SECRET_MAX_BYTES: usize = 4096;
 pub(crate) const CLIP_TTL_DEFAULT: u64 = 30;
 pub(crate) const CLIP_TTL_MIN: u64 = 5;
 pub(crate) const CLIP_TTL_MAX: u64 = 120;
+/// `ttl_secs: 0` is the popup's "Never" setting. The copy still gets the
+/// Win+V/cloud exclusion; only the auto-clear deadline is dropped, so the
+/// worker is handed a day-long timer instead of an immediate one.
+pub(crate) const CLIP_TTL_NEVER: u64 = 86_400;
 
 pub(crate) fn clip_ttl_secs(raw: Option<u64>) -> u64 {
-    raw.unwrap_or(CLIP_TTL_DEFAULT).clamp(CLIP_TTL_MIN, CLIP_TTL_MAX)
+    match raw {
+        None => CLIP_TTL_DEFAULT,
+        Some(0) => 0,
+        Some(v) => v.clamp(CLIP_TTL_MIN, CLIP_TTL_MAX),
+    }
 }
 
 pub(crate) fn clip_secret_ok(text: &str) -> bool {
@@ -3023,10 +3031,17 @@ pub fn serve_cli() -> i32 {
                     encode_frame(&err("bad secret"))
                 } else {
                     let ttl = clip_ttl_secs(req.get("ttl_secs").and_then(|v| v.as_u64()));
-                    match crate::windows_native::clipboard::copy_sensitive(text, ttl, || {}) {
+                    // "Never" keeps the privacy flags but drops the deadline.
+                    let clear_secs = if ttl == 0 { CLIP_TTL_NEVER } else { ttl };
+                    match crate::windows_native::clipboard::copy_sensitive(text, clear_secs, || {}) {
                         Ok(()) => {
-                            let until =
-                                now_secs().saturating_add(ttl).saturating_add(2);
+                            // No linger when the user asked for "Never": the
+                            // host may exit as soon as the port closes.
+                            let until = if ttl == 0 {
+                                0
+                            } else {
+                                now_secs().saturating_add(ttl).saturating_add(2)
+                            };
                             clip_until.store(until, Ordering::SeqCst);
                             crate::security::access_log::log_event("bridge-copy", "native");
                             encode_frame(&serde_json::json!({
@@ -4128,7 +4143,8 @@ mod tests {
     #[test]
     fn copy_secret_bounds_ttl_and_text() {
         assert_eq!(clip_ttl_secs(None), CLIP_TTL_DEFAULT);
-        assert_eq!(clip_ttl_secs(Some(0)), CLIP_TTL_MIN);
+        // "Never" survives the clamp: 0 means no auto-clear deadline.
+        assert_eq!(clip_ttl_secs(Some(0)), 0);
         assert_eq!(clip_ttl_secs(Some(1)), CLIP_TTL_MIN);
         assert_eq!(clip_ttl_secs(Some(30)), 30);
         assert_eq!(clip_ttl_secs(Some(CLIP_TTL_MAX)), CLIP_TTL_MAX);
