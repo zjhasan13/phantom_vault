@@ -1471,8 +1471,7 @@
     touchActivityPing();
     const btn = ev.currentTarget;
     try {
-      await navigator.clipboard.writeText(genOut.textContent || "");
-      armClipboardClear();
+      await copySecret(genOut.textContent || "");
       btn.textContent = "✅";
       btn.title = t("copied");
       btn.setAttribute("aria-label", t("copied"));
@@ -1723,17 +1722,50 @@
     });
   }
   // A4: after the popup writes a secret, ask the service worker to arm the
-  // global auto-clear alarm. Fire-and-forget: the copy already succeeded.
-  function armClipboardClear() {
+  // global auto-clear alarm. The hash proves at fire time that the clipboard
+  // still holds OUR text, so a newer user copy is never destroyed.
+  function armClipboardClear(hash) {
     try {
-      const p = chrome.runtime.sendMessage({ type: "PV_CLIP_ARM" });
+      const msg = { type: "PV_CLIP_ARM" };
+      if (hash) msg.hash = hash;
+      const p = chrome.runtime.sendMessage(msg);
       if (p && p.catch) p.catch(() => {});
     } catch (_) {}
   }
+  // SHA-256 hex of the copied text (never the text itself) for the
+  // hash-guarded clear. Empty when WebCrypto is unavailable: the caller then
+  // skips the web alarm instead of arming a blind clear.
+  async function sha256Hex(text) {
+    try {
+      if (!globalThis.crypto || !crypto.subtle) return "";
+      const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(String(text)));
+      return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+    } catch (_) {
+      return "";
+    }
+  }
+  // A4: every secret copy goes through the native host first. Only
+  // `copy_sensitive` sets the Windows exclusion formats, so Win+V and the
+  // cloud clipboard never see the value; the host also owns the timer. The
+  // web clipboard is the Firefox / host-unavailable fallback and is
+  // hash-guarded by the service-worker alarm.
+  async function copySecret(text, seconds) {
+    const t = String(text || "");
+    if (!t) return false;
+    try {
+      const msg = { type: "PV_COPY_SECRET", text: t };
+      if (seconds !== undefined) msg.seconds = seconds;
+      const r = await withTimeout(
+        chrome.runtime.sendMessage(msg), QUERY_TIMEOUT_MS, "copy");
+      if (r && r.ok) return true;
+    } catch (_) {}
+    await navigator.clipboard.writeText(t);
+    armClipboardClear(await sha256Hex(t));
+    return true;
+  }
   async function clipText(text, btn) {
     try {
-      await navigator.clipboard.writeText(text || "");
-      armClipboardClear();
+      await copySecret(text);
       btn.textContent = t("copied");
     }
     catch (_) { btn.textContent = t("blocked_cb"); }
@@ -1877,8 +1909,7 @@
         if (btn) btn.textContent = restore;
         return;
       }
-      await navigator.clipboard.writeText(live);
-      armClipboardClear();
+      await copySecret(live);
       if (btn) {
         btn.textContent = t("copied");
         setTimeout(() => { btn.textContent = restore; }, 1500);
@@ -2031,12 +2062,12 @@
         const full = await fetchEntry(1, e.id);
         if (!full.totp) { btn.textContent = "—"; return; }
         try {
-          await navigator.clipboard.writeText(full.totp);
-          armClipboardClear();
+          await copySecret(full.totp);
           btn.textContent = full.totp;
           btn.dataset.hasCode = "1";
           setTimeout(() => {
-            navigator.clipboard.writeText("").catch(() => {});
+            // The native host (or the hash-guarded alarm) owns the blank;
+            // never write an unconditional "" here.
             btn.textContent = "🔑 2FA";
             delete btn.dataset.hasCode;
           }, 30000);

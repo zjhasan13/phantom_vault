@@ -665,26 +665,40 @@ test("A3: PV_REPROMPT is refused from a page", async () => {
 
 // ---- A4: clipboard auto-clear ----
 
-test("A4: PV_CLIP_ARM uses the configured timeout and schedules one alarm", async () => {
+const HASH_A = "a".repeat(64);
+const HASH_B = "b".repeat(64);
+
+test("A4: PV_CLIP_ARM stores the hash and schedules one alarm", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.clipboard_clear_sec = 45;
   const before = Date.now();
-  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM" });
+  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", hash: HASH_A });
   assert.equal(r.ok, true);
   assert.equal(r.seconds, 45);
   const armed = chrome.__state.alarms.filter((a) => a.name === "pv_clip_clear");
   assert.equal(armed.length, 1);
   assert.ok(armed[0].info.when >= before + 45000 - 50);
   assert.ok(chrome.__state.sessionStore.pv_clip_clear_at >= before + 45000);
+  assert.equal(chrome.__state.sessionStore.pv_clip_hash, HASH_A);
   assert.ok(chrome.__state.alarmsCleared.includes("pv_clip_clear"));
+});
+
+test("A4: PV_CLIP_ARM without a hash refuses to arm a blind clear", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.clipboard_clear_sec = 45;
+  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM" });
+  assert.equal(r.armed, false);
+  assert.equal(
+    chrome.__state.alarms.filter((a) => a.name === "pv_clip_clear").length, 0);
+  assert.equal(chrome.__state.sessionStore.pv_clip_hash, undefined);
 });
 
 test("A4: PV_CLIP_ARM clamps short values and honours an explicit override", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.clipboard_clear_sec = 30;
-  let r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 1 });
+  let r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 1, hash: HASH_A });
   assert.equal(r.seconds, 5, "minimum 5s");
-  r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 99999 });
+  r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", seconds: 99999, hash: HASH_A });
   assert.equal(r.seconds, 3600, "maximum 1h");
 });
 
@@ -692,14 +706,17 @@ test("A4: timeout 0 disarms and clears the stored deadline", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.clipboard_clear_sec = 0;
   chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
-  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM" });
+  chrome.__state.sessionStore.pv_clip_hash = HASH_A;
+  const r = await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", hash: HASH_A });
   assert.equal(r.armed, false);
   assert.equal(chrome.__state.sessionStore.pv_clip_clear_at, undefined);
+  assert.equal(chrome.__state.sessionStore.pv_clip_hash, undefined);
 });
 
 test("A4: the alarm clears through the offscreen document and drops the marker", async () => {
   const { chrome } = fresh();
   chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
+  chrome.__state.sessionStore.pv_clip_hash = HASH_A;
   chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
   await flushTicks();
   assert.equal(chrome.__state.offscreenDocs.length, 1);
@@ -707,18 +724,67 @@ test("A4: the alarm clears through the offscreen document and drops the marker",
   const clear = chrome.__state.runtimeMessages.filter(
     (m) => m && m.target === "offscreen" && m.type === "PV_CLIP_CLEAR");
   assert.equal(clear.length, 1);
+  assert.equal(clear[0].hash, HASH_A, "clear is hash-guarded");
   assert.equal(chrome.__state.sessionStore.pv_clip_clear_at, undefined);
+  assert.equal(chrome.__state.sessionStore.pv_clip_hash, undefined);
+});
+
+test("A4: a stale alarm without a hash never blanks the clipboard", async () => {
+  const { chrome } = fresh();
+  chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
+  chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
+  await flushTicks();
+  assert.equal(chrome.__state.offscreenDocs.length, 0);
+  assert.equal(chrome.__state.sentToTabs.length, 0);
 });
 
 test("A4: without offscreen support the alarm falls back to content scripts", async () => {
   const { chrome } = fresh();
   delete chrome.offscreen;
   chrome.__state.tabList = [{ id: 7 }, { id: 8 }];
+  chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
+  chrome.__state.sessionStore.pv_clip_hash = HASH_B;
   chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
   await flushTicks();
   const hits = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_CLIP_CLEAR");
   assert.deepEqual(hits.map((x) => x.id).sort(), [7, 8]);
   assert.ok(hits.every((x) => x.opts && x.opts.frameId === 0));
+  assert.ok(hits.every((x) => x.msg.hash === HASH_B));
+});
+
+test("A4: re-arming with a new secret replaces the old hash", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.clipboard_clear_sec = 30;
+  await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", hash: HASH_A });
+  await sendMessage(onMessage, chrome, { type: "PV_CLIP_ARM", hash: HASH_B });
+  assert.equal(chrome.__state.sessionStore.pv_clip_hash, HASH_B);
+});
+
+test("A4: PV_COPY_SECRET proxies copy_secret to the native host", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome,
+    { type: "PV_COPY_SECRET", text: "s3cret", seconds: 45 });
+  await flushTicks();
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "copy_secret");
+  assert.equal(sent.text, "s3cret");
+  assert.equal(sent.ttl_secs, 45);
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn({ ok: true, native: true, ttl_secs: 45 }));
+  const r = await p;
+  assert.equal(r.ok, true);
+  assert.equal(r.native, true);
+  assert.equal(chrome.__state.alarms.filter((a) => a.name === "pv_clip_clear").length, 0,
+    "native host owns the timer");
+});
+
+test("A4: a page cannot use PV_COPY_SECRET as a clipboard service", async () => {
+  const { chrome, onMessage } = fresh();
+  const r = await sendMessage(onMessage, chrome,
+    { type: "PV_COPY_SECRET", text: "x" },
+    { tab: { id: 3, url: "https://evil.example/" } });
+  assert.equal(r.ok, false);
+  assert.equal(chrome.__state.postedNative.length, 0);
 });
 
 test("A4: unrelated alarms stay silent for the clipboard path", async () => {

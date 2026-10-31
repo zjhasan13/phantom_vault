@@ -104,13 +104,26 @@ test("A3: edit flow never overwrites a TOTP secret with a live code", () => {
 
 // ---- A4: clipboard auto-clear ----
 
-test("A4: every popup copy arms the background auto-clear alarm", () => {
-  const arm = SRC.match(/function armClipboardClear\(\) \{([\s\S]*?)\n  \}/);
+test("A4: popup copies through the native host before the web clipboard", () => {
+  const copy = SRC.match(/async function copySecret\(text, seconds\) \{([\s\S]*?)\n  \}/);
+  assert.ok(copy, "copySecret present");
+  const body = copy[1];
+  assert.ok(body.includes('type: "PV_COPY_SECRET"'), "native copy requested");
+  assert.ok(body.indexOf("PV_COPY_SECRET") < body.indexOf("navigator.clipboard.writeText"),
+    "native path is tried before the web fallback");
+  assert.match(body, /armClipboardClear\(await sha256Hex\(t\)\)/,
+    "web fallback arms the hash-guarded clear");
+  // Every popup copy surface goes through copySecret.
+  assert.match(SRC, /await copySecret\(text\);\s*\n\s*btn\.textContent = t\("copied"\)/);
+  assert.match(SRC, /await copySecret\(genOut\.textContent \|\| ""\)/);
+  assert.match(SRC, /await copySecret\(live\)/);
+  assert.match(SRC, /await copySecret\(full\.totp\)/);
+  // No unconditional clipboard blank: the native timer and the hash-guarded
+  // alarm own the clear now.
+  assert.ok(!/navigator\.clipboard\.writeText\(""\)/.test(SRC),
+    "popup must never blank the clipboard blind");
+  const arm = SRC.match(/function armClipboardClear\(hash\) \{([\s\S]*?)\n  \}/);
   assert.ok(arm, "armClipboardClear present");
   assert.match(arm[1], /type: "PV_CLIP_ARM"/);
-  const clip = SRC.match(/async function clipText\(text, btn\) \{([\s\S]*?)\n  \}/);
-  assert.ok(clip, "clipText present");
-  assert.match(clip[1], /armClipboardClear\(\)/);
-  assert.match(SRC, /armClipboardClear\(\);\s*\n\s*btn\.textContent = full\.totp;/, "2FA copy arms it too");
-  assert.match(SRC, /await navigator\.clipboard\.writeText\(genOut\.textContent \|\| ""\);\s*\n\s*armClipboardClear\(\);/, "generator copy arms it");
+  assert.match(arm[1], /msg\.hash = hash/);
 });

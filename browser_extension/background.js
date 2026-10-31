@@ -225,50 +225,71 @@ async function ensureOffscreen() {
 
 async function clearClipboardNow() {
   let cleared = false;
+  // A4: the armed hash identifies OUR secret. Never blank the clipboard
+  // blind — the user may have copied something else inside the window.
+  // Native copies are cleared by the host's own hash-guarded timer, so a
+  // missing hash (or a replaced secret) is a harmless no-op here.
+  let wantHash = "";
+  try {
+    const s = await chrome.storage.session.get({ pv_clip_hash: "" });
+    wantHash = String(s.pv_clip_hash || "");
+  } catch (_) {}
+  if (!wantHash) {
+    try {
+      await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_hash", "pv_clip_token"]);
+    } catch (_) {}
+    return { ok: true, cleared: false, skipped: true };
+  }
   // Preferred: offscreen document owns a DOM clipboard for the SW lifetime.
   try {
     if (await ensureOffscreen()) {
-      const r = await chrome.runtime.sendMessage({ target: "offscreen", type: "PV_CLIP_CLEAR" });
+      const r = await chrome.runtime.sendMessage({
+        target: "offscreen", type: "PV_CLIP_CLEAR", hash: wantHash,
+      });
       cleared = !!(r && r.ok);
     }
   } catch (_) {}
   // Fallback: a content script can blank the clipboard while its page is
-  // focused. Best-effort — a denied write leaves the secret to expire with the
-  // user's next copy, never silently claims success.
+  // focused. The content script re-hashes the current text and refuses a
+  // mismatch, so this is still match-guarded.
   if (!cleared) {
     try {
       const tabs = await chrome.tabs.query({});
       await Promise.all((tabs || []).map((t) => {
         if (!t || t.id == null) return null;
-        return Promise.resolve(chrome.tabs.sendMessage(t.id, { type: "PV_CLIP_CLEAR" }, { frameId: 0 }))
+        return Promise.resolve(chrome.tabs.sendMessage(
+          t.id, { type: "PV_CLIP_CLEAR", hash: wantHash }, { frameId: 0 }))
           .then(() => { cleared = true; })
           .catch(() => {});
       }));
     } catch (_) {}
   }
   try {
-    await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_token"]);
+    await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_hash", "pv_clip_token"]);
   } catch (_) {}
   return { ok: true, cleared };
 }
 
-async function armClipboardClear(rawSeconds) {
+async function armClipboardClear(rawSeconds, hash) {
   const cfg = await chrome.storage.local.get({ clipboard_clear_sec: CLIP_DEFAULT_SEC });
   const seconds = clipSeconds(
     rawSeconds === undefined || rawSeconds === null ? cfg.clipboard_clear_sec : rawSeconds,
   );
+  const clipHash = typeof hash === "string" ? hash.trim().toLowerCase() : "";
   try {
     if (chrome.alarms && typeof chrome.alarms.clear === "function") {
       chrome.alarms.clear(CLIP_ALARM);
     }
   } catch (_) {}
-  if (!seconds) {
-    try { await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_token"]); } catch (_) {}
+  // No hash means no safe clear: an alarm that cannot prove ownership would
+  // delete the user's next copy. Disarm instead of arming blind.
+  if (!seconds || !/^[0-9a-f]{64}$/.test(clipHash)) {
+    try { await chrome.storage.session.remove(["pv_clip_clear_at", "pv_clip_hash", "pv_clip_token"]); } catch (_) {}
     return { ok: true, armed: false, seconds: 0 };
   }
   const at = Date.now() + seconds * 1000;
   try {
-    await chrome.storage.session.set({ pv_clip_clear_at: at });
+    await chrome.storage.session.set({ pv_clip_clear_at: at, pv_clip_hash: clipHash });
   } catch (_) {}
   try {
     if (chrome.alarms && typeof chrome.alarms.create === "function") {
@@ -303,6 +324,9 @@ rearmClipboardClear();
 // 30 s cache in a background tab must not keep authorizing page actions after
 // the vault locked. Content treats this as "re-probe on next action".
 function broadcastGateLocked() {
+  // A4: a lock verdict is an immediate-clear event for the web fallback path
+  // too (hash-guarded, so it only fires when our secret is still on top).
+  try { clearClipboardNow().catch(() => {}); } catch (_) {}
   try {
     if (!chrome.tabs || typeof chrome.tabs.sendMessage !== "function") return;
     const send = (tabs) => {
@@ -433,13 +457,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       await touchActivity();
       return { ok: true };
     }
-    // A4: clipboard auto-clear. Popup/content already wrote the secret; this
-    // only schedules the blank (never receives the secret itself).
+    // A4: clipboard auto-clear. The popup/content already wrote the secret;
+    // this only schedules the blank and stores the hash that proves the
+    // clipboard is still ours at fire time (never the secret itself).
     if (msg.type === "PV_CLIP_ARM") {
-      return await armClipboardClear(msg.seconds);
+      return await armClipboardClear(msg.seconds, msg.hash);
     }
     if (msg.type === "PV_CLIP_CLEAR") {
       return await clearClipboardNow();
+    }
+    // A4: native copy. Only the host can set the Win+V/cloud exclusion
+    // formats; the web clipboard API cannot. Popup-only (sender check below)
+    // so a page can never use the bridge as a clipboard service.
+    if (msg.type === "PV_COPY_SECRET") {
+      const denied = !!(sender && sender.tab) ? "copy is popup-only" : "";
+      if (denied) return { ok: false, error: denied };
+      touchActivity();
+      const payload = { cmd: "copy_secret", text: String(msg.text || "") };
+      if (msg.seconds !== undefined && msg.seconds !== null) payload.ttl_secs = Number(msg.seconds);
+      try {
+        return await hostRequest(payload);
+      } catch (e) {
+        return { ok: false, error: String((e && e.message) || e) };
+      }
     }
     // A3: item editor. Popup-only — a content script must never create, edit,
     // or trash a vault row (its sender carries a tab).

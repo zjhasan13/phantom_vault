@@ -212,6 +212,55 @@ fn assert_rate_ok() -> bool {
     n < 100
 }
 
+/// A4: `verify_master` is a master-password oracle if left unbounded. Five
+/// attempts per minute per host process, plus the exponential sleep the serve
+/// loop applies to failures (`verify_master_backoff_ms`). A separate counter
+/// from `ASSERT_*` so WebAuthn traffic can never reset or starve the reprompt
+/// brake. Lock-free atomics — never panics.
+const VERIFY_MASTER_PER_MIN: u64 = 5;
+static VM_COUNT: AtomicU64 = AtomicU64::new(0);
+static VM_WINDOW: AtomicU64 = AtomicU64::new(0);
+
+fn verify_master_rate_ok() -> bool {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 60)
+        .unwrap_or(0);
+    if VM_WINDOW.load(Ordering::SeqCst) != now {
+        VM_WINDOW.store(now, Ordering::SeqCst);
+        VM_COUNT.store(1, Ordering::SeqCst);
+        return true;
+    }
+    VM_COUNT.fetch_add(1, Ordering::SeqCst) < VERIFY_MASTER_PER_MIN
+}
+
+/// Failure-count backoff: 250 ms, 500 ms, 1 s, 2 s, then a 4 s cap.
+pub(crate) fn verify_master_backoff_ms(fails: u32) -> u64 {
+    250u64.saturating_mul(1u64 << fails.min(4))
+}
+
+#[cfg(test)]
+pub(crate) fn reset_verify_master_rate() {
+    VM_COUNT.store(0, Ordering::SeqCst);
+    VM_WINDOW.store(0, Ordering::SeqCst);
+}
+
+/// A4: native clipboard copy bounds (`copy_secret`). The host performs the
+/// real copy so `copy_sensitive`'s Win+V/cloud exclusion applies; the web
+/// clipboard API cannot set those formats.
+pub(crate) const CLIP_SECRET_MAX_BYTES: usize = 4096;
+pub(crate) const CLIP_TTL_DEFAULT: u64 = 30;
+pub(crate) const CLIP_TTL_MIN: u64 = 5;
+pub(crate) const CLIP_TTL_MAX: u64 = 120;
+
+pub(crate) fn clip_ttl_secs(raw: Option<u64>) -> u64 {
+    raw.unwrap_or(CLIP_TTL_DEFAULT).clamp(CLIP_TTL_MIN, CLIP_TTL_MAX)
+}
+
+pub(crate) fn clip_secret_ok(text: &str) -> bool {
+    !text.is_empty() && text.len() <= CLIP_SECRET_MAX_BYTES
+}
+
 /// Phase 3: desktop-minted UV tokens. `request_uv` runs the Windows Hello
 /// system prompt (host process, blocking) and mints a single-use token
 /// bound to one rp_id with a 120s TTL. `assert_full`/`attest` consume it.
@@ -2816,6 +2865,10 @@ pub fn serve_cli() -> i32 {
     // A3: per-session failed master-reprompt counter (exponential delay only,
     // never persisted; a successful check resets it).
     let mut reprompt_fails: u32 = 0;
+    // A4: clipboard timer deadline (unix secs). `copy_sensitive`'s worker
+    // thread lives in THIS process, so the watchdog and the post-EOF path
+    // must keep the process alive until the timer fired (ttl + 2 s margin).
+    let clip_until = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
     // M1: watchdog — the loop blocks on stdin, so per-frame checks alone
     // leave the decrypted vault in heap indefinitely while idle. Poll every
     // 5 s: token deleted (app locked) / idle / max lifetime → hard exit.
@@ -2830,6 +2883,7 @@ pub fn serve_cli() -> i32 {
             .unwrap_or(0),
     ));
     let watch_last2 = watch_last.clone();
+    let clip_until2 = clip_until.clone();
     std::thread::spawn(move || loop {
         std::thread::sleep(std::time::Duration::from_secs(5));
         let now = std::time::SystemTime::now()
@@ -2838,10 +2892,22 @@ pub fn serve_cli() -> i32 {
             .unwrap_or(0);
         let idle = now.saturating_sub(watch_last2.load(std::sync::atomic::Ordering::SeqCst));
         let total = watch_start.elapsed().as_secs();
-        if !std::path::Path::new(HELLO_TOKEN_FILE).exists()
-            || session_idle_expired(idle)
-            || total > MAX_SECS
-        {
+        if !std::path::Path::new(HELLO_TOKEN_FILE).exists() {
+            // Lock is an immediate-clear event: the guarded flush only fires
+            // when our secret is still on the clipboard.
+            crate::windows_native::clipboard::flush_now();
+            bridge_log("host watchdog: locked — cleared clipboard, exiting");
+            std::process::exit(0);
+        }
+        if total > MAX_SECS {
+            bridge_log("host watchdog expired/locked — exiting");
+            std::process::exit(0);
+        }
+        // A4: a live clipboard timer must outlive the 60 s idle TTL.
+        if now < clip_until2.load(std::sync::atomic::Ordering::SeqCst) {
+            continue;
+        }
+        if session_idle_expired(idle) {
             bridge_log("host watchdog expired/locked — exiting");
             std::process::exit(0);
         }
@@ -2850,9 +2916,19 @@ pub fn serve_cli() -> i32 {
         // Live lock state: token deleted (app locked) / idle / max lifetime
         // → zeroize + exit instead of serving secrets indefinitely.
         let token_alive = std::path::Path::new(HELLO_TOKEN_FILE).exists();
-        if !token_alive
-            || session_idle_expired(last_active.elapsed().as_secs())
-            || start.elapsed().as_secs() > MAX_SECS
+        let clip_linger =
+            now_secs() < clip_until.load(std::sync::atomic::Ordering::SeqCst);
+        if !token_alive {
+            use zeroize::Zeroize;
+            crate::windows_native::clipboard::flush_now();
+            let mut m = master.expose_secret().clone();
+            m.zeroize();
+            bridge_log("host session locked — cleared clipboard, exiting");
+            break;
+        }
+        if !clip_linger
+            && (session_idle_expired(last_active.elapsed().as_secs())
+                || start.elapsed().as_secs() > MAX_SECS)
         {
             use zeroize::Zeroize;
             let mut m = master.expose_secret().clone();
@@ -2896,6 +2972,21 @@ pub fn serve_cli() -> i32 {
         if req_cmd == "verify_master" {
             let pwd = req.get("password").and_then(|v| v.as_str()).unwrap_or("");
             let now = crate::models::current_timestamp();
+            // A4: bound the oracle before touching the comparison. A blocked
+            // attempt still counts toward the per-session failure backoff.
+            if !verify_master_rate_ok() {
+                reprompt_fails = reprompt_fails.saturating_add(1);
+                crate::security::access_log::log_event("bridge-reprompt", "rate-limited");
+                std::thread::sleep(std::time::Duration::from_millis(
+                    verify_master_backoff_ms(reprompt_fails),
+                ));
+                let frame = encode_frame(&err("too many attempts — try again in a minute"));
+                if output.write_all(&frame).and(output.flush()).is_err() {
+                    break;
+                }
+                last_active = std::time::Instant::now();
+                continue;
+            }
             let ok = !pwd.is_empty()
                 && ct_eq_bytes(pwd.as_bytes(), master.expose_secret().as_bytes());
             let frame = if ok {
@@ -2910,9 +3001,43 @@ pub fn serve_cli() -> i32 {
                 reprompt_fails = reprompt_fails.saturating_add(1);
                 crate::security::access_log::log_event("bridge-reprompt", "denied");
                 std::thread::sleep(std::time::Duration::from_millis(
-                    250u64.saturating_mul(1u64 << reprompt_fails.min(4)),
+                    verify_master_backoff_ms(reprompt_fails),
                 ));
                 encode_frame(&err("wrong master password"))
+            };
+            if output.write_all(&frame).and(output.flush()).is_err() {
+                break;
+            }
+            last_active = std::time::Instant::now();
+            continue;
+        }
+        // A4: native copy. `navigator.clipboard.writeText` cannot set the
+        // Windows exclusion formats, so the host performs the real copy and
+        // keeps its timer thread alive (watchdog/EOF linger below).
+        if req_cmd == "copy_secret" {
+            let frame = if !bridge_unlocked() {
+                encode_frame(&err("vault locked"))
+            } else {
+                let text = req.get("text").and_then(|v| v.as_str()).unwrap_or("");
+                if !clip_secret_ok(text) {
+                    encode_frame(&err("bad secret"))
+                } else {
+                    let ttl = clip_ttl_secs(req.get("ttl_secs").and_then(|v| v.as_u64()));
+                    match crate::windows_native::clipboard::copy_sensitive(text, ttl, || {}) {
+                        Ok(()) => {
+                            let until =
+                                now_secs().saturating_add(ttl).saturating_add(2);
+                            clip_until.store(until, Ordering::SeqCst);
+                            crate::security::access_log::log_event("bridge-copy", "native");
+                            encode_frame(&serde_json::json!({
+                                "ok": true,
+                                "native": true,
+                                "ttl_secs": ttl,
+                            }))
+                        }
+                        Err(e) => encode_frame(&err(format!("clipboard: {e}"))),
+                    }
+                }
             };
             if output.write_all(&frame).and(output.flush()).is_err() {
                 break;
@@ -2970,6 +3095,21 @@ pub fn serve_cli() -> i32 {
         if output.write_all(&frame).and(output.flush()).is_err() {
             break;
         }
+    }
+    // A4: EOF (browser/port closed) must not kill the clipboard timer.
+    // `copy_sensitive`'s worker lives in THIS process, so keep the process —
+    // not the vault loop — alive until the timer fired (ttl + 2 s). A lock
+    // during the linger clears immediately through the guarded flush.
+    loop {
+        let until = clip_until.load(Ordering::SeqCst);
+        if until == 0 || now_secs() >= until {
+            break;
+        }
+        if !std::path::Path::new(HELLO_TOKEN_FILE).exists() || !desktop_alive() {
+            crate::windows_native::clipboard::flush_now();
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
     0
 }
@@ -3960,6 +4100,43 @@ mod tests {
         assert!(!save_rate_ok());
         reset_save_rate();
         assert!(save_rate_ok());
+    }
+
+    #[test]
+    fn verify_master_brake_allows_five_then_rejects() {
+        let _rg = RATE_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        reset_verify_master_rate();
+        for _ in 0..VERIFY_MASTER_PER_MIN {
+            assert!(verify_master_rate_ok());
+        }
+        assert!(!verify_master_rate_ok());
+        // New window re-arms.
+        reset_verify_master_rate();
+        assert!(verify_master_rate_ok());
+    }
+
+    #[test]
+    fn verify_master_backoff_grows_then_caps() {
+        assert_eq!(verify_master_backoff_ms(0), 250);
+        assert_eq!(verify_master_backoff_ms(1), 500);
+        assert_eq!(verify_master_backoff_ms(2), 1000);
+        assert_eq!(verify_master_backoff_ms(3), 2000);
+        assert_eq!(verify_master_backoff_ms(4), 4000);
+        assert_eq!(verify_master_backoff_ms(99), 4000);
+    }
+
+    #[test]
+    fn copy_secret_bounds_ttl_and_text() {
+        assert_eq!(clip_ttl_secs(None), CLIP_TTL_DEFAULT);
+        assert_eq!(clip_ttl_secs(Some(0)), CLIP_TTL_MIN);
+        assert_eq!(clip_ttl_secs(Some(1)), CLIP_TTL_MIN);
+        assert_eq!(clip_ttl_secs(Some(30)), 30);
+        assert_eq!(clip_ttl_secs(Some(CLIP_TTL_MAX)), CLIP_TTL_MAX);
+        assert_eq!(clip_ttl_secs(Some(9999)), CLIP_TTL_MAX);
+        assert!(clip_secret_ok("s3cret"));
+        assert!(!clip_secret_ok(""));
+        assert!(clip_secret_ok(&"a".repeat(CLIP_SECRET_MAX_BYTES)));
+        assert!(!clip_secret_ok(&"a".repeat(CLIP_SECRET_MAX_BYTES + 1)));
     }
 
     #[test]

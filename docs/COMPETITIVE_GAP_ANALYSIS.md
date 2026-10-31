@@ -1,6 +1,7 @@
 # PhantomVault vs Bitwarden / 1Password — Gap Analysis and Roadmap
 
-Status: 2026-10-26. Scope: this repository at `main` (post `72a220d`), plus the
+Status: 2026-10-31. Scope: this repository at `main` (post `08dadd3` plus the
+A3/A4 hardening pass), plus the
 installed Bitwarden Edge bundle `2026.2.0_0` used only for UI/flow parity.
 Every claim below cites a file and line in this tree. No claim is based on
 marketing copy.
@@ -63,7 +64,8 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A1 | Proactive idle lock pushes `PV_GATE_LOCKED` | `background.js:219-240`; 5 new tests | Locked state reaches every tab within one alarm tick |
 | A2 | "Never save for this site" (content + background) | `content.js:2374-2378`, `background.js:594-611`; 4 new tests | Clicking Never silences save and update prompts for the registrable domain |
 | A3 | Extension item editor: add, edit, delete, move to folder | `popup.js` `openItemEditor`; `background.js` `PV_ITEM_*`; native `create_login`/`update_login`/`delete_login`; 6 new tests | A login can be created and edited entirely from the popup, with reprompt enforced |
-| A4 | Extension clipboard auto-clear | `background.js` `pv_clip_clear`; `offscreen.js`; popup `armClipboardClear`; 6 new tests | Copied secret is cleared after the configured timeout, even if the popup closes |
+| A4 | Extension clipboard auto-clear | native `copy_secret` (`native_host.rs:3017`) with Windows exclusion formats; `pv_clip_hash` guard (`background.js:226-292`); `offscreen.js` SHA-256 check; popup `PV_COPY_SECRET`; 7 new tests | Copied secret is cleared after the configured timeout, even if the popup closes, and a newer user copy survives |
+| A4b | `verify_master` brute-force limiter | `VERIFY_MASTER_PER_MIN = 5` (`native_host.rs:220`), `verify_master_backoff_ms`, shared failure counter with `create_login`/`update_login`/`delete_login` | 6th attempt inside a minute is refused; failures delay the reply exponentially |
 
 ### P0 — parity blockers (do first)
 
@@ -241,7 +243,7 @@ Two extension items were implemented and tested. No desktop behavior changed.
 
 ### 5.3 Test coverage added
 
-`npm test` now reports **111 passing, 0 failing** (was 95 before A3/A4).
+`npm test` now reports **118 passing, 0 failing** (was 95 before A3/A4).
 
 New tests:
 
@@ -286,17 +288,29 @@ harness (`tests/js/content-harness.mjs`).
 
 ### 5.5 Clipboard auto-clear (A4)
 
-- Every popup copy (password, 2FA code, generator) calls `PV_CLIP_ARM` after
-  the clipboard write. Content-script copies do the same.
-- The service worker arms a one-shot `pv_clip_clear` alarm from
-  `clipboard_clear_sec` (15/30/60/120 s, 0 = Never). The deadline is mirrored in
-  `chrome.storage.session`, so a service-worker restart re-arms it.
-- On fire, the worker clears through an offscreen document with the
-  `CLIPBOARD` reason (Chrome), falling back to a content-script write when
-  offscreen is unavailable (Firefox). The secret is never sent to the worker:
-  only the timer is.
-- The old content-script timer stays as a fast path and verifies the clipboard
-  still holds its own text before blanking.
+- **Native first.** Every popup copy (password, 2FA code, generator) sends
+  `PV_COPY_SECRET` to the host, which calls
+  `windows_native::clipboard::copy_sensitive` (`native_host.rs:3017`). That is
+  the only path that sets the Windows exclusion formats
+  (`CFSTR_EXCLUDE...` / `CanIncludeInClipboardHistory = 0` /
+  `CanUploadToCloudClipboard = 0`), so a secret never reaches Win+V or cloud
+  clipboard. `text` is capped at 4096 bytes and `ttl_secs` is clamped to
+  5-120 s.
+- **Linger.** A successful copy stores `now + ttl + 2 s` in `clip_until`; the
+  host's shutdown path waits for that deadline before exiting, so closing the
+  browser does not leave a secret behind when the port dies.
+- **Web fallback.** Firefox, or a host that refuses the copy, falls back to
+  `navigator.clipboard` plus the `pv_clip_clear` alarm. The popup states that
+  the exclusion formats are unavailable on that path.
+- **Hash-guarded clear.** The popup/content script writes a SHA-256 of the
+  copied text into `pv_clip_hash` with the alarm deadline. On fire, the
+  offscreen document (`offscreen.js:6-25`) or the content script
+  (`content.js:3130-3145`) reads the clipboard, hashes it, and blanks only on
+  an exact match. Copying something else mid-window therefore survives.
+- The service worker mirrors the deadline in `chrome.storage.session`, so a
+  worker restart re-arms instead of leaking until reboot. Locking the vault
+  (`PV_GATE_LOCKED`) clears immediately through the same guarded path.
+- The old content-script timer stays as a fast path with the same match check.
 
 ### 5.6 Test coverage added for A3/A4
 
@@ -305,6 +319,20 @@ harness (`tests/js/content-harness.mjs`).
 - Router asserts popup-only item mutations, `verify_master` proxying,
   reprompt-token forwarding, timeout clamping, disarm, the offscreen clear,
   the content fallback, and unrelated-alarm silence.
+- Hardening pass: native-first copy order, missing/short hash refusal,
+  hash-mismatch skip, and `verify_master` backoff growth.
+
+### 5.7 A4 hardening pass (this commit)
+
+Three holes in `08dadd3` closed:
+
+| Hole | Before | Now |
+|---|---|---|
+| No Win+V exclusion | popup used `navigator.clipboard.writeText`, which cannot set exclusion formats | host `copy_secret` -> `copy_sensitive`, with `ttl+2 s` linger |
+| Unconditional clear | alarm blanked the clipboard with no ownership check, destroying a newer user copy | `pv_clip_hash` written at arm time; clear only on SHA-256 match |
+| Unbounded `verify_master` | unlimited constant-time comparisons = offline master-password oracle | 5 attempts/minute plus exponential backoff, shared failure counter with the item mutations |
+
+`cargo test` and `npm test` (118) are green after the change.
 
 ---
 
@@ -436,9 +464,10 @@ Select-String -Path browser_extension\content.js -Pattern 'never_save_domains|Ne
 Select-String -Path browser_extension\popup.js -Pattern 'openItemEditor|PV_ITEM_CREATE|PV_REPROMPT'
 Select-String -Path src\windows_native\native_host.rs -Pattern 'create_login|update_login|delete_login|verify_master|reprompt_ok'
 
-# A4 clipboard auto-clear (alarm survives popup close)
-Select-String -Path browser_extension\background.js -Pattern 'pv_clip_clear|armClipboardClear|PV_CLIP_ARM'
-Select-String -Path browser_extension\offscreen.js -Pattern 'navigator.clipboard.writeText'
+# A4 clipboard auto-clear (native copy, hash-guarded clear, host linger)
+Select-String -Path src\windows_native\native_host.rs -Pattern 'copy_secret|clip_until|VERIFY_MASTER_PER_MIN'
+Select-String -Path browser_extension\background.js -Pattern 'pv_clip_hash|PV_COPY_SECRET|pv_clip_clear'
+Select-String -Path browser_extension\offscreen.js -Pattern 'sha256Hex|skipped'
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6
@@ -474,7 +503,7 @@ pass missed, and corrected three assumptions.
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
 | E6 | Extension cannot add, edit, or delete items | ~~No write command in `browser_extension/popup.js`~~ — shipped in 5.4 (`openItemEditor`, `create_login`/`update_login`/`delete_login`) | Every change used to require the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
-| E7 | Extension copy never clears the clipboard | ~~`popup.js:1504-1507` writes and stops~~ — shipped in 5.5 (`pv_clip_clear` alarm + offscreen clear) | A copied password used to stay in the OS clipboard indefinitely | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | S1 |
+| E7 | Extension copy never clears the clipboard | ~~`popup.js:1504-1507` writes and stops~~ - shipped: native `copy_secret` + `pv_clip_hash` guard (5.5, 5.7) | A copied password used to stay in the OS clipboard indefinitely, and reached Win+V | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | **Shipped** |
 | E8 | No shadow-DOM autofill | `content.js:450` is the extension's own UI shadow root; no traversal of page shadow roots | Web-component login forms (increasing share of modern sites) never get badges or fill | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
 | E9 | No offline extension cache | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
 | E10 | No KDBX (binary) import or export | KeePass support is XML/CSV only (`src/importer/keepass.rs:1-5`); exporters are CSV/Bitwarden JSON/native (`exporter.rs:83-412`) | Users cannot move to or from KeePass's real container; lock-in both ways | Read/write KDBX 4 with Argon2 + AES-KDF; keep XML path | S2 |

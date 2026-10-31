@@ -647,3 +647,28 @@ test("Never also silences the password-update prompt for that site", async (t) =
   await flush();
   assert.equal(saver(window), null);
 });
+// ---- A4: hash-guarded clipboard clear ----
+
+test("A4: content arms the clipboard clear with a hash and verifies it before blanking", () => {
+  const C = readFileSync(
+    new URL("../../browser_extension/content.js", import.meta.url), "utf8");
+  const arm = C.match(/function copyWithAutoclear\(text, ms = 30000\) \{([\s\S]*?)\n  \}/);
+  assert.ok(arm, "copyWithAutoclear present");
+  assert.match(arm[1], /type: "PV_CLIP_ARM", hash/);
+  const clear = C.match(/if \(msg\.type === "PV_CLIP_CLEAR"\) \{([\s\S]*?)\n      \}/);
+  assert.ok(clear, "PV_CLIP_CLEAR handler present");
+  assert.match(clear[1], /readText\(\)/);
+  assert.ok(clear[1].indexOf("readText") < clear[1].indexOf('writeText("")'),
+    "read + hash compare must precede the blank");
+  assert.match(clear[1], /sha256Hex\(cur\) !== want/);
+});
+
+test("A4: offscreen never blanks without a matching hash", () => {
+  const O = readFileSync(
+    new URL("../../browser_extension/offscreen.js", import.meta.url), "utf8");
+  assert.match(O, /readText\(\)/);
+  assert.ok(O.indexOf("readText()") < O.indexOf('writeText("")'),
+    "read + hash compare must precede the blank");
+  assert.match(O, /sha256Hex\(current\) !== want/);
+  assert.match(O, /0-9a-f\]\{64\}/);
+});
