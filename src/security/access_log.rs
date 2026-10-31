@@ -70,14 +70,27 @@ fn write_key_atomic(k: [u8; 32]) -> Result<(), String> {
 fn chain_key_bytes() -> Result<[u8; 32], String> {
     match read_key_state() {
         KeyState::Loaded(k) => Ok(k),
+        KeyState::Unusable(why) => Err(format!("audit log chain key unusable: {why}")),
         KeyState::Absent => {
+            // Fresh install race: parallel tests / first-boot writers can all
+            // observe Absent and each seal a DIFFERENT key, orphaning every
+            // line but their own (seen on a clean CI runner). Serialize the
+            // create and re-check under the lock.
+            static KEY_INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
+            let _guard = KEY_INIT.lock().unwrap_or_else(|p| p.into_inner());
+            match read_key_state() {
+                KeyState::Loaded(k) => return Ok(k),
+                KeyState::Unusable(why) => {
+                    return Err(format!("audit log chain key unusable: {why}"));
+                }
+                KeyState::Absent => {}
+            }
             let mut k = [0u8; 32];
             use rand_core::RngCore as _;
             rand_core::OsRng.fill_bytes(&mut k);
             write_key_atomic(k)?;
             Ok(k)
         }
-        KeyState::Unusable(why) => Err(format!("audit log chain key unusable: {why}")),
     }
 }
 

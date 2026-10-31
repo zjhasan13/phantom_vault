@@ -474,6 +474,10 @@
   propagation semantics differ from `.max().min()`; layout sizing must not
   change silently. An `#[allow(clippy::manual_clamp)]` on `push_hub_width`
   keeps CI's `-D warnings` green without changing behaviour.
+- First-run audit-key creation is serialized (`chain_key_bytes` static mutex,
+  double-checked). Without it, parallel first writes on a clean machine can
+  each seal a different key and orphan every chain but their own — this is
+  what made `chain_verifies_and_tamper_breaks` flake on a fresh CI runner.
 - Test hygiene (proven twice): env-mutating tests sharing one process-global
   var MUST serialize via a static `Mutex` (see `browser_direct` ENV_LOCK
   precedent); single-use token consume MUST check-then-remove (failed
