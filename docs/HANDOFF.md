@@ -338,8 +338,10 @@
   `paste`/`ttf-parser`/`yoke-derive` (transitive).
 - Git history purged of vault containers (C1) + force-pushed. **Everyone works
   from fresh clones — never push from a stale pre-purge clone.**
-- Build env: `CARGO_TARGET_DIR=D:\pv-target` (persisted via setx). C: was
-  filling up (40 GB target dirs) — all builds go to D: now.
+- Build env: `CARGO_TARGET_DIR=C:\Users\FAHAD\pv-target` (persisted via setx,
+  2026-10-31). D: is only 9.7 GB and filled up twice; C: has ~23 GB free.
+  `scripts/package_release.ps1` and `installer.iss` honour the variable
+  (`/DMySourceExe`), so a custom target dir does not break packaging.
 - Epic roadmap 6→7→2→4→1 SHIPPED (per-phase commit + push, no existing
   signatures/behavior broken):
   - #6 breach full-loop checklist (`fe30f10`): vault-side rotation progress

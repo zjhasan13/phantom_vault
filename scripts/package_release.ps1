@@ -76,8 +76,15 @@ try {
     }
 
     # 3. Installer (bytes are final before signing)
+    $targetRoot = if ($env:CARGO_TARGET_DIR) {
+        if ([IO.Path]::IsPathRooted($env:CARGO_TARGET_DIR)) { $env:CARGO_TARGET_DIR }
+        else { Join-Path $root $env:CARGO_TARGET_DIR }
+    } else {
+        Join-Path $root "target"
+    }
+    $appExe = Join-Path $targetRoot "release\phantom_vault.exe"
     $iscc = Find-Iscc
-    Invoke-Native "Inno Setup compile" { & $iscc installer.iss }
+    Invoke-Native "Inno Setup compile" { & $iscc "/DMySourceExe=$appExe" installer.iss }
     $setup = Join-Path $root "installer-output\PhantomVault-Setup-$ver.exe"
     if (-not (Test-Path $setup)) { throw "installer not produced: $setup" }
 
@@ -93,7 +100,6 @@ try {
     # never receive the Inno installer. Keep this name stable: the updater
     # prefers "update"/"portable", then "windows/win64", and always skips
     # names containing "setup"/"installer".
-    $appExe = Join-Path $root "target\release\phantom_vault.exe"
     if (-not (Test-Path $appExe)) { throw "release binary missing: $appExe" }
     Copy-Item -LiteralPath $appExe -Destination (Join-Path $staging "PhantomVault-$ver-windows-x64.exe")
     foreach ($browser in @("chrome", "firefox")) {

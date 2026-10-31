@@ -10,6 +10,11 @@
 #define MyAppVersion "0.4.0"
 #define MyAppPublisher "PhantomVault Security Foundation"
 #define MyAppExeName "phantom_vault.exe"
+; The app binary path. The packaging script overrides this with /DMySourceExe
+; so CARGO_TARGET_DIR builds work; the default matches a plain `cargo build`.
+#ifndef MySourceExe
+#define MySourceExe "target\release\phantom_vault.exe"
+#endif
 ; Host manifests are GENERATED at install time by WriteHostManifest below
 ; (nothing checked in — intentional, see [Code]). Same for the .firefox one.
 #define HostJsonName "com.phantomvault.host.json"
@@ -38,7 +43,7 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; \
   GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "target\release\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#MySourceExe}"; DestDir: "{app}"; Flags: ignoreversion
 Source: "assets\app.ico"; DestDir: "{app}\assets"; Flags: ignoreversion
 Source: "browser_extension\*"; DestDir: "{app}\browser_extension"; \
   Excludes: "dist\*"; Flags: ignoreversion recursesubdirs createallsubdirs
