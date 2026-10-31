@@ -8517,6 +8517,26 @@ fn launch_url(ui: &MainWindow, url: &str) {
     // Local Wi-Fi P2P sync (offline LAN): toggle, scan, per-peer sync.
     // Listener + beacon + responder threads are detached; the shared stop
     // flag retires them on toggle-off (re-enable flips it back + respawns).
+    fn refresh_paired_p2p(ui: &MainWindow) {
+        let rows: Vec<PairedView> = sync::p2p_pairing::list_pairs()
+            .into_iter()
+            .map(|p| PairedView {
+                name: p.name.into(),
+                key: p.pubkey.clone().into(),
+                detail: format!(
+                    "{}…{}",
+                    p.pubkey.chars().take(8).collect::<String>(),
+                    if p.addr.is_empty() {
+                        String::new()
+                    } else {
+                        format!(" • {}", p.addr)
+                    }
+                )
+                .into(),
+            })
+            .collect();
+        ui.set_p2p_paired(ModelRc::new(VecModel::from(rows)));
+    }
     let p2p_stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
     let p2p_weak = main_window.as_weak();
     main_window.on_set_p2p(move |on| {
@@ -8537,6 +8557,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             // A15: one-time pairing code (HMAC; never sent over the wire).
             let code = sync::p2p_pairing::open_session();
             ui.set_p2p_pin(code.into());
+            refresh_paired_p2p(&ui);
             ui.set_p2p_status("📡 Discovery ON — port 52199. Enter this pairing code on the other device.".into());
             security::access_log::log_event("p2p", "discovery enabled");
         } else {
@@ -8568,10 +8589,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     .map(|p| PeerView {
                         name: p.name.clone().into(),
                         ip: p.ip.clone().into(),
-                        detail: format!("v{} • {}{}", p.version, p.head_sha.chars().take(8).collect::<String>(), if p.pin_required { " • 🔒 PIN" } else { "" }).into(),
+                        detail: format!("v{} • {}", p.version, p.id.chars().take(8).collect::<String>()).into(),
                     })
                     .collect();
                 ui.set_p2p_peers(ModelRc::new(VecModel::from(rows)));
+                refresh_paired_p2p(&ui);
                 ui.set_p2p_status(if peers.is_empty() {
                     "No peers found — same Wi-Fi? Discovery ON on both?".into()
                 } else {
@@ -8590,6 +8612,20 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_p2p_pin(pin.into());
         ui.set_p2p_status("🔑 New pairing code — enter it on the other device.".into());
         security::access_log::log_event("p2p", "pairing code regenerated");
+    });
+    let forget_weak = main_window.as_weak();
+    main_window.on_forget_p2p_peer(move |key| {
+        let Some(ui) = forget_weak.upgrade() else {
+            return;
+        };
+        match sync::p2p_pairing::forget(key.as_str()) {
+            Ok(()) => {
+                refresh_paired_p2p(&ui);
+                ui.set_p2p_status("Paired device forgotten.".into());
+                security::access_log::log_event("p2p", "paired device forgotten");
+            }
+            Err(e) => ui.set_p2p_status(format!("⚠️ {e}").into()),
+        }
     });
     let syncpeer_weak = main_window.as_weak();
     let syncpeer_vault = Arc::clone(&active_vault);
@@ -8654,6 +8690,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             qb.set_filtered_results(vault_quickbar(&vv, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_p2p_status(msg.into());
+                        refresh_paired_p2p(&ui);
                         let now_s = std::time::SystemTime::now()
                             .duration_since(std::time::UNIX_EPOCH)
                             .map(|d| d.as_secs())

@@ -76,6 +76,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A17 | Same-origin favicon fetch | `src/core/favicon.rs` `icon_url`/`fetch_icon_bytes` (only `https://{domain}/favicon.ico`); DDG/Google constants deleted; extension harvest unchanged | With the network off, no favicon request leaves the machine; no third party sees vault domains |
 | A12 | Shadow-DOM field scan and observer | `content.js` `deepRoots`/`deepQuery`/`deepActiveElement`, deep `findFields`/`scanForms`, per-root `pvScheduleScan` observers, shadow-scoped `badgeGroup`; 3 new tests | Open web-component login forms get badges/fill and save prompts; closed roots are skipped |
 | A15a | Mandatory P2P pairing (device keys + signed requests) | `sync/p2p_pairing.rs` (Ed25519 device key, one-time 64-bit code, HMAC pair proof, DPAPI-sealed peer list, request signatures); `p2p_local.rs` 403 gate; UI shows the pairing code; 3 new tests | An unpaired client gets 403 and cannot pull/push; the code never crosses the wire; existing paired devices sync without re-entering it |
+| A15b | Ephemeral P2P beacons + paired-device management | `p2p_local.rs` beacon carries only `{app,name,version,port,id,ts}` (random per-process ID; legacy head fallback for parsing only); `p2p_pairing::list_pairs/forget`; Settings lists paired devices with Forget | Beacons no longer reveal the head hash/mtime; paired devices can be listed and forgotten |
 | A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
@@ -92,7 +93,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 |---|---|---|---|---|
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
-| A15b | Ephemeral P2P beacons + paired-device management | S2 | 1 day | Beacons carry only an ephemeral ID (no head SHA/mtime); Settings lists and forgets paired devices |
 | A18 | Indistinguishable decoy provisioning | P2 | 1 wk | File listing and sizes do not reveal that a duress vault exists |
 | A19 | Remote canary alert | P3 | 1 wk | Tripping the canary notifies a paired device or dead-drop |
 
@@ -745,13 +745,21 @@ over plaintext HTTP; an unpaired client could pull ciphertext. A15a closes that:
 
 Tests: device key stability + pairing roundtrip + single-use code; wrong
 proof/unpaired request refused; signed request verifies and rejects tampered
-body/path/stale time. Baselines: `cargo test` **499 passed / 1 ignored + 4
+body/path/stale time. Baselines: `cargo test` **500 passed / 1 ignored + 4
 pv_sign tests**; `npm test` 132/132.
 
-Honest limits (A15b): beacons still advertise the head SHA/mtime (no ephemeral
-ID yet), there is no paired-device list/forget UI, response bodies are not
-signed, and the pairing code is displayed as copyable text rather than a QR.
-Re-pair if a peer's LAN address changes.
+A15b finishes the privacy/management half:
+
+- Beacons now carry only `{app, name, version, port, id, ts}`; `id` is a random
+  per-process value, so the head hash/mtime no longer leak. Legacy beacons with
+  `head_sha` are accepted for discovery during rollout, never emitted.
+- P2P settings lists paired devices (name, 8-char key prefix, address) with a
+  **Forget** action (`p2p_pairing::list_pairs/forget`); forgetting removes the
+  key from the DPAPI-sealed list, so the next request from that device is 403.
+
+Remaining honest limits: response bodies are not signed yet, the pairing code
+is copyable text rather than a QR, and A16's fresh-device anchor is not wired to
+the paired head. Re-pair if a peer's LAN address changes.
 
 ---
 
@@ -782,7 +790,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 3 — Sync integrity and pairing (2-3 weeks)
 
-1. P2P pairing mandatory, PAKE-based, ephemeral beacon IDs (S1, S2).
+1. **DONE (A15a/A15b)** — mandatory device-key pairing, signed requests,
+   ephemeral beacons and paired-device management (S1, S2).
 2. **DONE (A16)** — refuse a lower `rev`/wrong `prev_hash` on the post-unlock
    merge path; fresh-device first pull remains TOFU (S3).
 3. Exit test: an unpaired LAN client gets 403 and cannot pull bytes; a replayed
@@ -845,7 +854,7 @@ competitors do not ship.
 | Client crypto transparency | Source + in-code threat notes | Source | Closed | **Lead** |
 | Post-quantum story | Hybrid hedge, documented limit | None public | None public | Lead on mechanism, parity on honesty |
 | Sync integrity | Yes (A16: `rev` + `prev_hash` inside AEAD; merge refuses stale/forked) | Server-side versioning | Server-side versioning | Parity on replay, behind on fresh-device anchor |
-| P2P / offline sync | Yes, paired device keys (A15a) | No | No | **Lead**; ephemeral beacons pending (A15b) |
+| P2P / offline sync | Yes, paired device keys + ephemeral beacons (A15a/b) | No | No | **Lead** |
 | Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
 | Master-password rotation | Shipped (A5: old-password proof, atomic swap, `.bak.1.enc`) | Yes | Yes | Parity |
@@ -947,6 +956,10 @@ cargo test a16_
 # A15a mandatory P2P pairing (device keys + signed requests)
 Select-String -Path src\sync\p2p_pairing.rs -Pattern 'accept_pair|verify_request|pair_request_proof|device_signing_key'
 Select-String -Path src\sync\p2p_local.rs -Pattern '/p2p/pair|pair this device|route_authed'
+# A15b ephemeral beacons + paired-device management
+Select-String -Path src\sync\p2p_local.rs -Pattern 'fn ephemeral_id|"id"|head_sha'
+Select-String -Path src\sync\p2p_pairing.rs -Pattern 'fn list_pairs|fn forget'
+Select-String -Path ui\appwindow.slint -Pattern 'p2p_paired|forget_p2p_peer'
 cargo test p2p
 
 # Container layout and the honest PQ note

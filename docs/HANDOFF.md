@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A15a mandatory P2P pairing (device keys + signed requests), after A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A15b ephemeral P2P beacons + paired-device management (A15a+b complete), after A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -132,8 +132,18 @@
   paired device syncs without re-entering it (address-based lookup). Legacy PIN
   code is retained only for old route tests/migration. Tests +3 →
   `cargo test` **499 passed / 1 ignored + 4 pv_sign**; `npm test` 132/132.
-  Remaining **A15b**: beacons still carry head SHA/mtime, no paired-device
-  list/forget UI, and A16's fresh-device anchor is not yet wired to pairing.
+  **A15b:** beacons now carry only an ephemeral per-process ID (no head
+  SHA/mtime; legacy parse fallback only), and Settings lists paired devices with
+  a Forget action (`list_pairs/forget`). Remaining: response signing, QR, and
+  wiring A16's fresh-device anchor to the paired head.
+
+- **A15b — ephemeral beacons + paired-device UI (this batch):** `Peer` no longer
+  carries `head_sha`/`pin_required`; `beacon_json` emits `{app,name,version,port,id,ts}`
+  with a random per-process `id`, and `parse_beacon` accepts legacy `head_sha`
+  only for discovery. Settings gains a paired-device list (name, key prefix,
+  address) with **Forget**, which removes the key from `p2p_paired.dpapi` so the
+  next request is 403. Tests +1 → `cargo test` **500 passed / 1 ignored + 4
+  pv_sign**; `npm test` 132/132.
 
 - **A16 — signed container revision (this batch):** the AEAD payload is now a
   rev-2 envelope `{meta:{format,version,rev,prev_hash}, vault}`. Save increments
@@ -418,7 +428,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 499 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 500 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -589,8 +599,8 @@
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
 - A15a pairing invariants: the code never crosses the wire (HMAC proof only),
   is single-use/5-min, and every non-pair request requires a paired Ed25519
-  signature + fresh timestamp. 403 is the default. Beacons still leak a head
-  hash/mtime until A15b; never describe P2P as metadata-private yet.
+  signature + fresh timestamp. 403 is the default. A15b removes the head
+  hash/mtime from beacons; never reintroduce them.
 - A16 revision invariants: `rev`/`prev_hash` live INSIDE the AEAD payload and
   every save increments the chain; never reset a revision when the file merely
   disappeared (refuse). `check_incoming` is the only freshness gate: lower rev =

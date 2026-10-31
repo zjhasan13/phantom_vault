@@ -147,6 +147,22 @@ pub fn paired_count() -> usize {
     load_pairs().len()
 }
 
+/// A15b: paired-device management UI.
+pub fn list_pairs() -> Vec<PairedPeer> {
+    load_pairs()
+}
+
+pub fn forget(pubkey_hex: &str) -> Result<(), String> {
+    let key = pubkey_hex.trim().to_lowercase();
+    let mut pairs = load_pairs();
+    let before = pairs.len();
+    pairs.retain(|p| p.pubkey != key);
+    if pairs.len() == before {
+        return Err("device is not paired".to_string());
+    }
+    save_pairs(&pairs)
+}
+
 // ---- one-time pairing code ------------------------------------------------
 
 struct Session {
@@ -365,6 +381,22 @@ mod tests {
         let (k, t, s) = sign_request("GET", "/p2p/pull", b"").unwrap();
         assert!(verify_request("GET", "/p2p/pull", b"", &k, &t, &s).is_err());
         let _ = std::fs::remove_file(device_path());
+        let _ = std::fs::remove_file(paired_path());
+    }
+
+    #[test]
+    fn forget_removes_a_paired_device() {
+        let _g = crate::sync::TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("PV_P2P_DEVICE_FILE", tmp("dev4"));
+        std::env::set_var("PV_P2P_PAIRED_FILE", tmp("paired4"));
+        let _ = std::fs::remove_file(paired_path());
+        let key = "33".repeat(32);
+        add_peer("phone", &key, "192.0.2.9").unwrap();
+        assert!(is_paired(&key));
+        assert_eq!(list_pairs().len(), 1);
+        forget(&key).unwrap();
+        assert!(!is_paired(&key));
+        assert!(forget(&key).is_err());
         let _ = std::fs::remove_file(paired_path());
     }
 

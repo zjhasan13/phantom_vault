@@ -27,9 +27,8 @@ pub struct Peer {
     pub name: String,
     pub ip: String,
     pub version: String,
-    pub head_sha: String,
-    /// True when the peer enforces a pairing PIN (from its beacon).
-    pub pin_required: bool,
+    /// A15b: ephemeral per-boot ID. No head hash/mtime leaves the machine.
+    pub id: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -262,7 +261,7 @@ pub(crate) fn pin_throttle_test_clear() {
 /// so stale replays die. Residual: live LAN spoofing is still possible on
 /// plaintext UDP â€” the UI must show peer IP+name for out-of-band check and
 /// the PIN stays plaintext-checked + throttled (full mDNS/TLS tracked sep).
-pub fn beacon_json(version: &str, head_sha: &str) -> String {
+pub fn beacon_json(version: &str, id: &str) -> String {
     let name = std::env::var("COMPUTERNAME")
         .or_else(|_| std::env::var("HOSTNAME"))
         .unwrap_or_else(|_| "PC".to_string());
@@ -275,11 +274,21 @@ pub fn beacon_json(version: &str, head_sha: &str) -> String {
         "name": name,
         "version": version,
         "port": P2P_PORT,
-        "head_sha": head_sha,
-        "pin_required": pin_required(),
+        "id": id,
         "ts": ts,
     })
     .to_string()
+}
+
+/// Random per-process ID (not linked to the vault or its head).
+fn ephemeral_id() -> &'static str {
+    static ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    ID.get_or_init(|| {
+        use rand_core::RngCore as _;
+        let mut b = [0u8; 8];
+        rand_core::OsRng.fill_bytes(&mut b);
+        sha_hex(&b)[..16].to_string()
+    })
 }
 
 /// Validate + parse a beacon datagram. Source IP comes from the socket, not
@@ -311,8 +320,14 @@ pub fn parse_beacon(text: &str, from_ip: &str) -> Option<Peer> {
         name: v.get("name").and_then(|n| n.as_str()).unwrap_or("Peer").to_string(),
         ip: from_ip.to_string(),
         version: v.get("version").and_then(|n| n.as_str()).unwrap_or("?").to_string(),
-        head_sha: v.get("head_sha").and_then(|n| n.as_str()).unwrap_or("").to_string(),
-        pin_required: v.get("pin_required").and_then(|b| b.as_bool()).unwrap_or(false),
+        // Legacy beacons (pre-A15b) may only carry head_sha; accept it for
+        // discovery, but never send it ourselves.
+        id: v
+            .get("id")
+            .or_else(|| v.get("head_sha"))
+            .and_then(|n| n.as_str())
+            .unwrap_or("")
+            .to_string(),
     })
 }
 
@@ -785,8 +800,7 @@ pub fn run_beacon(stop: Arc<AtomicBool>) {
     let _ = sock.set_broadcast(true);
     let target = format!("255.255.255.255:{P2P_PORT}");
     while !stop.load(Ordering::Relaxed) {
-        let (sha, _) = local_head();
-        let msg = beacon_json(env!("CARGO_PKG_VERSION"), &sha);
+        let msg = beacon_json(env!("CARGO_PKG_VERSION"), ephemeral_id());
         let _ = sock.send_to(msg.as_bytes(), &target);
         // Answer direct DISCOVER probes heard on our port.
         std::thread::sleep(BEACON_EVERY);
@@ -806,8 +820,7 @@ pub fn run_discover_responder(stop: Arc<AtomicBool>) {
         if let Ok((n, from)) = sock.recv_from(&mut buf) {
             let text = String::from_utf8_lossy(&buf[..n]);
             if text.contains("\"DISCOVER\"") || text.contains("phantom_vault") {
-                let (sha, _) = local_head();
-                let reply = beacon_json(env!("CARGO_PKG_VERSION"), &sha);
+                let reply = beacon_json(env!("CARGO_PKG_VERSION"), ephemeral_id());
                 let _ = sock.send_to(reply.as_bytes(), from);
             }
         }
@@ -1015,8 +1028,12 @@ mod tests {
         // Loopback is self â†’ filtered (echo guard). Use a fake LAN IP instead.
         let p = parse_beacon(&b, "192.168.1.99").unwrap();
         assert_eq!(p.version, "1.2.3");
-        assert_eq!(p.head_sha, "abc123");
+        assert_eq!(p.id, "abc123");
         assert_eq!(p.ip, "192.168.1.99");
+        // A15b privacy: no head hash/mtime leaves the machine.
+        assert!(!b.contains("head_sha"));
+        assert!(!b.contains("mtime"));
+        assert!(b.contains("\"id\""));
         assert!(parse_beacon(r#"{"app":"something_else"}"#, "192.168.1.99").is_none());
         assert!(parse_beacon("garbage", "192.168.1.99").is_none());
         // M5: stale replays die; fresh beacons pass.
