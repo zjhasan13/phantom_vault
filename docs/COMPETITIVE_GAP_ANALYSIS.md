@@ -497,9 +497,9 @@ A8a closes the loop without an Authenticode certificate:
   users verify with `gh attestation verify <file> --repo zjhasan13/phantom_vault`.
 - **No UPX.** The old "sub-8MB" target came from the v0.2.0 6.7 MB build; at
   0.4.0 the exe was 19.55 MB and the installer 8.54 MB (`docs/HANDOFF.md`);
-  0.4.1 is 19.63 MB. Compressing an unsigned binary raises AV false
-  positives, so the checklist now records the real size instead of asserting
-  an unmet target.
+  the published 0.4.1 exe is 19.77 MB and the installer 8.98 MB. Compressing
+  an unsigned binary raises AV false positives, so the checklist records the
+  real size instead of asserting an unmet target.
 
 Key custody: the 2026-10-31 rotation generated a new key because the original
 pinned key had no available private half. The seed lives only in the Actions

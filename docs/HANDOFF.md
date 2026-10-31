@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: 0.4.1 release cut (A8a pipeline live; Authenticode deliberately deferred), after A6/A5/A7/A9.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: 0.4.1 published through the new signed A8a pipeline (Authenticode deliberately deferred), after A6/A5/A7/A9.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -84,15 +84,22 @@
   `setup`/`installer` names and refuses an installer-only release, so the
   updater can never swap the installer over the live app. The workflow
   publishes the release and a GitHub build-provenance attestation. **No UPX** —
-  the old sub-8MB target came from v0.2.0 (6.7 MB); 0.4.1 is 19.63 MB exe
-  (0.4.0 was 19.55 MB) and the installer is ~8.5 MB, so `docs/RELEASE.md` now
-  records the real size instead.
+  the old sub-8MB target came from v0.2.0 (6.7 MB); the published 0.4.1 exe is
+  19.77 MB (0.4.0 was 19.55 MB) and the installer 8.98 MB, so
+  `docs/RELEASE.md` records the real size instead.
   **Key rotation:** the old pinned key had no available private half, so a new
   key was generated. Seed: `%USERPROFILE%\.phantomvault\release_signing.key`
   (user-only ACL, never printed by keygen). The GitHub secret `PV_SIGNING_KEY`
   is set and verified via `gh secret list` (the maintainer's stored OAuth token
   was used; the seed was piped through stdin, never echoed). Clients built
   before this change must reinstall once manually.
+  **First live run (2026-10-31):** tag `v0.4.1` published automatically by
+  `release.yml`. Assets: setup exe 8,979,423 B, portable exe 20,727,808 B,
+  both zips, `.sig` + `.sha256` for each, CycloneDX SBOM (583 components) and
+  `SHA256SUMS.txt`. Verified after download: both exes' `.sig` against the
+  pinned key, hashes equal the API digests and `SHA256SUMS.txt`, and
+  `gh attestation verify … --repo zjhasan13/phantom_vault` exited 0.
+  `security.yml` is green on the tag commit too.
   Tests +4 → `cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
   Authenticode (A8b) remains open — no certificate.
 
@@ -106,7 +113,7 @@
   `license = "MIT"` plus repository/description/readme. `SECURITY.md` uses GitHub
   private advisories as the only channel (no invented email or PGP key), with
   supported versions, 7/14-day response targets, a 90-day coordinated window,
-  explicit in/out-of-scope lists, the 0.4.0 limitations and a safe-harbor statement.
+  explicit in/out-of-scope lists, the 0.4.1 limitations and a safe-harbor statement.
   No code changed; `cargo check` and `npm test` (124) stay green.
 
 - Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
@@ -404,51 +411,38 @@
 
 ## 3. Pending queue (ordered)
 
-1. **First signed release (A8a):** bump `Cargo.toml` + `installer.iss` + both
-   manifests to the next patch, run `scripts/package_release.ps1 -SignKeyPath
-   ...` locally once, then tag `vX.Y.Z` and let `.github/workflows/release.yml`
-   publish. Verify the release has `.sig`, `.sha256`, `SHA256SUMS.txt`, the SBOM
-   and that `gh attestation verify <setup>.exe --repo zjhasan13/phantom_vault`
-   passes. Do not reuse an existing tag.
-2. **A8b Authenticode:** needs a code-signing certificate (user decision). The
-   workflow already has one place to insert `signtool` after packaging and
-   before hashing; do not sign before the final bytes are fixed.
-3. **Dependency advisories (separate pass):** `rustsec/audit-check` reports 9
-   vulnerabilities (2026-10-31). Compatible patch bumps exist for `rustls`,
-   `rustls-webpki`, `webpki-roots`, `pulldown-cmark` and `tokio`; `rsa` has no
-   fix (RUSTSEC-2023-0071) and `crypto-bigint 0.5.5` is pinned through it.
-   Upgrade the patchable set, then document/ignore the rest with a rationale —
-   do not blanket-ignore. `security.yml` now grants `checks: write` so the
-   action can file its check run.
-4. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
+1. **A8b Authenticode — deferred by product decision (2026-10-31):** no paid
+   certificate for now; Ed25519 + SHA-256 + GitHub attestation is the current
+   trust stack. If revisited, insert `signtool` after packaging and before
+   hashing (never sign before the final bytes are fixed).
+2. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
    next physical pass (X → process stays as background tray process; Access
    Log close-path lines present). If it regresses, suspects in order:
    handler never fires (Slint close-request path) → panic=abort in handler →
    env-specific tray failure.
-5. **Live measurements (partial, needs the user's machine):** observed
+3. **Live measurements (partial, needs the user's machine):** observed
    minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
    locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
    warm p50 ~5 ms. Record in release notes.
-6. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
+4. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
    The old export/import rotation is no longer needed. After a rekey, reprint
    the recovery shards and re-enroll the App PIN (both stay on the old secret
    until redone).
-7. **GitHub cache check:** repo code-search `my_secure_vault` must return
+5. **GitHub cache check:** repo code-search `my_secure_vault` must return
    zero; else request GitHub Support cache purge. `gh` 2.102.1 is installed at `%LOCALAPPDATA%\Programs\gh\gh.exe` but
    not authenticated: run `gh auth login`, then
    `gh api "search/code?q=my_secure_vault+user:zjhasan13"` (web UI code search
-   works too). The 0.4.0 installer + browser zips are built locally; the user
-   uploads the Release in the web UI (device login is not usable from the
-   agent shell).
-8. **Follow-ups for the other line:** legacy host `assert` unreachable from
+   works too). Releases are now built and uploaded by `release.yml` (0.4.1 was
+   the first automated run); no manual web-UI upload is needed.
+6. **Follow-ups for the other line:** legacy host `assert` unreachable from
    extension (fails-closed test pinned — relay now uses
    `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH
    adopt paths (`serve_conn`, `sync_with_peer`) and the guard is now a tested
    pure function (`adopt_rollback_blocked`); `AgentKey` is explicitly
    `ZeroizeOnDrop` (vault key wipe on session teardown, not just dalek drop).
-6. **Standing item (do NOT blind-chase):** `Mutex::lock().unwrap()` pattern in
+7. **Standing item (do NOT blind-chase):** `Mutex::lock().unwrap()` pattern in
    `src/main.rs` (panic=abort design). Only touch attacker-influenced paths.
-7. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
+8. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
    rewrite (canceled), `rqrr-zeroize` fork (rejected), tokio current-thread
    (rejected), License purchase/vendor/seats, SSH passphrase decrypt,
    name-split/SSN, card billing address.

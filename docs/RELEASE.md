@@ -39,7 +39,8 @@ release. State the minimum peer version in the notes.
 
 ## 3. Rollback plan (tag discipline)
 
-- `v0.4.0` is tagged + pushed — it is the current rollback anchor.
+- `v0.4.1` is tagged + pushed and published — it is the current rollback
+  anchor (v0.4.0 remains the previous anchor).
 - Before publishing release N+1, confirm tag `vN` exists on GitHub with
   its artifacts attached (setup exe + extension zips + SHA256SUMS).
 - Rollback = users reinstall `vN` artifacts; vault file format is
@@ -63,9 +64,9 @@ release. State the minimum peer version in the notes.
   both extension manifests (the workflow and `package_release.ps1` fail on drift)
 - [ ] **No UPX.** It was only ever used for v0.2.0; it inflates AV false
   positives on an unsigned binary. Record the real size instead (v0.4.0:
-  19.55 MB exe, 8.54 MB installer; v0.4.1: 19.63 MB exe). If size becomes a
-  goal, treat UPX as a new decision with a measured AV/SmartScreen comparison,
-  not an assumed default.
+  19.55 MB exe, 8.54 MB installer; v0.4.1 published: 19.77 MB portable exe,
+  8.98 MB installer). If size becomes a goal, treat UPX as a new decision with
+  a measured AV/SmartScreen comparison, not an assumed default.
 - [ ] `exe_integrity.dpapi` reset (fresh seal on first launch)
 - [ ] Native-host pipe smoke test on the PACKED binary (ping/query/assert)
 - [ ] Installer build (Inno) smoke on clean profile
