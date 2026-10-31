@@ -1122,6 +1122,10 @@ mod tests {
 
     #[test]
     fn adopted_head_roundtrips_and_guards_rollback() {
+        // `PV_P2P_ADOPTED_FILE` is process-global; route tests that read it take
+        // this lock too, so mutating it without the lock races under the
+        // parallel harness (seen as a one-off 409/roundtrip flake).
+        let _guard = pin_env_lock();
         let sandbox = std::env::temp_dir().join(format!("pv-adopt-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&sandbox);
         let f = sandbox.join("p2p_adopted.json");
