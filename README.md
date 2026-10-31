@@ -54,6 +54,7 @@ third-party audit. Those are tracked as concrete work in
 **Browser extension**
 - Autofill logins, cards, identities and TOTP from the popup, context menu or `Ctrl+Shift+L`
 - **Edit-before-save**: the save prompt shows editable username/password fields in a closed shadow root
+- **Shadow-DOM autofill**: open web-component login forms (including nested roots) are scanned, badged, filled and watched for saves; closed roots are skipped
 - "Never save for this site", idle lock pushed to every tab, hash-guarded clipboard clear
 - Clipboard writes go through the native host so Windows can exclude them from history and cloud sync
 - **Opt-in offline cache**: with the desktop app closed, matching logins still fill after Windows Hello **or** an extension PIN (separate opt-in) — logins only, read-only, 15-minute session, erased on decoy/disable/rekey
@@ -105,7 +106,7 @@ cargo test                       # 493 passed / 1 ignored + 4 pv_sign tests at 0
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
-npm test                         # 129/129 at 0.4.1
+npm test                         # 132/132 at 0.4.1
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
 

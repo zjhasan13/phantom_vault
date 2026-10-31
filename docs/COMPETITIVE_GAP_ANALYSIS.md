@@ -74,6 +74,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A8a | Certificate-free release trust pipeline | `.github/workflows/release.yml`; `scripts/package_release.ps1`; `tools/pv-sign/src/main.rs`; `src/release_pubkey.rs`; `src/sync/updater.rs` `pick_asset`; `docs/RELEASE.md` §4-5 | Tag push builds + tests the installer, the portable updater exe and both zips, writes `SHA256SUMS.txt` + per-asset `.sha256`, Ed25519 `<asset>.sig`, a CycloneDX SBOM and a GitHub provenance attestation; a key mismatch or an installer-only release refuses to publish/update |
 | A14 | Argon2id extension PIN + attempt backoff | `src/security/ext_pin.rs` (`PVPIN2`, salt, Argon2id 32 MiB/t=3/p=4, file-backed lockout); host `ext_pin_verify`/`ext_pin_status`; popup quick-PIN calls the host | The verifier never leaves the host; 5 wrong PINs start a 30s→5min lockout that survives restarts; a legacy SHA-256 record is refused |
 | A17 | Same-origin favicon fetch | `src/core/favicon.rs` `icon_url`/`fetch_icon_bytes` (only `https://{domain}/favicon.ico`); DDG/Google constants deleted; extension harvest unchanged | With the network off, no favicon request leaves the machine; no third party sees vault domains |
+| A12 | Shadow-DOM field scan and observer | `content.js` `deepRoots`/`deepQuery`/`deepActiveElement`, deep `findFields`/`scanForms`, per-root `pvScheduleScan` observers, shadow-scoped `badgeGroup`; 3 new tests | Open web-component login forms get badges/fill and save prompts; closed roots are skipped |
 | A11 | Encrypted offline extension cache | `src/security/offline_cache.rs`; `cache_get`/`cache_status` in `native_host.rs`; `background.js` `queryWithCache`/`PV_CACHE_*`; Settings toggles; `popup.js` offline unlock screen | The popup lists and fills matching logins with the desktop app closed, after Windows Hello **or** an opt-in extension PIN (Argon2id + lockout); writes/mutations and reprompt items stay blocked; snapshot is read-only with a 15-minute session and is erased on decoy/disable/rekey |
 | A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
@@ -88,7 +89,6 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
 | A10 | Platform layer: macOS and Linux desktop | E14 | 6-10 wk | Vault unlock, autofill bridge, and sync build and pass tests on both |
-| A12 | Shadow-DOM field scan and observer | E8 | 1 wk | A web-component login form gets a badge and fills |
 | A13 | KDBX 4 import and export | E10 | 2-3 wk | A real `.kdbx` file round-trips without data loss |
 | A15 | Mandatory P2P pairing (PAKE/QR) | S1, S2 | 2 wk | An unpaired LAN client gets 403 and cannot pull bytes; beacons carry only an ephemeral ID |
 | A16 | Signed container revision (`rev` + `prev_hash`) | C3 | 1 wk | A replayed older blob is refused with a visible warning |
@@ -649,6 +649,38 @@ Honest limits: the site itself sees a request for its own icon (unavoidable if
 you want its icon), and a site may redirect `/favicon.ico` to a CDN it controls.
 There is still no bundled icon set; the letter circle is the offline fallback.
 
+### 5.17 Shadow-DOM field scan and observer (A12)
+
+Modern sites increasingly render login forms inside web components. The old
+scanner only walked `document`, so those fields never got a badge, never
+autofilled, and their submits were never watched (E8).
+
+A12 adds a depth-bounded traversal of **open** shadow roots:
+
+- `deepRoots`/`deepQuery` walk `element.shadowRoot` (max 200 roots / 20 000
+  elements) and skip the extension's own `__pv_*` hosts. Closed roots are
+  invisible by design and stay untouched.
+- `findFields`, the card/address selectors, `passwordNear`, the OTP split-group
+  anchor and `scanForms` all use the deep query. `deepActiveElement` reaches the
+  focused field inside a component for generate/auto-submit decisions.
+- `badgeGroup` treats a shadow tree as its own grouping scope, so form-less
+  component inputs do not collapse into one page-wide badge.
+- The debounced scan also installs a `MutationObserver` on every discovered open
+  root (same `pvScheduleScan`); a root attached later is found on the next
+  document mutation. Every observer still lands on the single 120 ms scheduler.
+- `watchSubmit` now attaches to deep `<form>` elements, so the save/update
+  prompts fire for component-hosted forms (submit events do not cross a shadow
+  boundary, so the listener must live on the form itself — it does).
+
+Tests: a shadow login gets a badge and a save prompt; a nested open root is
+traversed; a closed root is ignored. Baselines: `cargo test` **493 passed / 1
+ignored + 4 pv_sign tests**; `npm test` **132/132**.
+
+Honest limits: only **open** roots are reachable — closed components remain
+invisible (as they are to every extension). The traversal is capped, so a
+pathological page with hundreds of component roots may leave some unscanned
+until the next pass.
+
 ---
 
 ## 6. Roadmap
@@ -822,6 +854,10 @@ cargo test ext_pin
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'
 node --test tests/js/content.test.mjs
 
+# A12 shadow-DOM scan/observer (open roots only)
+Select-String -Path browser_extension\content.js -Pattern 'function deepRoots|function deepQuery|const observeDeep|observeDeep\(\)'
+node --test tests/js/content.test.mjs
+
 # A6 separate backup passphrase (PVBK1 tag, gate, legacy path)
 Select-String -Path src\importer\exporter.rs -Pattern 'BACKUP_V2_MAGIC|export_native_encrypted'
 Select-String -Path src\importer\sniffer.rs -Pattern 'PhantomBackupV2'
@@ -869,7 +905,7 @@ pass missed, and corrected three assumptions.
 |---|---|---|---|---|---|
 | E6 | Extension cannot add, edit, or delete items | ~~No write command in `browser_extension/popup.js`~~ — shipped in 5.4 (`openItemEditor`, `create_login`/`update_login`/`delete_login`) | Every change used to require the desktop app; Bitwarden's popup is a full editor | Add item editor + `update_item`/`delete_item` bridge commands with origin and reprompt checks | S1 |
 | E7 | Extension copy never clears the clipboard | ~~`popup.js:1504-1507` writes and stops~~ - shipped: native `copy_secret` + `pv_clip_hash` guard (5.5, 5.7) | A copied password used to stay in the OS clipboard indefinitely, and reached Win+V | Reuse the desktop clear timer via the bridge, or a popup-side 30 s timer with best-effort clear | **Shipped** |
-| E8 | No shadow-DOM autofill | `content.js:450` is the extension's own UI shadow root; no traversal of page shadow roots | Web-component login forms (increasing share of modern sites) never get badges or fill | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
+| E8 | No shadow-DOM autofill — **shipped (A12)** | `content.js` deep scan/observer + shadow-scoped grouping; closed roots skipped | Web-component login forms (increasing share of modern sites) now get badges, fill and save prompts | Traverse open shadow roots in field scan and observer; skip closed roots | S2 |
 | E9 | No offline extension cache — **shipped (A11)** | `background.js` needs a live native port; popup shows Retry (`popup.js:57`) | Extension is dead when the desktop app is closed | Encrypted read-only cache, unlocked by Hello-backed token, short TTL | S2 |
 | E10 | No KDBX (binary) import or export | KeePass support is XML/CSV only (`src/importer/keepass.rs:1-5`); exporters are CSV/Bitwarden JSON/native (`exporter.rs:83-412`) | Users cannot move to or from KeePass's real container; lock-in both ways | Read/write KDBX 4 with Argon2 + AES-KDF; keep XML path | S2 |
 | E11 | Attachments are 5 MB and inline in the vault blob | `src/models.rs:82`; attachments live on items (`models.rs:73-79,265`) | Any file save re-encrypts the whole vault and bloats sync; Bitwarden allows large separate attachments | Store attachments as separately encrypted chunks with their own keys and a size budget | S2 |

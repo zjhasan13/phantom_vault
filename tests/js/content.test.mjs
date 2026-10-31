@@ -530,9 +530,13 @@ test("P3: PV_FILL_ENTRY refuses ids the page domain cannot claim", async (t) => 
   assert.equal(window.document.querySelector('input[name="password"]').value, "keep");
 });
 
-test("E6: document scans run through one debounced observer", () => {
+test("E6/A12: every scan observer is debounced (document + open shadow roots)", () => {
   const src = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
-  assert.equal((src.match(/new MutationObserver\(pvScheduleScan\)/g) || []).length, 1);
+  // One document observer, plus one per discovered open shadow root — all must
+  // call the SAME debounced scheduler (never scan()/scanForms() directly).
+  assert.ok((src.match(/new MutationObserver\(pvScheduleScan\)/g) || []).length >= 1);
+  assert.match(src, /new MutationObserver\(pvScheduleScan\)\.observe\(document\.documentElement/);
+  assert.match(src, /const observeDeep = \(\) => \{[\s\S]{0,700}new MutationObserver\(pvScheduleScan\)\.observe\(root/);
   assert.ok(!/new MutationObserver\(scan\)/.test(src), "no undebounced scan observer");
   assert.ok(!/new MutationObserver\(scanForms\)/.test(src), "no undebounced scanForms observer");
   assert.match(src, /pvScanTimer = setTimeout\(\(\) => \{[\s\S]{0,120}scan\(\);[\s\S]{0,80}scanForms\(\);[\s\S]{0,40}\}, 120\)/);
@@ -771,6 +775,53 @@ test("A4: content arms the clipboard clear with a hash and verifies it before bl
   assert.ok(clear[1].indexOf("readText") < clear[1].indexOf('writeText("")'),
     "read + hash compare must precede the blank");
   assert.match(clear[1], /sha256Hex\(cur\) !== want/);
+});
+
+test("A12: a shadow-DOM login gets a badge and offers save on submit", async (t) => {
+  const { window } = env(t, `<div id="host"></div>`);
+  const host = window.document.getElementById("host");
+  const root = host.attachShadow({ mode: "open" });
+  root.innerHTML = `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`;
+  // Boot scan + the 120 ms debounced observer must discover the new root.
+  await flush(320);
+  const badges = [...window.document.querySelectorAll('button[data-pv-kind="shield"]')];
+  assert.ok(badges.length >= 1, "shadow field gets a badge");
+  submit(window, root.querySelector("form"));
+  await flush();
+  assert.ok(saver(window), "shadow form submit must offer save");
+});
+
+test("A12: nested open shadow roots are traversed", async (t) => {
+  const { window } = env(t, `<div id="outer"></div>`);
+  const outer = window.document.getElementById("outer").attachShadow({ mode: "open" });
+  outer.innerHTML = `<div id="inner"></div>`;
+  const inner = outer.getElementById("inner").attachShadow({ mode: "open" });
+  inner.innerHTML = `<form>
+    <input type="text" name="username" value="deep">
+    <input type="password" name="password" value="pw">
+  </form>`;
+  await flush(320);
+  const badges = [...window.document.querySelectorAll('button[data-pv-kind="shield"]')];
+  assert.ok(badges.length >= 1, "nested shadow input gets a badge");
+  submit(window, inner.querySelector("form"));
+  await flush();
+  assert.ok(saver(window), "nested shadow submit must offer save");
+});
+
+test("A12: the scanner stays out of closed shadow roots", async (t) => {
+  const { window } = env(t, `<div id="closed"></div>`);
+  const host = window.document.getElementById("closed");
+  const root = host.attachShadow({ mode: "closed" });
+  root.innerHTML = `<input type="password" name="password" value="hidden">`;
+  await flush(320);
+  assert.equal(
+    window.document.querySelectorAll('button[data-pv-kind="shield"]').length,
+    0,
+    "closed roots are not traversed",
+  );
 });
 
 test("A4: offscreen never blanks without a matching hash", () => {

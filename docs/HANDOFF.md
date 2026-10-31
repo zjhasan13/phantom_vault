@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A17 same-origin favicons (after A11b/A14), following 0.4.1.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A12 shadow-DOM scan/observer (after A17), following 0.4.1.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -122,6 +122,17 @@
   **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
+
+- **A12 — shadow-DOM scan/observer (this batch):** `content.js` gains
+  `deepRoots`/`deepQuery`/`deepActiveElement` (open roots only, 200-root/20k-node
+  caps, skips `__pv_*`). `findFields`, card/address queries, `passwordNear`, the
+  OTP split-group anchor and `scanForms` use the deep query; `badgeGroup` treats
+  a shadow tree as its own scope; `deepActiveElement` covers generate/auto-submit
+  focus. Every discovered open root gets the same debounced `pvScheduleScan`
+  observer, and `watchSubmit` attaches to deep `<form>` elements (submit does not
+  cross a shadow boundary). Closed roots remain untouched. Tests +3 JS → `npm
+  test` **132/132**; `cargo test` 493/1 + 4 pv_sign unchanged. Honest limit:
+  closed components are invisible; traversal caps may skip pathological pages.
 
 - **A17 — same-origin favicons (this batch):** deleted the DuckDuckGo and Google
   fallbacks in `src/core/favicon.rs`. The only fetch is now
@@ -382,7 +393,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 493 passed / 1 ignored + 4 pv_sign tests, `npm test` 129/129 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 493 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -551,6 +562,10 @@
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+- A12 shadow-DOM invariants: traverse OPEN roots only (closed roots are
+  inaccessible by design); every shadow observer must call the same debounced
+  `pvScheduleScan`; submit listeners attach to the form itself (submit is not
+  composed); grouping is per shadow tree, never page-wide.
 - A17 favicon invariant: the only network URL is `https://{domain}/favicon.ico`
   (or the extension-harvested page icon). Never reintroduce a third-party
   favicon service; the letter circle is the offline fallback.

@@ -300,6 +300,45 @@
     const cs = getComputedStyle(el);
     return cs.visibility !== "hidden" && cs.display !== "none" && !el.disabled && !el.readOnly;
   }
+  // A12: open shadow roots only. Closed roots are inaccessible by design (and
+  // the extension's own UI uses closed roots). Bounds keep a hostile page from
+  // turning every scan into an O(10^6) walk.
+  const DEEP_MAX_ROOTS = 200;
+  const DEEP_MAX_ELEMENTS = 20000;
+  function deepRoots(start) {
+    const roots = [];
+    const seen = new Set();
+    const stack = [start || document];
+    let visited = 0;
+    while (stack.length && roots.length < DEEP_MAX_ROOTS && visited < DEEP_MAX_ELEMENTS) {
+      const root = stack.pop();
+      if (!root || seen.has(root)) continue;
+      seen.add(root);
+      roots.push(root);
+      let all;
+      try { all = root.querySelectorAll("*"); } catch (_) { continue; }
+      visited += all.length;
+      for (const el of all) {
+        // Never walk into our own UI (toast/saver/picker); its roots are
+        // closed anyway, but the skip keeps the walk cheap.
+        if (el.id && el.id.startsWith("__pv_")) continue;
+        if (el.shadowRoot && !seen.has(el.shadowRoot)) stack.push(el.shadowRoot);
+      }
+    }
+    return roots;
+  }
+  function deepQuery(sel, start) {
+    const out = [];
+    for (const root of deepRoots(start)) {
+      try { out.push(...root.querySelectorAll(sel)); } catch (_) {}
+    }
+    return out;
+  }
+  function deepActiveElement() {
+    let a = document.activeElement;
+    while (a && a.shadowRoot && a.shadowRoot.activeElement) a = a.shadowRoot.activeElement;
+    return a;
+  }
   // React / modern SPA value injection: raw `el.value = x` is ignored by
   // controlled components — the native prototype setter plus bubbling
   // input/change events is what React's dispatcher listens for.
@@ -787,7 +826,7 @@
     // autocomplete username/email, type=email, or type=text beside a password
     // in the SAME form. Password = type=password only. OTP =
     // autocomplete=one-time-code or otp/2fa/code/token/verif name/id.
-    const all = [...document.querySelectorAll("input")].filter(isVisible);
+    const all = [...deepQuery("input")].filter(isVisible);
     const pass = [], newPass = [], users = [], otp = [];
     for (const el of all) {
       const type = (el.type || "").toLowerCase();
@@ -802,7 +841,7 @@
       if (isOtpField(el)) { otp.push(el); continue; }
       if (isUsernameField(el)) { users.push(el); continue; }
     }
-    const q = (s) => [...document.querySelectorAll(s)].filter(isVisible).filter((el) => !isSearchField(el));
+    const q = (s) => [...deepQuery(s)].filter(isVisible).filter((el) => !isSearchField(el));
     const cards = q(CARD_NUM_SEL);
     const addr = q('input[autocomplete="street-address"], input[autocomplete="address-line1"], ' +
       'input[name*="address" i], input[autocomplete="tel"], input[name*="phone" i]');
@@ -825,7 +864,7 @@
   }
   function firstVisibleIn(root, sel) {
     try {
-      for (const el of (root || document).querySelectorAll(sel)) {
+      for (const el of deepQuery(sel, root || document)) {
         if (isVisible(el)) return el;
       }
     } catch (_) {}
@@ -958,7 +997,7 @@
     return /log ?in|sign ?in|sign ?up|register|auth/i.test(location.pathname + " " + (document.title || ""));
   }
   function passwordNear(el) {
-    const pw = [...document.querySelectorAll('input[type="password"]')].filter(isVisible);
+    const pw = [...deepQuery('input[type="password"]')].filter(isVisible);
     if (!pw.length) return false;
     if (el.form) return pw.some((p) => p.form === el.form);
     let r = null;
@@ -1342,7 +1381,7 @@
     if (!otpFilled) pingFilled(entry.id);
     notePicked();
     if (settings.auto_submit) {
-      const form = (f.pass[0] || f.users[0] || document.activeElement || {}).form;
+      const form = (f.pass[0] || f.users[0] || deepActiveElement() || {}).form;
       if (form && form.requestSubmit) form.requestSubmit();
     }
   }
@@ -1358,7 +1397,7 @@
   // Returns null when this is not a group that matches the code length.
   function otpBoxGroup(codeLen) {
     if (!codeLen) return null;
-    const narrow = [...document.querySelectorAll("input")].filter((el) => {
+    const narrow = [...deepQuery("input")].filter((el) => {
       if (!isVisible(el)) return false;
       const t = (el.type || "").toLowerCase();
       if (t === "password" || t === "hidden") return false;
@@ -2127,7 +2166,7 @@
     if (pvPending && pvPending.totpId) return true;
     const box = f && f.otp && f.otp[0];
     if (!box) return false;
-    const active = document.activeElement;
+    const active = deepActiveElement();
     if (!active) return false;
     if (active === box || box.contains(active)) return true;
     // Split code screen: the user is in a sibling box of the same OTP group.
@@ -2153,7 +2192,7 @@
         if (!f.otp.length && pvPicker) closeOtpPicker(false);
         if (!f.otp.length && Date.now() - otpDiagAt > 5000) {
           otpDiagAt = Date.now();
-          const all = [...document.querySelectorAll("input")].filter(isVisible);
+          const all = [...deepQuery("input")].filter(isVisible);
           const desc = all.map((el) => {
             const lab = (el.labels && el.labels[0] && (el.labels[0].innerText || "").trim().slice(0, 40)) || "";
             return `${el.type || "?"}#${el.id || "-"}[${el.name || "-"}|ac=${el.autocomplete || "-"}|lab=${lab || "-"}]`;
@@ -2270,14 +2309,18 @@
   // form-less SPA logins - by the nearest ancestor that holds a password.
   function badgeGroup(el) {
     if (el.form) return el.form;
+    // A12: a shadow tree is its own grouping scope; without this, form-less
+    // shadow inputs all collapsed into documentElement and shared one badge.
+    const scope = el.getRootNode ? el.getRootNode() : document;
     let p = el.parentElement;
-    while (p && p !== document.body && p !== document.documentElement) {
+    while (p && p !== scope && p !== document.body && p !== document.documentElement) {
       const fields = p.querySelectorAll("input, select, textarea").length;
       if (fields >= 2 && [...p.querySelectorAll('input[type="password"]')].some(isVisible)) {
         return p;
       }
       p = p.parentElement;
     }
+    if (scope && scope.host) return scope;
     return document.documentElement;
   }
   // Desired icon per context:
@@ -2884,7 +2927,7 @@
     });
   }
   function scanForms() {
-    for (const f of document.querySelectorAll("form")) watchSubmit(f);
+    for (const f of deepQuery("form")) watchSubmit(f);
   }
 
   // ---------- SPA save detection: page-world fetch/XHR credential hook ----
@@ -3345,7 +3388,7 @@
         } else if (msg.menu === "pv_generate_password") {
           // Registration pages: focused password field wins, else the first
           // visible new-password field, else the first password field.
-          const ae = document.activeElement;
+          const ae = deepActiveElement();
           const target = (ae instanceof HTMLInputElement && ae.type === "password" && isVisible(ae))
             ? ae
             : (f.newPass[0] || f.pass[0]);
@@ -3373,12 +3416,31 @@
       pvScanTimer = 0;
       scan();
       scanForms();
+      observeDeep();
     }, 120);
   };
   new MutationObserver(pvScheduleScan).observe(document.documentElement, {
     childList: true,
     subtree: true,
   });
+  // A12: mutations inside a shadow root never reach the document observer, so
+  // observe every open root we discover. A newly attached root is found by the
+  // next document-triggered scan (host insertion is a light-DOM mutation).
+  const observedRoots = new WeakSet();
+  const observeDeep = () => {
+    for (const root of deepRoots()) {
+      if (observedRoots.has(root)) continue;
+      observedRoots.add(root);
+      if (root === document) continue;
+      try {
+        new MutationObserver(pvScheduleScan).observe(root, {
+          childList: true,
+          subtree: true,
+        });
+      } catch (_) {}
+    }
+  };
+  observeDeep();
   // Fixed overlays must track the viewport (passive listeners, no jank).
   let reposT = 0;
   const queueRepos = () => {
