@@ -4,7 +4,7 @@
 > the built extension (`browser_extension/build.ps1` → `dist/chrome` or
 > `dist/firefox`), with the desktop app unlocked. Record Pass/Fail in §4.
 >
-> Automated coverage: `npm test` (25 tests: 19 background + 6 content/jsdom).
+> Automated coverage: `npm test` (124 tests across four JS harnesses: background, content/jsdom, domain, popup).
 > These manual cases cover the real-browser behavior jsdom cannot (navigation,
 > SPA routing, native bridge round-trips).
 

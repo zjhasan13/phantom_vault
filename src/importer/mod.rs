@@ -194,7 +194,7 @@ fn to_custom(
 /// Powers the dry-run preview: the caller dry-merges the returned rows into
 /// a CLONED vault for exact counts, then merges for real only on confirm.
 pub fn parse_import_file(path: &std::path::Path) -> Result<(Vec<RawItem>, ImportSummary)> {
-    match parse_import_any(path, None)? {
+    match parse_import_any(path, None, None)? {
         ParsedImport::Rows(raws, summary) => Ok((raws, summary)),
         ParsedImport::Native(..) => Err(VaultError::Sync(
             "PhantomVault backups must be imported through the GUI".into(),
@@ -202,12 +202,16 @@ pub fn parse_import_file(path: &std::path::Path) -> Result<(Vec<RawItem>, Import
     }
 }
 
-/// GUI entrypoint: vendor ROWS or a native vault snapshot. `master` is
-/// required only for encrypted `.pvx` backups (sealed with this vault's
-/// master password, so no extra prompt is needed).
+/// GUI entrypoint: vendor ROWS or a native vault snapshot.
+///
+/// A6: `master` opens **legacy** `.pvx` files (sealed with the vault master
+/// before 0.4.x). A `PVBK1` backup is sealed with its own passphrase and is
+/// opened only by `backup` — the master is never tried for it, so "the backup
+/// does not open with the vault password" stays true by construction.
 pub fn parse_import_any(
     path: &std::path::Path,
     master: Option<&secrecy::SecretString>,
+    backup: Option<&secrecy::SecretString>,
 ) -> Result<ParsedImport> {
     let bytes = std::fs::read(path)
         .map_err(|e| VaultError::Sync(format!("cannot read import file: {e}")))?;
@@ -218,15 +222,36 @@ pub fn parse_import_any(
     }
     let format = sniffer::sniff(&bytes)?;
     let mut summary = ImportSummary { source: format.label(), ..Default::default() };
+    if format == sniffer::Format::PhantomBackupV2 {
+        let Some(pw) = backup else {
+            return Err(VaultError::Sync(
+                "this backup needs its own backup passphrase — it does not open with the vault master password"
+                    .into(),
+            ));
+        };
+        let body = bytes
+            .get(exporter::BACKUP_V2_MAGIC.len()..)
+            .filter(|b| b.len() > 4)
+            .ok_or_else(|| VaultError::Sync("backup envelope is truncated".into()))?;
+        let plain = crate::crypto::decrypt_vault_portable_secret(pw, body).map_err(|_| {
+            VaultError::Sync(
+                "cannot open backup: wrong backup passphrase (the master password will not work)"
+                    .into(),
+            )
+        })?;
+        let vault = native_vault_from_bytes(&plain)?;
+        return Ok(ParsedImport::Native(Box::new(vault), summary));
+    }
     if format == sniffer::Format::PhantomNativeEncrypted {
         let Some(pw) = master else {
             return Err(VaultError::Sync(
-                "encrypted PhantomVault backup needs the vault master password".into(),
+                "legacy encrypted backup needs the vault master password".into(),
             ));
         };
         let plain = crate::crypto::decrypt_vault_portable_secret(pw, &bytes).map_err(|_| {
             VaultError::Sync(
-                "cannot open backup: it was not sealed with this vault's master password".into(),
+                "cannot open legacy backup: it was not sealed with this vault's master password"
+                    .into(),
             )
         })?;
         let vault = native_vault_from_bytes(&plain)?;
@@ -248,7 +273,9 @@ pub fn parse_import_any(
         | sniffer::Format::LastPassCsv => browser_csv::parse(&bytes, &format, &mut summary)?,
         sniffer::Format::GenericJson => bitwarden::parse_generic_json(&bytes, &mut summary)?,
         sniffer::Format::FuzzyCsv(delim) => fuzzy::parse(&bytes, delim, &mut summary)?,
-        sniffer::Format::PhantomNative | sniffer::Format::PhantomNativeEncrypted => {
+        sniffer::Format::PhantomNative
+        | sniffer::Format::PhantomNativeEncrypted
+        | sniffer::Format::PhantomBackupV2 => {
             unreachable!("handled above")
         }
     };

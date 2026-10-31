@@ -377,26 +377,37 @@ pub fn native_stats(vault: &Vault) -> (usize, usize, u64) {
     (items, atts.len(), bytes)
 }
 
+/// A6: `.pvx` v2 envelope tag. A file that starts with this marker is sealed
+/// with a dedicated **backup passphrase**; the importer refuses the vault
+/// master password for it. Files without the tag are legacy backups sealed with
+/// the master password and keep working through the old path.
+pub const BACKUP_V2_MAGIC: &[u8; 5] = b"PVBK1";
+
 /// `.pvx` container: the native JSON sealed with the portable hybrid
-/// envelope (same Argon2id + ML-KEM + XChaCha20Poly1305 as the vault file).
+/// envelope (same Argon2id + ML-KEM + XChaCha20Poly1305 as the vault file),
+/// under its own backup passphrase and prefixed with [`BACKUP_V2_MAGIC`].
 pub fn export_native_encrypted(
     vault: &Vault,
-    master_password: &secrecy::SecretString,
+    backup_passphrase: &secrecy::SecretString,
 ) -> Result<Vec<u8>, String> {
     let doc = export_native_json(vault);
     let plain = serde_json::to_vec(&doc).map_err(|e| format!("native encode failed: {e}"))?;
-    crate::crypto::encrypt_vault_portable_secret(master_password, &plain)
+    let container = crate::crypto::encrypt_vault_portable_secret(backup_passphrase, &plain)?;
+    let mut out = Vec::with_capacity(BACKUP_V2_MAGIC.len() + container.len());
+    out.extend_from_slice(BACKUP_V2_MAGIC);
+    out.extend_from_slice(&container);
+    Ok(out)
 }
 
 pub fn export_native_gated(
     vault: &Vault,
     is_decoy: bool,
-    master_password: &secrecy::SecretString,
+    backup_passphrase: &secrecy::SecretString,
 ) -> Result<Vec<u8>, String> {
     if is_decoy {
         return Err("decoy mode is read-only".to_string());
     }
-    export_native_encrypted(vault, master_password)
+    export_native_encrypted(vault, backup_passphrase)
 }
 
 /// Full-fidelity CSV for spreadsheets: EVERY item kind, one row each, with
@@ -808,10 +819,12 @@ mod tests {
     #[test]
     fn native_backup_is_lossless_and_encrypted() {
         let v = vault_all_kinds();
-        let pw = secrecy::SecretString::new("master-pw".to_string());
+        let pw = secrecy::SecretString::new("backup-passphrase-1".to_string());
         let blob = export_native_encrypted(&v, &pw).unwrap();
-        assert_eq!(&blob[..4], crate::crypto::V2_PORTABLE_MAGIC);
-        let plain = crate::crypto::decrypt_vault_portable_secret(&pw, &blob).unwrap();
+        assert_eq!(&blob[..5], BACKUP_V2_MAGIC);
+        let plain =
+            crate::crypto::decrypt_vault_portable_secret(&pw, &blob[BACKUP_V2_MAGIC.len()..])
+                .unwrap();
         let doc: serde_json::Value = serde_json::from_slice(&plain).unwrap();
         assert_eq!(doc["format"], NATIVE_FORMAT);
         assert_eq!(doc["version"], NATIVE_VERSION);
@@ -823,7 +836,34 @@ mod tests {
         assert_eq!(back.passkeys[0].private_key_pkcs8, vec![9, 8, 7]);
         assert_eq!(back.credentials[0].attachments[0].data, vec![1, 2, 3]);
         let bad = secrecy::SecretString::new("wrong".to_string());
-        assert!(crate::crypto::decrypt_vault_portable_secret(&bad, &blob).is_err());
+        assert!(
+            crate::crypto::decrypt_vault_portable_secret(&bad, &blob[BACKUP_V2_MAGIC.len()..])
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn a6_backup_opens_with_passphrase_but_never_with_the_master() {
+        let v = vault_all_kinds();
+        let backup = secrecy::SecretString::new("backup-passphrase-1".to_string());
+        let master = secrecy::SecretString::new("master-password-1".to_string());
+        let blob = export_native_gated(&v, false, &backup).unwrap();
+        let body = &blob[BACKUP_V2_MAGIC.len()..];
+        assert!(crate::crypto::decrypt_vault_portable_secret(&backup, body).is_ok());
+        assert!(
+            crate::crypto::decrypt_vault_portable_secret(&master, body).is_err(),
+            "the vault master must not open a backup export"
+        );
+    }
+
+    #[test]
+    fn a6_backup_export_uses_a_fresh_salt_every_time() {
+        let v = vault_all_kinds();
+        let backup = secrecy::SecretString::new("backup-passphrase-1".to_string());
+        let a = export_native_gated(&v, false, &backup).unwrap();
+        let b = export_native_gated(&v, false, &backup).unwrap();
+        assert_ne!(a, b, "same vault, different container bytes");
+        assert_ne!(a[5..21], b[5..21], "salt must not be reused");
     }
 
     #[test]
@@ -849,11 +889,11 @@ mod tests {
     #[test]
     fn native_backup_parses_through_the_real_sniffer() {
         let v = vault_all_kinds();
-        let pw = secrecy::SecretString::new("master-pw".to_string());
+        let pw = secrecy::SecretString::new("backup-passphrase-1".to_string());
         let blob = export_native_encrypted(&v, &pw).unwrap();
         let path = std::env::temp_dir().join(format!("pv-native-{}.pvx", std::process::id()));
         std::fs::write(&path, &blob).unwrap();
-        let parsed = crate::importer::parse_import_any(&path, Some(&pw)).unwrap();
+        let parsed = crate::importer::parse_import_any(&path, None, Some(&pw)).unwrap();
         let _ = std::fs::remove_file(&path);
         match parsed {
             crate::importer::ParsedImport::Native(src, _) => {
@@ -875,5 +915,38 @@ mod tests {
             }
             crate::importer::ParsedImport::Rows(..) => panic!("native backup sniffed as rows"),
         }
+    }
+
+    #[test]
+    fn a6_new_backup_refuses_the_master_and_legacy_keeps_it() {
+        let v = vault_all_kinds();
+        let backup = secrecy::SecretString::new("backup-passphrase-1".to_string());
+        let master = secrecy::SecretString::new("master-password-1".to_string());
+        let dir = std::env::temp_dir().join("pv_a6_import");
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+
+        // New export: master alone must not open it, even with no other error.
+        let new_path = dir.join("new.pvx");
+        std::fs::write(&new_path, export_native_gated(&v, false, &backup).unwrap()).unwrap();
+        assert!(
+            crate::importer::parse_import_any(&new_path, Some(&master), None).is_err(),
+            "a PVBK1 backup must not open with the master password"
+        );
+        assert!(crate::importer::parse_import_any(&new_path, None, Some(&backup)).is_ok());
+        // Wrong backup passphrase fails loudly, vault untouched (parse only).
+        let wrong = secrecy::SecretString::new("wrong-backup-pass".to_string());
+        assert!(crate::importer::parse_import_any(&new_path, None, Some(&wrong)).is_err());
+
+        // Legacy `.pvx` (no PVBK1 tag) still opens with the master password.
+        let doc = export_native_json(&v);
+        let plain = serde_json::to_vec(&doc).unwrap();
+        let legacy = crate::crypto::encrypt_vault_portable_secret(&master, &plain).unwrap();
+        let legacy_path = dir.join("legacy.pvx");
+        std::fs::write(&legacy_path, &legacy).unwrap();
+        assert!(crate::importer::parse_import_any(&legacy_path, Some(&master), None).is_ok());
+        assert!(crate::importer::parse_import_any(&legacy_path, None, Some(&backup)).is_err());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

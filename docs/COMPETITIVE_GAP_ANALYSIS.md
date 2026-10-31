@@ -40,8 +40,8 @@ four places:
    the installer is still unsigned and there is no release provenance. A security
    product that cannot be verified end-to-end is not competitive, regardless of
    crypto.
-2. **Account lifecycle** — no separate backup passphrase, no signed container
-   revision (master-password change shipped as A5).
+2. **Account lifecycle** — no signed container revision (separate backup
+   passphrase shipped as A6, master-password change as A5).
 3. **Extension hardening** — fixed in this batch (proactive idle lock and
    "Never save for this site"); a few smaller items remain.
 4. **Ecosystem** — no local API or CLI, so editor/CI/Terraform workflows that
@@ -69,13 +69,13 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A4b | `verify_master` brute-force limiter | `VERIFY_MASTER_PER_MIN = 5` (`native_host.rs:220`), `verify_master_backoff_ms`, shared failure counter with `create_login`/`update_login`/`delete_login` | 6th attempt inside a minute is refused; failures delay the reply exponentially |
 | A5 | Master password change / rekey | `storage::rekey_vault_secret` (`storage.rs`); `rekey_input_error` + `on_change_master_password` (`main.rs`); Settings > Security card (`ui/appwindow.slint`) | Old password fails, new password unlocks, `.bak.1.enc` opens with the old password, 6 new tests |
 | A9 | Edit-before-save in the save toast | `content.js` `credentialToast` (shared builder, closed shadow root), `toastField`, `saverToast`/`updateToast`; 6 new tests; harness `shadowOf` | Username and password can be corrected before the item is stored; empty pairs and already-known pairs never reach the host |
+| A6 | Separate backup passphrase for `.pvx` | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) + `export_native_encrypted`; `Format::PhantomBackupV2` (`sniffer.rs:19`); `parse_import_any` (`mod.rs:211`); `backup_pass_error` (`main.rs:881`); modal + import fields (`ui/appwindow.slint:617,785,2331`); 4 new tests | A `PVBK1` export opens only with the backup passphrase; the master password never opens it, and legacy `.pvx` files still open with the master |
+| A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 
 ### P0 — parity blockers (do first)
 
 | ID | Task | Gap | Effort | Done when |
 |---|---|---|---|---|
-| A6 | Separate backup passphrase for `.pvx` | C2 | 1 wk | Export opens only with the backup passphrase, never with the vault password |
-| A7 | README, LICENSE, SECURITY.md | `README.md`, `LICENSE` (MIT), `SECURITY.md` (GitHub private advisory, 90-day window, scope + known limits) | License present at root; private disclosure channel documented; supported versions and out-of-scope list published |
 | A8 | Authenticode signing + release provenance | T2, T3 | 1 wk | A downloaded installer verifies against the release checksum and signature |
 
 ### P1 — close the structural gaps
@@ -158,7 +158,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | ID | Gap | Evidence | Impact | Fix | Sev |
 |---|---|---|---|---|---|
 | C1 | Master-password change/rekey — **shipped (A5)** | `src/storage.rs` `rekey_vault_secret` (old-password proof, round-trip proof, atomic swap, `.bak.1.enc` rollback); Settings card + `main.rs` `on_change_master_password` | A leaked master password can now be rotated without exporting and rebuilding the vault; `.pvx` backups and printed shards stay on the old password by design | Rekey flow: decrypt with old, re-encrypt with new salt + fresh KDF, atomic swap, keep one rollback snapshot, zeroize both | S1 |
-| C2 | Backup `.pvx` shares the master password | Export uses the same secret path (`src/storage.rs:139-160`) | A backup stolen with a known/weak master password exposes the vault; no separate "backup passphrase" | Optional separate export passphrase, Argon2id with its own salt, explicit "cannot be opened with the vault password" warning | S1 |
+| C2 | Backup `.pvx` shares the master password — **shipped (A6)** | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) tags new exports; `parse_import_any` (`mod.rs:211`) opens a `PVBK1` file only with the backup passphrase and routes untagged files to the legacy master-password path | A stolen backup no longer opens with the vault master password; exporting requires a separate 12+ character passphrase that differs from the master | Optional separate export passphrase, Argon2id with its own salt, explicit "cannot be opened with the vault password" warning | S1 |
 | C3 | No signed container revision / epoch | Container layout has no revision field (`src/crypto.rs:230-233`); GitHub sync has no expected-revision check on fresh restore (`src/main.rs:1151-1177`) | A fresh device (or a restore after local wipe) silently adopts whatever blob the remote holds; a forced-push of an old commit restores stale data and resurrects entries deleted after that point | Add `rev` + `prev_hash` inside the AEAD payload, sign with the vault key; refuse a lower `rev` and surface a loud warning | S1 |
 | C4 | Portable PQ profile is not a second factor | `src/crypto.rs:235-242`; portable form is the default save path (`src/storage.rs:149`) | "Post-quantum" is a hedge, not a factor. A guessed password yields the whole key chain | Opt-in "PQ-paranoid" profile: DPAPI/TPM-bound decapsulation key plus password (the old `V2Legacy` model). Keep portable for sync | S2 |
 | C5 | Fixed Argon2id cost | `src/crypto.rs:51-56` (64 MiB, t=3, p=4) | Below current OWASP-recommended ceilings for a high-value vault; no per-device tuning | Version the KDF parameters in the header and raise defaults for new containers; keep legacy unlock path | S2 |
@@ -423,6 +423,43 @@ Acceptance: `Test-Path README.md, LICENSE, SECURITY.md` is true for all three;
 `Cargo.toml` declares the license; the advisory URL resolves for a repository
 maintainer. No code changed in this batch.
 
+### 5.11 Independent backup passphrase (A6)
+
+`.pvx` exports used to be sealed with the vault master password, so a stolen
+backup was only as strong as the password the user also types every day. New
+exports are now sealed with a **separate backup passphrase**:
+
+- A new export is `b"PVBK1"` (`exporter.rs:384`) followed by the unchanged
+  portable envelope (`Argon2id` + ML-KEM + XChaCha20-Poly1305). `crypto.rs` is
+  untouched — only the key input differs, and every export still draws a fresh
+  salt (asserted by `a6_backup_export_uses_a_fresh_salt_every_time`).
+- The export gate (`backup_pass_error`, `main.rs:881`) requires ≥12 characters,
+  a matching confirmation, and a value that **differs from the master
+  password**. Reusing the master is refused rather than warned about, because a
+  backup that opens with the master would silently restore the old behaviour.
+  The master reprompt stays: it proves the user is present before a file leaves
+  the machine.
+- The importer (`mod.rs:211`) checks the `PVBK1` tag first
+  (`sniffer.rs:117`). A tagged file is decrypted **only** with the backup field —
+  the master password is never tried — and a missing or wrong passphrase fails
+  with a message that says so. Untagged files take the explicit legacy path and
+  still open with the master password, so pre-A6 backups keep importing.
+- UI: the reprompt modal grows two password fields for encrypted export
+  (`ui/appwindow.slint:2331`); the Import screen has an optional "Backup
+  passphrase — only for .pvx backups" field (`ui/appwindow.slint:1543`) that is
+  cleared once staging succeeds. Both export fields are cleared on the event
+  loop the moment Rust owns the secret.
+
+Tests: `a6_backup_opens_with_passphrase_but_never_with_the_master`,
+`a6_backup_export_uses_a_fresh_salt_every_time`,
+`a6_new_backup_refuses_the_master_and_legacy_keeps_it`, and the gate test
+`a6_backup_pass_gate_rejects_empty_short_mismatch_and_master`. Baselines:
+`cargo test` **485 passed / 1 ignored**; `npm test` **124/124**.
+
+Honest limits: the passphrase is only as good as what the user types, there is
+no recovery if it is lost, and a backup file still carries its own salt and
+container — losing the file loses the data regardless of the passphrase.
+
 ---
 
 ## 6. Roadmap
@@ -442,7 +479,8 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 1. **DONE (A5)** — master-password change/rekey with atomic swap and a
    one-step rollback snapshot (C1).
-2. Optional separate backup passphrase for `.pvx` (C2).
+2. **DONE (A6)** — separate backup passphrase for `.pvx` (C2): `PVBK1` tag,
+   independent passphrase, legacy master-password path preserved.
 3. Header version bump carrying `rev` + `prev_hash` (C3).
 4. Exit test: rotate the password, unlock with the new one, verify the old one
    fails, and verify an older `.pvx` still imports.
@@ -512,7 +550,7 @@ competitors do not ship.
 | Duress / coercion | Decoy vault | None | Travel Mode (partial) | **Lead**, needs deniability |
 | Canary credential | Yes, local-only | None | None | **Lead**, needs remote alert |
 | Master-password rotation | Shipped (A5: old-password proof, atomic swap, `.bak.1.enc`) | Yes | Yes | Parity |
-| Backup passphrase | Missing | N/A (server) | Yes (Emergency Kit) | Behind |
+| Backup passphrase | Yes (A6: `PVBK1`, independent of the master) | N/A (server) | Yes (Emergency Kit) | Parity |
 | Extension idle lock | Proactive (this batch) | Proactive | Proactive | Parity |
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
 | Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
@@ -567,6 +605,14 @@ cargo test rekey
 # A9 edit-before-save (closed shadow fields, re-classify, empty guard)
 Select-String -Path browser_extension\content.js -Pattern 'credentialToast|attachShadow\(\{ mode: "closed" \}\)|already saved'
 node --test tests/js/content.test.mjs
+
+# A6 separate backup passphrase (PVBK1 tag, gate, legacy path)
+Select-String -Path src\importer\exporter.rs -Pattern 'BACKUP_V2_MAGIC|export_native_encrypted'
+Select-String -Path src\importer\sniffer.rs -Pattern 'PhantomBackupV2'
+Select-String -Path src\importer\mod.rs -Pattern 'fn parse_import_any|PhantomBackupV2'
+Select-String -Path src\main.rs -Pattern 'fn backup_pass_error|on_reprompt_confirm'
+Select-String -Path ui\appwindow.slint -Pattern 'rp_backup_pass|import_backup_pass'
+cargo test a6
 
 # Container layout and the honest PQ note
 Select-String -Path src\crypto.rs -Pattern 'V2_PORTABLE_MAGIC|H5 NOTE' -Context 0,6
@@ -633,7 +679,7 @@ pass missed, and corrected three assumptions.
    the extension is a viewer, not a manager. 1-2 weeks.
 2. **E14** � platform layer. Windows-only caps the addressable market and is the
    single largest structural gap. 6-10 weeks for macOS/Linux; mobile after.
-3. **C1 + C2** � rekey and separate backup passphrase. 2-3 weeks.
+3. **C1 + C2** — rekey and separate backup passphrase (**both done as A5 + A6**).
 4. **E8 + E9 + E10** � shadow DOM, offline cache, KDBX. 3 weeks.
 5. **T1-T3** - README/LICENSE/SECURITY (**T1 done as A7**), Authenticode, release provenance. 1 week remaining.
 6. **E13 + E12 + C4** � serverless Send, hardware-key unlock, PQ-paranoid

@@ -15,6 +15,8 @@ pub enum Format {
     LastPassCsv,
     PhantomNative,
     PhantomNativeEncrypted,
+    /// A6: `PVBK1` envelope — sealed with its own backup passphrase.
+    PhantomBackupV2,
     GenericJson,
     FuzzyCsv(u8), // delimiter byte
 }
@@ -33,6 +35,7 @@ impl Format {
             Format::LastPassCsv => "LastPass CSV".to_string(),
             Format::PhantomNative => "PhantomVault backup".to_string(),
             Format::PhantomNativeEncrypted => "PhantomVault encrypted backup".to_string(),
+            Format::PhantomBackupV2 => "PhantomVault backup (backup passphrase)".to_string(),
             Format::GenericJson => "Generic JSON".to_string(),
             Format::FuzzyCsv(_) => "Universal CSV".to_string(),
         }
@@ -107,7 +110,13 @@ pub fn sniff(bytes: &[u8]) -> Result<Format> {
     if bytes.is_empty() {
         return Err(VaultError::Sync("import file is empty".into()));
     }
-    // Native `.pvx`: the portable envelope is BINARY, so the magic check must
+    // A6 `.pvx` v2: the tag says "sealed with a backup passphrase, not the
+    // master". Check it before the plain portable magic — the tag is a strict
+    // prefix wrapper around the same envelope.
+    if bytes.len() >= 5 && &bytes[..5] == crate::importer::exporter::BACKUP_V2_MAGIC {
+        return Ok(Format::PhantomBackupV2);
+    }
+    // Legacy `.pvx`: the portable envelope is BINARY, so the magic check must
     // run before text decoding (lossy UTF-8 would shred it into CSV noise).
     if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V2_PORTABLE_MAGIC {
         return Ok(Format::PhantomNativeEncrypted);

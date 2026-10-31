@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A7 trust documentation (README, MIT LICENSE, SECURITY.md), 0.4.0 still.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A6 separate backup passphrase (`PVBK1`), after A5/A7/A9, 0.4.0 still.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -14,7 +14,8 @@
   tripwire; popup mirrors the trust rank; carry clears only on a full fill.
 
 - **Import/export 0.4.0:** lossless native
-  `.pvx` backup (same master-password hybrid envelope; passkeys, 2FA hub,
+  `.pvx` backup (same master-password hybrid envelope — superseded by A6 below,
+  which adds the `PVBK1` backup-passphrase tag; passkeys, 2FA hub,
   SSH keys, attachment bytes), row-level preview with Skip / Update existing /
   Import all, URL-aware login dedupe, session-only undo guarded by a vault
   fingerprint, and an all-kinds "Full CSV" export. Importer decrypts `.pvx`
@@ -52,6 +53,21 @@
   `npm test` **124/124**, `cargo test` 481 unchanged. Honest limit: a closed
   shadow root is a DOM boundary, not a keyboard boundary — the page can still
   see key events, as it can for the original typing.
+
+- **A6 — independent backup passphrase (this batch):** new `.pvx` exports are
+  `b"PVBK1"` + the unchanged portable envelope, sealed with a **backup
+  passphrase** instead of the vault master (`exporter::export_native_encrypted`,
+  `BACKUP_V2_MAGIC`). Export gate (`backup_pass_error`): ≥12 characters, confirm
+  must match, and the value must **differ from the master** — reusing the master
+  is refused outright. The master reprompt stays as proof of presence. Import
+  checks the tag first (`Format::PhantomBackupV2`) and decrypts a tagged file
+  **only** with the backup field; a missing/wrong passphrase fails with an
+  explicit message and leaves the vault untouched. Untagged files take the
+  legacy path (master password) so pre-A6 backups still import. UI: two modal
+  fields for encrypted export + an optional "Backup passphrase" field on the
+  Import screen, both cleared once Rust owns the secret. `crypto.rs` unchanged;
+  fresh salt per export (asserted). Tests +4 → `cargo test` **485 passed / 1
+  ignored**, `npm test` **124/124**.
 
 - **A7 — trust documentation (this batch):** three files at the repo root, written
   from the code, not from marketing. `README.md` (features, container/KEM summary,
@@ -277,7 +293,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 481 passed / 1 ignored, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 485 passed / 1 ignored, `npm test` 124/124 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -425,3 +441,9 @@
   (sealed with the OLD password); App PIN is removed on rotation because the
   PIN cannot re-seal itself; old `.pvx` exports, backups and GitHub history
   stay on the old password — never claim otherwise in UI or docs.
+- A6 backup invariants: `PVBK1` is a 5-byte prefix, not a new container
+  version — `crypto.rs` stays untouched. A tagged file is opened ONLY with the
+  backup passphrase (the master is never tried); untagged files keep the
+  legacy master path, so pre-A6 `.pvx` files must never be broken. The export
+  gate refuses a passphrase equal to the master (not a warning). Clearing the
+  Slint fields happens on the event loop; property writes never cross threads.

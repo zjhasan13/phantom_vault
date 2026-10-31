@@ -612,6 +612,10 @@ export component MainWindow inherits Window {
     in-out property <string> rp_user;
     in-out property <string> rp_secret;
     in-out property <string> rp_error: "";
+    // A6: separate backup passphrase for encrypted `.pvx` export. Kept in root
+    // properties so Rust can clear them the moment the key is owned by Rust.
+    in-out property <string> rp_backup_pass: "";
+    in-out property <string> rp_backup_confirm: "";
     in-out property <bool> show_2fa_import: false;
     // GA reverse-export modal state (image set from Rust PNG bytes).
     in-out property <bool> ga_show: false;
@@ -776,7 +780,9 @@ export component MainWindow inherits Window {
     callback save_prox_device(string);
     callback set_prox_sensitivity(int);
     // Phase 18: Omni-Importer vault view
-    in-out property <string> import_status: "No import yet — pick any export file.";
+    in-out property <string> import_status: "No import yet - pick any export file.";
+    // A6: optional passphrase for `PVBK1` backups (ignored by vendor formats).
+    in-out property <string> import_backup_pass: "";
     in-out property <string> import_kind: "info";
     changed import_status => { root.import_kind = "info"; }
     // Dry-run preview: staged counts shown BEFORE anything merges.
@@ -939,7 +945,7 @@ export component MainWindow inherits Window {
     callback open_detail(string);
     callback close_detail();
     callback cycle_select(int);
-    callback reprompt_confirm(string);
+    callback reprompt_confirm(string, string, string);
     callback search_changed(string);
     callback totp_search_changed(string);
     callback scan_qr_requested();
@@ -1533,7 +1539,10 @@ export component MainWindow inherits Window {
         if root.active_nav == 2 : Rectangle {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; clicked => { root.pick_import_file(); } }
+                HorizontalLayout { spacing: 8px;
+                    LineEdit { placeholder-text: "Backup passphrase — only for .pvx backups"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
+                    AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; width: 260px; clicked => { root.pick_import_file(); } }
+                }
                 AuraButton { label: "🔍 Detect Browsers"; height: 42px; clicked => { root.detect_browsers(); } }
                 if root.browser_detect_status != "" : Rectangle { background: #0d131f; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: #38e1ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 Rectangle { background: #121927; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? #fb7185 : (root.import_kind == "success" ? #34d399 : #38e1ff); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
@@ -2316,12 +2325,17 @@ export component MainWindow inherits Window {
                 }
                 Text { text: "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.rp_user != "" : Text { text: "for " + root.rp_user; color: #5b6589; font-size: 11px; horizontal-alignment: center; overflow: elide; }
-                rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text); } }
+                rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text, root.rp_backup_pass, root.rp_backup_confirm); } }
+                if root.rp_action == 5 && root.rp_export_fmt == 3 : VerticalLayout { spacing: 6px;
+                    Text { text: "A6: this .pvx is sealed with THIS passphrase — never with your master password. Store it separately; it cannot be recovered."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: "Backup passphrase (12+ characters)"; input-type: password; height: 40px; text: root.rp_backup_pass; edited(v) => { root.rp_backup_pass = v; } }
+                    LineEdit { placeholder-text: "Confirm backup passphrase"; input-type: password; height: 40px; text: root.rp_backup_confirm; edited(v) => { root.rp_backup_confirm = v; } }
+                }
                 if root.rp_error != "" : Text { text: root.rp_error; color: #fb7185; font-size: 12px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: center;
-                    AuraButton { label: "Confirm"; primary: true; width: 150px; height: 42px; clicked => { root.reprompt_confirm(rp_input.text); } }
+                    AuraButton { label: "Confirm"; primary: true; width: 150px; height: 42px; clicked => { root.reprompt_confirm(rp_input.text, root.rp_backup_pass, root.rp_backup_confirm); } }
                     AuraButton { label: "✕ Cancel"; width: 130px; height: 42px; clicked => { root.rp_show = false; root.rp_error = ""; } }
                 }
             }

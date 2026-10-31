@@ -874,6 +874,26 @@ fn rekey_input_error(old: &str, new: &str, confirm: &str) -> Option<&'static str
     None
 }
 
+/// A6: backup passphrase gate for `.pvx` export. A backup that opens with the
+/// master password defeats the point of a separate secret, so equality is
+/// refused — not merely warned about. Twelve characters because this file is
+/// designed to leave the machine (USB, cloud drive) and is offline-crackable.
+fn backup_pass_error(pass: &str, confirm: &str, master: &str) -> Option<&'static str> {
+    if pass.trim().is_empty() {
+        return Some("⚠️ Enter a backup passphrase.");
+    }
+    if pass.chars().count() < 12 {
+        return Some("⚠️ Backup passphrase must be at least 12 characters.");
+    }
+    if pass != confirm {
+        return Some("⚠️ Backup passphrases do not match.");
+    }
+    if pass == master {
+        return Some("⚠️ Backup passphrase must differ from the master password.");
+    }
+    None
+}
+
 /// Audit finding: the Rust vault was wiped but Slint-side models/props
 /// (detail secrets, history, form drafts, health badges) survived in UI-layer
 /// RAM — exactly what Mimikatz-style dumping hunts. Everything secret-shaped
@@ -10559,7 +10579,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let rp_travel_vault = Arc::clone(&active_vault);
     let rp_search = Arc::clone(&search_state);
     let rp_ct = Arc::clone(&clipboard_timeout_secs);
-    main_window.on_reprompt_confirm(move |password| {
+    main_window.on_reprompt_confirm(move |password, backup_pass, backup_confirm| {
         let Some(ui) = rp_weak.upgrade() else {
             return;
         };
@@ -10571,6 +10591,21 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if !ok {
             ui.set_rp_error("❌ Wrong master password.".into());
             return;
+        }
+        // A6: an encrypted export is sealed with its own backup passphrase. The
+        // master above only proves presence; it must never become the key that
+        // opens the file. Keep the modal open on a bad passphrase.
+        if ui.get_rp_action() == 5 && ui.get_rp_export_fmt() == 3 {
+            if let Some(err) =
+                backup_pass_error(backup_pass.as_str(), backup_confirm.as_str(), password.as_str())
+            {
+                ui.set_rp_error(err.into());
+                return;
+            }
+            // The worker owns its copy from here; do not leave a second one in
+            // the Slint tree (property writes must stay on the event loop).
+            ui.set_rp_backup_pass("".into());
+            ui.set_rp_backup_confirm("".into());
         }
         ui.set_rp_show(false);
         ui.set_rp_error("".into());
@@ -10703,7 +10738,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_export_status("⚠️ Plaintext export — pick a destination…".into());
                 let weak = rp_main.clone();
                 let vault_clone = Arc::clone(&rp_del_vault);
-                let export_master = secrecy::SecretString::new(password.to_string());
+                let export_backup =
+                    secrecy::SecretString::new(backup_pass.as_str().to_string());
                 std::thread::spawn(move || {
                     // Snapshot under lock, then release before the dialog blocks.
                     // M5: decoy already refused on the event-loop thread
@@ -10715,7 +10751,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let bytes = match importer::exporter::export_native_gated(
                                 &v,
                                 false,
-                                &export_master,
+                                &export_backup,
                             ) {
                                 Ok(b) => b,
                                 Err(e) => {
@@ -11229,6 +11265,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             ui.set_import_status("⏳ Waiting for file picker…".into());
         }
+        // A6: read the optional backup passphrase on the event loop, then hand
+        // it to the worker. Empty = "this export has no separate passphrase".
+        let backup_text = import_weak
+            .upgrade()
+            .map(|ui| ui.get_import_backup_pass().to_string())
+            .unwrap_or_default();
         let weak = import_weak.clone();
         let vault_clone = Arc::clone(&import_vault);
         let master_clone = Arc::clone(&import_master);
@@ -11258,12 +11300,21 @@ fn launch_url(ui: &MainWindow, url: &str) {
             };
             // Parse only; dry-merge into a CLONE for exact counts; stash the
             // rows for the Confirm step. Live vault untouched.
+            let backup_opt = if backup_text.is_empty() {
+                None
+            } else {
+                Some(secrecy::SecretString::new(backup_text))
+            };
             let res: Result<
                 (StagedImport, importer::ImportSummary, Vec<String>, String),
                 String,
             > = (|| {
                 let vault = lock_vault(&vault_clone);
-                let (staged, source) = match importer::parse_import_any(&path, Some(&master_pw)) {
+                let (staged, source) = match importer::parse_import_any(
+                    &path,
+                    Some(&master_pw),
+                    backup_opt.as_ref(),
+                ) {
                     Ok(importer::ParsedImport::Rows(raws, s)) => (StagedImport::Rows(raws), s.source),
                     Ok(importer::ParsedImport::Native(v, s)) => (StagedImport::Native(v), s.source),
                     Err(e) => return Err(e.to_string()),
@@ -11291,6 +11342,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_show_import_preview(true);
                         ui.set_import_status("👁️ Preview ready — nothing merged yet.".into());
                         ui.set_import_kind("success".into());
+                        // The passphrase is not needed past this point.
+                        ui.set_import_backup_pass("".into());
                     }
                     Err(e) => {
                         ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
@@ -14822,5 +14875,19 @@ mod grid_tests {
         assert!(rekey_input_error("old-pass", "new-password-1", "new-password-1").is_none());
         // Bengali script counts characters, not bytes.
         assert!(rekey_input_error("পুরনো-পাসওয়ার্ড", "নতুন-পাসওয়ার্ড", "নতুন-পাসওয়ার্ড").is_none());
+    }
+
+    #[test]
+    fn a6_backup_pass_gate_rejects_empty_short_mismatch_and_master() {
+        let master = "master-password-1";
+        assert!(backup_pass_error("", "", master).is_some());
+        assert!(backup_pass_error("   ", "   ", master).is_some());
+        assert!(backup_pass_error("short-pass", "short-pass", master).is_some());
+        assert!(backup_pass_error("backup-passphrase-1", "backup-passphrase-2", master).is_some());
+        // A backup that opens with the master password defeats A6's promise.
+        assert!(backup_pass_error(master, master, master).is_some());
+        assert!(backup_pass_error("backup-passphrase-1", "backup-passphrase-1", master).is_none());
+        // Bengali script counts characters, not bytes.
+        assert!(backup_pass_error("ব্যাকআপ-পাসফ্রেজ-১", "ব্যাকআপ-পাসফ্রেজ-১", master).is_none());
     }
 }
