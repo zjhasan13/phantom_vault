@@ -982,22 +982,31 @@ fn signed_headers(method: &str, path: &str, body: &str) -> Result<Vec<(String, S
 }
 
 fn verify_peer_response(
-    addr: SocketAddr,
     status: u16,
     body: &[u8],
     headers: &std::collections::HashMap<String, String>,
-) -> Result<(), String> {
-    let ip = addr.ip().to_string();
-    let peer = crate::sync::p2p_pairing::peer_for_addr(&ip)
-        .ok_or_else(|| "peer is not paired".to_string())?;
-    let key = headers.get("x-pv-key").map(String::as_str).unwrap_or("");
+) -> Result<String, String> {
+    let key = headers
+        .get("x-pv-key")
+        .map(|k| k.trim().to_lowercase())
+        .unwrap_or_default();
     let time = headers.get("x-pv-time").map(String::as_str).unwrap_or("");
     let sig = headers.get("x-pv-sig").map(String::as_str).unwrap_or("");
-    crate::sync::p2p_pairing::verify_response(status, body, key, time, sig, &peer.pubkey)
+    // A15d: trust the responder by its signed key, not by the IP it came from.
+    // The key must already be paired; the signature then proves possession.
+    if key.is_empty() || !crate::sync::p2p_pairing::is_paired(&key) {
+        return Err("response is not from a paired device".to_string());
+    }
+    crate::sync::p2p_pairing::verify_response(status, body, &key, time, sig, &key)?;
+    Ok(key)
 }
 
-/// Pair with a host using its one-time code (HMAC; code never sent). No-op when
-/// this address is already paired.
+/// Pair with a host using its one-time code (HMAC; code never sent).
+///
+/// A15d: when this address is unknown and no code was entered, return `Ok`
+/// optimistically. The signed response decides whether the responder is an
+/// already-paired device that moved; an unpaired host still answers 403 and the
+/// caller tells the user to enter its pairing code. The code path is unchanged.
 fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
     use crate::sync::p2p_pairing as pairing;
     let ip = addr.ip().to_string();
@@ -1005,7 +1014,7 @@ fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
         return Ok(());
     }
     if code.trim().is_empty() {
-        return Err("enter the pairing code shown on the other device".to_string());
+        return Ok(());
     }
     let client_pub = pairing::device_pub_hex()?;
     use rand_core::RngCore as _;
@@ -1062,7 +1071,7 @@ pub fn broadcast_canary(body: &str) -> bool {
             continue;
         };
         if let Ok((status, resp, rh)) = http_call(addr, "POST", "/p2p/canary", body, &headers) {
-            if status == 200 && verify_peer_response(addr, status, &resp, &rh).is_ok() {
+            if status == 200 && verify_peer_response(status, &resp, &rh).is_ok() {
                 ok = true;
             }
         }
@@ -1075,7 +1084,15 @@ pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>),
     ensure_paired(addr, code)?;
     let headers = signed_headers("GET", "/p2p/pull", "")?;
     let (status, resp, rh) = http_call(addr, "GET", "/p2p/pull", "", &headers)?;
-    verify_peer_response(addr, status, &resp, &rh)?;
+    let host_pub = match verify_peer_response(status, &resp, &rh) {
+        Ok(k) => k,
+        Err(_) if status == 403 => {
+            return Err(
+                "this device is not paired with the host — enter its pairing code".to_string(),
+            )
+        }
+        Err(e) => return Err(e),
+    };
     if status != 200 {
         return Err(format!("pull refused (HTTP {status})"));
     }
@@ -1085,16 +1102,20 @@ pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>),
     let mtime = v.get("mtime").and_then(|m| m.as_u64()).unwrap_or(0);
     let remote_rev = v.get("rev").and_then(|r| r.as_u64()).unwrap_or(0);
     let remote_hash = v.get("hash").and_then(|h| h.as_str()).unwrap_or("");
-    let ip = addr.ip().to_string();
-    let peer = crate::sync::p2p_pairing::peer_for_addr(&ip)
-        .ok_or_else(|| "peer is not paired".to_string())?;
+    let peer = crate::sync::p2p_pairing::peer_by_pubkey(&host_pub)
+        .ok_or_else(|| "responder is not paired".to_string())?;
     crate::sync::p2p_pairing::head_ok(peer.rev, &peer.hash, remote_rev, remote_hash)?;
     let blob_b64 = v.get("blob_b64").and_then(|s| s.as_str()).unwrap_or("");
     let blob = base64_decode(blob_b64).ok_or_else(|| "bad pull blob".to_string())?;
     if blob.len() > MAX_BLOB_BYTES || sha_hex(&blob) != sha {
         return Err("pull integrity failed".to_string());
     }
-    crate::sync::p2p_pairing::update_peer_head(&peer.pubkey, remote_rev, remote_hash)?;
+    // A15d: the response signature proved this is the paired device, so its
+    // LAN address may have moved. Bind only after every check above passed.
+    if crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())? {
+        crate::security::access_log::log_event("p2p", "peer address re-bound");
+    }
+    crate::sync::p2p_pairing::update_peer_head(&host_pub, remote_rev, remote_hash)?;
     Ok((sha, mtime, blob))
 }
 
@@ -1111,13 +1132,25 @@ pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], code: &st
     }).to_string();
     let headers = signed_headers("POST", "/p2p/sync", &body)?;
     let (status, resp, rh) = http_call(addr, "POST", "/p2p/sync", &body, &headers)?;
-    verify_peer_response(addr, status, &resp, &rh)?;
+    let host_pub = match verify_peer_response(status, &resp, &rh) {
+        Ok(k) => k,
+        Err(_) if status == 403 => {
+            return Err(
+                "this device is not paired with the host — enter its pairing code".to_string(),
+            )
+        }
+        Err(e) => return Err(e),
+    };
     if status != 200 {
         return Err(format!("push refused (HTTP {status})"));
     }
     let v: serde_json::Value =
         serde_json::from_slice(&resp).map_err(|e| format!("bad push body: {e}"))?;
     if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+        // A15d: the verified responder may have moved to a new LAN address.
+        if crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())? {
+            crate::security::access_log::log_event("p2p", "peer address re-bound");
+        }
         Ok(v.get("adopted").and_then(|a| a.as_bool()).unwrap_or(false))
     } else {
         Err(v
@@ -1258,7 +1291,7 @@ mod tests {
         let sha = sha_hex(&blob);
         let server = std::thread::spawn(move || {
             let _ = listener.set_nonblocking(false);
-            for _ in 0..2 {
+            for _ in 0..3 {
                 if let Ok((stream, _)) = listener.accept() {
                     serve_conn_with_blob(stream, blob.clone(), sha.clone(), 7);
                 }
@@ -1278,6 +1311,18 @@ mod tests {
         assert_eq!(got_blob, b"loopback-ct");
         assert!(!got_sha.is_empty());
         assert!(crate::sync::p2p_pairing::paired_count() >= 1);
+
+        // A15d: the peer moved. With the stored address deliberately wrong, a
+        // code-less pull must still authenticate by key and re-bind the address.
+        let host = crate::sync::p2p_pairing::list_pairs()[0].pubkey.clone();
+        assert!(crate::sync::p2p_pairing::bind_peer_addr(&host, "192.0.2.250").unwrap());
+        let (_, _, moved_blob) = pull_peer(addr, "").unwrap();
+        assert_eq!(moved_blob, b"loopback-ct");
+        assert_eq!(
+            crate::sync::p2p_pairing::peer_by_pubkey(&host).unwrap().addr,
+            "127.0.0.1"
+        );
+
         let _ = server.join();
         let _ = std::fs::remove_file(&dev);
         let _ = std::fs::remove_file(&paired);
@@ -1508,5 +1553,44 @@ mod tests {
         pin_throttle_test_set(ip, 9, -5);
         assert!(!pin_locked_out(ip));
         pin_throttle_test_clear();
+    }
+
+    #[test]
+    fn signed_response_is_trusted_by_key_not_by_address() {
+        let _g = crate::sync::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv-p2p-rebind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PV_P2P_DEVICE_FILE", dir.join("dev.dpapi"));
+        std::env::set_var("PV_P2P_PAIRED_FILE", dir.join("paired.dpapi"));
+
+        let addr: SocketAddr = "192.0.2.77:52199".parse().unwrap();
+        // A15d: unknown address + no code is attempted optimistically; an
+        // unpaired host answers 403 and the caller asks for the code.
+        assert!(ensure_paired(addr, "").is_ok());
+
+        let host = crate::sync::p2p_pairing::device_pub_hex().unwrap();
+        let (k, t, s) = crate::sync::p2p_pairing::sign_response(200, b"{}").unwrap();
+        let mut headers = std::collections::HashMap::new();
+        headers.insert("x-pv-key".to_string(), k);
+        headers.insert("x-pv-time".to_string(), t);
+        headers.insert("x-pv-sig".to_string(), s);
+
+        // A valid signature from a key we never paired is refused.
+        assert!(verify_peer_response(200, b"{}", &headers).is_err());
+        crate::sync::p2p_pairing::add_peer("host", &host, "192.0.2.1").unwrap();
+        let got = verify_peer_response(200, b"{}", &headers).unwrap();
+        assert_eq!(got, host);
+
+        // Binding happens only after the caller's integrity/head checks.
+        assert!(crate::sync::p2p_pairing::peer_for_addr("192.0.2.77").is_none());
+        assert!(crate::sync::p2p_pairing::bind_peer_addr(&got, "192.0.2.77").unwrap());
+        assert!(crate::sync::p2p_pairing::peer_for_addr("192.0.2.77").is_some());
+
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::remove_var("PV_P2P_DEVICE_FILE");
+        std::env::remove_var("PV_P2P_PAIRED_FILE");
     }
 }

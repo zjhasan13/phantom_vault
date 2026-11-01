@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D3 (TPM QA + perf cache + release notes; phase D complete), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A15d automatic P2P re-bind (after A22 phase D complete), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -26,6 +26,15 @@
   `675196E7EC550471`, excludes `browser_extension/dist`); exe 19.55 MB
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
+
+- **A15d — automatic P2P re-bind (this batch):** `p2p_pairing::bind_peer_addr`
+  plus a key-based `p2p_local::verify_peer_response`: a response is trusted by
+  the **signed device key**, not by the source IP. `pull_peer`/`push_peer`
+  re-bind a paired peer to its new LAN address only after the head anchor and
+  blob integrity checks pass; an unknown host still answers 403 and the user is
+  asked for its pairing code. The loopback e2e test now moves the stored
+  address, pulls with no code and asserts the re-bind. Tests +2 →
+  `cargo test` **519 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**.
 
 - **A22 Phase A/B — PQ-paranoid profile (this batch):** a new container profile
   that needs the master password **and** this device's ML-KEM decapsulation key.
@@ -509,7 +518,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 517 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 519 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

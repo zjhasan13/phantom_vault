@@ -78,6 +78,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A15a | Mandatory P2P pairing (device keys + signed requests) | `sync/p2p_pairing.rs` (Ed25519 device key, one-time 64-bit code, HMAC pair proof, DPAPI-sealed peer list, request signatures); `p2p_local.rs` 403 gate; UI shows the pairing code; 3 new tests | An unpaired client gets 403 and cannot pull/push; the code never crosses the wire; existing paired devices sync without re-entering it |
 | A15b | Ephemeral P2P beacons + paired-device management | `p2p_local.rs` beacon carries only `{app,name,version,port,id,ts}` (random per-process ID; legacy head fallback for parsing only); `p2p_pairing::list_pairs/forget`; Settings lists paired devices with Forget | Beacons no longer reveal the head hash/mtime; paired devices can be listed and forgotten |
 | A15c | Response signing, QR code, A16 anchor | `p2p_pairing::sign_response/verify_response`; `qr_svg` + Settings image; `PairedPeer.rev/hash` + `head_ok/update_peer_head`; pull refuses a peer rollback | Pull/push responses are signed by the host key; the pairing code renders as a QR; a pinned peer head refuses stale pulls |
+| A15d | Automatic re-bind when a peer's LAN address changes | `p2p_pairing::bind_peer_addr`; `p2p_local::verify_peer_response` trusts the **signed key** instead of the source IP, and `pull_peer`/`push_peer` re-bind only after head/integrity checks; loopback e2e test | A paired peer that moves is re-bound without re-entering the code; an unpaired host still gets the "enter its pairing code" message |
 | A18 | Indistinguishable decoy provisioning | `decoy.rs` decoy stored as `my_secure_vault.enc.bak.0.enc` (backup-like, no rotation), no `duress.dpapi` verifier (AEAD tag is proof), payloads padded to a 1 MiB bucket in `storage.rs` | Listing has no duress filename; decoy and vault containers have the same size class |
 | A19 | Remote canary alert | `canary.rs` `alert_json`/`record_remote_alert`/`flush_pending`; `p2p_local` `/p2p/canary` + `broadcast_canary`; startup notification flag | A trip notifies paired devices over signed P2P; unreachable alerts queue and retry; only a title hash + metadata travel |
 | A16 | Signed container revision (`rev` + `prev_hash`) | `storage.rs` rev-2 `VaultEnvelope`, per-path revision head, `check_incoming`; `main.rs` merge refuses stale/forked remote; 3 new tests | A replayed older blob is refused with a visible warning; legacy vaults migrate on the next save; fresh-device restore stays TOFU (documented) |
@@ -769,7 +770,10 @@ A15c finishes the polish:
   host head and `head_ok` refuses a lower revision or same-rev/different-hash.
   A successful pull updates the pinned head; pushes carry the client head and
   the server refuses a lower revision (409) before adopting.
-- Remaining honest limit: re-pairing is needed if a peer's LAN address changes.
+- A15d removes the remaining limit: a response is trusted by its **signed
+  device key**, not the source IP, so a paired peer that gets a new LAN address
+  is re-bound automatically after the head/integrity checks pass. An unpaired
+  host still gets “enter its pairing code”.
 
 ### 5.20 Indistinguishable decoy provisioning (A18)
 
@@ -825,8 +829,9 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 3 — Sync integrity and pairing (2-3 weeks)
 
-1. **DONE (A15a/A15b)** — mandatory device-key pairing, signed requests,
-   ephemeral beacons and paired-device management (S1, S2).
+1. **DONE (A15a/A15b/A15c/A15d)** — mandatory device-key pairing, signed
+   requests/responses, ephemeral beacons, paired-device management, and
+   automatic re-bind when a paired peer's LAN address changes (S1, S2).
 2. **DONE (A16)** — refuse a lower `rev`/wrong `prev_hash` on the post-unlock
    merge path; fresh-device first pull remains TOFU (S3).
 3. Exit test: an unpaired LAN client gets 403 and cannot pull bytes; a replayed

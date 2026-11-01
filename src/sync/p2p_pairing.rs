@@ -190,6 +190,27 @@ pub fn peer_by_pubkey(pubkey_hex: &str) -> Option<PairedPeer> {
     load_pairs().into_iter().find(|p| p.pubkey == key)
 }
 
+/// A15d: re-bind an already-paired device to a new LAN address. Only called
+/// after a response signed by that device's key verified, so an unknown or
+/// spoofed host can never move a peer. Returns `true` when it changed.
+pub fn bind_peer_addr(pubkey_hex: &str, addr: &str) -> Result<bool, String> {
+    let key = pubkey_hex.trim().to_lowercase();
+    let addr = addr.trim();
+    if addr.is_empty() {
+        return Err("empty peer address".to_string());
+    }
+    let mut pairs = load_pairs();
+    let Some(peer) = pairs.iter_mut().find(|p| p.pubkey == key) else {
+        return Err("device is not paired".to_string());
+    };
+    if peer.addr == addr {
+        return Ok(false);
+    }
+    peer.addr = addr.to_string();
+    save_pairs(&pairs)?;
+    Ok(true)
+}
+
 #[allow(dead_code)]
 pub fn paired_count() -> usize {
     load_pairs().len()
@@ -520,6 +541,24 @@ mod tests {
         forget(&key).unwrap();
         assert!(!is_paired(&key));
         assert!(forget(&key).is_err());
+        let _ = std::fs::remove_file(paired_path());
+    }
+
+    #[test]
+    fn bind_moves_only_a_paired_key_to_its_new_address() {
+        let _g = crate::sync::TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        std::env::set_var("PV_P2P_DEVICE_FILE", tmp("dev5"));
+        std::env::set_var("PV_P2P_PAIRED_FILE", tmp("paired5"));
+        let _ = std::fs::remove_file(paired_path());
+        let key = "44".repeat(32);
+        add_peer("phone", &key, "192.0.2.9").unwrap();
+        add_peer("phone", &key, "192.0.2.9").unwrap(); // still one record
+        assert!(bind_peer_addr(&key, "192.0.2.44").unwrap());
+        assert_eq!(peer_by_pubkey(&key).unwrap().addr, "192.0.2.44");
+        assert!(!bind_peer_addr(&key, "192.0.2.44").unwrap());
+        let stranger = "55".repeat(32);
+        assert!(bind_peer_addr(&stranger, "192.0.2.1").is_err());
+        assert!(peer_by_pubkey(&stranger).is_none());
         let _ = std::fs::remove_file(paired_path());
     }
 

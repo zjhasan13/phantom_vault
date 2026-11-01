@@ -105,7 +105,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 517 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 519 passed / 2 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -179,8 +179,8 @@ These are real today. They are listed here so nobody discovers them the hard way
   with the network off, the letter icon is used.
 - **P2P is paired by default** (A15a/b), beacons carry only an ephemeral ID,
   responses are signed and the pairing code renders as a QR (A15c). Pushes
-  carry a revision anchor (stale pushes get 409); automatic re-pair on address
-  change remains open.
+  carry a revision anchor (stale pushes get 409). A paired peer that gets a new
+  LAN address is re-bound automatically from its signed response (A15d).
 - **A16 vault format is rev 2**: builds before this change cannot open it, so
   upgrade every device before syncing. On a fresh device the first pull is
   TOFU — there is no local revision to compare against.
