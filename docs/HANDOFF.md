@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A19 remote canary alert (signed P2P + pending retry), after A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: T5 reproducible-build docs (A19/E5 shipped before), after A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -150,6 +150,11 @@
   `chrome.storage.local` and `content.js`/`background.js` pick it up live via
   `storage.onChanged`/the background lookup. Test +1 JS â†’ `npm test` **133/133**,
   `cargo test` 505/1 unchanged.
+
+- **T5 â€” reproducible-build documentation (this batch):** added
+  `docs/REPRODUCIBLE_BUILDS.md` (pinned inputs, clean rebuild, hash + Ed25519 +
+  attestation verification, honest non-bit-reproducible list, T5b target).
+  Docs-only; `cargo test` 505/1 and `npm test` 133/133 unchanged.
 
 - **A19 â€” remote canary alert (this batch):** `record_trip` still writes the
   local log, then sends `{id,time,title_hash,via,device}` to paired peers via

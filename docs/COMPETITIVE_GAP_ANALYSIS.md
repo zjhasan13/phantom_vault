@@ -204,7 +204,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | T2 | Installer is not Authenticode-signed | `installer.iss` still has no `SignTool`/`SignedUninstaller` directive | SmartScreen warns; enterprise deployment blocked; Authenticode tamper evidence is absent | Authenticode sign the installer and the binary in CI (needs a certificate, A8b) | S1 |
 | T3 | No release/provenance workflow — **shipped (A8a)** | `.github/workflows/release.yml` builds, tests, signs, hashes, SBOMs and attests on `v*` tags; `scripts/package_release.ps1` mirrors it locally | Users can now verify a release against source: checksums, detached Ed25519 signature, SBOM and GitHub provenance | Add a build workflow with checksums, SBOM, and a signed release attestation | S1 |
 | T4 | No ARM64 build | No ARM64 target in the tree | Windows-on-ARM users (increasing share) run under emulation or not at all | Add `aarch64-pc-windows-msvc` to the release matrix | S2 |
-| T5 | No reproducible-build documentation | Absent | Cannot independently verify binaries | Document toolchain pinning and hash comparison | S3 |
+| T5 | No reproducible-build documentation — **shipped (T5)** | `docs/REPRODUCIBLE_BUILDS.md`: pinned inputs, clean-clone rebuild, hash/signature/provenance checks, and the honest non-bit-reproducible list | Users can independently verify a published binary and know exactly what a rebuild does/doesn't prove | Document toolchain pinning and hash comparison | S3 |
 
 ### 4.6 Ecosystem and accessibility
 
@@ -875,7 +875,9 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 1. Light/high-contrast theme (X2).
 2. Bengali localization (X3).
 3. ARM64 build (T4).
-4. Reproducible-build documentation (T5).
+4. **DONE (T5)** — reproducible-build documentation
+   (`docs/REPRODUCIBLE_BUILDS.md`); bit-for-bit rebuild comparison is the
+   follow-up T5b.
 
 ---
 

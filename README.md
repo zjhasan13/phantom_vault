@@ -234,6 +234,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/COMPETITIVE_GAP_ANALYSIS.md`](docs/COMPETITIVE_GAP_ANALYSIS.md) | Publishable gap register with evidence and exit tests |
 | [`docs/AUDIT.md`](docs/AUDIT.md) | Internal audit findings and verification |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Release checklist, SmartScreen wording, interop matrix |
+| [`docs/REPRODUCIBLE_BUILDS.md`](docs/REPRODUCIBLE_BUILDS.md) | Pinned inputs, clean rebuild, hash/signature/provenance verification, honest limits |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 
