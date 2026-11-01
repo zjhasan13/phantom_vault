@@ -50,6 +50,7 @@ third-party audit. Those are tracked as concrete work in
 - Extension PIN is **host-verified** with Argon2id and a persistent 30s→5min lockout — the verifier never reaches the browser
 - Auto-lock on idle, on session lock, and on **proximity** (paired Bluetooth device leaves)
 - Panic wipe path; decoy vault with its own password — stored as a backup-like, 1 MiB-padded container with no duress verifier file
+- Canary honeytoken trips a local alert **and** a signed alert to paired devices (pending retry if offline)
 
 **Browser extension**
 - Autofill logins, cards, identities and TOTP from the popup, context menu or `Ctrl+Shift+L`
@@ -103,7 +104,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 504 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 505 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension

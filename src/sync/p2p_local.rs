@@ -767,6 +767,14 @@ fn serve_conn_inner(
         ));
         return;
     }
+    // A19: paired peers may deliver a canary trip (no vault access needed).
+    if method == "POST" && path == "/p2p/canary" {
+        if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&body) {
+            crate::security::canary::record_remote_alert(&v);
+        }
+        let _ = stream.write_all(&http_response(200, r#"{"ok":true}"#));
+        return;
+    }
     let (local_rev, local_hash) = crate::storage::container_head(std::path::Path::new(
         crate::developer::vault_run::VAULT_FILE,
     ))
@@ -998,6 +1006,29 @@ fn ensure_paired(addr: SocketAddr, code: &str) -> Result<(), String> {
     pairing::add_peer_with_head(host_name, host_pub, &ip, host_rev, host_hash)?;
     crate::security::access_log::log_event("p2p", "paired with peer");
     Ok(())
+}
+
+/// A19: send a signed canary alert to every paired peer. True if at least one
+/// accepted it. Never log/transmit the title itself (hash only).
+pub fn broadcast_canary(body: &str) -> bool {
+    let mut ok = false;
+    for p in crate::sync::p2p_pairing::list_pairs() {
+        if p.addr.is_empty() {
+            continue;
+        }
+        let Ok(addr) = format!("{}:{}", p.addr, P2P_PORT).parse::<SocketAddr>() else {
+            continue;
+        };
+        let Ok(headers) = signed_headers("POST", "/p2p/canary", body) else {
+            continue;
+        };
+        if let Ok((status, resp, rh)) = http_call(addr, "POST", "/p2p/canary", body, &headers) {
+            if status == 200 && verify_peer_response(addr, status, &resp, &rh).is_ok() {
+                ok = true;
+            }
+        }
+    }
+    ok
 }
 
 /// Pull a peer's ciphertext head + blob (paired device signature).

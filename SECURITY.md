@@ -74,7 +74,8 @@ tell us the date in the report so the advisory can land first.
 - Offline read-only cache: the Hello gate, the DPAPI-sealed cache key, the
   15-minute extension TTL, decoy erasure and the read-only boundary
 - Local attack surface: decoy vault (backup-like name, 1 MiB padding, no
-  verifier file), canary, shredder, installer, update path
+  verifier file), canary (local log + signed paired-device alert), shredder,
+  installer, update path
 - Dependency vulnerabilities that are actually reachable from this code
 
 **Out of scope** (report these as ordinary bugs, not vulnerabilities)
@@ -104,6 +105,8 @@ These are documented rather than secret; please do not report them as new findin
   later stale pulls are refused.
 - Decoy provisioning hides its filename/size class (A18), but mtimes are not
   aligned and large-attachment vaults can still differ in size class.
+- Canary alerts reach paired devices only while P2P is reachable; otherwise
+  they queue locally for the next P2P enable/launch. There is no dead-drop yet.
 - P2P requests/responses are signed by paired device keys (A15a/c) and beacons
   carry only an ephemeral ID; push-side revision anchoring remains open.
 - The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.

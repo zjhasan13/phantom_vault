@@ -1,6 +1,6 @@
 # Session Handoff — PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A18 indistinguishable decoy provisioning (backup-like name, padded, verifier-free), after A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A19 remote canary alert (signed P2P + pending retry), after A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants — non-negotiable).
 
 ## 1. Where we are
@@ -144,6 +144,15 @@
   address) with **Forget**, which removes the key from `p2p_paired.dpapi` so the
   next request is 403. Tests +1 → `cargo test` **500 passed / 1 ignored + 4
   pv_sign**; `npm test` 132/132.
+
+- **A19 — remote canary alert (this batch):** `record_trip` still writes the
+  local log, then sends `{id,time,title_hash,via,device}` to paired peers via
+  `POST /p2p/canary` (signed by A15 keys; no title/secret leaves). Unreachable
+  alerts queue in `canary_pending.jsonl` and retry on P2P enable; the receiver
+  appends a `CANARY-TRIPPED-REMOTE` line and a startup flag that `main` turns
+  into a notification. Tests +1 → `cargo test` **505 passed / 1 ignored + 4
+  pv_sign**; `npm test` 132/132. Honest limit: P2P reachability required for
+  live delivery; no dead-drop yet.
 
 - **A18 — indistinguishable decoy provisioning (this batch):** decoy moved from
   `decoy_vault.enc` to `my_secure_vault.enc.bak.0.enc` (looks like an extra
@@ -448,7 +457,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 504 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 505 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
   warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
@@ -617,6 +626,9 @@
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
   implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+- A19 canary invariant: alerts carry only `id/time/title_hash/via/device` and
+  are signed by a paired device; never send the title or secret. Pending retry
+  is best-effort until P2P is reachable (no dead-drop yet).
 - A18 decoy invariants: the duress verifier is the AEAD tag (never a sidecar);
   the decoy uses the backup naming family and no rotation; every payload is
   bucket-padded. Never reintroduce `decoy_vault.enc`/`duress.dpapi`.

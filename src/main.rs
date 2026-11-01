@@ -3510,6 +3510,9 @@ fn main() -> Result<(), slint::PlatformError> {
     let main_window = MainWindow::new()?;
     main_window.set_offline_cache_on(security::offline_cache::enabled());
     main_window.set_offline_pin_on(security::offline_cache::pin_allowed_at(Path::new(".")));
+    if let Some(msg) = security::canary::take_remote_alert() {
+        main_window.set_notification_text(msg.into());
+    }
     main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
     main_window.set_favicons_enabled(crate::core::favicon::show_favicons());
     // App PIN button shows iff a sealed PIN exists on this machine.
@@ -8570,6 +8573,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let code = sync::p2p_pairing::open_session();
             ui.set_p2p_qr(p2p_qr_image(&code));
             ui.set_p2p_pin(code.into());
+            std::thread::spawn(security::canary::flush_pending);
             refresh_paired_p2p(&ui);
             ui.set_p2p_status("📡 Discovery ON — port 52199. Enter this pairing code on the other device.".into());
             security::access_log::log_event("p2p", "discovery enabled");
