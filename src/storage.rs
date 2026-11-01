@@ -391,24 +391,24 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     file_path: P,
 ) -> Result<(), String> {
     // A22: never silently downgrade an existing PQ-paranoid container. The
-    // explicit switch lives in `convert_vault_profile` / the Settings toggle.
-    let profile = current_profile(file_path.as_ref());
-    save_vault_secret_inner(vault, master_password, file_path, true, profile)
+    // profile is resolved under the save lock inside `save_vault_secret_inner`
+    // so a concurrent conversion cannot be raced into a downgrade.
+    save_vault_secret_inner(vault, master_password, file_path, true, None)
 }
 
 /// A22: save with an explicit container profile. `Portable` is byte-identical
 /// to [`save_vault_secret`]; `Paranoid` requires a device key sidecar and never
 /// falls back to portable when it is missing.
 ///
-/// UI callers must not reach the Paranoid branch until Phase C gates it behind
-/// a portable `.pvx` backup.
+/// UI callers should use [`convert_vault_profile`] (Settings gate); this
+/// explicit API is for tests and future migrations.
 pub fn save_vault_secret_with_profile<P: AsRef<Path>>(
     vault: &Vault,
     master_password: &SecretString,
     file_path: P,
     profile: ContainerProfile,
 ) -> Result<(), String> {
-    save_vault_secret_inner(vault, master_password, file_path, true, profile)
+    save_vault_secret_inner(vault, master_password, file_path, true, Some(profile))
 }
 
 /// A18: save without rotating backups — used by the decoy container, whose
@@ -419,7 +419,7 @@ pub fn save_vault_secret_flat<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
-    save_vault_secret_inner(vault, master_password, file_path, false, ContainerProfile::Portable)
+    save_vault_secret_inner(vault, master_password, file_path, false, Some(ContainerProfile::Portable))
 }
 
 /// A22: the paranoid key chain needs the device encapsulation key. A missing
@@ -475,10 +475,13 @@ fn save_vault_secret_inner<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
     rotate: bool,
-    profile: ContainerProfile,
+    profile: Option<ContainerProfile>,
 ) -> Result<(), String> {
     let path = file_path.as_ref();
     let _guard = FileLock::acquire(path)?;
+    // Resolve the profile only after the lock is held: a concurrent
+    // `convert_vault_profile` must not be raced into a silent downgrade.
+    let profile = profile.unwrap_or_else(|| current_profile(path));
     let old = fs::read(path).unwrap_or_default();
     let (rev, prev_hash) = next_meta(path, &old, master_password)?;
     let payload = envelope_bytes(vault, rev, prev_hash, profile)?;
