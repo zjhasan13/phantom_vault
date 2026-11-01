@@ -139,13 +139,46 @@ pub fn load_encapsulation() -> Result<Vec<u8>, String> {
     load_keypair().map(|(ek, _)| ek)
 }
 
+/// A22 D2: re-seal the existing device key with a CNG backend, keeping the old
+/// sidecar in place until the caller proves the vault still opens.
+///
+/// Order: unseal current DK → TPM-seal → unseal the produced blob in memory →
+/// only then write `pq_device.tpm`. The caller removes `pq_device.dpapi` after
+/// an end-to-end vault load succeeds (`remove_dpapi`), or removes the TPM file
+/// on failure (`remove_tpm`).
+pub fn reseal_to(backend: DeviceBackend) -> Result<(), String> {
+    let cng = backend
+        .cng()
+        .ok_or_else(|| "DPAPI is not a migration target".to_string())?;
+    if tpm_path().is_file() {
+        return Err("a CNG device key sidecar already exists".to_string());
+    }
+    let dk = load_decapsulation()?;
+    let blob = pq_tpm::seal(cng, dk.expose())?;
+    let proof = pq_tpm::unseal(&blob)?;
+    if proof.as_slice() != dk.expose() {
+        return Err("TPM reseal proof failed".to_string());
+    }
+    write_atomic(&tpm_path(), &blob)
+}
+
+/// A22 D2: drop the DPAPI sidecar after a successful TPM migration proof.
+pub fn remove_dpapi() {
+    let _ = std::fs::remove_file(path());
+    let _ = std::fs::remove_file(path().with_extension("tmp"));
+}
+
+/// A22 D2: drop a not-yet-proven TPM sidecar (rollback path).
+pub fn remove_tpm() {
+    let _ = std::fs::remove_file(tpm_path());
+    let _ = std::fs::remove_file(tpm_path().with_extension("tmp"));
+}
+
 /// Remove both sidecars (factory reset / explicit move). Idempotent.
 #[allow(dead_code)] // D2 factory reset / backend move
 pub fn clear() {
-    let _ = std::fs::remove_file(path());
-    let _ = std::fs::remove_file(tpm_path());
-    let _ = std::fs::remove_file(path().with_extension("tmp"));
-    let _ = std::fs::remove_file(tpm_path().with_extension("tmp"));
+    remove_dpapi();
+    remove_tpm();
 }
 
 #[cfg(test)]
@@ -236,6 +269,40 @@ mod tests {
     }
 
     #[test]
+    fn migration_to_cng_keeps_the_same_decapsulation_key() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _key = pq_tpm::TEST_KEY_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !pq_tpm::provider_available(pq_tpm::Backend::Software) {
+            eprintln!("software KSP unavailable; skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("pv-pq-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
+        clear();
+
+        generate_and_seal_with(DeviceBackend::Dpapi).unwrap();
+        let before = load_decapsulation().unwrap().expose().to_vec();
+        reseal_to(DeviceBackend::Software).unwrap();
+        // Same DK through the CNG sidecar; DPAPI is still present pre-proof.
+        assert_eq!(load_decapsulation().unwrap().expose(), before);
+        assert!(path().is_file());
+        remove_dpapi();
+        assert!(!path().exists());
+        assert_eq!(load_decapsulation().unwrap().expose(), before);
+        // Rollback path.
+        remove_tpm();
+        assert!(load_decapsulation().is_err());
+
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     #[ignore = "requires a TPM 2.0 device"]
     fn tpm_device_roundtrip_manual() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -248,10 +315,21 @@ mod tests {
         set_test_paths(&dir);
         clear();
 
+        // D1: native TPM seal/unseal.
         let ek = generate_and_seal_with(DeviceBackend::Tpm).unwrap();
         assert!(!ek.is_empty());
         let dk = load_decapsulation().unwrap();
         assert_eq!(dk.expose().len(), crate::core::pq_hybrid::DK_LEN);
+        assert_eq!(active_backend(), Some("tpm"));
+        clear();
+
+        // D2: migrate an existing DPAPI key into the TPM, same DK.
+        generate_and_seal_with(DeviceBackend::Dpapi).unwrap();
+        let before = load_decapsulation().unwrap().expose().to_vec();
+        reseal_to(DeviceBackend::Tpm).unwrap();
+        assert_eq!(load_decapsulation().unwrap().expose(), before);
+        remove_dpapi();
+        assert_eq!(load_decapsulation().unwrap().expose(), before);
         assert_eq!(active_backend(), Some("tpm"));
 
         clear();

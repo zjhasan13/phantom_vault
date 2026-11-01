@@ -1062,6 +1062,22 @@ fn paranoid_active() -> bool {
     storage::current_profile(VAULT_FILE) == storage::ContainerProfile::Paranoid
 }
 
+/// A22 D2: (raw backend id, human label) for the Settings status line.
+fn pq_backend_ui() -> (&'static str, &'static str) {
+    match security::pq_profile::active_backend() {
+        Some("tpm") => ("tpm", "TPM 2.0 (hardware-bound)"),
+        Some("dpapi") => ("dpapi", "DPAPI (software fallback)"),
+        Some("software") => ("software", "software KSP (test only)"),
+        _ => ("", "not created"),
+    }
+}
+
+fn set_pq_backend_ui(ui: &MainWindow) {
+    let (raw, detail) = pq_backend_ui();
+    ui.set_pq_backend(raw.into());
+    ui.set_pq_backend_detail(detail.into());
+}
+
 /// Phase 15 (Option 1): canary lookup by leaked password material.
 /// Returns the tripped honeytoken title (and records the trip) if matched.
 fn check_canary_trip(
@@ -3551,6 +3567,7 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.set_offline_cache_on(security::offline_cache::enabled());
     main_window.set_offline_pin_on(security::offline_cache::pin_allowed_at(Path::new(".")));
     main_window.set_pq_paranoid_on(paranoid_active());
+    set_pq_backend_ui(&main_window);
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -12925,9 +12942,18 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if enable {
                     // Reuse a healthy existing device key so older paranoid
                     // backups stay openable; mint one only when none exists
-                    // (or the sidecar cannot be unsealed).
+                    // (or the sidecar cannot be unsealed). Prefer TPM 2.0 and
+                    // fall back to DPAPI honestly when the TPM refuses.
                     if crate::security::pq_profile::load_encapsulation().is_err() {
-                        crate::security::pq_profile::generate_and_seal()?;
+                        let tpm_ok = crate::security::pq_tpm::provider_available(
+                            crate::security::pq_tpm::Backend::Tpm,
+                        ) && crate::security::pq_profile::generate_and_seal_with(
+                            crate::security::pq_profile::DeviceBackend::Tpm,
+                        )
+                        .is_ok();
+                        if !tpm_ok {
+                            crate::security::pq_profile::generate_and_seal()?;
+                        }
                     }
                 }
                 let vault = lock_vault(&vault_arc);
@@ -12952,6 +12978,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 );
                             }
                             ui.set_pq_paranoid_on(enable);
+                            set_pq_backend_ui(&ui);
                             ui.set_pq_status(
                                 if enable {
                                     "✅ PQ-paranoid ON. This vault needs this device's key. Sync and P2P are disabled."
@@ -12975,6 +13002,86 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_pq_status(format!("❌ Profile change failed: {e}").into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+    // A22 D2: move an existing DPAPI-sealed device key into TPM custody.
+    // Proof-first: the TPM sidecar is written beside the DPAPI one, the vault
+    // must still open, and only then is the DPAPI file removed.
+    let mv_weak = main_window.as_weak();
+    let mv_master = Arc::clone(&active_master_pw);
+    main_window.on_move_pq_key_to_tpm(move || {
+        let Some(ui) = mv_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_pq_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let Some(master) = lock_master_pw(&mv_master).clone() else {
+            ui.set_pq_status("❌ Vault not unlocked!".into());
+            return;
+        };
+        if !paranoid_active() {
+            ui.set_pq_status("⚠️ Enable PQ-paranoid first.".into());
+            return;
+        }
+        if !PARANOID_BACKUP_READY.load(std::sync::atomic::Ordering::SeqCst) {
+            ui.set_pq_status(
+                "⚠️ Export an encrypted .pvx backup first — it is the only restore path if the TPM key is lost."
+                    .into(),
+            );
+            return;
+        }
+        if security::pq_profile::active_backend() == Some("tpm") {
+            ui.set_pq_status("✅ The device key is already TPM-backed.".into());
+            return;
+        }
+        if !security::pq_tpm::provider_available(security::pq_tpm::Backend::Tpm) {
+            ui.set_pq_status("⚠️ No TPM 2.0 provider on this machine.".into());
+            return;
+        }
+        ui.set_pq_status("⏳ Moving device key to TPM 2.0…".into());
+        let weak = mv_weak.clone();
+        std::thread::spawn(move || {
+            let result = (|| {
+                security::pq_profile::reseal_to(
+                    security::pq_profile::DeviceBackend::Tpm,
+                )?;
+                // End-to-end proof: the live vault must open through the TPM
+                // sidecar before the DPAPI fallback is deleted.
+                match storage::load_vault_versioned_secret(&master, VAULT_FILE) {
+                    Ok(_) => {
+                        security::pq_profile::remove_dpapi();
+                        Ok(())
+                    }
+                    Err(e) => {
+                        security::pq_profile::remove_tpm();
+                        Err(format!("vault proof failed: {e}"))
+                    }
+                }
+            })();
+            match result {
+                Ok(()) => {
+                    security::access_log::log_event("pq-profile", "device key moved to TPM");
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            set_pq_backend_ui(&ui);
+                            ui.set_pq_status(
+                                "✅ Device key moved to TPM 2.0. A TPM clear or Windows reinstall means data loss — keep the .pvx backup."
+                                    .into(),
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            set_pq_backend_ui(&ui);
+                            ui.set_pq_status(format!("❌ TPM move failed: {e}").into());
                         }
                     });
                 }

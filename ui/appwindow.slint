@@ -675,6 +675,8 @@ export component MainWindow inherits Window {
     in-out property <bool> pq_backup_ready: false;
     in-out property <bool> pq_confirm_off: false;
     in-out property <string> pq_status: "";
+    in-out property <string> pq_backend: "";
+    in-out property <string> pq_backend_detail: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -985,6 +987,8 @@ export component MainWindow inherits Window {
     callback set_offline_cache_pin(bool);
     // A22 Phase C: true = convert to PQ-paranoid, false = back to portable.
     callback convert_pq_profile(bool);
+    // A22 Phase D2: re-seal the device key with TPM 2.0 (explicit, proof-first).
+    callback move_pq_key_to_tpm();
     callback setup_ext_pin(string, string);
     callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
@@ -1635,6 +1639,8 @@ export component MainWindow inherits Window {
                     FieldLabel { text: "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
                     Text { text: "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Container profile"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    Text { text: "Device key: " + root.pq_backend_detail; color: root.pq_backend == "tpm" ? #34d399 : #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    if root.pq_paranoid_on && root.pq_backend == "dpapi" : AuraButton { label: "Move device key to TPM"; width: 210px; height: 34px; clicked => { root.move_pq_key_to_tpm(); } }
                     Text { text: root.pq_backup_ready ? "✅ A backup was exported this session." : "⚠️ Export an encrypted .pvx backup first (Importer → Encrypted (.pvx)) — required before enabling."; color: root.pq_backup_ready ? #34d399 : #fbbf24; font-size: 11px; wrap: word-wrap; }
                     if !root.pq_paranoid_on : AuraButton { label: "Enable PQ-paranoid"; width: 190px; height: 34px; clicked => { root.convert_pq_profile(true); } }
                     if root.pq_paranoid_on : HorizontalLayout { spacing: 8px;

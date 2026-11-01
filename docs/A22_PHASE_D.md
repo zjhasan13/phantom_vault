@@ -1,16 +1,19 @@
 # A22 Phase D — TPM-backed device-key custody (design note)
 
-> Status: **D0 design + D1 custody layer implemented.** Production still seals
-> with DPAPI; D2 wires the TPM preference into the Settings enable flow, D3 is
-> the release QA. A/B/C are shipped (`c79f535`).
+> Status: **D0 design + D1 custody layer + D2 wiring implemented.** Enabling the
+> paranoid profile now prefers TPM 2.0, falls back to DPAPI with a visible
+> backend label, and offers an explicit proof-first "Move device key to TPM".
+> D3 is the remaining QA/release pass. A/B/C are shipped (`c79f535`).
 >
-> D1 landed: `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap +
-> XChaCha20 DK seal, platform *and* software KSP), backend-aware
-> `src/security/pq_profile.rs`, and strict load order (a `pq_device.tpm` file
-> never falls back to DPAPI). Tests: `cargo test` **514 passed / 2 ignored**
-> (+ 4 `pv_sign`); the ignored ones are the real-TPM manual test (verified
-> pass on this Infineon TPM 2.0) and the pre-existing hardware test.
-> `npm test` **133/133**, clippy clean.
+> D1/D2 landed: `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap
+> + XChaCha20 DK seal, platform *and* software KSP), backend-aware
+> `src/security/pq_profile.rs` (strict load order, `reseal_to`, no hidden
+> fallback), Settings backend status + move action (`src/main.rs`,
+> `ui/appwindow.slint`), and the `.tpm` factory-reset sweep. Tests:
+> `cargo test` **515 passed / 2 ignored** (+ 4 `pv_sign`); the ignored ones are
+> the real-TPM manual test (DPAPI→TPM migration verified on this Infineon
+> TPM 2.0) and the pre-existing hardware test. `npm test` **133/133**, clippy
+> clean.
 
 ## 1. Goal
 
@@ -144,15 +147,16 @@ Save (paranoid):
 Load: identical, and the `V3Paranoid` arm continues to surface the error before
 the AEAD step.
 
-### 5.5 Availability and fallback policy (recommended)
+### 5.5 Availability and fallback policy (shipped in D2)
 
 - On enable: try TPM; if `NCryptOpenStorageProvider`/key creation fails, fall
   back to DPAPI and show the backend in the Settings status line:
-  `Device key: TPM 2.0` / `Device key: DPAPI (no TPM)`.
+  `Device key: TPM 2.0 (hardware-bound)` / `Device key: DPAPI (software fallback)`.
 - Existing paranoid vaults keep working with their DPAPI sidecar.
-- Optional D2 action: **Move key to TPM** (explicit, after a fresh `.pvx`
-  export): unseal DK with DPAPI → seal with TPM → write `pq_device.tpm` →
-  round-trip unseal proof → delete `pq_device.dpapi`.
+- **Move key to TPM** (explicit, after a fresh `.pvx` export): unseal DK with
+  DPAPI → seal with TPM → write `pq_device.tpm` → in-memory unseal proof →
+  end-to-end vault load → delete `pq_device.dpapi`. Failure removes the TPM file
+  and keeps DPAPI.
 - Never auto-migrate on unlock: a silent backend switch is indistinguishable
   from tampering/telemetry and adds a failure window to the only key.
 
@@ -163,8 +167,8 @@ the AEAD step.
 | Enable paranoid | Gate unchanged (`.pvx` export in-session). Prefer TPM, else DPAPI; write one sidecar only |
 | Re-enable / rekey | Reuse the existing healthy sidecar of whichever backend is present |
 | Disable | Keep the sidecar (older paranoid backups stay openable), as in Phase C |
-| Move to TPM (D2) | Explicit, proof-first, old sidecar deleted only after unseal proof |
-| Factory reset | Shred `pq_device.tpm` **and** `pq_device.dpapi` (add `.tpm` to the `*.dpapi` sweep / explicit list) |
+| Move to TPM (D2) | Explicit, proof-first (in-memory unseal + vault load), old sidecar deleted only after the proof |
+| Factory reset | Shred `pq_device.tpm` **and** `pq_device.dpapi` (`.tpm` joins the sweep) |
 | TPM cleared / reinstall | Unseal fails; the only recovery is a portable `.pvx` backup + restore into a portable vault |
 
 ## 6. Failure modes
@@ -183,34 +187,39 @@ the AEAD step.
 Settings → PQ-paranoid gains one status line (no new modal):
 
 ```
-Device key: TPM 2.0 (hardware-bound)   |   Device key: DPAPI (no TPM)
+Device key: TPM 2.0 (hardware-bound)   |   Device key: DPAPI (software fallback)
 ```
 
-Warnings stay as shipped; D2 adds one line to the existing copy: *"TPM-backed
-keys do not survive a TPM clear or Windows reinstall — your .pvx backup is the
-only restore path."* The enable gate itself does not change.
+When the sidecar is DPAPI-sealed and the vault is paranoid, a **Move device key
+to TPM** button appears; it is gated by the same in-session `.pvx` export and
+runs the proof-first migration (§5.6). Warnings stay as shipped; D2 adds one
+line to the existing copy: *"TPM-backed keys do not survive a TPM clear or
+Windows reinstall — your .pvx backup is the only restore path."* The enable gate
+itself does not change. Enabling with no sidecar tries TPM first and only falls
+back to DPAPI when the TPM provider or key creation refuses.
 
 ## 8. Tests
 
-Status: **1, 2, 3, 5 and the happy path of 6 are green**; 4 and the NCRYPT
-user-presence/disabled-TPM runs land with D2/D3.
+Status: **1–6 are green** (4 via software KSP and the real-TPM manual run); the
+TPM-disabled run and the per-save timing measurement are D3.
 
 1. **Software KSP round-trip** (`security::pq_tpm::tests::software_ksp_seals_and_unseals`):
    seal → unseal the same DK; tamper/truncation fail closed.
-2. **Backend label**: `active_backend()` reports `software`/`tpm`/`dpapi`;
-   the enable flow's DPAPI fallback lands in D2.
+2. **Backend label**: `active_backend()` reports `software`/`tpm`/`dpapi`; the
+   Settings line and the move-button visibility use it.
 3. **No hidden fallback** (`pq_profile::tests::tpm_sidecar_roundtrips_and_never_falls_back_to_dpapi`):
    corrupt `pq_device.tpm` + valid `pq_device.dpapi` still fails closed.
-4. **Migration proof** (D2): DPAPI-sealed DK → TPM-sealed DK → both unseal to
-   the same bytes; old file removed only after the proof.
+4. **Migration proof** (`pq_profile::tests::migration_to_cng_keeps_the_same_decapsulation_key`,
+   plus the manual TPM run): DPAPI-sealed DK → TPM-sealed DK → same bytes; the
+   old file is removed only after the proof, and rollback restores DPAPI.
 5. **Container regression**: the full A22 B/C storage test still passes with the
    TPM backend present (portable + PV3 unchanged).
 6. **Manual, `#[ignore]`**: `security::pq_profile::tests::tpm_device_roundtrip_manual`
-   passed on this machine's Infineon TPM 2.0 (2026-11-01); a "TPM provider
-   disabled" run is D3.
-7. **Performance budget**: the real-TPM manual test took ~1.1 s including key
-   creation; per-save unseal timing is measured in D2/D3 before adding a
-   zeroizing per-unlock DK cache.
+   passed on this machine's Infineon TPM 2.0 (2026-11-01), including the
+   DPAPI→TPM migration; a "TPM provider disabled" run is D3.
+7. **Performance budget**: the real-TPM manual run took ~1.4 s for two key
+   creations + migration (key creation dominates); per-save unseal timing is
+   measured in D3 before adding a zeroizing per-unlock DK cache.
 
 ## 9. Migration / rollback
 
@@ -222,17 +231,15 @@ user-presence/disabled-TPM runs land with D2/D3.
 - No vault bytes, revisions or backups are rewritten by D1/D2; only the
   sidecar changes.
 
-## 10. Open decisions (recommendations)
+## 10. Decisions (settled in D0)
 
-1. **Fallback policy:** DPAPI fallback + visible backend status (recommended) vs
-   refuse paranoid on non-TPM machines.
-2. **User-presence:** `NCRYPT_UI_PROTECT_KEY_FLAG` OFF by default (recommended);
-   optional future "lock every save" mode.
-3. **Migration:** explicit only (recommended); no auto-migration on unlock.
-4. **Key scope:** per-user (recommended) vs machine-wide (needs admin).
-5. **RSA size:** 2048 (recommended); 3072 only if TPM performance allows.
-6. **Where the backend is chosen:** at enable time (recommended) vs a Settings
-   preference with its own toggle.
+1. **Fallback policy:** DPAPI fallback + visible backend status (shipped).
+2. **User-presence:** `NCRYPT_UI_PROTECT_KEY_FLAG` OFF by default; optional
+   future "lock every save" mode.
+3. **Migration:** explicit only; no auto-migration on unlock (shipped).
+4. **Key scope:** per-user (shipped).
+5. **RSA size:** 2048 (shipped).
+6. **Backend choice:** at enable time, TPM preferred (shipped).
 
 ## 11. Slices and exit criteria
 
@@ -243,7 +250,9 @@ user-presence/disabled-TPM runs land with D2/D3.
   TPM→DPAPI load order with no fallback, software-KSP tests, and a real-TPM
   manual roundtrip on this device. Production still writes DPAPI — D2 wires the
   preference.
-- **D2 (1–2 days):** enable prefers TPM (DPAPI fallback + visible backend),
-  "Move key to TPM" action, factory-reset `.tpm` sweep, status line, docs.
-- **D3 (1 day):** TPM-disabled QA, per-save timing measurement, release-note
-  wording.
+- **D2 — DONE:** enable prefers TPM with an honest DPAPI fallback, Settings
+  backend line, proof-first "Move device key to TPM" (in-memory unseal + live
+  vault load before deleting DPAPI), `.tpm` factory-reset sweep, and the
+  migration tests (software KSP + real TPM).
+- **D3 (remaining, 1 day):** TPM-disabled QA, per-save unseal timing
+  measurement, release-note wording, and a final docs pass.

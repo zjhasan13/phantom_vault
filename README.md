@@ -51,7 +51,7 @@ third-party audit. Those are tracked as concrete work in
 - Auto-lock on idle, on session lock, and on **proximity** (paired Bluetooth device leaves)
 - Panic wipe path; decoy vault with its own password — stored as a backup-like, 1 MiB-padded container with no duress verifier file
 - Canary honeytoken trips a local alert **and** a signed alert to paired devices (pending retry if offline)
-- **Opt-in PQ-paranoid container** (`PV3`): password **plus** this PC's DPAPI-sealed ML-KEM key; sync/P2P refused, mandatory `.pvx` backup before enabling (A22)
+- **Opt-in PQ-paranoid container** (`PV3`): password **plus** this PC's device key — TPM 2.0-backed when available, DPAPI fallback — with an explicit proof-first move to TPM; sync/P2P refused, mandatory `.pvx` backup before enabling (A22)
 
 **Browser extension**
 - Autofill logins, cards, identities and TOTP from the popup, context menu or `Ctrl+Shift+L`
@@ -105,7 +105,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 514 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 515 passed / 2 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension

@@ -867,11 +867,12 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 3. Exit test: with the device key removed, the paranoid container cannot be
    opened even with the correct password. The container path is covered by
    tests; the Settings path is manual QA (no UI automation harness yet).
-4. **Phase D (TPM custody) — D0/D1 done:** `docs/A22_PHASE_D.md` design plus
-   the `src/security/pq_tpm.rs` custody layer (`PVT1`, CNG RSA-2048
-   OAEP-SHA256 + XChaCha20, platform/software KSP, strict no-fallback load
-   order). Real-TPM roundtrip verified on this machine; D2 (Settings preference,
-   migration, status) and D3 (QA) pending.
+4. **Phase D (TPM custody) — D0/D1/D2 done:** design + `src/security/pq_tpm.rs`
+   (`PVT1`, CNG RSA-2048 OAEP-SHA256 + XChaCha20, platform/software KSP, strict
+   no-fallback load order) + enable-time TPM preference with an honest DPAPI
+   fallback, Settings backend label, and proof-first "Move device key to TPM".
+   Real-TPM roundtrip and DPAPI→TPM migration verified on this machine. D3
+   (TPM-disabled QA, timing, release notes) pending.
 
 ### Phase 7 — Ecosystem (3-4 weeks)
 

@@ -129,7 +129,6 @@ fn open_provider(backend: Backend) -> Result<Prov, String> {
 /// True when the provider can be opened. A TPM provider may open while key
 /// creation still fails (no TPM / policy); the enable flow treats a later seal
 /// error as the authoritative signal.
-#[allow(dead_code)] // D2 uses this for backend selection
 pub fn provider_available(backend: Backend) -> bool {
     open_provider(backend).is_ok()
 }
