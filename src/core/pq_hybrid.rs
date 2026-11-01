@@ -117,6 +117,13 @@ impl PqHybridEngine {
         Ok(PqSharedSecret(ss))
     }
 
+    /// A22: re-derive the encapsulation key from a stored decapsulation key.
+    /// The device sidecar only has to custody one secret.
+    pub fn encapsulation_from_decapsulation(decapsulation_key_bytes: &[u8]) -> Result<Vec<u8>> {
+        let dk = Self::dk_from_bytes(decapsulation_key_bytes)?;
+        Ok(dk.encapsulation_key().as_bytes().to_vec())
+    }
+
     /// Encapsulate against an encapsulation key → (ciphertext, shared secret).
     pub fn encapsulate(encapsulation_key_bytes: &[u8]) -> Result<(Vec<u8>, PqSharedSecret)> {
         let ek = Self::ek_from_bytes(encapsulation_key_bytes)?;
@@ -163,6 +170,15 @@ mod tests {
         assert_eq!(ct.len(), CT_LEN);
         let ss2 = PqHybridEngine::decapsulate(kp.decapsulation.expose(), &ct).unwrap();
         assert_eq!(ss1.expose(), ss2.expose());
+    }
+
+    #[test]
+    fn encapsulation_rederived_from_decapsulation() {
+        let kp = PqHybridEngine::generate_keypair();
+        let ek = PqHybridEngine::encapsulation_from_decapsulation(kp.decapsulation.expose())
+            .unwrap();
+        assert_eq!(ek, kp.encapsulation);
+        assert!(PqHybridEngine::encapsulation_from_decapsulation(&[0u8; 5]).is_err());
     }
 
     #[test]

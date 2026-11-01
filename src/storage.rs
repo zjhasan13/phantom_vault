@@ -1,8 +1,9 @@
 use crate::core::memory::DpapiGuard;
 use crate::core::pq_hybrid::PqDecapsulationBytes;
 use crate::crypto::{
-    decrypt_vault_hybrid_legacy_secret, decrypt_vault_portable_secret, decrypt_vault_secret,
-    detect_version, encrypt_vault_portable_secret, VaultVersion,
+    decrypt_vault_hybrid_legacy_secret, decrypt_vault_paranoid_secret,
+    decrypt_vault_portable_secret, decrypt_vault_secret, detect_version,
+    encrypt_vault_paranoid_secret, encrypt_vault_portable_secret, VaultVersion,
 };
 use crate::models::Vault;
 use secrecy::SecretString;
@@ -19,6 +20,37 @@ use zeroize::Zeroize;
 pub const CONTAINER_FORMAT: &str = "phantom-vault";
 pub const CONTAINER_VERSION: u32 = 2;
 
+/// A22: which key chain sealed the container. `Portable` needs the password
+/// alone (cross-device safe). `Paranoid` needs the password **and** this
+/// device's ML-KEM decapsulation key (`pq_device.dpapi`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ContainerProfile {
+    #[default]
+    Portable,
+    Paranoid,
+}
+
+impl ContainerProfile {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Portable => "portable",
+            Self::Paranoid => "paranoid",
+        }
+    }
+
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "portable" => Ok(Self::Portable),
+            "paranoid" => Ok(Self::Paranoid),
+            other => Err(format!("unknown vault profile: {other}")),
+        }
+    }
+}
+
+fn default_profile() -> String {
+    ContainerProfile::Portable.as_str().to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct ContainerMeta {
     pub format: String,
@@ -26,6 +58,11 @@ pub struct ContainerMeta {
     pub rev: u64,
     #[serde(default)]
     pub prev_hash: String,
+    /// A22. Defence in depth: the container magic already tells a reader which
+    /// key chain to use, but the profile is repeated inside the AEAD payload so
+    /// a downgrade (PV3 file re-labelled portable) fails closed.
+    #[serde(default = "default_profile")]
+    pub profile: String,
 }
 
 impl Default for ContainerMeta {
@@ -35,6 +72,7 @@ impl Default for ContainerMeta {
             version: CONTAINER_VERSION,
             rev: 0,
             prev_hash: String::new(),
+            profile: default_profile(),
         }
     }
 }
@@ -122,12 +160,18 @@ fn pad_payload(mut bytes: Vec<u8>) -> Vec<u8> {
     bytes
 }
 
-fn envelope_bytes(vault: &Vault, rev: u64, prev_hash: String) -> Result<Vec<u8>, String> {
+fn envelope_bytes(
+    vault: &Vault,
+    rev: u64,
+    prev_hash: String,
+    profile: ContainerProfile,
+) -> Result<Vec<u8>, String> {
     let meta = ContainerMeta {
         format: CONTAINER_FORMAT.to_string(),
         version: CONTAINER_VERSION,
         rev,
         prev_hash,
+        profile: profile.as_str().to_string(),
     };
     let json = serde_json::to_vec(&VaultEnvelopeRef { meta, vault })
         .map_err(|e| format!("Serialization error: {e}"))?;
@@ -331,7 +375,22 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
-    save_vault_secret_inner(vault, master_password, file_path, true)
+    save_vault_secret_inner(vault, master_password, file_path, true, ContainerProfile::Portable)
+}
+
+/// A22: save with an explicit container profile. `Portable` is byte-identical
+/// to [`save_vault_secret`]; `Paranoid` requires a device key sidecar and never
+/// falls back to portable when it is missing.
+///
+/// UI callers must not reach the Paranoid branch until Phase C gates it behind
+/// a portable `.pvx` backup.
+pub fn save_vault_secret_with_profile<P: AsRef<Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+    profile: ContainerProfile,
+) -> Result<(), String> {
+    save_vault_secret_inner(vault, master_password, file_path, true, profile)
 }
 
 /// A18: save without rotating backups — used by the decoy container, whose
@@ -342,7 +401,55 @@ pub fn save_vault_secret_flat<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
-    save_vault_secret_inner(vault, master_password, file_path, false)
+    save_vault_secret_inner(vault, master_password, file_path, false, ContainerProfile::Portable)
+}
+
+/// A22: the paranoid key chain needs the device encapsulation key. A missing
+/// sidecar is a distinct, actionable error — never a silent portable save.
+fn encrypt_container(
+    profile: ContainerProfile,
+    master_password: &SecretString,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    match profile {
+        ContainerProfile::Portable => encrypt_vault_portable_secret(master_password, plaintext),
+        ContainerProfile::Paranoid => {
+            let encapsulation = crate::security::pq_profile::load_encapsulation().map_err(|e| {
+                format!("PQ-paranoid save refused: {e} (create the device key first)")
+            })?;
+            encrypt_vault_paranoid_secret(master_password, &encapsulation, plaintext)
+        }
+    }
+}
+
+/// A22: symmetric open counterpart of [`encrypt_container`]. Used by rekey
+/// proofs; normal loads dispatch on the container magic instead.
+fn decrypt_container(
+    profile: ContainerProfile,
+    master_password: &SecretString,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    match profile {
+        ContainerProfile::Portable => decrypt_vault_portable_secret(master_password, payload),
+        ContainerProfile::Paranoid => {
+            let dk = crate::security::pq_profile::load_decapsulation()?;
+            decrypt_vault_paranoid_secret(master_password, &dk, payload)
+        }
+    }
+}
+
+/// A22: the magic and the authenticated `meta.profile` must agree. A PV3 file
+/// re-labelled as portable (or a PV2 file claiming paranoid) fails closed.
+fn check_profile(expected: ContainerProfile, meta: &ContainerMeta) -> Result<(), String> {
+    let found = ContainerProfile::parse(&meta.profile)?;
+    if found != expected {
+        return Err(format!(
+            "container profile mismatch: file is {}, envelope says {} — refusing",
+            expected.as_str(),
+            meta.profile
+        ));
+    }
+    Ok(())
 }
 
 fn save_vault_secret_inner<P: AsRef<Path>>(
@@ -350,13 +457,14 @@ fn save_vault_secret_inner<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
     rotate: bool,
+    profile: ContainerProfile,
 ) -> Result<(), String> {
     let path = file_path.as_ref();
     let _guard = FileLock::acquire(path)?;
     let old = fs::read(path).unwrap_or_default();
     let (rev, prev_hash) = next_meta(path, &old, master_password)?;
-    let payload = envelope_bytes(vault, rev, prev_hash)?;
-    let encrypted_payload = encrypt_vault_portable_secret(master_password, &payload)?;
+    let payload = envelope_bytes(vault, rev, prev_hash, profile)?;
+    let encrypted_payload = encrypt_container(profile, master_password, &payload)?;
 
     if rotate {
         rotate_backups(path)?;
@@ -411,14 +519,19 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
     proof.zeroize();
 
     // 2. Encrypt with the new password (fresh salt + fresh PQ keypair) and the
-    //    next revision, chained to the old container.
+    //    next revision, chained to the old container. A22: the profile is
+    //    preserved — rekeying never silently downgrades paranoid → portable.
     let old = fs::read(path).map_err(|e| format!("File read error: {e}"))?;
+    let profile = match detect_version(&old) {
+        VaultVersion::V3Paranoid => ContainerProfile::Paranoid,
+        _ => ContainerProfile::Portable,
+    };
     let (rev, prev_hash) = next_meta(path, &old, old_password)?;
-    let mut serialized = envelope_bytes(vault, rev, prev_hash)?;
-    let encrypted_payload = encrypt_vault_portable_secret(new_password, &serialized)?;
+    let mut serialized = envelope_bytes(vault, rev, prev_hash, profile)?;
+    let encrypted_payload = encrypt_container(profile, new_password, &serialized)?;
 
     // 3. Round-trip proof before replacing the only good copy.
-    let mut probe = decrypt_vault_portable_secret(new_password, &encrypted_payload)?;
+    let mut probe = decrypt_container(profile, new_password, &encrypted_payload)?;
     let roundtrip_ok = probe == serialized;
     probe.zeroize();
     serialized.zeroize();
@@ -429,7 +542,7 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
     // 4. Old password must not open the new container. Fresh salt makes this
     //    true cryptographically; verify it so a future format change cannot
     //    silently regress the promise.
-    if let Ok(mut leaked) = decrypt_vault_portable_secret(old_password, &encrypted_payload) {
+    if let Ok(mut leaked) = decrypt_container(profile, old_password, &encrypted_payload) {
         leaked.zeroize();
         return Err(
             "Rekey refused: the old password still opens the new container.".to_string(),
@@ -444,8 +557,10 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Load with 3-way envelope dispatch (unchanged):
+/// Load with 4-way envelope dispatch:
 ///
+/// - V3Paranoid: password + this device's DPAPI sidecar (A22). Never falls
+///   back to portable.
 /// - V2Portable: password alone (cross-device safe).
 /// - V2Legacy: password + DPAPI sidecar (same-machine migration only).
 /// - V1Classical: password alone (legacy fallback).
@@ -467,7 +582,16 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     // and bricks the open when the sidecar is absent. Fall back across
     // branches before failing — an attacker who can rewrite the file can
     // already delete it; a flipped magic must not brick a good vault.
-    let decrypted = match detect_version(&payload) {
+    let version = detect_version(&payload);
+    let decrypted = match version {
+        VaultVersion::V3Paranoid => {
+            let dk = crate::security::pq_profile::load_decapsulation().map_err(|e| {
+                format!("This vault requires this device's PQ key: {e}")
+            })?;
+            let out = decrypt_vault_paranoid_secret(master_password, &dk, &payload);
+            drop(dk);
+            out?
+        }
         VaultVersion::V2Portable => decrypt_vault_portable_secret(master_password, &payload)
             .or_else(|_| {
                 let dk = load_legacy_pq_dk()?;
@@ -489,8 +613,14 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
         }
         VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
     };
+    let expected = if version == VaultVersion::V3Paranoid {
+        ContainerProfile::Paranoid
+    } else {
+        ContainerProfile::Portable
+    };
     // A16 rev-2 envelope (meta + vault). The meta is inside the AEAD payload.
     if let Some((vault, meta)) = parse_envelope(&decrypted) {
+        check_profile(expected, &meta)?;
         remember_head(file_path.as_ref(), meta.rev, sha256_hex(&payload));
         return Ok((vault, false));
     }
@@ -1028,6 +1158,105 @@ mod tests {
         save_vault_secret(&demo_vault(), &pw, &path).unwrap();
         let err = rekey_vault_secret(&demo_vault(), &pw, &pw, &path).unwrap_err();
         assert!(err.contains("must differ"), "unexpected error: {err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn paranoid_profile_requires_sidecar_and_never_downgrades() {
+        let _guard = crate::security::pq_profile::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv_paranoid_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let sidecar = dir.join("pq_device.dpapi");
+        let path = dir.join("vault.enc");
+        std::env::set_var("PV_PQ_DEVICE_KEY_FILE", &sidecar);
+        crate::security::pq_profile::clear();
+
+        let pw = SecretString::new("Paranoid master!2026".to_string());
+
+        // Portable stays the default and needs no sidecar.
+        save_vault_secret(&demo_vault(), &pw, &path).unwrap();
+        assert_eq!(
+            detect_version(&std::fs::read(&path).unwrap()),
+            VaultVersion::V2Portable
+        );
+        assert!(load_vault_secret(&pw, &path).is_ok());
+
+        // Paranoid save without a device key is refused, not silently portable.
+        let err = save_vault_secret_with_profile(
+            &demo_vault(),
+            &pw,
+            &path,
+            ContainerProfile::Paranoid,
+        )
+        .unwrap_err();
+        assert!(err.contains("device key"), "unexpected error: {err}");
+        assert_eq!(
+            detect_version(&std::fs::read(&path).unwrap()),
+            VaultVersion::V2Portable
+        );
+
+        // With a device key: PV3 container, opens only with password + sidecar.
+        crate::security::pq_profile::generate_and_seal().unwrap();
+        save_vault_secret_with_profile(
+            &demo_vault(),
+            &pw,
+            &path,
+            ContainerProfile::Paranoid,
+        )
+        .unwrap();
+        let raw = std::fs::read(&path).unwrap();
+        assert_eq!(detect_version(&raw), VaultVersion::V3Paranoid);
+        let loaded = load_vault_secret(&pw, &path).unwrap();
+        assert_eq!(loaded.credentials.len(), 1);
+
+        // Wrong password fails with the matching device key.
+        let bad = SecretString::new("wrong password".to_string());
+        assert!(load_vault_secret(&bad, &path).is_err());
+
+        // Missing sidecar is a distinct failure, never "wrong password".
+        let good_sidecar = std::fs::read(&sidecar).unwrap();
+        std::fs::remove_file(&sidecar).unwrap();
+        let err = load_vault_secret(&pw, &path).unwrap_err();
+        assert!(err.contains("requires this device's PQ key"), "unexpected: {err}");
+
+        // A different device key cannot open it either (AEAD fails).
+        crate::security::pq_profile::generate_and_seal().unwrap();
+        assert!(load_vault_secret(&pw, &path).is_err());
+
+        // Restore the original sidecar: rekey keeps the profile and the key.
+        std::fs::write(&sidecar, &good_sidecar).unwrap();
+        let new_pw = SecretString::new("Rotated master!2026".to_string());
+        rekey_vault_secret(&demo_vault(), &pw, &new_pw, &path).unwrap();
+        assert_eq!(
+            detect_version(&std::fs::read(&path).unwrap()),
+            VaultVersion::V3Paranoid
+        );
+        assert!(load_vault_secret(&pw, &path).is_err());
+        assert!(load_vault_secret(&new_pw, &path).is_ok());
+        assert!(container_head(&path).map(|(rev, _)| rev) >= Some(3));
+
+        // A portable save still never consults the sidecar.
+        std::fs::remove_file(&sidecar).unwrap();
+        save_vault_secret(&demo_vault(), &new_pw, &path).unwrap();
+        assert!(load_vault_secret(&new_pw, &path).is_ok());
+
+        // Profile marker is validated on load (downgrade/unknown fails closed).
+        let paranoid_meta = ContainerMeta {
+            profile: "paranoid".into(),
+            ..Default::default()
+        };
+        assert!(check_profile(ContainerProfile::Portable, &paranoid_meta).is_err());
+        let unknown_meta = ContainerMeta {
+            profile: "future-profile".into(),
+            ..Default::default()
+        };
+        assert!(check_profile(ContainerProfile::Paranoid, &unknown_meta).is_err());
+
+        crate::security::pq_profile::clear();
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -14690,6 +14690,7 @@ mod grid_tests {
             "favicons.pref",
             "totp_offset.pref",
             "org_members.json",
+            "pq_device.dpapi",
         ] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
@@ -14710,6 +14711,7 @@ mod grid_tests {
             "pin_attempts.dpapi",
             "ext_pin.dpapi",
             "org_members.json",
+            "pq_device.dpapi",
         ] {
             assert!(got.contains(&want.to_string()), "missing {want}: {got:?}");
         }

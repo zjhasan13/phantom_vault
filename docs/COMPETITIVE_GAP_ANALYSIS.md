@@ -103,7 +103,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 |---|---|---|---|---|
 | A20 | Serverless Send-style expiring share | E13 | 2-3 wk | A link opens once, expires, and the relay never sees the key |
 | A21 | Hardware security key unlock (FIDO2 hmac-secret) | E12 | 2-3 wk | Vault unlocks with key + PIN; password fallback still works |
-| A22 | PQ-paranoid profile (device-bound decapsulation key) | C4 | 2-3 wk | Correct password alone cannot open the container |
+| A22 | PQ-paranoid profile (device-bound decapsulation key) — **Phase A/B DONE, Phase C pending** | C4 | 2-3 wk | Correct password alone cannot open the container |
 | A23 | Loopback API + `pv` CLI | X1 | 3-4 wk | A script reads a secret only after explicit approval; tokens expire |
 | A24 | Chunked, separately encrypted attachments | E11 | 2 wk | A 50 MB attachment saves without re-encrypting the vault |
 | A25 | Desktop light/high-contrast theme | E15 | 1 wk | Palette switches without restarting; contrast passes WCAG AA |
@@ -164,7 +164,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | C1 | Master-password change/rekey — **shipped (A5)** | `src/storage.rs` `rekey_vault_secret` (old-password proof, round-trip proof, atomic swap, `.bak.1.enc` rollback); Settings card + `main.rs` `on_change_master_password` | A leaked master password can now be rotated without exporting and rebuilding the vault; `.pvx` backups and printed shards stay on the old password by design | Rekey flow: decrypt with old, re-encrypt with new salt + fresh KDF, atomic swap, keep one rollback snapshot, zeroize both | S1 |
 | C2 | Backup `.pvx` shares the master password — **shipped (A6)** | `exporter::BACKUP_V2_MAGIC` (`exporter.rs:384`) tags new exports; `parse_import_any` (`mod.rs:211`) opens a `PVBK1` file only with the backup passphrase and routes untagged files to the legacy master-password path | A stolen backup no longer opens with the vault master password; exporting requires a separate 12+ character passphrase that differs from the master | Optional separate export passphrase, Argon2id with its own salt, explicit "cannot be opened with the vault password" warning | S1 |
 | C3 | No signed container revision — **shipped (A16)** | `storage.rs` rev-2 `VaultEnvelope` (`rev` + `prev_hash` inside the AEAD payload); `check_incoming` refuses lower revs/forks on merge | A replayed older blob is refused; legacy vaults migrate. Fresh-device first pull is still TOFU (no external anchor) | Add `rev` + `prev_hash` inside the AEAD payload, sign with the vault key; refuse a lower `rev` and surface a loud warning | S1 |
-| C4 | Portable PQ profile is not a second factor | `src/crypto.rs:235-242`; portable form is the default save path (`src/storage.rs:149`) | "Post-quantum" is a hedge, not a factor. A guessed password yields the whole key chain | Opt-in "PQ-paranoid" profile: DPAPI/TPM-bound decapsulation key plus password (the old `V2Legacy` model). Keep portable for sync | S2 |
+| C4 | Portable PQ profile is not a second factor — **closed at the container layer (A22 A/B); UI in Phase C** | `src/crypto.rs:235-242`; portable form is the default save path (`src/storage.rs:149`) | "Post-quantum" is a hedge, not a factor. A guessed password yields the whole key chain | Opt-in "PQ-paranoid" profile: DPAPI/TPM-bound decapsulation key plus password (the old `V2Legacy` model). Keep portable for sync | S2 |
 | C5 | Fixed Argon2id cost | `src/crypto.rs:51-56` (64 MiB, t=3, p=4) | Below current OWASP-recommended ceilings for a high-value vault; no per-device tuning | Version the KDF parameters in the header and raise defaults for new containers; keep legacy unlock path | S2 |
 
 ### 4.2 Sync
@@ -857,11 +857,15 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 
 ### Phase 6 — PQ-paranoid profile (2-3 weeks)
 
-1. Opt-in device-bound decapsulation key (DPAPI/TPM) in addition to the
-   password (C4).
-2. Keep the portable profile for sync; label both honestly in the UI.
-3. Exit test: with the device key removed, the paranoid container cannot be
-   opened even with the correct password.
+1. **Container layer DONE (A22 Phase A/B)** — `PV3\0` containers open only with
+   the password **and** this device's DPAPI-sealed ML-KEM key
+   (`src/crypto.rs`, `src/storage.rs`, `src/security/pq_profile.rs`); the
+   missing-sidecar path fails closed and sync merge refuses `PV3` blobs.
+2. Remaining (Phase C): opt-in Settings toggle gated behind a portable `.pvx`
+   backup, sync/P2P button guards, and the warning/loss copy.
+3. Exit test (already green at the container layer): with the device key
+   removed, the paranoid container cannot be opened even with the correct
+   password. UI-level test lands with Phase C.
 
 ### Phase 7 — Ecosystem (3-4 weeks)
 

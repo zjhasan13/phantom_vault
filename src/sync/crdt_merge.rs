@@ -287,6 +287,12 @@ pub fn decrypt_blob_to_envelope(
                 Err(_) => decrypt_vault_portable_secret(master, bytes)?,
             }
         }
+        VaultVersion::V3Paranoid => {
+            return Err(
+                "a PQ-paranoid vault cannot be synced — it opens only on the device that sealed it"
+                    .to_string(),
+            )
+        }
         VaultVersion::V1Classical => decrypt_vault_secret(master, bytes)?,
     };
     // A16: rev-2 envelope, else a legacy plain Vault (rev 0).

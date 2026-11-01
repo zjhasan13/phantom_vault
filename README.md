@@ -104,7 +104,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 505 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 509 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -163,8 +163,11 @@ These are real today. They are listed here so nobody discovers them the hard way
 - **No third-party security audit.** `docs/AUDIT.md` is an internal, reproducible
   review; it is not a substitute for an external audit.
 - **Windows only.** No macOS, Linux or mobile client (A10).
-- **Post-quantum is a hedge, not a second factor.** A correct password still opens
-  the portable container. A device-bound "PQ-paranoid" profile is planned (A22).
+- **Post-quantum is a hedge, not a second factor — in the portable profile.** A
+  correct password still opens a portable container. A device-bound
+  "PQ-paranoid" container profile (`PV3`, password + DPAPI-sealed ML-KEM key) is
+  implemented at the container layer but **not user-reachable yet** (A22 Phase C:
+  Settings toggle + mandatory portable backup + sync guards).
 - **A closed shadow root is a DOM boundary, not a keyboard boundary.** The page
   cannot read the corrected save-toast value from the DOM, but it can still observe
   key events, exactly as it observes the original login typing.
@@ -235,6 +238,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/AUDIT.md`](docs/AUDIT.md) | Internal audit findings and verification |
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Release checklist, SmartScreen wording, interop matrix |
 | [`docs/REPRODUCIBLE_BUILDS.md`](docs/REPRODUCIBLE_BUILDS.md) | Pinned inputs, clean rebuild, hash/signature/provenance verification, honest limits |
+| [`docs/A22_PHASE_B.md`](docs/A22_PHASE_B.md) | PQ-paranoid container profile: `PV3` layout, key chain, exit tests, Phase C gate |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 

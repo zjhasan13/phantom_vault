@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: T5 reproducible-build docs (A19/E5 shipped before), after A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase B (PV3 PQ-paranoid container, not yet UI-reachable), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -27,7 +27,24 @@
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
 
-- **A5 â€” master password rekey (this batch):** `storage::rekey_vault_secret`
+- **A22 Phase A/B — PQ-paranoid profile (this batch):** a new container profile
+  that needs the master password **and** this device's ML-KEM decapsulation key.
+  Phase A added `security/pq_profile.rs` (generate/seal/load `pq_device.dpapi`
+  with DPAPI; missing/corrupt fails closed). Phase B adds `PV3\0`
+  (`crypto.rs`) with layout `magic | salt 16 | kem_ct 1088 | nonce 24 | ct+tag`,
+  key chain `HKDF-SHA256(salt = ML-KEM shared secret, ikm = Argon2id key,
+  info = "phantom_vault_paranoid_v1")`, `ContainerProfile` +
+  `save_vault_secret_with_profile` + profile dispatch in `storage.rs`, and a
+  sync-merge guard that refuses `PV3` blobs. Missing sidecar is a distinct error
+  (`This vault requires this device's PQ key`), never a password error and never
+  a portable fallback. Rekey preserves the profile (rev+1, same device key).
+  `meta.profile` is validated against the magic; unknown/downgrade fails closed.
+  Tests +3 → `cargo test` **509 passed / 1 ignored + 4 pv_sign**; `npm test`
+  **133/133**. NOT user-reachable yet: Phase C (Settings toggle, mandatory
+  portable `.pvx` backup, sync button guards) is still required, and DPAPI is
+  user+machine bound, not a TPM.
+
+- **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new
   one (fresh Argon2id salt + fresh ML-KEM keypair, KDF params untouched),
   round-trip-verifies, proves the old password no longer opens it, rotates the
@@ -469,10 +486,8 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 505 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
-  warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
-  warnings (toolchain drift â€” `.clamp()` changes NaN semantics, intentionally
-  untouched per no-break rule).
+- Baselines: `cargo test` 509 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+  warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
 - SecretString migration (Phases 1â€“5) DONE: crypto/storage `_secret` variants live,

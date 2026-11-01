@@ -7,7 +7,9 @@ use rand_core::RngCore;
 use secrecy::{ExposeSecret, SecretString};
 use zeroize::Zeroize;
 
-use crate::core::pq_hybrid::{PqHybridEngine, CT_LEN};
+use crate::core::pq_hybrid::{PqDecapsulationBytes, PqHybridEngine, PqSharedSecret, CT_LEN};
+use hkdf::Hkdf;
+use sha2::Sha256;
 
 // Salt সাইজ (16 bytes) এবং Nonce সাইজ (24 bytes for XChaCha20)
 pub const SALT_LEN: usize = 16;
@@ -17,8 +19,17 @@ pub const NONCE_LEN: usize = 24;
 /// - v1 (legacy classical): no magic, raw salt first.
 /// - v2-legacy (Phase 14 hybrid, machine-bound DK): `PV2` (3 bytes).
 /// - v2-portable (self-contained, key-wrapped DK): `PV2\0` (4 bytes).
+/// - v3-paranoid (A22, device-bound decapsulation key): `PV3\0` (4 bytes).
+///   The device DK never travels in the container; only an ML-KEM ciphertext
+///   encapsulated to this device's key does.
 pub const V2_MAGIC: &[u8; 3] = b"PV2";
 pub const V2_PORTABLE_MAGIC: &[u8; 4] = b"PV2\x00";
+pub const V3_PARANOID_MAGIC: &[u8; 4] = b"PV3\x00";
+
+/// A22: HKDF info for the paranoid hybrid key. Distinct from the legacy
+/// [`crate::core::pq_hybrid::HYBRID_INFO`] so the two key chains can never
+/// be confused even if both inputs happened to match.
+pub const PARANOID_INFO: &[u8] = b"phantom_vault_paranoid_v1";
 
 /// Wrapped-DK blob length: DK (2400B) + Poly1305 tag (16B).
 pub const WRAPPED_DK_LEN: usize = crate::core::pq_hybrid::DK_LEN + 16;
@@ -30,11 +41,16 @@ pub enum VaultVersion {
     V2Legacy,
     /// Self-contained portable layout: DK wrapped by the Argon2id key.
     V2Portable,
+    /// A22 PQ-paranoid layout: Argon2id + this device's ML-KEM decapsulation
+    /// key (DPAPI sidecar). The password alone cannot open it.
+    V3Paranoid,
 }
 
 /// Detect container version by magic prefix (4-byte check first).
 pub fn detect_version(payload: &[u8]) -> VaultVersion {
-    if payload.len() >= 4 && &payload[..4] == V2_PORTABLE_MAGIC {
+    if payload.len() >= 4 && &payload[..4] == V3_PARANOID_MAGIC {
+        VaultVersion::V3Paranoid
+    } else if payload.len() >= 4 && &payload[..4] == V2_PORTABLE_MAGIC {
         VaultVersion::V2Portable
     } else if payload.len() >= 3 && &payload[..3] == V2_MAGIC {
         VaultVersion::V2Legacy
@@ -382,6 +398,117 @@ pub fn decrypt_vault_portable(
     decrypt_vault_portable_secret(&SecretString::new(master_password.to_string()), payload)
 }
 
+/// A22: hybrid key for the paranoid profile.
+/// `HKDF-SHA256(salt = PQ shared secret, ikm = Argon2id key)` with a
+/// profile-specific info string. Both halves are mandatory: a password guess
+/// without the device key cannot decapsulate, and the device key alone cannot
+/// reproduce the Argon2id half.
+fn combine_paranoid(argon2_key: &[u8; 32], pq: &PqSharedSecret) -> Result<[u8; 32], String> {
+    let hk = Hkdf::<Sha256>::new(Some(pq.expose()), argon2_key);
+    let mut okm = [0u8; 32];
+    hk.expand(PARANOID_INFO, &mut okm)
+        .map_err(|_| "HKDF expansion failed".to_string())?;
+    Ok(okm)
+}
+
+fn encrypt_paranoid_with_argon(
+    argon2_key: &[u8; 32],
+    salt: &[u8],
+    encapsulation_key: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use crate::core::pq_hybrid::PqHybridEngine as PQ;
+
+    let (pq_ct, pq_secret) =
+        PQ::encapsulate(encapsulation_key).map_err(|e| format!("PQ encapsulate: {e}"))?;
+    if pq_ct.len() != CT_LEN {
+        return Err("PQ ciphertext malformed".to_string());
+    }
+    let mut hybrid = combine_paranoid(argon2_key, &pq_secret)?;
+    drop(pq_secret);
+
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(&hybrid));
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let encrypted = cipher.encrypt(&nonce, plaintext);
+    hybrid.zeroize();
+    let ciphertext = encrypted.map_err(|e| format!("Encryption error: {e}"))?;
+
+    let mut out =
+        Vec::with_capacity(4 + SALT_LEN + CT_LEN + NONCE_LEN + ciphertext.len());
+    out.extend_from_slice(V3_PARANOID_MAGIC);
+    out.extend_from_slice(salt);
+    out.extend_from_slice(&pq_ct);
+    out.extend_from_slice(&nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// A22 PQ-paranoid encryption.
+///
+/// Layout: `[PV3\0 4B] + [salt 16B] + [kem_ct 1088B] + [nonce 24B] + [ct+tag]`.
+/// The decapsulation key stays in the DPAPI sidecar; only the encapsulated
+/// ciphertext travels. A fresh salt + fresh encapsulation are used per save.
+pub fn encrypt_vault_paranoid_secret(
+    master_password: &SecretString,
+    encapsulation_key: &[u8],
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    let mut salt = [0u8; SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    let mut argon2_key = derive_key_secret(master_password, &salt)?;
+    let result = encrypt_paranoid_with_argon(&argon2_key, &salt, encapsulation_key, plaintext);
+    argon2_key.zeroize();
+    result
+}
+
+/// A22 PQ-paranoid decryption. Fails closed if the container is not `PV3\0`,
+/// if the device key does not decapsulate the stored ciphertext, or if the
+/// AEAD tag does not verify. Never falls back to the portable path.
+pub fn decrypt_vault_paranoid_secret(
+    master_password: &SecretString,
+    decapsulation: &PqDecapsulationBytes,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    use crate::core::pq_hybrid::PqHybridEngine as PQ;
+
+    let min = 4 + SALT_LEN + CT_LEN + NONCE_LEN;
+    if payload.len() < min {
+        return Err("Invalid payload: data is too short!".to_string());
+    }
+    if &payload[..4] != V3_PARANOID_MAGIC {
+        return Err("Not a PQ-paranoid container.".to_string());
+    }
+    let salt = &payload[4..4 + SALT_LEN];
+    let pq_ct = &payload[4 + SALT_LEN..4 + SALT_LEN + CT_LEN];
+    let nonce = XNonce::from_slice(&payload[4 + SALT_LEN + CT_LEN..min]);
+    let ciphertext = &payload[min..];
+
+    let mut argon2_key = derive_key_secret(master_password, salt)?;
+    let pq_secret = match PQ::decapsulate(decapsulation.expose(), pq_ct) {
+        Ok(s) => s,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
+    let mut hybrid = match combine_paranoid(&argon2_key, &pq_secret) {
+        Ok(k) => k,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
+    argon2_key.zeroize();
+    drop(pq_secret);
+
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(&hybrid));
+    let result = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "Decryption failed! Wrong password, wrong device key, or corrupted file.".to_string());
+    hybrid.zeroize();
+    result
+}
+
 #[cfg(test)]
 #[allow(deprecated)]
 mod tests {
@@ -474,5 +601,35 @@ mod tests {
         let dec = decrypt_vault_hybrid_legacy(master_pass, &payload, kp.decapsulation.expose())
             .expect("legacy decrypt");
         assert_eq!(data, dec.as_slice());
+    }
+
+    #[test]
+    fn paranoid_roundtrip_needs_password_and_device_key() {
+        let kp = PqHybridEngine::generate_keypair();
+        let pw = SecretString::new("ParanoidMaster!2026".to_string());
+        let data = b"paranoid payload";
+
+        let enc = encrypt_vault_paranoid_secret(&pw, &kp.encapsulation, data).expect("encrypt");
+        assert_eq!(detect_version(&enc), super::VaultVersion::V3Paranoid);
+        let dec = decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &enc).expect("decrypt");
+        assert_eq!(dec, data);
+
+        // The password alone is not an API: without the matching device key the
+        // decapsulated secret differs and the AEAD tag fails.
+        let other = PqHybridEngine::generate_keypair();
+        assert!(decrypt_vault_paranoid_secret(&pw, &other.decapsulation, &enc).is_err());
+
+        // Even with the device key, a wrong password fails.
+        let bad = SecretString::new("wrong-password".to_string());
+        assert!(decrypt_vault_paranoid_secret(&bad, &kp.decapsulation, &enc).is_err());
+
+        // Tampering / truncation / a portable container all fail closed.
+        let mut tampered = enc.clone();
+        let last = tampered.len() - 1;
+        tampered[last] ^= 1;
+        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &tampered).is_err());
+        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &enc[..20]).is_err());
+        let portable = encrypt_vault_portable_secret(&pw, b"x").expect("portable");
+        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &portable).is_err());
     }
 }

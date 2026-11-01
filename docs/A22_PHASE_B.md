@@ -1,7 +1,14 @@
-# A22 Phase B — PQ-paranoid container profile (design note)
+# A22 Phase B — PQ-paranoid container profile
 
-> Status: design only. No production path uses it yet; A22 is not shipped until
-> Phase C (UI + backup gate + sync guards) lands. Portable remains the default.
+> Status: **implemented (Phase B)**. No production/UI path uses it yet; A22 is
+> not shipped until Phase C (Settings toggle + mandatory portable `.pvx` backup +
+> sync guards) lands. Portable remains the default.
+>
+> Landed: `PV3\0` + `encrypt/decrypt_vault_paranoid_secret`
+> (`src/crypto.rs`), profile dispatch + `save_vault_secret_with_profile`
+> (`src/storage.rs`), device keypair load (`src/security/pq_profile.rs`).
+> Tests: `cargo test` **509 passed / 1 ignored** (+ 4 `pv_sign`), `npm test`
+> **133/133**, clippy clean.
 
 ## Goal
 
@@ -17,11 +24,13 @@ The decapsulation key is the DPAPI-sealed sidecar from Phase A
 
 ## Non-goals
 
-- No new container magic in Phase B. The portable envelope layout stays; only
-  the key derivation and a `profile` field change.
+- Portable (`PV2\0`) bytes stay unchanged. Paranoid uses a **new** `PV3\0`
+  magic so a reader never has to guess the key chain from an authenticated
+  field it cannot read yet.
 - No UI toggle yet (Phase C). A paranoid save is reachable only from tests until
   the mandatory portable-backup gate exists.
-- No sync of paranoid vaults (Phase C refuses it).
+- No sync of paranoid vaults (sync merge already refuses `PV3` blobs; Phase C
+  refuses it at the button).
 - No TPM-backed key yet (later hardening; DPAPI is user+machine bound).
 
 ## Facts this design builds on
@@ -141,6 +150,41 @@ pub fn save_vault_secret_with_profile(
 | GitHub/P2P sync | refused in Phase C with a clear message |
 | Device key lost | vault unreadable; only a pre-enable `.pvx` backup restores |
 
+## Implementation notes (Phase B, landed)
+
+- `V3Paranoid` magic is detected before `PV2\0`; portable bytes are untouched.
+- Paranoid layout: `PV3\0 | salt 16 | kem_ct 1088 | nonce 24 | ct+tag`.
+  There is no wrapped DK in the container — the device keeps it.
+- Key chain: `HKDF-SHA256(salt = ML-KEM shared secret, ikm = Argon2id key,
+  info = "phantom_vault_paranoid_v1")`. The info string is distinct from the
+  legacy hybrid key chain so the two can never collide.
+- The encapsulation key is re-derived from the sealed decapsulation key
+  (`PqHybridEngine::encapsulation_from_decapsulation`), so the sidecar custodies
+  exactly one secret.
+- Saves refuse with `PQ-paranoid save refused: PQ device key is missing …`
+  when no sidecar exists. There is no silent portable fallback.
+- Loads of `PV3` fail with `This vault requires this device's PQ key: …` before
+  the AEAD step, so "missing device key" is distinguishable from a bad password.
+- `meta.profile` is validated against the magic; unknown profiles and
+  downgrade attempts fail closed.
+- Sync merge (`decrypt_blob_to_envelope`) rejects `PV3` blobs, so a paranoid
+  container can never be adopted by a peer even before Phase C's UI guard.
+- Factory reset already shreds `*.dpapi`, which covers `pq_device.dpapi`
+  (locked by a test).
+- Honest limits unchanged: DPAPI is user+machine bound (same-user malware can
+  unseal it), and losing the sidecar or the Windows profile means data loss.
+
+## Decisions (settled)
+
+1. **Profile marker:** `PV3\0` magic + authenticated `meta.profile` (both must
+   agree; either alone is not enough).
+2. **Sidecar lifecycle:** explicit device-key creation in Phase C, gated behind
+   a portable `.pvx` export. Phase B has no UI.
+3. **Locked-vault UX:** missing sidecar surfaces as “requires this device's PQ
+   key”, never as a password error.
+4. **Rekey with sidecar missing:** refuse (the load proof fails); rekey preserves
+   the profile and never downgrades to portable.
+
 ## Tests (exit criteria)
 
 1. Paranoid save → decrypt with password only **fails** with a distinct error.
@@ -151,16 +195,13 @@ pub fn save_vault_secret_with_profile(
 6. A16 chain/padding invariants still hold for paranoid (rev/prev_hash).
 7. Tampered KEM ciphertext / AEAD tag → error, no partial plaintext.
 8. Sidecar is DPAPI-bound (unseal fails with a foreign blob).
+9. Sync merge refuses a `PV3` blob.
+10. Profile mismatch (magic vs meta) fails closed.
 
-## Decisions still open (settle before coding)
-
-1. **Profile marker location:** recommend new magic `PV3\0` for paranoid (no
-   offset shifts; portable bytes unchanged). Meta `profile` is secondary.
-2. **Sidecar lifecycle:** generate on first paranoid enable vs. explicit “create
-   device key” step. Recommend explicit + mandatory `.pvx` backup gate (Phase C).
-3. **Locked-vault UX:** if the sidecar is missing, show “device key missing —
-   restore a portable backup” rather than a password error.
-4. **Rekey with sidecar missing:** refuse; never silently fall back to portable.
+Exit criteria 1–8, 10 are covered by
+`storage::tests::paranoid_profile_requires_sidecar_and_never_downgrades` and
+`crypto::tests::paranoid_roundtrip_needs_password_and_device_key`; 9 by the
+sync merge guard.
 
 ## Phase C gate (do not skip)
 

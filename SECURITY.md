@@ -59,7 +59,8 @@ tell us the date in the report so the advisory can land first.
 **In scope**
 
 - Container cryptography: Argon2id parameters, XChaCha20-Poly1305, ML-KEM/X25519
-  hybrid, salt/keypair reuse, nonce handling, version detection and migration
+  hybrid, the `PV3` PQ-paranoid key chain (Argon2id + device decapsulation key),
+  salt/keypair reuse, nonce handling, version detection and migration
 - Key handling: zeroization, page locking, DPAPI seals, Hello token, App PIN,
   extension PIN (Argon2id, host-side verification, attempt lockout), master-password rekey, rollback snapshot
 - Native-messaging bridge: origin pinning, frame MAC, request caps, `verify_master`
@@ -117,8 +118,11 @@ These are documented rather than secret; please do not report them as new findin
 - The extension PIN is 4–8 digits. Argon2id + a file-backed lockout make online
   guessing expensive, but a same-user process can read the DPAPI record and
   grind it offline at local CPU cost. Prefer 6–8 digits.
-- The post-quantum layer is a **hedge, not a second factor**: a correct master
-  password still opens the portable container.
+- The post-quantum layer is a **hedge, not a second factor** in the **portable**
+  profile: a correct master password still opens it. The `PV3` PQ-paranoid
+  profile (password + DPAPI-sealed ML-KEM key) exists at the container layer but
+  is not user-reachable until A22 Phase C; DPAPI is user+machine bound, not a
+  TPM, so same-user malware can still unseal the device key.
 - Favicon lookup is **same-origin only** (`/favicon.ico`); no third-party service
   is contacted. The site itself naturally sees its own icon request.
 - P2P sync serves **ciphertext without pairing** if no PIN is configured.
