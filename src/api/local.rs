@@ -496,6 +496,18 @@ pub fn client_get(
         match stream.read(&mut chunk) {
             Ok(0) => break,
             Ok(n) => raw.extend_from_slice(&chunk[..n]),
+            // Windows can surface a graceful server close as a reset after the
+            // body is already buffered; keep what we have.
+            Err(e)
+                if !raw.is_empty()
+                    && matches!(
+                        e.kind(),
+                        std::io::ErrorKind::ConnectionReset
+                            | std::io::ErrorKind::ConnectionAborted
+                    ) =>
+            {
+                break;
+            }
             Err(e) => return Err(format!("API read failed: {e}")),
         }
     }

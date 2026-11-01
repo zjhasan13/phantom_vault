@@ -65,6 +65,8 @@ tell us the date in the report so the advisory can land first.
   `keepass` dependency boundary
 - Local API (A23): loopback-only binding, DPAPI token storage, per-request
   approval, rate limits and the `pv` CLI surface
+- Share bundles (A20): `PVSH1` format, URL-fragment key custody, expiry and the
+  transport's one-view enforcement
 - Key handling: zeroization, page locking, DPAPI seals, Hello token, App PIN,
   extension PIN (Argon2id, host-side verification, attempt lockout), master-password rekey, rollback snapshot
 - Native-messaging bridge: origin pinning, frame MAC, request caps, `verify_master`
@@ -147,6 +149,9 @@ These are documented rather than secret; please do not report them as new findin
   DPAPI-sealed for the current user, so same-user malware can steal it; every
   read still requires an explicit in-app Allow prompt and is audit-logged. The
   API does not auto-start after a restart and has no TLS/process attestation.
+- A20 shares put the key in the URL fragment; anyone who obtains the full link
+  can open the share until expiry (and a recipient can copy what they read).
+  "One view" is enforced by the P2P transport in slice 2, not by the bundle.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

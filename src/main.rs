@@ -9,6 +9,7 @@ mod models;
 #[allow(dead_code)]
 mod storage;
 mod api;
+mod share;
 mod totp_engine;
 // Diet: mi-malloc returns freed pages to Windows instead of hoarding heap.
 #[global_allocator]

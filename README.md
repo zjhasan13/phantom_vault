@@ -106,7 +106,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 532 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 536 passed / 2 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -188,7 +188,7 @@ These are real today. They are listed here so nobody discovers them the hard way
 - **KDBX export covers logins only** (A13): cards/notes/identities/passkeys and
   attachment bytes need `.pvx`/CSV. KDBX import is full read support for
   KDBX 3.1/4. No hardware-key unlock (A21), no serverless Send-style share
-  (A20).
+  (A20 — only the encrypted bundle core is shipped, no transport/UI yet).
 - **Local API is opt-in and read-only** (A23): only `pv status` / `pv get`;
   `run`/`inject` and scopes are later. Same-user malware can steal the
   DPAPI-sealed token, so every read still requires the in-app Allow prompt.
@@ -249,6 +249,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/A22_PHASE_D.md`](docs/A22_PHASE_D.md) | TPM-backed device-key custody: threat model, `PVT1` sidecar, NCrypt design, tests |
 | [`docs/A13_KDBX.md`](docs/A13_KDBX.md) | KeePass KDBX import: supported formats, KDF caps, fixtures, export slice |
 | [`docs/A23_LOCAL_API.md`](docs/A23_LOCAL_API.md) | Loopback API + `pv` CLI: endpoints, approval flow, token, threat model |
+| [`docs/A20_SEND.md`](docs/A20_SEND.md) | Expiring share: bundle crypto, link-fragment key, transport options, honest limits |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 
