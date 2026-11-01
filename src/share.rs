@@ -61,6 +61,7 @@ pub struct CreatedShare {
     /// The only secret in the share; keep it out of logs and out of the blob.
     pub key: SecretString,
     pub expires_at: u64,
+    pub max_views: u32,
 }
 
 impl CreatedShare {
@@ -68,6 +69,23 @@ impl CreatedShare {
     pub fn link(&self) -> String {
         format!("{LINK_SCHEME}{}#k={}", self.id, self.key.expose_secret())
     }
+
+    /// Link that names the sender's reachable address (`pvshare://host:port/id#k=`).
+    pub fn link_via(&self, host_port: &str) -> String {
+        format!(
+            "{LINK_SCHEME}{host_port}/{}#k={}",
+            self.id,
+            self.key.expose_secret()
+        )
+    }
+}
+
+/// Parsed share link. `host` is `None` for a file-transport link.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareLink {
+    pub host: Option<String>,
+    pub id: String,
+    pub key: String,
 }
 
 pub fn now_secs() -> u64 {
@@ -113,7 +131,7 @@ pub fn create(
     let mut padded = pad(json);
     let mut key = [0u8; 32];
     OsRng.fill_bytes(&mut key);
-    let mut id_raw = [0u8; 8];
+    let mut id_raw = [0u8; 16];
     OsRng.fill_bytes(&mut id_raw);
 
     let sealed = crate::crypto::seal_with_raw_key(&key, &padded);
@@ -130,6 +148,7 @@ pub fn create(
         id: hex(&id_raw),
         key: SecretString::new(key_b64),
         expires_at,
+        max_views,
     })
 }
 
@@ -167,14 +186,27 @@ pub fn open(bundle: &[u8], key_b64: &str) -> Result<SharePayload, String> {
     Ok(payload)
 }
 
-/// Parse `pvshare://<id>#k=<key>`. The key must never be sent to a server.
-pub fn parse_link(link: &str) -> Option<(String, String)> {
+/// Parse `pvshare://<id>#k=<key>` (file transport) or
+/// `pvshare://<host>:<port>/<id>#k=<key>` (LAN transport).
+/// The key must never be sent to a server.
+pub fn parse_link(link: &str) -> Option<ShareLink> {
     let rest = link.strip_prefix(LINK_SCHEME)?;
-    let (id, key) = rest.split_once("#k=")?;
-    if id.is_empty() || key.is_empty() {
+    let (rest, key) = rest.split_once("#k=")?;
+    if key.is_empty() {
         return None;
     }
-    Some((id.to_string(), key.to_string()))
+    let (host, id) = match rest.split_once('/') {
+        Some((host, id)) if !host.is_empty() && !id.trim_matches('/').is_empty() => (
+            Some(host.to_string()),
+            id.trim_matches('/').to_string(),
+        ),
+        Some(_) => return None,
+        None => (None, rest.to_string()),
+    };
+    if id.is_empty() || id.contains('/') {
+        return None;
+    }
+    Some(ShareLink { host, id, key: key.to_string() })
 }
 
 #[cfg(test)]
@@ -198,9 +230,11 @@ mod tests {
     fn share_roundtrips_and_the_key_is_separate() {
         let created = create(vec![item("Gmail", "s3cret!")], 3600, 1).unwrap();
         let link = created.link();
-        let (id, key) = parse_link(&link).unwrap();
-        assert_eq!(id, created.id);
-        assert_eq!(key.as_str(), created.key.expose_secret().as_str());
+        let parsed = parse_link(&link).unwrap();
+        assert_eq!(parsed.id, created.id);
+        assert!(parsed.host.is_none());
+        assert_eq!(parsed.key.as_str(), created.key.expose_secret().as_str());
+        let key = parsed.key;
         // The key never lives inside the blob.
         assert!(!created
             .bundle
@@ -255,13 +289,26 @@ mod tests {
     }
 
     #[test]
-    fn link_parser_rejects_missing_fragment() {
+    fn link_parser_handles_file_and_lan_forms() {
         assert!(parse_link("pvshare://abc").is_none());
         assert!(parse_link("https://x#k=y").is_none());
         assert!(parse_link("pvshare://#k=abc").is_none());
         assert_eq!(
             parse_link("pvshare://id1#k=key1"),
-            Some(("id1".to_string(), "key1".to_string()))
+            Some(ShareLink {
+                host: None,
+                id: "id1".to_string(),
+                key: "key1".to_string()
+            })
         );
+        assert_eq!(
+            parse_link("pvshare://192.168.1.5:52199/id2#k=key2"),
+            Some(ShareLink {
+                host: Some("192.168.1.5:52199".to_string()),
+                id: "id2".to_string(),
+                key: "key2".to_string()
+            })
+        );
+        assert!(parse_link("pvshare://host:1/#k=k").is_none());
     }
 }

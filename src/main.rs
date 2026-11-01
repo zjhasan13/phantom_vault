@@ -10,6 +10,9 @@ mod models;
 mod storage;
 mod api;
 mod share;
+mod share_cli;
+mod share_serve;
+mod share_store;
 mod totp_engine;
 // Diet: mi-malloc returns freed pages to Windows instead of hoarding heap.
 #[global_allocator]
@@ -3507,6 +3510,7 @@ fn main() -> Result<(), slint::PlatformError> {
             "run" => developer::vault_run::run_cli(&argv[2..]),
             "scan" => developer::vault_run::scan_cli(&argv[2..]),
             "pv" => api::cli::pv_cli(&argv[2..]),
+            "share" => share_cli::share_cli(&argv[2..]),
             "ssh-agent" => developer::ssh_agent::serve_cli(),
             origin if is_native_host_launch(origin) => {
                 if let Some(pos) = argv.iter().position(|a| a == "--print-manifest") {

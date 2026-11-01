@@ -151,7 +151,10 @@ These are documented rather than secret; please do not report them as new findin
   API does not auto-start after a restart and has no TLS/process attestation.
 - A20 shares put the key in the URL fragment; anyone who obtains the full link
   can open the share until expiry (and a recipient can copy what they read).
-  "One view" is enforced by the P2P transport in slice 2, not by the bundle.
+  One-view/TTL are enforced by the **sender's** store/relay, not by the bundle;
+  the LAN endpoint is unauthenticated by design (128-bit random id, ciphertext
+  only, key never in the request). File transport enforces expiry on the opener's
+  clock and cannot enforce one-view.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

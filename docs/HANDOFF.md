@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A20 slice 1 (expiring share bundle core, transport pending), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A20 slices 1-2 (expiring share bundle + LAN/file CLI transport), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -27,13 +27,16 @@
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
 
-- **A20 slice 1 — expiring share core (this batch):** `src/share.rs` adds the
-  transport-agnostic `PVSH1` bundle: random 256-bit key (never in the blob, meant
-  for the `pvshare://…#k=` fragment), XChaCha20-Poly1305, JSON payload padded to
-  4 KiB, TTL/`max_views`, key/tamper/truncation/expiry fail-closed. Tests +4 →
-  `cargo test` **536 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**.
-  Not user-facing: the P2P transport, preview/import UI and revocation land in
-  slice 2 (`docs/A20_SEND.md`).
+- **A20 slices 1–2 — expiring share (this batch):** `src/share.rs` adds the
+  transport-agnostic `PVSH1` bundle (random 256-bit key never in the blob, meant
+  for the `pvshare://…#k=` fragment; XChaCha20-Poly1305; JSON padded to 4 KiB;
+  TTL/`max_views`; key/tamper/truncation/expiry fail-closed). Slice 2 adds
+  `src/share_store.rs` (`pvshares/<id>.pvsh` + meta; `take()` increments views
+  before returning), `src/share_serve.rs` (`GET /<id>` one-view/TTL, `health`,
+  LAN or loopback; **no pairing/auth by design** — 128-bit id + fragment key),
+  and `src/share_cli.rs` (`share create [--serve] / serve / open [--file]
+  [--json] [--import] / list / revoke`). Tests +6 → `cargo test` **538 passed /
+  2 ignored + 4 pv_sign**; `npm test` **133/133**. Desktop share UI is slice 3.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -556,7 +559,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 536 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 538 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
