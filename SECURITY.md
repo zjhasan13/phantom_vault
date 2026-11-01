@@ -107,8 +107,8 @@ These are documented rather than secret; please do not report them as new findin
   aligned and large-attachment vaults can still differ in size class.
 - Canary alerts reach paired devices only while P2P is reachable; otherwise
   they queue locally for the next P2P enable/launch. There is no dead-drop yet.
-- P2P requests/responses are signed by paired device keys (A15a/c) and beacons
-  carry only an ephemeral ID; push-side revision anchoring remains open.
+- P2P requests/responses are signed by paired device keys (A15a/c), pushes carry
+  a revision anchor, and beacons carry only an ephemeral ID.
 - The opt-in offline cache is **read-only and logins-only**, refreshed at unlock.
   Windows Hello gates the host read, but a same-user process can unseal the
   DPAPI-protected key without that prompt. If the PIN fallback is enabled, the

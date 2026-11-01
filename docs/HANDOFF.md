@@ -172,7 +172,8 @@
   Pairing pins the host `rev`/`hash`, pull responses carry it, and `head_ok`
   refuses a lower revision / same-rev different hash; a successful pull updates
   the pin. Tests +2 → `cargo test` **502 passed / 1 ignored + 4 pv_sign**.
-  Remaining: push-side revision anchoring and re-pair on address change.
+  Push-side anchor now sends the client head and the server refuses a lower
+  revision (409) before adopting. Remaining: re-pair on address change.
 
 - **A16 — signed container revision (this batch):** the AEAD payload is now a
   rev-2 envelope `{meta:{format,version,rev,prev_hash}, vault}`. Save increments

@@ -775,6 +775,25 @@ fn serve_conn_inner(
         let _ = stream.write_all(&http_response(200, r#"{"ok":true}"#));
         return;
     }
+    // A15 push-side anchor: a paired client cannot push a lower revision.
+    let mut push_rev = 0u64;
+    let mut push_hash = String::new();
+    if method == "POST" && path == "/p2p/sync" {
+        let v: serde_json::Value = serde_json::from_slice(&body).unwrap_or_default();
+        push_rev = v.get("rev").and_then(|x| x.as_u64()).unwrap_or(0);
+        push_hash = v.get("hash").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if let Some(peer) = crate::sync::p2p_pairing::peer_by_pubkey(&key) {
+            if let Err(e) =
+                crate::sync::p2p_pairing::head_ok(peer.rev, &peer.hash, push_rev, &push_hash)
+            {
+                let _ = stream.write_all(&http_response(
+                    409,
+                    &format!(r#"{{"ok":false,"error":"{e}"}}"#),
+                ));
+                return;
+            }
+        }
+    }
     let (local_rev, local_hash) = crate::storage::container_head(std::path::Path::new(
         crate::developer::vault_run::VAULT_FILE,
     ))
@@ -792,6 +811,7 @@ fn serve_conn_inner(
             return;
         }
         write_adopted_head(mtime, &sha);
+        let _ = crate::sync::p2p_pairing::update_peer_head(&key, push_rev, &push_hash);
         crate::security::access_log::log_event("p2p", &format!("adopted {sha}"));
     }
     let _ = stream.write_all(&http_response(status, &resp_body));
@@ -1062,7 +1082,14 @@ pub fn pull_peer(addr: SocketAddr, code: &str) -> Result<(String, u64, Vec<u8>),
 /// Push our ciphertext blob to a paired peer (it SHA-verifies + freshness-gates).
 pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], code: &str) -> Result<bool, String> {
     ensure_paired(addr, code)?;
-    let body = serde_json::json!({"sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob)}).to_string();
+    let (local_rev, local_hash) = crate::storage::container_head(std::path::Path::new(
+        crate::developer::vault_run::VAULT_FILE,
+    ))
+    .unwrap_or((0, String::new()));
+    let body = serde_json::json!({
+        "sha": sha, "mtime": mtime, "blob_b64": base64_encode(blob),
+        "rev": local_rev, "hash": local_hash,
+    }).to_string();
     let headers = signed_headers("POST", "/p2p/sync", &body)?;
     let (status, resp, rh) = http_call(addr, "POST", "/p2p/sync", &body, &headers)?;
     verify_peer_response(addr, status, &resp, &rh)?;

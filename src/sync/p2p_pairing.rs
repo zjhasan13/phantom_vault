@@ -185,6 +185,11 @@ pub fn peer_for_addr(addr: &str) -> Option<PairedPeer> {
     load_pairs().into_iter().find(|p| p.addr == addr)
 }
 
+pub fn peer_by_pubkey(pubkey_hex: &str) -> Option<PairedPeer> {
+    let key = pubkey_hex.trim().to_lowercase();
+    load_pairs().into_iter().find(|p| p.pubkey == key)
+}
+
 #[allow(dead_code)]
 pub fn paired_count() -> usize {
     load_pairs().len()

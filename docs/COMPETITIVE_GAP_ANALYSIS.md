@@ -767,11 +767,9 @@ A15c finishes the polish:
   Settings (no external service); the text code remains for copy/paste.
 - **A16 anchor:** pairing records the host `rev`/`hash`; each pull carries the
   host head and `head_ok` refuses a lower revision or same-rev/different-hash.
-  A successful pull updates the pinned head. (Push-side check still relies on
-  the paired key + mtime guard.)
-
-Remaining honest limits: push-side revision anchoring is not wired yet, and
-re-pairing is needed if a peer's LAN address changes.
+  A successful pull updates the pinned head; pushes carry the client head and
+  the server refuses a lower revision (409) before adopting.
+- Remaining honest limit: re-pairing is needed if a peer's LAN address changes.
 
 ### 5.20 Indistinguishable decoy provisioning (A18)
 
