@@ -623,6 +623,7 @@ fn collect_factory_targets_in(dir: &std::path::Path) -> Vec<std::path::PathBuf> 
                 continue;
             }
             if name.ends_with(".dpapi")
+                || name.ends_with(".tpm")
                 || (name.starts_with("my_secure_vault.bak.") && name.ends_with(".enc"))
             {
                 out.push(p);
@@ -14888,6 +14889,7 @@ mod grid_tests {
             "totp_offset.pref",
             "org_members.json",
             "pq_device.dpapi",
+            "pq_device.tpm",
         ] {
             std::fs::write(dir.join(name), b"x").unwrap();
         }
@@ -14909,6 +14911,7 @@ mod grid_tests {
             "ext_pin.dpapi",
             "org_members.json",
             "pq_device.dpapi",
+            "pq_device.tpm",
         ] {
             assert!(got.contains(&want.to_string()), "missing {want}: {got:?}");
         }

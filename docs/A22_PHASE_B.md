@@ -35,8 +35,10 @@ The decapsulation key is the DPAPI-sealed sidecar from Phase A
   field it cannot read yet.
 - No sync of paranoid vaults: GitHub/P2P/merge/startup-pull refuse `PV3`
   (container + UI), because the peer lacks this device's key.
-- TPM-backed key custody is **not** included yet (DPAPI is user+machine bound);
-  design is in [`docs/A22_PHASE_D.md`](A22_PHASE_D.md).
+- TPM-backed key custody is implemented as a tested layer (D1,
+  `src/security/pq_tpm.rs`, `pq_device.tpm`), but production still seals with
+  DPAPI until D2 wires the preference. Design:
+  [`docs/A22_PHASE_D.md`](A22_PHASE_D.md).
 
 ## Facts this design builds on
 

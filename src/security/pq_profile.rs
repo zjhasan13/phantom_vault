@@ -1,16 +1,43 @@
 //! A22: device-bound ML-KEM key custody for the PQ-paranoid profile.
 //!
-//! Phase A shipped the sidecar; Phase B wires it into the `PV3\0` container
-//! profile. Nothing turns it on from the UI until Phase C (Settings toggle +
-//! mandatory portable backup + sync guards).
+//! Phase D1 adds a CNG backend: production stays on DPAPI until D2 wires the
+//! preference, but the `pq_device.tpm` (`PVT1`) custody path and its tests are
+//! live now. Load order is strict:
 //!
-//! Threat honesty: DPAPI is user+machine bound, not a TPM. A same-user process
-//! can unseal this file; a TPM/CNG-backed key is the later hardening step.
+//! 1. `pq_device.tpm` exists → unseal it. No fallback to DPAPI on failure.
+//! 2. else `pq_device.dpapi` → DPAPI (current behaviour).
+//!
+//! Threat honesty: DPAPI is user+machine bound; a TPM-bound key survives
+//! sidecar copying but **not** same-user malware (no user-presence prompt by
+//! default). Losing the TPM key or the Windows profile means data loss.
 
 use crate::core::memory::DpapiGuard;
 use crate::core::pq_hybrid::{PqDecapsulationBytes, PqKeypair};
+use crate::security::pq_tpm;
 
 pub const PQ_DEVICE_KEY_FILE: &str = "pq_device.dpapi";
+/// A22 D1: TPM/CNG-sealed sidecar (`PVT1`).
+pub const PQ_TPM_KEY_FILE: &str = "pq_device.tpm";
+
+/// Which custody backend a sidecar belongs to.
+#[allow(dead_code)] // D2 wires TPM/Software; tests construct them today
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceBackend {
+    Dpapi,
+    Tpm,
+    /// Test-only: CNG software KSP (same code path, no TPM).
+    Software,
+}
+
+impl DeviceBackend {
+    fn cng(self) -> Option<pq_tpm::Backend> {
+        match self {
+            Self::Dpapi => None,
+            Self::Tpm => Some(pq_tpm::Backend::Tpm),
+            Self::Software => Some(pq_tpm::Backend::Software),
+        }
+    }
+}
 
 /// Tests in different modules mutate the process-wide sidecar path, so they
 /// must not run concurrently.
@@ -23,29 +50,75 @@ fn path() -> std::path::PathBuf {
         .unwrap_or_else(|_| std::path::PathBuf::from(PQ_DEVICE_KEY_FILE))
 }
 
-/// Whether a device key sidecar exists. Phase C reads this to gate the
-/// Settings toggle.
-#[allow(dead_code)] // wired up in Phase C (UI)
+fn tpm_path() -> std::path::PathBuf {
+    std::env::var("PV_PQ_TPM_FILE")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(PQ_TPM_KEY_FILE))
+}
+
+/// Whether any device key sidecar exists.
+#[allow(dead_code)] // D2 reads this for the Settings status line
 pub fn exists() -> bool {
-    path().is_file()
+    path().is_file() || tpm_path().is_file()
+}
+
+/// D1: which backend is on disk (`None` when no sidecar). Test-only software
+/// blobs report `software` so the UI can never call them hardware custody.
+#[allow(dead_code)] // D2 status line
+pub fn active_backend() -> Option<&'static str> {
+    if let Ok(blob) = std::fs::read(tpm_path()) {
+        if let Some(label) = pq_tpm::blob_backend_label(&blob) {
+            return Some(label);
+        }
+    }
+    if path().is_file() {
+        return Some("dpapi");
+    }
+    None
+}
+
+fn write_atomic(target: &std::path::Path, blob: &[u8]) -> Result<(), String> {
+    let tmp = target.with_extension("tmp");
+    std::fs::write(&tmp, blob).map_err(|e| format!("PQ key write: {e}"))?;
+    std::fs::rename(&tmp, target).map_err(|e| format!("PQ key swap: {e}"))?;
+    Ok(())
 }
 
 /// Generate a fresh ML-KEM-768 keypair and seal the decapsulation key with
-/// DPAPI. Returns the encapsulation key for the container.
-#[allow(dead_code)] // wired up in Phase C (explicit "create device key" step)
+/// DPAPI (the production default until D2 switches on the TPM preference).
 pub fn generate_and_seal() -> Result<Vec<u8>, String> {
+    generate_and_seal_with(DeviceBackend::Dpapi)
+}
+
+/// D1: seal with an explicit backend. `Tpm`/`Software` write `pq_device.tpm`
+/// and never leave a DPAPI sidecar behind.
+#[allow(dead_code)] // D2 wires `Tpm` into the Settings enable flow
+pub fn generate_and_seal_with(backend: DeviceBackend) -> Result<Vec<u8>, String> {
     let kp: PqKeypair = crate::core::pq_hybrid::PqHybridEngine::generate_keypair();
     let decap = kp.decapsulation.expose();
-    let blob = DpapiGuard::protect(decap).map_err(|e| format!("PQ key seal failed: {e}"))?;
-    let p = path();
-    let tmp = p.with_extension("dpapi.tmp");
-    std::fs::write(&tmp, &blob).map_err(|e| format!("PQ key write: {e}"))?;
-    std::fs::rename(&tmp, &p).map_err(|e| format!("PQ key swap: {e}"))?;
+    match backend.cng() {
+        None => {
+            let blob = DpapiGuard::protect(decap).map_err(|e| format!("PQ key seal failed: {e}"))?;
+            write_atomic(&path(), &blob)?;
+        }
+        Some(cng) => {
+            let blob = pq_tpm::seal(cng, decap)?;
+            write_atomic(&tpm_path(), &blob)?;
+        }
+    }
     Ok(kp.encapsulation)
 }
 
-/// Load the sealed decapsulation key. Missing/corrupt fails closed.
+/// Load the sealed decapsulation key. A present-but-unreadable TPM sidecar is
+/// terminal — it never falls back to a neighbouring DPAPI file.
 pub fn load_decapsulation() -> Result<PqDecapsulationBytes, String> {
+    let tpm = tpm_path();
+    if tpm.is_file() {
+        let blob = std::fs::read(&tpm)
+            .map_err(|_| "PQ TPM device key cannot be read".to_string())?;
+        let dk = pq_tpm::unseal(&blob)?;
+        return Ok(PqDecapsulationBytes(dk));
+    }
     let blob = std::fs::read(path()).map_err(|_| "PQ device key is missing".to_string())?;
     let secret = DpapiGuard::unprotect(&blob)
         .map_err(|_| "PQ device key cannot be unsealed".to_string())?;
@@ -66,22 +139,31 @@ pub fn load_encapsulation() -> Result<Vec<u8>, String> {
     load_keypair().map(|(ek, _)| ek)
 }
 
-/// Remove the sidecar (factory reset / disable). Idempotent.
-#[allow(dead_code)] // wired up in Phase C (factory reset / disable)
+/// Remove both sidecars (factory reset / explicit move). Idempotent.
+#[allow(dead_code)] // D2 factory reset / backend move
 pub fn clear() {
     let _ = std::fs::remove_file(path());
-    let _ = std::fs::remove_file(path().with_extension("dpapi.tmp"));
+    let _ = std::fs::remove_file(tpm_path());
+    let _ = std::fs::remove_file(path().with_extension("tmp"));
+    let _ = std::fs::remove_file(tpm_path().with_extension("tmp"));
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn set_test_paths(dir: &std::path::Path) {
+        std::env::set_var("PV_PQ_DEVICE_KEY_FILE", dir.join("pq_device.dpapi"));
+        std::env::set_var("PV_PQ_TPM_FILE", dir.join("pq_device.tpm"));
+    }
+
     #[test]
     fn device_key_roundtrips_and_missing_fails_closed() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
-        let d = std::env::temp_dir().join(format!("pv-pq-dev-{}.dpapi", std::process::id()));
-        std::env::set_var("PV_PQ_DEVICE_KEY_FILE", &d);
+        let dir = std::env::temp_dir().join(format!("pv-pq-dev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
         clear();
         assert!(load_decapsulation().is_err());
 
@@ -91,11 +173,90 @@ mod tests {
         let dk2 = load_decapsulation().unwrap();
         assert_eq!(dk1.expose(), dk2.expose());
         assert!(exists());
+        assert_eq!(active_backend(), Some("dpapi"));
         let (loaded_ek, _) = load_keypair().unwrap();
         assert_eq!(loaded_ek, ek);
 
         clear();
         assert!(!exists());
         std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn tpm_sidecar_roundtrips_and_never_falls_back_to_dpapi() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _key = pq_tpm::TEST_KEY_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if !pq_tpm::provider_available(pq_tpm::Backend::Software) {
+            eprintln!("software KSP unavailable; skipping");
+            return;
+        }
+        let dir = std::env::temp_dir().join(format!("pv-pq-tpm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
+        clear();
+
+        let ek = generate_and_seal_with(DeviceBackend::Software).unwrap();
+        assert!(!ek.is_empty());
+        assert!(tpm_path().is_file());
+        assert!(!path().is_file());
+        assert_eq!(active_backend(), Some("software"));
+        let dk1 = load_decapsulation().unwrap();
+        let dk2 = load_decapsulation().unwrap();
+        assert_eq!(dk1.expose(), dk2.expose());
+
+        // Corrupt the TPM sidecar: load fails closed...
+        let good = std::fs::read(tpm_path()).unwrap();
+        let mut bad = good.clone();
+        let last = bad.len() - 1;
+        bad[last] ^= 1;
+        std::fs::write(tpm_path(), &bad).unwrap();
+        assert!(load_decapsulation().is_err());
+
+        // ...even with a valid DPAPI sidecar next to it (no hidden fallback).
+        generate_and_seal_with(DeviceBackend::Dpapi).unwrap();
+        assert!(path().is_file());
+        assert!(load_decapsulation().is_err());
+
+        // Restoring the TPM blob works again.
+        std::fs::write(tpm_path(), &good).unwrap();
+        assert_eq!(load_decapsulation().unwrap().expose(), dk1.expose());
+
+        clear();
+        assert!(!exists());
+        assert!(!path().exists());
+        assert!(!tpm_path().exists());
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    #[ignore = "requires a TPM 2.0 device"]
+    fn tpm_device_roundtrip_manual() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _key = pq_tpm::TEST_KEY_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv-pq-real-tpm-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
+        clear();
+
+        let ek = generate_and_seal_with(DeviceBackend::Tpm).unwrap();
+        assert!(!ek.is_empty());
+        let dk = load_decapsulation().unwrap();
+        assert_eq!(dk.expose().len(), crate::core::pq_hybrid::DK_LEN);
+        assert_eq!(active_backend(), Some("tpm"));
+
+        clear();
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

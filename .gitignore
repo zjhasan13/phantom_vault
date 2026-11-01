@@ -14,6 +14,8 @@ test_vault.enc
 # Phase 11-14 local secrets: DPAPI-sealed keys/tokens + vault blobs + crash logs.
 # NEVER commit these — sync pushes ciphertext via API, not via git.
 *.dpapi
+# A22 D1: TPM/CNG-sealed device key sidecar (PVT1), test-only software KSP.
+*.tpm
 *.enc
 *.enc.*
 *.enc.bak

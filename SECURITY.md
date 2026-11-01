@@ -123,6 +123,8 @@ These are documented rather than secret; please do not report them as new findin
   PQ-paranoid profile additionally requires the DPAPI-sealed ML-KEM key for this
   Windows profile (Settings → PQ-paranoid) and refuses sync/P2P. DPAPI is
   user+machine bound, not a TPM: same-user malware can unseal the device key.
+  A TPM/CNG custody layer is implemented and tested (`pq_device.tpm`, D1) but
+  not yet wired into the enable flow (D2).
   Losing `pq_device.dpapi` or the Windows profile means data loss; enabling is
   gated behind a password-openable `.pvx` export.
 - Favicon lookup is **same-origin only** (`/favicon.ico`); no third-party service

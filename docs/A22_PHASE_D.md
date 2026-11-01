@@ -1,8 +1,16 @@
 # A22 Phase D — TPM-backed device-key custody (design note)
 
-> Status: **design only (D0)**. No code yet. A/B/C are shipped (`c79f535`).
-> Portable remains the default; the paranoid profile (`PV3`) is unchanged by
-> this phase — only *how the device key is sealed at rest* changes.
+> Status: **D0 design + D1 custody layer implemented.** Production still seals
+> with DPAPI; D2 wires the TPM preference into the Settings enable flow, D3 is
+> the release QA. A/B/C are shipped (`c79f535`).
+>
+> D1 landed: `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap +
+> XChaCha20 DK seal, platform *and* software KSP), backend-aware
+> `src/security/pq_profile.rs`, and strict load order (a `pq_device.tpm` file
+> never falls back to DPAPI). Tests: `cargo test` **514 passed / 2 ignored**
+> (+ 4 `pv_sign`); the ignored ones are the real-TPM manual test (verified
+> pass on this Infineon TPM 2.0) and the pre-existing hardware test.
+> `npm test` **133/133**, clippy clean.
 
 ## 1. Goal
 
@@ -111,7 +119,7 @@ fallback is OAEP-SHA1 for the 32-byte wrap only, documented explicitly.
 |---|---|---|
 | magic | 4 | `PVT1` |
 | version | 1 | `1` |
-| backend | 1 | `2` = TPM (future-proofs a third backend) |
+| backend | 1 | `2` = TPM, `3` = software KSP (test-only, never accepted as hardware custody) |
 | key_name_len | 1 | length of the persisted key name |
 | key_name | N | `PhantomVault-PQ-Device-v1` |
 | rsa_ct_len | 2 | LE, `256` for RSA-2048 |
@@ -184,20 +192,25 @@ only restore path."* The enable gate itself does not change.
 
 ## 8. Tests
 
-1. **Software KSP round-trip** (Windows CI): seal → unseal the same DK; wrong
-   blob / truncated / bad magic fails closed.
-2. **Backend selection**: TPM unavailable ⇒ `available() == false` and the
-   enable flow reports DPAPI; no panic.
-3. **No hidden fallback**: a corrupt `pq_device.tpm` plus a valid
-   `pq_device.dpapi` must still fail closed.
+Status: **1, 2, 3, 5 and the happy path of 6 are green**; 4 and the NCRYPT
+user-presence/disabled-TPM runs land with D2/D3.
+
+1. **Software KSP round-trip** (`security::pq_tpm::tests::software_ksp_seals_and_unseals`):
+   seal → unseal the same DK; tamper/truncation fail closed.
+2. **Backend label**: `active_backend()` reports `software`/`tpm`/`dpapi`;
+   the enable flow's DPAPI fallback lands in D2.
+3. **No hidden fallback** (`pq_profile::tests::tpm_sidecar_roundtrips_and_never_falls_back_to_dpapi`):
+   corrupt `pq_device.tpm` + valid `pq_device.dpapi` still fails closed.
 4. **Migration proof** (D2): DPAPI-sealed DK → TPM-sealed DK → both unseal to
    the same bytes; old file removed only after the proof.
 5. **Container regression**: the full A22 B/C storage test still passes with the
-   TPM backend mocked/unavailable (portable + PV3 unchanged).
-6. **Manual, `#[ignore]`**: real TPM 2.0 seal/unseal on this Infineon device,
-   plus a "TPM provider disabled" run.
-7. **Performance budget**: document one `NCryptDecrypt` per save; if it exceeds
-   ~250 ms, add a zeroizing per-unlock DK cache (not in D1).
+   TPM backend present (portable + PV3 unchanged).
+6. **Manual, `#[ignore]`**: `security::pq_profile::tests::tpm_device_roundtrip_manual`
+   passed on this machine's Infineon TPM 2.0 (2026-11-01); a "TPM provider
+   disabled" run is D3.
+7. **Performance budget**: the real-TPM manual test took ~1.1 s including key
+   creation; per-save unseal timing is measured in D2/D3 before adding a
+   zeroizing per-unlock DK cache.
 
 ## 9. Migration / rollback
 
@@ -223,11 +236,14 @@ only restore path."* The enable gate itself does not change.
 
 ## 11. Slices and exit criteria
 
-- **D1 (2–3 days):** `KeySealer` + `TpmSealer` + `PVT1` format + software-KSP
-  tests; production still writes DPAPI until D2 wires the preference.
-- **D2 (1–2 days):** enable prefers TPM, "Move key to TPM" action, factory-reset
-  `.tpm` sweep, status line, docs.
-- **D3 (1 day):** manual TPM QA on this device (present + disabled), timing
-  measurement, release-note wording.
-
-**D0 exit:** this document reviewed; decisions 1–6 settled.
+- **D0 — DONE:** this document reviewed; decisions 1–6 settled (recommended
+  defaults accepted).
+- **D1 — DONE:** CNG provider abstraction (`Tpm`/`Software`), `PVT1` format,
+  RSA-2048 OAEP-SHA256 wrap + XChaCha20 DK seal, atomic sidecar writes, strict
+  TPM→DPAPI load order with no fallback, software-KSP tests, and a real-TPM
+  manual roundtrip on this device. Production still writes DPAPI — D2 wires the
+  preference.
+- **D2 (1–2 days):** enable prefers TPM (DPAPI fallback + visible backend),
+  "Move key to TPM" action, factory-reset `.tpm` sweep, status line, docs.
+- **D3 (1 day):** TPM-disabled QA, per-save timing measurement, release-note
+  wording.

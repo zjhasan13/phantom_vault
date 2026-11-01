@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D0 (TPM device-key custody design note), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D1 (TPM/CNG custody layer shipped; preference wiring pending), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -50,11 +50,14 @@
   openable. Tests +2 → `cargo test` **511 passed / 1 ignored + 4 pv_sign**;
   `npm test` **133/133**. Honest limits: DPAPI is user+machine bound (not a
   TPM), the offline cache/`.pvx` stay password-sealed, and paranoid is
-  single-device by design. **D0 (this batch):** TPM-backed custody design note
-  (`docs/A22_PHASE_D.md`) — CNG `MS_PLATFORM_CRYPTO_PROVIDER` RSA-2048 OAEP wrap
-  + XChaCha20 DK seal in `pq_device.tpm` (`PVT1`), DPAPI fallback with a visible
-  backend status, software-KSP tests for CI, explicit-only migration.
-  Implementation slices D1–D3 are pending.
+  single-device by design. **D1 (this batch):** TPM custody layer shipped —
+  `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap + XChaCha20
+  DK seal, platform **and** software KSP), backend-aware `pq_profile`
+  (`generate_and_seal_with`, `active_backend`), strict TPM→DPAPI load order
+  with **no hidden fallback**, atomic sidecars, software-KSP tests, and a
+  real-TPM manual roundtrip on this machine. Production still writes DPAPI;
+  D2 wires the preference + Settings status + migration. Tests +3 →
+  `cargo test` **514 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**.
 
 - **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new
@@ -498,7 +501,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 511 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 514 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
