@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase C (PV3 PQ-paranoid container + Settings gate + sync guards), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D0 (TPM device-key custody design note), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -50,7 +50,11 @@
   openable. Tests +2 → `cargo test` **511 passed / 1 ignored + 4 pv_sign**;
   `npm test` **133/133**. Honest limits: DPAPI is user+machine bound (not a
   TPM), the offline cache/`.pvx` stay password-sealed, and paranoid is
-  single-device by design.
+  single-device by design. **D0 (this batch):** TPM-backed custody design note
+  (`docs/A22_PHASE_D.md`) — CNG `MS_PLATFORM_CRYPTO_PROVIDER` RSA-2048 OAEP wrap
+  + XChaCha20 DK seal in `pq_device.tpm` (`PVT1`), DPAPI fallback with a visible
+  backend status, software-KSP tests for CI, explicit-only migration.
+  Implementation slices D1–D3 are pending.
 
 - **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new

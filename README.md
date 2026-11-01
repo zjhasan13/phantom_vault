@@ -240,6 +240,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/RELEASE.md`](docs/RELEASE.md) | Release checklist, SmartScreen wording, interop matrix |
 | [`docs/REPRODUCIBLE_BUILDS.md`](docs/REPRODUCIBLE_BUILDS.md) | Pinned inputs, clean rebuild, hash/signature/provenance verification, honest limits |
 | [`docs/A22_PHASE_B.md`](docs/A22_PHASE_B.md) | PQ-paranoid container profile: `PV3` layout, key chain, exit tests, Phase C gate |
+| [`docs/A22_PHASE_D.md`](docs/A22_PHASE_D.md) | TPM-backed device-key custody: threat model, `PVT1` sidecar, NCrypt design, tests |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 
