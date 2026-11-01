@@ -871,8 +871,10 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
    (`PVT1`, CNG RSA-2048 OAEP-SHA256 + XChaCha20, platform/software KSP, strict
    no-fallback load order) + enable-time TPM preference with an honest DPAPI
    fallback, Settings backend label, and proof-first "Move device key to TPM".
-   Real-TPM roundtrip and DPAPI→TPM migration verified on this machine. D3
-   (TPM-disabled QA, timing, release notes) pending.
+   Real-TPM roundtrip and DPAPI→TPM migration verified on this machine; D3
+   added the no-TPM fallback test hook, measured unseal (~316–352 ms) and a
+   public encapsulation-key cache (0 ms per save), plus release notes. Phase D
+   complete.
 
 ### Phase 7 — Ecosystem (3-4 weeks)
 

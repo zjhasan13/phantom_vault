@@ -1,19 +1,19 @@
 # A22 Phase D — TPM-backed device-key custody (design note)
 
-> Status: **D0 design + D1 custody layer + D2 wiring implemented.** Enabling the
-> paranoid profile now prefers TPM 2.0, falls back to DPAPI with a visible
-> backend label, and offers an explicit proof-first "Move device key to TPM".
-> D3 is the remaining QA/release pass. A/B/C are shipped (`c79f535`).
+> Status: **D0 design + D1 custody + D2 wiring + D3 QA/docs — complete.**
+> Enabling the paranoid profile prefers TPM 2.0, falls back to DPAPI with a
+> visible backend label, and offers an explicit proof-first "Move device key to
+> TPM". A/B/C are shipped (`c79f535`).
 >
-> D1/D2 landed: `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap
+> D1–D3 landed: `src/security/pq_tpm.rs` (`PVT1`, CNG RSA-2048 OAEP-SHA256 wrap
 > + XChaCha20 DK seal, platform *and* software KSP), backend-aware
-> `src/security/pq_profile.rs` (strict load order, `reseal_to`, no hidden
-> fallback), Settings backend status + move action (`src/main.rs`,
-> `ui/appwindow.slint`), and the `.tpm` factory-reset sweep. Tests:
-> `cargo test` **515 passed / 2 ignored** (+ 4 `pv_sign`); the ignored ones are
-> the real-TPM manual test (DPAPI→TPM migration verified on this Infineon
-> TPM 2.0) and the pre-existing hardware test. `npm test` **133/133**, clippy
-> clean.
+> `src/security/pq_profile.rs` (strict load order, `reseal_to`, cached **public**
+> encapsulation key, no hidden fallback), Settings backend status + move action
+> (`src/main.rs`, `ui/appwindow.slint`), the `.tpm` factory-reset sweep, and a
+> test-only no-TPM fallback hook. Tests: `cargo test` **517 passed / 2 ignored**
+> (+ 4 `pv_sign`); the ignored ones are the real-TPM manual test (DPAPI→TPM
+> migration + timings on this Infineon TPM 2.0) and the pre-existing hardware
+> test. `npm test` **133/133**, clippy clean.
 
 ## 1. Goal
 
@@ -200,8 +200,9 @@ back to DPAPI when the TPM provider or key creation refuses.
 
 ## 8. Tests
 
-Status: **1–6 are green** (4 via software KSP and the real-TPM manual run); the
-TPM-disabled run and the per-save timing measurement are D3.
+Status: **1–7 are green.** The TPM-disabled path is simulated by the test-only
+`PV_PQ_FORCE_DPAPI` hook (release builds compile it out); disabling real TPM
+hardware requires firmware/admin access and is out of scope for this host.
 
 1. **Software KSP round-trip** (`security::pq_tpm::tests::software_ksp_seals_and_unseals`):
    seal → unseal the same DK; tamper/truncation fail closed.
@@ -216,18 +217,37 @@ TPM-disabled run and the per-save timing measurement are D3.
    TPM backend present (portable + PV3 unchanged).
 6. **Manual, `#[ignore]`**: `security::pq_profile::tests::tpm_device_roundtrip_manual`
    passed on this machine's Infineon TPM 2.0 (2026-11-01), including the
-   DPAPI→TPM migration; a "TPM provider disabled" run is D3.
-7. **Performance budget**: the real-TPM manual run took ~1.4 s for two key
-   creations + migration (key creation dominates); per-save unseal timing is
-   measured in D3 before adding a zeroizing per-unlock DK cache.
+   DPAPI→TPM migration.
+7. **D3 no-TPM fallback** (`pq_profile::tests::enable_prefers_tpm_but_falls_back_to_dpapi_when_unavailable`):
+   with TPM forced off, enable writes DPAPI only and the backend label is
+   `dpapi`; release builds ignore the hook.
+8. **Cache correctness** (`encapsulation_cache_invalidates_when_the_sidecar_changes`):
+   the public-key cache is hit on repeat reads and invalidated by regeneration
+   or `clear()`.
+
+### Measured on this machine (Infineon SLB9670)
+
+| Operation | Cost |
+|---|---|
+| TPM keygen + seal | 30–197 ms (varies) |
+| TPM RSA-OAEP unseal | 316–352 ms |
+| First encapsulation-key load (unseal) | ~337 ms |
+| Cached encapsulation-key load (per save) | **0 ms** |
+| DPAPI→TPM migration (reseal + proof) | 362–419 ms |
+
+Because the unseal exceeded the 250 ms budget, D3 added a cache of the **public**
+encapsulation key keyed by the exact sidecar bytes: saves no longer touch the
+TPM. The decapsulation key is still unsealed only when actually needed
+(unlock/load) and is never retained by the cache.
 
 ## 9. Migration / rollback
 
 - Rolling back to the current build is safe: a `PVT1` sidecar is simply an
   unknown file to old builds, and old builds cannot open `PV3` anyway.
-- Rolling back a *migrated* vault to DPAPI requires the explicit move action
-  (D2) or restoring the portable `.pvx`; we do not ship an automatic reverse
-  migration.
+- Rolling back a *migrated* vault to DPAPI requires restoring the portable
+  `.pvx` backup; no automatic reverse migration or "move back to DPAPI" action
+  is shipped (deliberate: it would put the same DK back on the weaker backend
+  without a fresh user decision).
 - No vault bytes, revisions or backups are rewritten by D1/D2; only the
   sidecar changes.
 
@@ -248,11 +268,13 @@ TPM-disabled run and the per-save timing measurement are D3.
 - **D1 — DONE:** CNG provider abstraction (`Tpm`/`Software`), `PVT1` format,
   RSA-2048 OAEP-SHA256 wrap + XChaCha20 DK seal, atomic sidecar writes, strict
   TPM→DPAPI load order with no fallback, software-KSP tests, and a real-TPM
-  manual roundtrip on this device. Production still writes DPAPI — D2 wires the
-  preference.
+  manual roundtrip on this device. Production still wrote DPAPI at that point;
+  D2 wired the preference.
 - **D2 — DONE:** enable prefers TPM with an honest DPAPI fallback, Settings
   backend line, proof-first "Move device key to TPM" (in-memory unseal + live
   vault load before deleting DPAPI), `.tpm` factory-reset sweep, and the
   migration tests (software KSP + real TPM).
-- **D3 (remaining, 1 day):** TPM-disabled QA, per-save unseal timing
-  measurement, release-note wording, and a final docs pass.
+- **D3 — DONE:** no-TPM fallback covered by a test-only hook (release builds
+  ignore it), TPM unseal timed at ~316–352 ms, and a cache of the **public**
+  encapsulation key removes that cost from every save (0 ms cached; the DK is
+  still unsealed only on unlock/load and never cached). Release notes updated.

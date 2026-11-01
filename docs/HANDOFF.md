@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D2 (TPM preferred at enable + explicit move-to-TPM), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase D3 (TPM QA + perf cache + release notes; phase D complete), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -61,8 +61,11 @@
   fallback)` and offers a proof-first **Move device key to TPM** (reseal →
   in-memory unseal → live vault load → delete DPAPI; failure rolls back).
   `.tpm` joins the factory-reset sweep. Migration is explicit only — never on
-  unlock. Tests +4 → `cargo test` **515 passed / 2 ignored + 4 pv_sign**;
-  `npm test` **133/133**.
+  unlock. **D3 (this batch):** no-TPM fallback covered by a test-only hook,
+  measured TPM timings (unseal ~316–352 ms), and a **public**
+  encapsulation-key cache keyed by sidecar bytes (0 ms per save; the DK is
+  never cached), plus release notes. Tests +6 → `cargo test` **517 passed /
+  2 ignored + 4 pv_sign**; `npm test` **133/133**.
 
 - **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new
@@ -506,7 +509,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 515 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 517 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

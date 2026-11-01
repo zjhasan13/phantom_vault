@@ -12945,15 +12945,20 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     // (or the sidecar cannot be unsealed). Prefer TPM 2.0 and
                     // fall back to DPAPI honestly when the TPM refuses.
                     if crate::security::pq_profile::load_encapsulation().is_err() {
-                        let tpm_ok = crate::security::pq_tpm::provider_available(
-                            crate::security::pq_tpm::Backend::Tpm,
-                        ) && crate::security::pq_profile::generate_and_seal_with(
-                            crate::security::pq_profile::DeviceBackend::Tpm,
-                        )
-                        .is_ok();
-                        if !tpm_ok {
-                            crate::security::pq_profile::generate_and_seal()?;
-                        }
+                        let backend =
+                            crate::security::pq_profile::generate_preferring_tpm()?;
+                        security::access_log::log_event(
+                            "pq-profile",
+                            match backend {
+                                crate::security::pq_profile::DeviceBackend::Tpm => {
+                                    "device key: tpm"
+                                }
+                                crate::security::pq_profile::DeviceBackend::Dpapi => {
+                                    "device key: dpapi"
+                                }
+                                _ => "device key: other",
+                            },
+                        );
                     }
                 }
                 let vault = lock_vault(&vault_arc);

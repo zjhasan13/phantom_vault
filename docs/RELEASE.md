@@ -45,12 +45,14 @@ pull is TOFU; later stale pulls are refused.
 
 **PQ-paranoid container (A22, `PV3\0`):** opt-in only; portable stays the
 default. A paranoid vault opens **only** on the device that sealed it
-(password + that Windows profile's DPAPI-sealed ML-KEM key) and refuses sync,
-P2P and remote merge. Notes MUST state: (1) `pq_device.dpapi` is not portable
-and losing it or the Windows profile means data loss; (2) the portable `.pvx`
-backup is the restore path and is mandatory before enabling; (3) builds older
-than this release cannot open `PV3` at all, so every device stays on a
-compatible build.
+(password + that Windows profile's device key) and refuses sync, P2P and remote
+merge. The device key is **TPM 2.0-backed when available** (`pq_device.tpm`),
+otherwise DPAPI (`pq_device.dpapi`); Settings shows the active backend and
+offers an explicit proof-first "Move device key to TPM". Notes MUST state:
+(1) neither sidecar is portable, and losing the sidecar, the TPM key or the
+Windows profile means data loss; (2) the portable `.pvx` backup is the restore
+path and is mandatory before enabling; (3) builds older than this release cannot
+open `PV3` at all, so every device stays on a compatible build.
 
 ## 3. Rollback plan (tag discipline)
 

@@ -14,6 +14,7 @@
 use crate::core::memory::DpapiGuard;
 use crate::core::pq_hybrid::{PqDecapsulationBytes, PqKeypair};
 use crate::security::pq_tpm;
+use std::sync::{Mutex, OnceLock};
 
 pub const PQ_DEVICE_KEY_FILE: &str = "pq_device.dpapi";
 /// A22 D1: TPM/CNG-sealed sidecar (`PVT1`).
@@ -106,27 +107,66 @@ pub fn generate_and_seal_with(backend: DeviceBackend) -> Result<Vec<u8>, String>
             write_atomic(&tpm_path(), &blob)?;
         }
     }
+    reset_encap_cache();
     Ok(kp.encapsulation)
+}
+
+/// D3: cache of the **public** encapsulation key, keyed by the exact sidecar
+/// bytes. A TPM unseal costs ~350 ms on this hardware; saves only need the
+/// public key, so caching it removes the TPM op from every save without
+/// keeping a secret in RAM. Invalidated on any sidecar mutation.
+struct EncapsulationCache {
+    from_tpm: bool,
+    blob: Vec<u8>,
+    encapsulation: Vec<u8>,
+}
+
+fn encap_cache() -> &'static Mutex<Option<EncapsulationCache>> {
+    static CACHE: OnceLock<Mutex<Option<EncapsulationCache>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(None))
+}
+
+fn reset_encap_cache() {
+    *encap_cache()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner()) = None;
+}
+
+/// Read the active sidecar: TPM first, DPAPI second, no fallback.
+fn read_active_sidecar() -> Result<(bool, Vec<u8>), String> {
+    let tpm = tpm_path();
+    if tpm.is_file() {
+        let blob = std::fs::read(&tpm)
+            .map_err(|_| "PQ TPM device key cannot be read".to_string())?;
+        return Ok((true, blob));
+    }
+    let p = path();
+    if !p.is_file() {
+        return Err("PQ device key is missing".to_string());
+    }
+    let blob = std::fs::read(&p).map_err(|_| "PQ device key is missing".to_string())?;
+    Ok((false, blob))
+}
+
+fn unseal_sidecar(from_tpm: bool, blob: &[u8]) -> Result<Vec<u8>, String> {
+    if from_tpm {
+        return pq_tpm::unseal(blob);
+    }
+    let secret = DpapiGuard::unprotect(blob)
+        .map_err(|_| "PQ device key cannot be unsealed".to_string())?;
+    Ok(secret.expose().to_vec())
 }
 
 /// Load the sealed decapsulation key. A present-but-unreadable TPM sidecar is
 /// terminal — it never falls back to a neighbouring DPAPI file.
 pub fn load_decapsulation() -> Result<PqDecapsulationBytes, String> {
-    let tpm = tpm_path();
-    if tpm.is_file() {
-        let blob = std::fs::read(&tpm)
-            .map_err(|_| "PQ TPM device key cannot be read".to_string())?;
-        let dk = pq_tpm::unseal(&blob)?;
-        return Ok(PqDecapsulationBytes(dk));
-    }
-    let blob = std::fs::read(path()).map_err(|_| "PQ device key is missing".to_string())?;
-    let secret = DpapiGuard::unprotect(&blob)
-        .map_err(|_| "PQ device key cannot be unsealed".to_string())?;
-    Ok(PqDecapsulationBytes(secret.expose().to_vec()))
+    let (from_tpm, blob) = read_active_sidecar()?;
+    Ok(PqDecapsulationBytes(unseal_sidecar(from_tpm, &blob)?))
 }
 
 /// A22: unseal once and return both halves. The encapsulation key is
 /// re-derived from the decapsulation key (only one secret is custodied).
+#[allow(dead_code)] // kept for callers that need both halves
 pub fn load_keypair() -> Result<(Vec<u8>, PqDecapsulationBytes), String> {
     let dk = load_decapsulation()?;
     let ek = crate::core::pq_hybrid::PqHybridEngine::encapsulation_from_decapsulation(dk.expose())
@@ -134,9 +174,53 @@ pub fn load_keypair() -> Result<(Vec<u8>, PqDecapsulationBytes), String> {
     Ok((ek, dk))
 }
 
-/// A22: encapsulation key for a paranoid save.
+/// A22: encapsulation key for a paranoid save. Cached (public key only) so a
+/// slow TPM unseal happens once per sidecar, not once per save.
 pub fn load_encapsulation() -> Result<Vec<u8>, String> {
-    load_keypair().map(|(ek, _)| ek)
+    let (from_tpm, blob) = read_active_sidecar()?;
+    {
+        let cache = encap_cache().lock().unwrap_or_else(|p| p.into_inner());
+        if let Some(cached) = cache.as_ref() {
+            if cached.from_tpm == from_tpm && cached.blob == blob {
+                return Ok(cached.encapsulation.clone());
+            }
+        }
+    }
+    let dk = unseal_sidecar(from_tpm, &blob)?;
+    let ek = crate::core::pq_hybrid::PqHybridEngine::encapsulation_from_decapsulation(&dk)
+        .map_err(|e| format!("PQ device key is corrupt: {e}"));
+    // The DK is secret: zeroize before the cache only keeps the public half.
+    let dk_guard = PqDecapsulationBytes(dk);
+    let ek = ek?;
+    drop(dk_guard);
+
+    *encap_cache().lock().unwrap_or_else(|p| p.into_inner()) = Some(EncapsulationCache {
+        from_tpm,
+        blob,
+        encapsulation: ek.clone(),
+    });
+    Ok(ek)
+}
+
+/// D2/D3: create a device key, preferring TPM 2.0 and falling back to DPAPI.
+/// Returns the backend actually used so the caller can log it.
+///
+/// `PV_PQ_FORCE_DPAPI` is a **test-only** hook (`cfg!(test)`), used to exercise
+/// the no-TPM fallback without disabling real hardware. Release builds compile
+/// the check out, so a stray env var cannot weaken custody.
+pub fn generate_preferring_tpm() -> Result<DeviceBackend, String> {
+    if !tpm_forced_off()
+        && pq_tpm::provider_available(pq_tpm::Backend::Tpm)
+        && generate_and_seal_with(DeviceBackend::Tpm).is_ok()
+    {
+        return Ok(DeviceBackend::Tpm);
+    }
+    generate_and_seal()?;
+    Ok(DeviceBackend::Dpapi)
+}
+
+fn tpm_forced_off() -> bool {
+    cfg!(test) && std::env::var_os("PV_PQ_FORCE_DPAPI").is_some()
 }
 
 /// A22 D2: re-seal the existing device key with a CNG backend, keeping the old
@@ -159,19 +243,23 @@ pub fn reseal_to(backend: DeviceBackend) -> Result<(), String> {
     if proof.as_slice() != dk.expose() {
         return Err("TPM reseal proof failed".to_string());
     }
-    write_atomic(&tpm_path(), &blob)
+    write_atomic(&tpm_path(), &blob)?;
+    reset_encap_cache();
+    Ok(())
 }
 
 /// A22 D2: drop the DPAPI sidecar after a successful TPM migration proof.
 pub fn remove_dpapi() {
     let _ = std::fs::remove_file(path());
     let _ = std::fs::remove_file(path().with_extension("tmp"));
+    reset_encap_cache();
 }
 
 /// A22 D2: drop a not-yet-proven TPM sidecar (rollback path).
 pub fn remove_tpm() {
     let _ = std::fs::remove_file(tpm_path());
     let _ = std::fs::remove_file(tpm_path().with_extension("tmp"));
+    reset_encap_cache();
 }
 
 /// Remove both sidecars (factory reset / explicit move). Idempotent.
@@ -269,6 +357,61 @@ mod tests {
     }
 
     #[test]
+    fn enable_prefers_tpm_but_falls_back_to_dpapi_when_unavailable() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let _key = pq_tpm::TEST_KEY_LOCK
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv-pq-fallback-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
+        clear();
+
+        // Simulate a machine where the TPM provider is unusable/denied.
+        std::env::set_var("PV_PQ_FORCE_DPAPI", "1");
+        let backend = generate_preferring_tpm().unwrap();
+        std::env::remove_var("PV_PQ_FORCE_DPAPI");
+
+        assert_eq!(backend, DeviceBackend::Dpapi);
+        assert!(path().is_file());
+        assert!(!tpm_path().is_file());
+        assert_eq!(active_backend(), Some("dpapi"));
+        assert_eq!(
+            load_decapsulation().unwrap().expose().len(),
+            crate::core::pq_hybrid::DK_LEN
+        );
+
+        clear();
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn encapsulation_cache_invalidates_when_the_sidecar_changes() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv-pq-cache-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        set_test_paths(&dir);
+        clear();
+
+        let ek1 = generate_and_seal().unwrap();
+        assert_eq!(load_encapsulation().unwrap(), ek1);
+        assert_eq!(load_encapsulation().unwrap(), ek1);
+        let ek2 = generate_and_seal().unwrap();
+        assert_ne!(ek2, ek1);
+        assert_eq!(load_encapsulation().unwrap(), ek2);
+        clear();
+        assert!(load_encapsulation().is_err());
+
+        std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
+        std::env::remove_var("PV_PQ_TPM_FILE");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn migration_to_cng_keeps_the_same_decapsulation_key() {
         let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
         let _key = pq_tpm::TEST_KEY_LOCK
@@ -316,17 +459,39 @@ mod tests {
         clear();
 
         // D1: native TPM seal/unseal.
+        let t0 = std::time::Instant::now();
         let ek = generate_and_seal_with(DeviceBackend::Tpm).unwrap();
+        let seal_ms = t0.elapsed().as_millis();
         assert!(!ek.is_empty());
-        let dk = load_decapsulation().unwrap();
-        assert_eq!(dk.expose().len(), crate::core::pq_hybrid::DK_LEN);
+        let mut unseal_ms = 0u128;
+        for _ in 0..5 {
+            let t = std::time::Instant::now();
+            let dk = load_decapsulation().unwrap();
+            assert_eq!(dk.expose().len(), crate::core::pq_hybrid::DK_LEN);
+            unseal_ms += t.elapsed().as_millis();
+        }
         assert_eq!(active_backend(), Some("tpm"));
+        let t_encap = std::time::Instant::now();
+        let _ = load_encapsulation().unwrap();
+        let encap_first_ms = t_encap.elapsed().as_millis();
+        let t_cached = std::time::Instant::now();
+        let _ = load_encapsulation().unwrap();
+        let encap_cached_ms = t_cached.elapsed().as_millis();
+        eprintln!(
+            "D3 timings: TPM keygen+seal={seal_ms}ms, unseal avg={}ms, encap first={encap_first_ms}ms cached={encap_cached_ms}ms",
+            unseal_ms / 5
+        );
         clear();
 
         // D2: migrate an existing DPAPI key into the TPM, same DK.
         generate_and_seal_with(DeviceBackend::Dpapi).unwrap();
         let before = load_decapsulation().unwrap().expose().to_vec();
+        let t1 = std::time::Instant::now();
         reseal_to(DeviceBackend::Tpm).unwrap();
+        eprintln!(
+            "D3 timings: DPAPI->TPM migration reseal={}ms",
+            t1.elapsed().as_millis()
+        );
         assert_eq!(load_decapsulation().unwrap().expose(), before);
         remove_dpapi();
         assert_eq!(load_decapsulation().unwrap().expose(), before);
