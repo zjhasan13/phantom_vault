@@ -1402,25 +1402,25 @@ export component MainWindow inherits Window {
             NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🗑️"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
             Rectangle { height: 10px; }
-            if !root.sidebar_collapsed : FieldLabel { text: "TYPES"; }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; label: "Login"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: "Card"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: "Identity"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: "Note"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: "License"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: "SSH Key"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-            if !root.sidebar_collapsed : FieldLabel { text: "FOLDERS"; }
+            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ধরন" : "TYPES"; }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; label: root.ui_lang == "bn" ? "লগইন" : "Login"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: root.ui_lang == "bn" ? "নোট" : "Note"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ফোল্ডার" : "FOLDERS"; }
             for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
             if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder..."; text <=> root.new_folder_name; height: 32px; accepted(text) => { root.add_folder_requested(text); } }
-            if !root.sidebar_collapsed : FieldLabel { text: "APP"; }
+            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "অ্যাপ" : "APP"; }
             NavItem { collapsed: root.sidebar_collapsed; icon: "➕"; label: "+ New"; active: root.show_add_form; tapped => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
             if root.show_new_menu : VerticalLayout { spacing: 2px;
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🌐"; label: "Login"; tapped => { root.open_new_form(1); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: "Card"; tapped => { root.open_new_form(4); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: "Identity"; tapped => { root.open_new_form(5); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: "Note"; tapped => { root.open_new_form(3); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: "License"; tapped => { root.open_new_form(2); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: "SSH Key"; tapped => { root.open_new_form(6); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🌐"; label: root.ui_lang == "bn" ? "লগইন" : "Login"; tapped => { root.open_new_form(1); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; tapped => { root.open_new_form(4); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; tapped => { root.open_new_form(5); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: root.ui_lang == "bn" ? "নোট" : "Note"; tapped => { root.open_new_form(3); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; tapped => { root.open_new_form(2); } }
+                NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; tapped => { root.open_new_form(6); } }
             }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🛡️"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
@@ -2040,14 +2040,14 @@ export component MainWindow inherits Window {
                     }}
                     if root.show_new_menu : VerticalLayout { spacing: 4px;
                         HorizontalLayout { spacing: 6px;
-                            AuraButton { label: "Login"; horizontal-stretch: 1; clicked => { root.open_new_form(1); } }
-                            AuraButton { label: "Card"; horizontal-stretch: 1; clicked => { root.open_new_form(4); } }
-                            AuraButton { label: "Identity"; horizontal-stretch: 1; clicked => { root.open_new_form(5); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; horizontal-stretch: 1; clicked => { root.open_new_form(1); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; horizontal-stretch: 1; clicked => { root.open_new_form(4); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; horizontal-stretch: 1; clicked => { root.open_new_form(5); } }
                         }
                         HorizontalLayout { spacing: 6px;
-                            AuraButton { label: "Note"; horizontal-stretch: 1; clicked => { root.open_new_form(3); } }
-                            AuraButton { label: "License"; horizontal-stretch: 1; clicked => { root.open_new_form(2); } }
-                            AuraButton { label: "SSH Key"; horizontal-stretch: 1; clicked => { root.open_new_form(6); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; horizontal-stretch: 1; clicked => { root.open_new_form(3); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; horizontal-stretch: 1; clicked => { root.open_new_form(2); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; horizontal-stretch: 1; clicked => { root.open_new_form(6); } }
                         }
                     }
                     search_input := LineEdit { placeholder-text: "🔍 Search vault...  ( / to focus )"; text <=> root.search_query; height: 38px; edited(text) => { col2_scroll.content-y = 0; root.search_changed(text); } }
@@ -2116,20 +2116,20 @@ export component MainWindow inherits Window {
                 ScrollView { VerticalLayout { padding: 18px; spacing: 12px;
                     // NEW FORM (when +New active)
                     if root.show_add_form : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 14px; spacing: 8px;
-                        HorizontalLayout { spacing: 6px; AuraButton { label: "Login"; primary: root.new_kind==1; horizontal-stretch: 1; clicked => { root.new_kind=1; } } AuraButton { label: "Card"; primary: root.new_kind==4; horizontal-stretch: 1; clicked => { root.new_kind=4; } } AuraButton { label: "Note"; primary: root.new_kind==3; horizontal-stretch: 1; clicked => { root.new_kind=3; } } AuraButton { label: "✕ Close"; width: 76px; clicked => { root.cancel_form(); } } }
-                        HorizontalLayout { spacing: 6px; AuraButton { label: "Identity"; primary: root.new_kind==5; horizontal-stretch: 1; clicked => { root.new_kind=5; } } AuraButton { label: "License"; primary: root.new_kind==2; horizontal-stretch: 1; clicked => { root.new_kind=2; } } AuraButton { label: "SSH Key"; primary: root.new_kind==6; horizontal-stretch: 1; clicked => { root.new_kind=6; } } }
+                        HorizontalLayout { spacing: 6px; AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.new_kind==1; horizontal-stretch: 1; clicked => { root.new_kind=1; } } AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.new_kind==4; horizontal-stretch: 1; clicked => { root.new_kind=4; } } AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.new_kind==3; horizontal-stretch: 1; clicked => { root.new_kind=3; } } AuraButton { label: "✕ Close"; width: 76px; clicked => { root.cancel_form(); } } }
+                        HorizontalLayout { spacing: 6px; AuraButton { label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; primary: root.new_kind==5; horizontal-stretch: 1; clicked => { root.new_kind=5; } } AuraButton { label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; primary: root.new_kind==2; horizontal-stretch: 1; clicked => { root.new_kind=2; } } AuraButton { label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; primary: root.new_kind==6; horizontal-stretch: 1; clicked => { root.new_kind=6; } } }
                         if root.f_a != "" || root.f_b != "" : Text { text: "⚠️ Typed text stays — check it still means the same fields."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
-                        FieldLabel { text: "ITEM DETAILS"; }
+                        FieldLabel { text: root.ui_lang == "bn" ? "আইটেমের বিবরণ" : "ITEM DETAILS"; }
                         LineEdit { placeholder-text: "Item name (required)"; text <=> root.f_title; height: 36px; }
                         ComboBox { model: root.folders_list; current-value <=> root.f_folder; }
-                        FieldLabel { text: "LOGIN CREDENTIALS"; }
+                        FieldLabel { text: root.ui_lang == "bn" ? "লগইন তথ্য" : "LOGIN CREDENTIALS"; }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Username / Email" : (root.new_kind == 2 ? "License Key" : (root.new_kind == 4 ? "Cardholder name" : (root.new_kind == 5 ? "Full name" : (root.new_kind == 6 ? "Public Key" : "Note content")))); text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: "🎭 Alias"; width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Password" : (root.new_kind == 2 ? "Expiry (optional)" : (root.new_kind == 4 ? "Card number" : (root.new_kind == 5 ? "NID / Passport" : (root.new_kind == 6 ? "Private Key" : "Field B (secret)")))); input-type: root.new_kind == 1 || root.new_kind == 6 ? password : text; text <=> root.f_b; height: 36px; horizontal-stretch: 1; } AuraButton { label: "🎲"; width: 52px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } } }
                         if root.new_kind == 1 : Text { text: "Use the generator 🎲 to create a strong unique password"; color: #5b6589; font-size: 11px; }
                         // Non-login kinds: Field C/D/E have NO inputs elsewhere
                         // (f_d/f_e were unwritable) — per-kind labels here.
                         if root.new_kind == 4 || root.new_kind == 5 || root.new_kind == 6 : VerticalLayout { spacing: 8px;
-                            FieldLabel { text: "EXTRA FIELDS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "অতিরিক্ত ফিল্ড" : "EXTRA FIELDS"; }
                             LineEdit { placeholder-text: root.new_kind == 4 ? "Expiry MM/YY" : (root.new_kind == 5 ? "Email" : "Fingerprint"); text <=> root.f_c; height: 36px; }
                         }
                         if root.new_kind == 4 || root.new_kind == 5 : VerticalLayout { spacing: 8px;
@@ -2144,11 +2144,11 @@ export component MainWindow inherits Window {
                         }
                         if root.new_kind == 5 : LineEdit { placeholder-text: "Country (optional)"; text <=> root.f_country; height: 36px; }
                         if root.new_kind == 1 : VerticalLayout { spacing: 8px;
-                            FieldLabel { text: "AUTHENTICATOR KEY (TOTP)"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "অথেনটিকেটর কী (TOTP)" : "AUTHENTICATOR KEY (TOTP)"; }
                             LineEdit { placeholder-text: "Paste otpauth secret…"; text <=> root.f_totp; height: 36px; }
-                            FieldLabel { text: "BACKUP / RECOVERY CODES"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "ব্যাকআপ / রিকভারি কোড" : "BACKUP / RECOVERY CODES"; }
                             TextEdit { placeholder-text: "Paste one-time recovery / backup codes here (one per line)..."; text <=> root.f_backup; height: 56px; wrap: word-wrap; }
-                            FieldLabel { text: "AUTOFILL OPTIONS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "অটোফিল অপশন" : "AUTOFILL OPTIONS"; }
                             LineEdit { placeholder-text: "Website (URI), e.g. https://example.com/login"; text <=> root.f_c; height: 36px; }
                             for url[idx] in root.f_urls : HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: "Additional website (URI)…"; text: url; height: 36px; horizontal-stretch: 1; edited(text) => { root.update_url(idx, text); } } AuraButton { label: root.f_url_rules[idx] == 0 ? "Auto" : (root.f_url_rules[idx] == 1 ? "Base" : (root.f_url_rules[idx] == 2 ? "Host" : (root.f_url_rules[idx] == 3 ? "Exact" : (root.f_url_rules[idx] == 4 ? "Prefix" : "Never")))); width: 64px; height: 36px; clicked => { root.cycle_url_rule(idx); } } AuraButton { label: root.confirm_delete_field == "u" + idx ? "Sure?" : "🗑️"; width: root.confirm_delete_field == "u" + idx ? 64px : 44px; height: 36px; danger: true; clicked => { if root.confirm_delete_field == "u" + idx { root.confirm_delete_field = ""; root.remove_url(idx); } else { root.confirm_delete_field = "u" + idx; } } } }
                             AuraButton { label: "+ Add website"; height: 34px; clicked => { root.add_url(); } }
@@ -2158,7 +2158,7 @@ export component MainWindow inherits Window {
                         FieldLabel { text: "SECRET KEYS / API TOKENS"; }
                         for cf[idx] in root.custom_fields : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : Text { text: cf.value == "true" ? "☑" : "☐"; color: #eef1ff; font-size: 14px; vertical-alignment: center; } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #8b7cf6; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: root.confirm_delete_field == "c" + idx ? "Sure?" : "🗑"; width: root.confirm_delete_field == "c" + idx ? 56px : 40px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_field == "c" + idx { root.confirm_delete_field = ""; root.delete_custom_field(idx); } else { root.confirm_delete_field = "c" + idx; } } } } }
                         AuraButton { label: "+ Add Custom Field"; height: 34px; clicked => { root.show_cf_dialog = true; } }
-                        FieldLabel { text: "NOTES"; }
+                        FieldLabel { text: root.ui_lang == "bn" ? "নোট" : "NOTES"; }
                         TextEdit { text <=> root.f_notes; height: 64px; wrap: word-wrap; }
                         HorizontalLayout { spacing: 12px;
                             CheckBox { text: "Master password re-prompt"; checked <=> root.f_reprompt; }
@@ -2203,17 +2203,17 @@ export component MainWindow inherits Window {
                                 AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 34px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
                                 if root.d_kind == 1 : AuraButton { label: "🖼️"; width: 44px; height: 34px; clicked => { root.override_favicon(root.d_id); } }
                             }
-                            if !root.d_trashed : AuraButton { label: "⚡ Autofill / Type"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
+                            if !root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "⚡ অটোফিল / টাইপ" : "⚡ Autofill / Type"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
                         }}
                         if root.d_trashed : Rectangle { background: #2a1f08; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: #fbbf24; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                         // CARD 2: login credentials
                         if root.d_kind != 8 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: "LOGIN CREDENTIALS"; }
-                            FieldLabel { text: "USERNAME"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "লগইন তথ্য" : "LOGIN CREDENTIALS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "ইউজারনেম" : "USERNAME"; }
                             if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: #eef1ff; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.last_copied == root.d_user && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == root.d_user && root.last_copied != ""; width: 76px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
                             Rectangle { height: 1px; background: #1e293b; }
-                            FieldLabel { text: "PASSWORD"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "PASSWORD"; }
                             HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: #38e1ff; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
                             if root.d_kind == 1 && root.d_secret != "" && root.d_pw_strength_label != "" : VerticalLayout { spacing: 4px;
                                 HorizontalLayout { spacing: 8px; alignment: center;
@@ -2234,37 +2234,37 @@ export component MainWindow inherits Window {
                         if root.d_totp != "" : Rectangle { background: #0d131f; border-radius: 8px; border-width: 1px; border-color: #8b7cf655; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: #8e99c0; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: #38e1ff; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: #fbbf24; Text { text: root.totp_countdown; color: #fbbf24; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: "AUTO-FILL OPTIONS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "অটোফিল অপশন" : "AUTO-FILL OPTIONS"; }
                             HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: root.last_copied == root.d_url && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_url && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
                             if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: #5b6589; font-size: 11px; overflow: elide; }
                         }}
                         // CARD 4: additional options (only when populated)
                         if root.d_backup != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: "BACKUP / RECOVERY CODES"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "ব্যাকআপ / রিকভারি কোড" : "BACKUP / RECOVERY CODES"; }
                             Rectangle { background: #121927; border-radius: 8px; height: 64px; clip: true; Text { x: 10px; y: 6px; width: parent.width - 20px; height: parent.height - 12px; text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : root.d_backup; color: #eef1ff; font-size: 12px; wrap: word-wrap; overflow: elide; } }
-                            HorizontalLayout { alignment: center; AuraButton { label: "📋  Copy All Codes"; width: 190px; height: 30px; clicked => { root.copy_password_requested(root.d_backup); } } }
+                            HorizontalLayout { alignment: center; AuraButton { label: root.ui_lang == "bn" ? "📋  সব কোড কপি" : "📋  Copy All Codes"; width: 190px; height: 30px; clicked => { root.copy_password_requested(root.d_backup); } } }
                         }}
                         if root.d_custom.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
-                            FieldLabel { text: "CUSTOM FIELDS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "কাস্টম ফিল্ড" : "CUSTOM FIELDS"; }
                             for cf[idx] in root.d_custom : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: #8e99c0; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: #eef1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 0 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 1 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (root.d_revealed == idx ? cf.value : "••••"); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : AuraButton { label: root.d_revealed == idx ? "👁️‍🗨️" : "👁️"; width: 40px; height: 24px; y: 6px; clicked => { if !root.peep_hole_mode { root.d_revealed = root.d_revealed == idx ? -1 : idx; } } } if cf.ftype == 1 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value); } } if cf.ftype == 2 : AuraButton { label: cf.value == "true" ? "✓ ON" : "✕ OFF"; primary: cf.value == "true"; width: 76px; height: 24px; y: 6px; clicked => { root.toggle_saved_field(root.d_kind, root.d_id, idx); } } if cf.ftype == 3 : Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : (cf.value == "username" ? root.d_user : root.d_secret); color: #38e1ff; font-size: 12px; vertical-alignment: center; overflow: elide; } if cf.ftype == 3 : AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(cf.value == "username" ? root.d_user : root.d_secret); } } } }
                         }}
                         if root.d_notes != "" : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: "NOTES"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "নোট" : "NOTES"; }
                             Text { text: root.d_notes; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                         }}
                         if root.d_attachments.length > 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
-                            FieldLabel { text: "ATTACHMENTS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "সংযুক্তি" : "ATTACHMENTS"; }
                             for att in root.d_attachments : Rectangle { background: #121927; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: att.filename + " (" + att.size + ")"; color: #eef1ff; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "👁"; width: 40px; height: 24px; y: 6px; clicked => { root.preview_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: "💾"; width: 40px; height: 24px; y: 6px; clicked => { root.download_attachment(root.d_kind, root.d_id, att.id); } } AuraButton { label: root.confirm_delete_att_id == att.id ? "Sure?" : "🗑"; width: root.confirm_delete_att_id == att.id ? 56px : 36px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_att_id == att.id { root.confirm_delete_att_id = ""; root.delete_attachment(root.d_kind, root.d_id, att.id); } else { root.confirm_delete_att_id = att.id; } } } } }
                         }}
                         if root.d_attachments.length == 0 : Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 6px;
-                            FieldLabel { text: "ATTACHMENTS"; }
-                            Text { text: "No attachments yet."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; }
-                            HorizontalLayout { alignment: center; AuraButton { label: "📎  Attach File"; width: 180px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } }
+                            FieldLabel { text: root.ui_lang == "bn" ? "সংযুক্তি" : "ATTACHMENTS"; }
+                            Text { text: root.ui_lang == "bn" ? "এখনো কোনো সংযুক্তি নেই।" : "No attachments yet."; color: #8e99c0; font-size: 11px; horizontal-alignment: center; }
+                            HorizontalLayout { alignment: center; AuraButton { label: root.ui_lang == "bn" ? "📎  ফাইল যুক্ত করুন" : "📎  Attach File"; width: 180px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } }
                         }}
-                        if root.d_attachments.length > 0 : HorizontalLayout { alignment: center; AuraButton { label: "📎  Attach Another File"; width: 200px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } }
+                        if root.d_attachments.length > 0 : HorizontalLayout { alignment: center; AuraButton { label: root.ui_lang == "bn" ? "📎  আরও ফাইল যুক্ত করুন" : "📎  Attach Another File"; width: 200px; height: 32px; clicked => { root.pick_attachment(root.d_kind, root.d_id); } } }
                         // CARD 5: item history & safety
                         Rectangle { background: #111827; border-radius: 8px; border-width: 1px; border-color: #1e293b; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: "ITEM HISTORY"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "আইটেমের ইতিহাস" : "ITEM HISTORY"; }
                             // d_health carries the full audit badge TEXT
                             // ("🚨 Leaked in N breaches!.." / "⚠️ Reused password" /
                             // "⚠️ Weak password" / "🕰️ Over 6 months old").

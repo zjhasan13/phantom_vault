@@ -32,11 +32,16 @@
   `set_language` callback, and Settings gains an **English / বাংলা** row. Inline
   `ui_lang` ternaries translate the sidebar (VAULT, All items, Favorites, 2FA
   Hub, Settings), the importer/Settings headings, and the LOCAL API / Expiring
-  shares section labels. `normalize_lang` only accepts `bn` (case/space
-  tolerant); anything else falls back to English. Honest: most dialogs and all
-  Rust-generated status strings remain English — `docs/A26_BN.md` lists the
-  coverage and how to extend. Tests +1 → `cargo test` **540 passed / 2 ignored +
-  4 pv_sign**; `npm test` **133/133**.
+  shares section labels. **Batch 2:** type labels (Login/Card/Identity/Note/
+  License/SSH Key), TYPES/FOLDERS/APP, item-detail headings (credentials,
+  username/password, notes, auto-fill, backup codes, custom fields, attachments,
+  history, autofill/attach actions) and the add/edit form headings. ~72
+  bilingual strings; the Quick Capture window (separate component without
+  `ui_lang`) and all Rust status strings stay English. `normalize_lang` only
+  accepts `bn` (case/space tolerant); anything else falls back to English.
+  Honest: most dialogs and all Rust-generated status strings remain English —
+  `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`
+  **540 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**.
 
 - **A20 slices 1–2 — expiring share (this batch):** `src/share.rs` adds the
   transport-agnostic `PVSH1` bundle (random 256-bit key never in the blob, meant

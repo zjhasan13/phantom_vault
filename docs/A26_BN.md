@@ -11,13 +11,16 @@
 | Surface | Strings |
 |---|---|
 | Lock/unlock screen | password/PIN/shards tabs, master-password placeholder, unlock/Hello/PIN buttons, 2FA step, shard recovery (existing) |
-| Sidebar | VAULT, All items, Favorites, 2FA Hub, Settings |
+| Sidebar | VAULT, TYPES, FOLDERS, APP, All items, Favorites, 2FA Hub, Settings, Login, Card, Identity, Note, License, SSH Key |
 | Importer | “Universal Vault Importer” title |
 | Settings | “Settings & Dev Center”, Language row |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
+| Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
+| Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |
 
-Everything else — item forms, dialogs, notifications, sync/P2P, import/export
-details, security copy — remains English.
+Everything else — dialogs, notifications, sync/P2P, import/export details,
+security copy, and the Quick Capture window (a separate Slint component without
+`ui_lang`) — remains English.
 
 ## How the switch works
 
