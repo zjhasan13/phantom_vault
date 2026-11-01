@@ -19,15 +19,18 @@
 | Rust status strings | “decoy mode is read-only” (all handlers), “vault not unlocked”, import flow (waiting/no-file/preview/staged/merging/restore), unlock status line (empty password, decrypting, wrong password, unlocked, Hello/TOTP prompts), main share/API static statuses |
 | Quick Capture | window title row, service/username/password/2FA labels + placeholders, Save/Dismiss (separate `ui_lang` copy) |
 | Quick Bar | instant-copy hint, Copy, no-matches, Dismiss (separate `ui_lang` copy) |
+| Generator | Complex/Diceware, LENGTH/WORDS/ENTROPY/NO AMBIGUOUS, Regenerate/Use This, entropy unit, empty-set warning |
+| Item actions | Delete/Sure?, Permanently Shred/Sure? Shred, Restore Item |
+| P2P results | already-in-sync, adopted/pushed, conflict (Rust `i18n`) |
 | Import summary | headline + counts, updated-in-place, bad rows (Rust `i18n`) |
 | Sync results | offline-skip, ciphertext-pushed, vault-synced status lines |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
 | Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
 | Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |
 
-Everything else — many dialogs, notifications, sync/P2P results, import/export
-details and long security copy — remains English. Quick Capture and Quick Bar
-now mirror `ui_lang`; the generator component and most modal help copy do not.
+Everything else — many dialogs, notifications, remaining sync/import result
+strings, import/export details and long security copy — remains English. Quick
+Capture, Quick Bar and the generator now mirror `ui_lang`.
 
 ## How the switch works
 

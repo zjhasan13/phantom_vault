@@ -51,9 +51,11 @@
   `ui_lang` copy synced by `set_language`). **Batch 7:** the `tr()` flag moved
   to `src/i18n.rs` (shared with the importer); the import summary headline/counts,
   Quick Bar (its own `ui_lang` copy: instant-copy, Copy, no-matches, Dismiss) and
-  sync offline/pushed/synced status lines are localized. Remaining: most
-  sync/import result strings, generator dialogs and long help copy.
-  `docs/A26_BN.md` tracks coverage. `normalize_lang` only
+  sync offline/pushed/synced status lines are localized. **Batch 8:** the
+  generator panel (its own `ui_lang` passed down), delete/shred/restore item
+  buttons, and P2P result lines (already-in-sync, adopted, pushed, conflict) via
+  the shared `i18n` flag; the Bengali Confirm-Import button was widened. A full
+  100%/125% visual layout pass is still manual. `docs/A26_BN.md` tracks coverage. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

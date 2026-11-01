@@ -262,6 +262,8 @@ component GeneratorPanel inherits Rectangle {
     in-out property <int> gen_word_count;
     in-out property <string> gen_output;
     in-out property <float> gen_entropy_bits;
+    // A26: passed down from MainWindow.
+    in-out property <string> ui_lang: "en";
 
     callback regenerate();
     callback use_password(string);
@@ -299,7 +301,7 @@ component GeneratorPanel inherits Rectangle {
                         mouse-cursor: pointer;
                         clicked => { root.gen_diceware_mode = false; root.regenerate(); }
                     }
-                    Text { text: "Complex"; color: !root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: root.ui_lang == "bn" ? "কমপ্লেক্স" : "Complex"; color: !root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                 }
                 Rectangle {
                     horizontal-stretch: 1;
@@ -309,7 +311,7 @@ component GeneratorPanel inherits Rectangle {
                         mouse-cursor: pointer;
                         clicked => { root.gen_diceware_mode = true; root.regenerate(); }
                     }
-                    Text { text: "Diceware"; color: root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+                    Text { text: root.ui_lang == "bn" ? "ডাইসওয়্যার" : "Diceware"; color: root.gen_diceware_mode ? #ffffff : #8e99c0; font-size: 13px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
                 }
             }
         }
@@ -318,7 +320,7 @@ component GeneratorPanel inherits Rectangle {
             spacing: 8px;
             HorizontalLayout {
                 alignment: space-between;
-                FieldLabel { text: "LENGTH"; vertical-alignment: center; }
+                FieldLabel { text: root.ui_lang == "bn" ? "দৈর্ঘ্য" : "LENGTH"; vertical-alignment: center; }
                 HorizontalLayout {
                     spacing: 8px;
                     AuraButton { label: "−"; width: 34px; height: 32px; enabled: root.gen_length > 8; clicked => { if root.gen_length > 8 { root.gen_length -= 1; root.regenerate(); } } }
@@ -344,7 +346,7 @@ component GeneratorPanel inherits Rectangle {
                 VerticalLayout {
                     spacing: 2px;
                     alignment: center;
-                    FieldLabel { text: "NO AMBIGUOUS"; horizontal-alignment: center; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "অস্পষ্ট নয়" : "NO AMBIGUOUS"; horizontal-alignment: center; }
                     AuraButton { label: root.gen_exclude_ambiguous ? "0/O/l ✓" : "0/O/l"; width: 86px; height: 32px; primary: root.gen_exclude_ambiguous; clicked => { root.gen_exclude_ambiguous = !root.gen_exclude_ambiguous; root.regenerate(); } }
                 }
             }
@@ -388,7 +390,7 @@ component GeneratorPanel inherits Rectangle {
         }
         HorizontalLayout {
             alignment: space-between;
-            FieldLabel { text: "WORDS"; vertical-alignment: center; }
+            FieldLabel { text: root.ui_lang == "bn" ? "শব্দ" : "WORDS"; vertical-alignment: center; }
             HorizontalLayout {
                 spacing: 8px;
                 AuraButton { label: "−"; width: 34px; height: 32px; enabled: root.gen_word_count > 4; clicked => { if root.gen_word_count > 4 { root.gen_word_count -= 1; root.regenerate(); } } }
@@ -424,9 +426,9 @@ component GeneratorPanel inherits Rectangle {
             spacing: 4px;
             HorizontalLayout {
                 alignment: space-between;
-                FieldLabel { text: "ENTROPY"; }
+                FieldLabel { text: root.ui_lang == "bn" ? "এনট্রপি" : "ENTROPY"; }
                 Text {
-                    text: Math.round(root.gen_entropy_bits) + " bits";
+                    text: Math.round(root.gen_entropy_bits) + (root.ui_lang == "bn" ? " বিট" : " bits");
                     font-size: 12px;
                     font-weight: 800;
                     color: root.gen_entropy_bits > 80 ? #34d399 : (root.gen_entropy_bits > 60 ? #fbbf24 : #fb7185);
@@ -448,10 +450,10 @@ component GeneratorPanel inherits Rectangle {
 
         HorizontalLayout {
             spacing: 8px;
-            AuraButton { label: "🔄  Regenerate"; horizontal-stretch: 1; clicked => { root.regenerate(); } }
-            AuraButton { label: "✅  Use This"; primary: true; horizontal-stretch: 1; enabled: root.gen_output != ""; clicked => { root.use_password(root.gen_output); } }
+            AuraButton { label: root.ui_lang == "bn" ? "🔄  আবার তৈরি" : "🔄  Regenerate"; horizontal-stretch: 1; clicked => { root.regenerate(); } }
+            AuraButton { label: root.ui_lang == "bn" ? "✅  এটি ব্যবহার করুন" : "✅  Use This"; primary: true; horizontal-stretch: 1; enabled: root.gen_output != ""; clicked => { root.use_password(root.gen_output); } }
         }
-        if !root.gen_diceware_mode && !root.gen_uppercase && !root.gen_lowercase && !root.gen_digits && !root.gen_symbols : Text { text: "⚠️ Select at least one character set above."; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+        if !root.gen_diceware_mode && !root.gen_uppercase && !root.gen_lowercase && !root.gen_digits && !root.gen_symbols : Text { text: root.ui_lang == "bn" ? "⚠️ উপরে অন্তত একটি character set বাছুন।" : "⚠️ Select at least one character set above."; color: #fbbf24; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
     }
 }
 
@@ -1620,7 +1622,7 @@ export component MainWindow inherits Window {
                     }
                     if root.import_undo_available : AuraButton { label: root.ui_lang == "bn" ? "শেষ ইমপোর্ট আনডু" : "Undo last import"; width: 160px; height: 30px; clicked => { root.undo_import(); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
-                        AuraButton { label: root.ui_lang == "bn" ? "✅ ইমপোর্ট নিশ্চিত" : "✅ Confirm Import"; primary: true; width: 170px; height: 38px; clicked => { root.confirm_import_file(); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "✅ ইমপোর্ট নিশ্চিত" : "✅ Confirm Import"; primary: true; width: 190px; height: 38px; clicked => { root.confirm_import_file(); } }
                         AuraButton { label: root.ui_lang == "bn" ? "✕ বাতিল" : "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
                     }
                 }}
@@ -2281,10 +2283,10 @@ export component MainWindow inherits Window {
                         }}
                         // Bottom action bar
                         HorizontalLayout { spacing: 8px;
-                            if root.d_trashed : AuraButton { label: "♻️ Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
-                            if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? "Sure? Shred" : "🔥 Permanently Shred"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
+                            if root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "🔄 আইটেম ফিরিয়ে আনুন" : "🔄 Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
+                            if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? ধ্বংস" : "Sure? Shred") : (root.ui_lang == "bn" ? "🔥 স্থায়ীভাবে ধ্বংস" : "🔥 Permanently Shred"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
                             if !root.d_trashed && root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
-                            if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? "Sure? Delete" : "🗑️ Delete"; danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
+                            if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? মুছুন" : "Sure? Delete") : (root.ui_lang == "bn" ? "🗑 মুছুন" : "🗑 Delete"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
                             AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.close_detail(); } }
                         }
                     }
@@ -2326,6 +2328,7 @@ export component MainWindow inherits Window {
         GeneratorPanel {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
+            ui_lang: root.ui_lang;
             gen_length <=> root.gen_length;
             gen_uppercase <=> root.gen_uppercase;
             gen_lowercase <=> root.gen_lowercase;

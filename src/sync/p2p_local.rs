@@ -1181,20 +1181,20 @@ pub fn sync_with_peer(
         return Err("peer has a PQ-paranoid vault — not syncable".to_string());
     }
     if remote_sha == local_sha {
-        return Ok("ðŸ“¡ Already in sync (identical heads).".to_string());
+        return Ok(crate::i18n::tr("📡 Already in sync (identical heads).", "📡 ইতিমধ্যে সিঙ্কে আছে (হেড একই)।").to_string());
     }
     if remote_mtime > local_mtime {
         adopt_local(remote_blob)?;
         write_adopted_head(remote_mtime, &remote_sha);
         crate::security::access_log::log_event("p2p", &format!("adopted {remote_sha} from {ip}"));
-        return Ok("ðŸ“¡ Synced with local peer via Wi-Fi! (adopted newer remote)".to_string());
+        return Ok(crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (adopted newer remote)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন remote নেওয়া হয়েছে)").to_string());
     }
     if local_mtime > remote_mtime {
         push_peer(addr, &local_sha, local_mtime, &local_blob, pin)?;
         crate::security::access_log::log_event("p2p", &format!("pushed {local_sha} to {ip}"));
-        return Ok("ðŸ“¡ Synced with local peer via Wi-Fi! (pushed newer local)".to_string());
+        return Ok(crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (pushed newer local)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন local পুশ হয়েছে)").to_string());
     }
-    Err("âš ï¸ Sync CONFLICT: same age, different vaults â€” local kept. Resolve manually.".to_string())
+    Err(crate::i18n::tr("⚠️ Sync CONFLICT: same age, different vaults — local kept. Resolve manually.", "⚠️ সিঙ্ক দ্বন্দ্ব: একই বয়স, আলাদা ভল্ট — local রাখা হয়েছে। নিজে সমাধান করুন।").to_string())
 }
 
 #[cfg(test)]
