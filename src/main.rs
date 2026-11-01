@@ -1373,7 +1373,7 @@ fn publish_unlocked_vault(
     ui.set_is_decoy(false);
     ui.set_show_totp_step(false);
     ui.set_totp_step_error("".into());
-    ui.set_status_text("✅ Vault unlocked".into());
+    ui.set_status_text(tr("🔓 Vault unlocked", "🔓 ভল্ট আনলক হয়েছে").into());
     // One-shot recovery-sheet nudge (never nagged before → banner until the
     // user Generates or defers; the decoy cover path above stays silent).
     if !shard_nudge_seen() {
@@ -1557,14 +1557,14 @@ fn unlock_with_password(    pass: SecretString,
 ) {
     if pass.expose_secret().is_empty() {
         if let Some(ui) = main_weak.upgrade() {
-            ui.set_status_text("⚠️ Password cannot be empty!".into());
+            ui.set_status_text(tr("⛔ Password cannot be empty!", "⛔ পাসওয়ার্ড খালি হতে পারে না!").into());
         }
         return;
     }
 
     if let Some(ui) = main_weak.upgrade() {
         ui.set_unlock_error_message("".into());
-        ui.set_status_text("⏳ Decrypting vault (Argon2id)…".into());
+        ui.set_status_text(tr("⏳ Decrypting vault (Argon2id)…", "⏳ ভল্ট ডিক্রিপ্ট হচ্ছে (Argon2id)…").into());
     }
 
     std::thread::spawn(move || {
@@ -1714,7 +1714,7 @@ fn unlock_with_password(    pass: SecretString,
             let weak_and = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak_and.upgrade() {
-                    ui.set_status_text("✅ Password OK — confirm Windows Hello…".into());
+                    ui.set_status_text(tr("✅ Password OK — confirm Windows Hello…", "✅ পাসওয়ার্ড ঠিক — Windows Hello নিশ্চিত করুন…").into());
                 }
             });
             let (w2, v2, m2, s2, q2) = (
@@ -1738,7 +1738,7 @@ fn unlock_with_password(    pass: SecretString,
                                     "Could not start biometric service.".into(),
                                 );
                                 ui.set_status_text(
-                                    "Vault is locked. Enter Master Password:".into(),
+                                    tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into(),
                                 );
                             }
                         });
@@ -1760,7 +1760,7 @@ fn unlock_with_password(    pass: SecretString,
                                         .into(),
                                 );
                                 ui.set_status_text(
-                                    "Vault is locked. Enter Master Password:".into(),
+                                    tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into(),
                                 );
                             }
                         });
@@ -1788,7 +1788,7 @@ fn unlock_with_password(    pass: SecretString,
                         *lock_vault(&vault_arc) = vault;
                         ui.set_show_totp_step(true);
                         ui.set_totp_step_error("".into());
-                        ui.set_status_text("✅ Password OK — enter authenticator code".into());
+                        ui.set_status_text(tr("✅ Password OK — enter authenticator code", "✅ পাসওয়ার্ড ঠিক — অথেনটিকেটর কোড দিন").into());
                         security::access_log::log_event("unlock", "password ok, totp pending");
                         return;
                     }
@@ -1841,7 +1841,7 @@ fn unlock_with_password(    pass: SecretString,
                         ui.set_is_unlocked(true);
                         ui.set_show_onboarding(false);
                         ui.set_is_decoy(true);
-    ui.set_status_text("✅ Vault unlocked".into());
+    ui.set_status_text(tr("🔓 Vault unlocked", "🔓 ভল্ট আনলক হয়েছে").into());
                         // Deliberately NO access-log line here: writing
                         // "decoy cover" to the real log would blow the cover
                         // for anyone reviewing it under coercion.
@@ -1851,7 +1851,7 @@ fn unlock_with_password(    pass: SecretString,
                         || e.contains("Decryption failed")
                         || e.contains("corrupted");
                     if is_wrong_pw {
-                        ui.set_status_text("❌ Wrong Password! Could not decrypt vault.".into());
+                        ui.set_status_text(tr("❌ Wrong Password! Could not decrypt vault.", "❌ ভুল পাসওয়ার্ড! ভল্ট ডিক্রিপ্ট করা যায়নি।").into());
                     } else {
                         ui.set_status_text(format!("❌ {}", e).into());
                     }
@@ -3609,6 +3609,13 @@ fn main() -> Result<(), slint::PlatformError> {
         std::sync::atomic::Ordering::Relaxed,
     );
     main_window.set_ui_lang(saved_lang.into());
+    main_window.set_status_text(
+        tr(
+            "Vault is locked. Enter Master Password:",
+            "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:",
+        )
+        .into(),
+    );
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -3656,6 +3663,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     let quick_bar = QuickBarWindow::new()?;
     let capture_window = QuickCaptureWindow::new()?;
+    capture_window.set_ui_lang(saved_lang.into());
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Main-window visibility for the resource diet: background loops deep-
     // sleep while this is false (tray/minimized) or the vault is locked.
@@ -3753,7 +3761,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     &t_master,
                     &t_pending,
                     &t_editing,
-                    "Vault is locked. Enter Master Password:",
+                    tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:"),
                     "tray",
                 );
             }) as Arc<dyn Fn() + Send + Sync>
@@ -4931,7 +4939,7 @@ fn main() -> Result<(), slint::PlatformError> {
             *lock_master_pw(&verify_master) = None;
             ui.set_show_totp_step(false);
             ui.set_totp_step_error("Unlock 2FA misconfigured — signed out.".into());
-            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
             return;
         };
         // Constant-time-ish compare (length gate + OR-fold, no early exit).
@@ -4971,7 +4979,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(ui) = cancel_weak.upgrade() {
             ui.set_show_totp_step(false);
             ui.set_totp_step_error("".into());
-            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
         }
     });
 
@@ -5152,7 +5160,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
             ui.set_unlock_error_message("".into());
-            ui.set_status_text("🖐 Waiting for Windows Hello…".into());
+            ui.set_status_text(tr("⏳ Waiting for Windows Hello…", "⏳ Windows Hello-এর অপেক্ষায়…").into());
         }
         let weak = bio_weak.clone();
         let vault_clone = Arc::clone(&bio_vault);
@@ -5172,7 +5180,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             ui.set_unlock_error_message(
                                 "Could not start biometric service.".into(),
                             );
-                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                         }
                     });
                     return;
@@ -5194,7 +5202,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 if let Some(ui) = weak.upgrade() {
                                     ui.set_unlock_error_message(msg.into());
                                     ui.set_status_text(
-                                        "Vault is locked. Enter Master Password:".into(),
+                                        tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into(),
                                     );
                                 }
                             });
@@ -5209,7 +5217,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                 ui.set_unlock_error_message(
                                     "No cached Hello credential — unlock with password once first.".into(),
                                 );
-                                ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                                ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                             }
                         });
                         return;
@@ -5223,7 +5231,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     // User canceled — stay safely locked.
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                         }
                     });
                 }
@@ -5372,7 +5380,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             ui.set_pin_available(false);
                             ui.set_show_pin_pad(false);
                             ui.set_pin_error("Too many wrong PINs — PIN login wiped. Unlock with your master password to set a new PIN.".into());
-                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                         }
                     });
                 }
@@ -5381,7 +5389,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_pin_error(msg.into());
-                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                         }
                     });
                 }
@@ -11261,7 +11269,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_unlock_error_message(msg.into());
-                            ui.set_status_text("Vault is locked. Enter Master Password:".into());
+                            ui.set_status_text(tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:").into());
                         }
                     });
                     return;
@@ -12512,7 +12520,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 &lock_master,
                 &lock_pending,
                 &lock_editing,
-                "Vault is locked. Enter Master Password:",
+                tr("Vault is locked. Enter Master Password:", "ভল্ট লক করা আছে। মাস্টার পাসওয়ার্ড দিন:"),
                 "manual",
             );
         });
@@ -13224,7 +13232,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 .unwrap_or_else(|p| p.into_inner())
                 .is_some()
             {
-                ui.set_api_status("✅ Local API is already running.".into());
+                ui.set_api_status(tr("✅ Local API is already running.", "✅ লোকাল API আগেই চালু আছে।").into());
                 return;
             }
             api::token::revoke();
@@ -13268,7 +13276,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             api::token::revoke();
             ui.set_api_on(false);
-            ui.set_api_status("Local API off; token revoked.".into());
+            ui.set_api_status(tr("Local API off; token revoked.", "লোকাল API বন্ধ; টোকেন বাতিল হয়েছে।").into());
             security::access_log::log_event("api", "local API disabled");
         }
     });
@@ -13382,7 +13390,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_ls_title("".into());
         ui.set_ls_link(link.into());
         ui.set_ls_status(
-            "✅ Share created — the link fragment is the key; send it over a trusted channel."
+            tr("✅ Share created — the link fragment is the key; send it over a trusted channel.", "✅ শেয়ার তৈরি — লিংকের fragment-ই key; বিশ্বস্ত চ্যানেলে পাঠান।")
                 .into(),
         );
         refresh_ls_rows(&ui);
@@ -13456,7 +13464,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             ui.set_ls_preview(text.into());
                             ui.set_ls_ready(true);
                             ui.set_ls_status(
-                                "✅ Decrypted. Review, then Add to my vault.".into(),
+                                tr("✅ Decrypted. Review, then Add to my vault.", "✅ ডিক্রিপ্ট হয়েছে। দেখে নিয়ে ভল্টে যোগ করুন।").into(),
                             );
                         }
                     });
@@ -13492,7 +13500,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .unwrap_or_else(|p| p.into_inner())
             .take();
         let Some(payload) = payload else {
-            ui.set_ls_status("⚠️ open a share first.".into());
+            ui.set_ls_status(tr("⚠️ open a share first.", "⚠️ আগে একটি শেয়ার খুলুন।").into());
             return;
         };
         let Some(master) = lock_master_pw(&login_share_add_master).clone() else {
@@ -13503,7 +13511,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let snapshot = vault.clone();
         let added = share::add_items_to_vault(&mut vault, &payload.items);
         if added == 0 {
-            ui.set_ls_status("ℹ️ Those logins are already in this vault.".into());
+            ui.set_ls_status(tr("ℹ️ Those logins are already in this vault.", "ℹ️ এই লগইনগুলো আগেই ভল্টে আছে।").into());
             ui.set_ls_ready(false);
             return;
         }
@@ -13559,6 +13567,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     // A26: persist the UI language. Visible bilingual strings are inline
     // `ui_lang` ternaries; the pref only has to outlive the process.
     let lang_weak = main_window.as_weak();
+    let cap_lang_weak = capture_window.as_weak();
     main_window.on_set_language(move |lang| {
         let lang = normalize_lang(lang.as_str());
         UI_LANG_BN.store(lang == "bn", std::sync::atomic::Ordering::Relaxed);
@@ -13567,6 +13576,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Some(ui) = lang_weak.upgrade() {
             ui.set_ui_lang(lang.into());
+        }
+        if let Some(cap) = cap_lang_weak.upgrade() {
+            cap.set_ui_lang(lang.into());
         }
         security::access_log::log_event("ui", &format!("language {lang}"));
     });

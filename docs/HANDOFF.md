@@ -45,8 +45,11 @@
   bridge now localizes the most frequent Rust status strings (decoy read-only
   across all handlers, vault-not-unlocked, import waiting/no-file/preview/
   merging/restore) and the duplicate-import choice buttons. Remaining Rust
-  status/error strings, the Quick Capture window and many dialogs stay English;
-  `docs/A26_BN.md` tracks coverage. `normalize_lang` only
+  status/error strings, and many dialogs stay English; **Batch 6:** unlock
+  status line (empty/wrong password, decrypting, unlocked, Hello/TOTP prompts),
+  main share/API static statuses, and the Quick Capture window (its own
+  `ui_lang` copy synced by `set_language`). Remaining: most sync/import result
+  strings, Quick Bar, and various dialogs. `docs/A26_BN.md` tracks coverage. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

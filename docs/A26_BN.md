@@ -16,14 +16,15 @@
 | Settings | “Settings & Dev Center”, Language row, master rotation, offline cache, PQ-paranoid, 2FA clock, clipboard, auto-lock, updates, paired devices, duress/honeytokens/emergency headings |
 | Sync/export | GitHub Sync, Local Wi-Fi P2P title + enable/pairing/scan/empty labels, Export Vault heading |
 | Dialogs | Master Reprompt title/action/field/Confirm/Cancel, “demands master-password confirmation”, API approval (Allow/Deny + warning), import dry-run preview (mode buttons, Confirm/Cancel, Undo), duplicate-import choice buttons |
-| Rust status strings | “decoy mode is read-only” (all handlers), “vault not unlocked”, import flow: waiting for picker, no file chosen, preview ready, nothing staged, merging, restoring |
+| Rust status strings | “decoy mode is read-only” (all handlers), “vault not unlocked”, import flow (waiting/no-file/preview/staged/merging/restore), unlock status line (empty password, decrypting, wrong password, unlocked, Hello/TOTP prompts), main share/API static statuses |
+| Quick Capture | window title row, service/username/password/2FA labels + placeholders, Save/Dismiss (separate `ui_lang` copy) |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
 | Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
 | Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |
 
-Everything else — dialogs, notifications, sync/P2P, import/export details,
-security copy, and the Quick Capture window (a separate Slint component without
-`ui_lang`) — remains English.
+Everything else — many dialogs, notifications, sync/P2P results, import/export
+details and long security copy — remains English. Quick Capture now mirrors
+`ui_lang`; the Quick Bar window does not (its Dismiss stays English).
 
 ## How the switch works
 
