@@ -108,7 +108,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 |---|---|---|---|---|
 | A20 | Serverless Send-style expiring share — **slices 1–3 shipped (bundle + LAN/file + CLI + desktop card); async relay/QR pending** | E13 | 2-3 wk | A link opens once, expires, and the relay never sees the key |
 | A21 | Hardware security key unlock (FIDO2 hmac-secret) | E12 | 2-3 wk | Vault unlocks with key + PIN; password fallback still works |
-| A22 | PQ-paranoid profile (device-bound decapsulation key) — **DONE (A/B/C)** | C4 | 2-3 wk | Correct password alone cannot open the container |
+| A22 | PQ-paranoid profile (device-bound decapsulation key) — **DONE (A/B/C/D)** | C4 | 2-3 wk | Correct password alone cannot open the container |
 | A23 | Loopback API + `pv` CLI — **read-only slice shipped (`pv status/get`); run/inject/scopes pending** | X1 | 3-4 wk | A script reads a secret only after explicit approval; tokens expire |
 | A24 | Chunked, separately encrypted attachments | E11 | 2 wk | A 50 MB attachment saves without re-encrypting the vault |
 | A25 | Desktop light/high-contrast theme | E15 | 1 wk | Palette switches without restarting; contrast passes WCAG AA |
