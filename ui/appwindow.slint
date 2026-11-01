@@ -2410,7 +2410,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ==== A23: local API approval (blocking request from the pv CLI) ====
+    // ==== A23: local API approval (pending request from the pv CLI) ====
     if root.api_prompt_show : Rectangle {
         x: 0;
         y: 0;
@@ -2431,7 +2431,7 @@ export component MainWindow inherits Window {
                 spacing: 12px;
                 Text { text: "🔐 pv CLI request"; color: #eef1ff; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
                 Text { text: root.api_prompt_text; color: #eef1ff; font-size: 13px; wrap: word-wrap; horizontal-alignment: center; }
-                Text { text: "A local script wants to read one vault field. Deny if you did not start it. This prompt auto-denies after 30 seconds."; color: #8e99c0; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                Text { text: "A local script wants to read one vault field. Deny if you did not start it. This prompt expires after 60 seconds; the CLI gives up at 50."; color: #8e99c0; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;

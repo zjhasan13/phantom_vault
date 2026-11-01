@@ -13,7 +13,8 @@
   `pv_api_token.dpapi`, expires after **24 hours**, and is revoked when the API
   is turned off.
 - Every secret read creates a pending request; the app shows an **Allow once /
-  Deny** prompt (30s). The CLI polls the result. Every decision is written to
+  Deny** prompt (request TTL 60s; the CLI waits 50s). The CLI polls the result.
+  Every decision is written to
   the access log (id + field, never the secret).
 
 ## CLI

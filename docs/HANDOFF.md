@@ -32,8 +32,8 @@
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on
   disable. Every `pv get` enqueues a pending request; the UI thread polls with a
   200 ms Slint `Timer` and shows an **Allow once / Deny** modal (the worker never
-  touches Slint — component handles are thread-affine). Decision window 30s,
-  pending TTL 60s, 30 requests/min, audit log stores credential id + field only.
+  touches Slint - component handles are thread-affine). Pending TTL 60s (the CLI
+  waits 50s), 30 requests/min, audit log stores credential id + field only.
   CLI: `phantom_vault pv status | pv get <title|--id> [--field password|username]
   [--json]`; the client polls `/v1/result`. Locked vault → 423, wrong/expired
   token → 401. Tests +4 (token, handler, loopback e2e, CLI parse) →
