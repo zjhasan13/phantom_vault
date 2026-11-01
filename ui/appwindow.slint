@@ -1618,9 +1618,9 @@ export component MainWindow inherits Window {
                     Text { text: root.import_preview_text; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                     ScrollView { height: 150px; VerticalLayout { spacing: 2px; for r in root.import_preview_rows : Text { text: r; color: #8e99c0; font-size: 11px; overflow: elide; } } }
                     HorizontalLayout { spacing: 6px; alignment: center;
-                        AuraButton { label: root.ui_lang == "bn" ? "ডুপ্লিকেট বাদ" : "Skip dupes"; primary: root.import_merge_mode == 0; width: 118px; height: 30px; clicked => { root.import_mode_changed(0); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "বিদ্যমান আপডেট" : "Update existing"; primary: root.import_merge_mode == 1; width: 138px; height: 30px; clicked => { root.import_mode_changed(1); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "সব ইমপোর্ট" : "Import all"; primary: root.import_merge_mode == 2; width: 118px; height: 30px; clicked => { root.import_mode_changed(2); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "ডুপ্লিকেট বাদ" : "Skip dupes"; primary: root.import_merge_mode == 0; width: 140px; height: 30px; clicked => { root.import_mode_changed(0); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "বিদ্যমান আপডেট" : "Update existing"; primary: root.import_merge_mode == 1; width: 160px; height: 30px; clicked => { root.import_mode_changed(1); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সব ইমপোর্ট" : "Import all"; primary: root.import_merge_mode == 2; width: 130px; height: 30px; clicked => { root.import_mode_changed(2); } }
                     }
                     if root.import_undo_available : AuraButton { label: root.ui_lang == "bn" ? "শেষ ইমপোর্ট আনডু" : "Undo last import"; width: 160px; height: 30px; clicked => { root.undo_import(); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
@@ -1670,7 +1670,7 @@ export component MainWindow inherits Window {
                     // A11: read-only snapshot for the extension, opened with
                     // Windows Hello even when the desktop app is closed.
                     FieldLabel { text: root.ui_lang == "bn" ? "অফলাইন ব্রাউজার ক্যাশ (রিড-অনলি)" : "OFFLINE BROWSER CACHE (READ-ONLY)"; }
-                    Text { text: "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "শুধু লগইন। DPAPI + র‍্যান্ডম কী দিয়ে সিল করা; এক্সটেনশন পড়তে Windows Hello পাস করতে হয়, ১৫ মিনিট রাখে। ডিকয় আনলক/বন্ধ/master rotation-এ মুছে যায়।" : "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Allow extension PIN unlock (weaker than Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_pin_on ? "ON" : "OFF"; primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
                     if root.offline_cache_status != "" : Text { text: root.offline_cache_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
@@ -1678,7 +1678,7 @@ export component MainWindow inherits Window {
                     // password alone cannot open it — the DPAPI-sealed ML-KEM
                     // key for this Windows profile is required too.
                     FieldLabel { text: root.ui_lang == "bn" ? "পিকিউ-প্যারানোয়েড কন্টেইনার (ডিভাইস-বাউন্ড)" : "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
-                    Text { text: "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "শুধু সঠিক মাস্টার পাসওয়ার্ড এই ভল্ট খুলবে না। এই Windows প্রোফাইলের DPAPI-সিলড ML-KEM key (pq_device.dpapi)-ও লাগবে। ফাইল/প্রোফাইল হারালে স্থায়ী ডেটা ক্ষতি। Sync/P2P বন্ধ; portable ডিফল্ট। offline cache ও .pvx এখনো password-sealed।" : "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Container profile"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     Text { text: "Device key: " + root.pq_backend_detail; color: root.pq_backend == "tpm" ? #34d399 : #8e99c0; font-size: 11px; wrap: word-wrap; }
                     if root.pq_paranoid_on && root.pq_backend == "dpapi" : AuraButton { label: "Move device key to TPM"; width: 210px; height: 34px; clicked => { root.move_pq_key_to_tpm(); } }
@@ -1691,12 +1691,12 @@ export component MainWindow inherits Window {
                     if root.pq_status != "" : Text { text: root.pq_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A23: loopback-only, read-only API for scripts (`pv` CLI).
                     FieldLabel { text: root.ui_lang == "bn" ? "লোকাল এপিআই (pv CLI)" : "LOCAL API (pv CLI)"; }
-                    Text { text: "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "শুধু 127.0.0.1-এ bind করে। আপনি Allow না চাপলে স্ক্রিপ্ট কোনো সিক্রেট পড়তে পারবে না; প্রতিটি read audit-logged, token DPAPI-sealed, ২৪ ঘণ্টায় মেয়াদ শেষ, বন্ধ করলে বাতিল।" : "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
                     if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
                     FieldLabel { text: root.ui_lang == "bn" ? "সময়সীমাবদ্ধ শেয়ার (সেন্ড)" : "EXPIRING SHARES (SEND)"; }
-                    Text { text: "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share …"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন) বা ফাইলে যায়; key শুধু link fragment-এ। TTL/one-view এই অ্যাপ enforce করে। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share ...."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
@@ -1741,7 +1741,7 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             alignment: center;
                             totp_confirm_input := LineEdit { placeholder-text: "6-digit code"; height: 38px; width: 150px; accepted(text) => { root.confirm_totp_unlock(text); } }
-                            AuraButton { label: root.ui_lang == "bn" ? "নিশ্চিত করুন" : "Confirm"; primary: true; width: 110px; clicked => { root.confirm_totp_unlock(totp_confirm_input.text); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "নিশ্চিত করুন" : "Confirm"; primary: true; width: 130px; clicked => { root.confirm_totp_unlock(totp_confirm_input.text); } }
                         }
                     }
                     if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Disarm Unlock 2FA"; danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
@@ -1859,7 +1859,7 @@ export component MainWindow inherits Window {
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📶 লোকাল ওয়াই-ফাই P2P সিঙ্ক (অফলাইন)" : "📶 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    Text { text: "👨‍👩‍👧 Family sync: same Wi-Fi + one-time pairing code — phones and PCs stay in sync."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "👨‍👩‍👧 পারিবারিক সিঙ্ক: একই Wi-Fi + একবারের pairing code — ফোন/PC সিঙ্কে থাকে।" : "👨‍👩‍👧 Family sync: same Wi-Fi + one-time pairing code — phones and PCs stay in sync."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "লোকাল ওয়াই-ফাই ডিসকভারি চালু" : "Enable Local Wi-Fi Discovery"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
                     HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "পেয়ারিং কোড (এই ডিভাইস)" : "Pairing code (this device)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: #38e1ff; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New code"; width: 110px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
                     if root.p2p_pin != "" : Image { source: root.p2p_qr; width: 132px; height: 132px; image-fit: contain; }
@@ -2066,7 +2066,7 @@ export component MainWindow inherits Window {
                         if root.show_empty_confirm : VerticalLayout { spacing: 6px;
                             Text { text: root.ui_lang == "bn" ? "ট্র্যাশের সবকিছু ধ্বংস করবেন? ফেরানো যাবে না।" : "Shred EVERYTHING in Trash? No undo."; color: #fb7185; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { spacing: 8px; alignment: center;
-                                AuraButton { label: root.ui_lang == "bn" ? "হ্যাঁ, সব ধ্বংস করুন" : "Yes, shred all"; danger: true; width: 140px; height: 32px; clicked => { root.empty_trash(); } }
+                                AuraButton { label: root.ui_lang == "bn" ? "হ্যাঁ, সব ধ্বংস করুন" : "Yes, shred all"; danger: true; width: 175px; height: 32px; clicked => { root.empty_trash(); } }
                                 AuraButton { label: root.ui_lang == "bn" ? "বাতিল" : "Cancel"; width: 100px; height: 32px; clicked => { root.show_empty_confirm = false; } }
                             }
                         }

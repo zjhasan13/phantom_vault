@@ -70,6 +70,48 @@ Capture, Quick Bar and the generator now mirror `ui_lang`.
 5. Prefer translating **actions and errors** next (highest user value), then
    long help text.
 
+## Status (pilot wrap-up)
+
+- Slint: ~110 `ui_lang` ternary lines across lock screen, sidebar, detail/form,
+  settings, sync/export cards, generator, dialogs and the Quick Bar/Capture
+  windows.
+- Rust: ~150 `tr()` call sites (unlock statuses, decoy/vault guards, import
+  flow, share/API statics, P2P results, import summary).
+- Long help paragraphs translated: offline cache, PQ-paranoid card, Local API,
+  Expiring shares, family-sync blurb.
+- Static width audit: the longest Bengali labels got wider fixed buttons
+  (Confirm Import, reprompt/TOTP confirm, import mode row, shred-all).
+- Still English: remaining sync/import result details, some modal help copy,
+  identity/card detail rows rendered by Rust, and many error strings.
+
+## Layout QA checklist (manual, before calling A26 complete)
+
+1. Settings at 100% and 125% scaling: security cards, language row, share card.
+2. Lock screen: tabs, PIN pad, TOTP step, shard recovery.
+3. Item detail: username/password rows, attachment buttons, delete/shred/restore.
+4. Add/edit form for every kind (login/card/identity/license/note/SSH).
+5. Import dry-run preview and duplicate-choice dialog.
+6. Generator panel, Quick Bar, Quick Capture.
+7. Confirm no Bengali label is clipped/ellipsized unexpectedly; widen or wrap.
+
+## Migration plan (`@tr` + `.po`)
+
+The inline-ternary + `tr()` approach is dependency-free and fine for this
+pilot, but it does not scale to full A26. When finishing the translation:
+
+1. Wrap strings with `@tr("…")` (no context) and move pairs into
+   `lang/bn/LC_MESSAGES/phantom_vault.po` (+ an `en` catalogue).
+2. `build.rs`: `CompilerConfiguration::new()
+   .with_bundled_translations("lang")
+   .with_default_translation_context(DefaultTranslationContext::None)`.
+3. Startup: `slint::select_bundled_translation("bn")` after reading
+   `lang.pref`; keep `set_language` writing the pref. Bundled translations
+   re-evaluate on selection, so no `update_all_translations` is needed.
+4. Replace `i18n::tr` calls with catalogue lookups for the remaining Rust
+   strings (or keep the tiny flag for non-Slint-only strings).
+5. Remove the inline ternaries as each surface migrates; keep the coverage
+   table and the layout checklist as the acceptance gate.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

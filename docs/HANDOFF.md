@@ -57,8 +57,13 @@
   the shared `i18n` flag; the Bengali Confirm-Import button was widened. **Batch
   9:** a `root.tr(en, bn)` helper, add/edit placeholders for card/identity/
   license/SSH/note kinds (cardholder, number, CVV, expiry, NID, keys, address/
-  city/state/ZIP/country, alias), and the Empty Trash & Shred All dialog. A full
-  100%/125% visual layout pass is still manual. `docs/A26_BN.md` tracks coverage. `normalize_lang` only
+  city/state/ZIP/country, alias), and the Empty Trash & Shred All dialog. **Batch
+  10:** long help paragraphs (offline cache, PQ-paranoid, Local API, Expiring
+  shares, family sync), a static fixed-width audit (Confirm Import, reprompt/
+  TOTP confirm, import-mode row, shred-all widened), and a wrap-up section in
+  `docs/A26_BN.md` with the layout-QA checklist and the `@tr`/`.po` migration
+  plan. A full 100%/125% visual layout pass is still manual and required before
+  calling A26 complete. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`
