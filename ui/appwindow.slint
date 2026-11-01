@@ -1651,7 +1651,7 @@ export component MainWindow inherits Window {
                     if root.pin_status != "" : Text { text: root.pin_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A5: master-password rotation (rekey). Old backups, exports
                     // and printed shards stay on the OLD password by design.
-                    FieldLabel { text: "MASTER PASSWORD ROTATION"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড পরিবর্তন" : "MASTER PASSWORD ROTATION"; }
                     Text { text: "Re-encrypts the vault with a fresh salt. Old backups, exports and printed shards keep the OLD password. App PIN is removed after rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
                         rekey_old := LineEdit { placeholder-text: "Current master password"; input-type: password; height: 36px; horizontal-stretch: 1; }
@@ -1665,7 +1665,7 @@ export component MainWindow inherits Window {
                     if root.rekey_status != "" : Text { text: root.rekey_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A11: read-only snapshot for the extension, opened with
                     // Windows Hello even when the desktop app is closed.
-                    FieldLabel { text: "OFFLINE BROWSER CACHE (READ-ONLY)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "অফলাইন ব্রাউজার ক্যাশ (রিড-অনলি)" : "OFFLINE BROWSER CACHE (READ-ONLY)"; }
                     Text { text: "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Allow extension PIN unlock (weaker than Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_pin_on ? "ON" : "OFF"; primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
@@ -1673,7 +1673,7 @@ export component MainWindow inherits Window {
                     // A22 Phase C: device-bound container profile. Correct
                     // password alone cannot open it — the DPAPI-sealed ML-KEM
                     // key for this Windows profile is required too.
-                    FieldLabel { text: "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "পিকিউ-প্যারানোয়েড কন্টেইনার (ডিভাইস-বাউন্ড)" : "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
                     Text { text: "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Container profile"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     Text { text: "Device key: " + root.pq_backend_detail; color: root.pq_backend == "tpm" ? #34d399 : #8e99c0; font-size: 11px; wrap: word-wrap; }
@@ -1741,21 +1741,21 @@ export component MainWindow inherits Window {
                         }
                     }
                     if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Disarm Unlock 2FA"; danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
-                    FieldLabel { text: "2FA CLOCK OFFSET"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "2FA ক্লক অফসেট" : "2FA CLOCK OFFSET"; }
                     Text { text: "If codes are rejected but look right, this PC's clock is off. Shift all codes by a few seconds — stored locally, never uploaded."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "seconds (e.g. 45 or -30)"; text <=> root.totp_offset_text; width: 170px; height: 34px; accepted(text) => { root.set_totp_offset(text); } }
                         AuraButton { label: "Apply"; primary: true; width: 78px; height: 34px; clicked => { root.set_totp_offset(root.totp_offset_text); } }
                         AuraButton { label: "Reset"; width: 78px; height: 34px; clicked => { root.reset_totp_offset(); } } }
                     if root.totp_offset_status != "" : Text { text: root.totp_offset_status; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
-                    FieldLabel { text: "CLIPBOARD AUTO-CLEAR"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "ক্লিপবোর্ড অটো-ক্লিয়ার" : "CLIPBOARD AUTO-CLEAR"; }
                     HorizontalLayout { spacing: 6px;
                         AuraButton { label: "10s"; primary: root.clipboard_timeout == 10; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(10); } }
                         AuraButton { label: "15s"; primary: root.clipboard_timeout == 15; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(15); } }
                         AuraButton { label: "30s"; primary: root.clipboard_timeout == 30; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(30); } }
                         AuraButton { label: "60s"; primary: root.clipboard_timeout == 60; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(60); } }
                     }
-                    FieldLabel { text: "AUTO-LOCK"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "অটো-লক" : "AUTO-LOCK"; }
                     HorizontalLayout { spacing: 6px;
                         AuraButton { label: "1m"; primary: root.autolock_timeout == 1; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(1); } }
                         AuraButton { label: "5m"; primary: root.autolock_timeout == 5; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(5); } }
@@ -1765,7 +1765,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: "Offline kill-switch (no network)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📜  Access Log"; width: 180px; clicked => { root.view_access_log(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Close button minimizes to tray"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tray_minimize ? "ON" : "OFF"; primary: root.tray_minimize; width: 90px; clicked => { root.set_tray_minimize(!root.tray_minimize); } } }
-                    FieldLabel { text: "APP UPDATES (GITHUB RELEASES)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "অ্যাপ আপডেট (গিটহাব রিলিজ)" : "APP UPDATES (GITHUB RELEASES)"; }
                     Text { text: root.update_tag == "" ? "Current: v" + root.app_version : "🎉 New Update Available: " + root.update_tag; color: root.update_tag == "" ? #8e99c0 : #34d399; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "Check for Updates"; width: 170px; clicked => { root.check_updates(); } }
@@ -1789,7 +1789,7 @@ export component MainWindow inherits Window {
                     Text { text: root.prox_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "GitHub Sync"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: root.ui_lang == "bn" ? "গিটহাব সিঙ্ক" : "GitHub Sync"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     LineEdit { placeholder-text: "Owner (github username)"; text <=> root.sync_owner; height: 36px; }
                     LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.sync_repo; height: 36px; }
                     LineEdit { placeholder-text: "PAT (classic token, repo scope)"; input-type: password; text <=> root.sync_token_input; height: 36px; }
@@ -1853,18 +1853,18 @@ export component MainWindow inherits Window {
                     if root.admin_output != "" : Text { text: root.admin_output; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "📡 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: root.ui_lang == "bn" ? "📶 লোকাল ওয়াই-ফাই P2P সিঙ্ক (অফলাইন)" : "📶 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     Text { text: "👨‍👩‍👧 Family sync: same Wi-Fi + one-time pairing code — phones and PCs stay in sync."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Enable Local Wi-Fi Discovery"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Pairing code (this device)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: #38e1ff; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New code"; width: 110px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "লোকাল ওয়াই-ফাই ডিসকভারি চালু" : "Enable Local Wi-Fi Discovery"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "পেয়ারিং কোড (এই ডিভাইস)" : "Pairing code (this device)"; color: #eef1ff; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: #38e1ff; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New code"; width: 110px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
                     if root.p2p_pin != "" : Image { source: root.p2p_qr; width: 132px; height: 132px; image-fit: contain; }
                     Text { text: "First sync: type the other device's pairing code below. The code is single-use and never leaves the LAN."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🔍 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } LineEdit { placeholder-text: "Pairing code from the other device"; text <=> root.p2p_peer_pin; height: 36px; horizontal-stretch: 1; } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: root.ui_lang == "bn" ? "📡 ল্যান পিয়ার স্ক্যান" : "📡 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } LineEdit { placeholder-text: "Pairing code from the other device"; text <=> root.p2p_peer_pin; height: 36px; horizontal-stretch: 1; } }
                     for peer in root.p2p_peers : Rectangle { background: #121927; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: #5b6589; font-size: 11px; overflow: elide; } } AuraButton { label: root.confirm_sync_ip == peer.ip ? "Sure?" : "Sync Now"; width: root.confirm_sync_ip == peer.ip ? 90px : 110px; height: 30px; y: 7px; clicked => { if root.confirm_sync_ip == peer.ip { root.confirm_sync_ip = ""; root.sync_peer(peer.ip, root.p2p_peer_pin); } else { root.confirm_sync_ip = peer.ip; } } } } }
-                    FieldLabel { text: "PAIRED DEVICES"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "পেয়ার করা ডিভাইস" : "PAIRED DEVICES"; }
                     if root.p2p_paired.length == 0 : Text { text: "None yet — the first successful sync pairs the devices."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    for pp in root.p2p_paired : Rectangle { background: #121927; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "🔗 " + pp.name; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: pp.detail; color: #5b6589; font-size: 10px; overflow: elide; } } AuraButton { label: "Forget"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.forget_p2p_peer(pp.key); } } } }
+                    for pp in root.p2p_paired : Rectangle { background: #121927; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "🔗 " + pp.name; color: #eef1ff; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: pp.detail; color: #5b6589; font-size: 10px; overflow: elide; } } AuraButton { label: root.ui_lang == "bn" ? "ভুলে যান" : "Forget"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.forget_p2p_peer(pp.key); } } } }
                     Text { text: root.p2p_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     if root.p2p_last_sync != "" : Text { text: "✅ Last sync: " + root.p2p_last_sync; color: #34d399; font-size: 11px; wrap: word-wrap; }
                 }}
@@ -1878,7 +1878,7 @@ export component MainWindow inherits Window {
                     Text { text: root.bridge_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
+                    Text { text: root.ui_lang == "bn" ? "📤 ভল্ট এক্সপোর্ট (জিরো ভেন্ডর লক-ইন)" : "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. .pvx/KDBX are encrypted with the separate password you enter. Shred plaintext after moving it."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: "Encrypted (.pvx)"; width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: "Full CSV (all kinds)"; width: 170px; clicked => { root.export_vault(4); } } }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "🗝️ Export KeePass KDBX"; width: 230px; clicked => { root.export_vault(5); } } }
@@ -1911,7 +1911,7 @@ export component MainWindow inherits Window {
                         AuraButton { label: "Hide in PNG"; width: 200px; clicked => { root.stego_hide(); } }
                         AuraButton { label: "Restore PNG"; width: 200px; clicked => { root.stego_restore(); } }
                     }
-                    FieldLabel { text: "DURESS PASSWORD (DECOY VAULT)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "ডিউরেস পাসওয়ার্ড (ডিকয় ভল্ট)" : "DURESS PASSWORD (DECOY VAULT)"; }
                     LineEdit {
                         placeholder-text: "Enter Duress Password (8+ chars)...";
                         text <=> root.duress_input;
@@ -1920,10 +1920,10 @@ export component MainWindow inherits Window {
                         accepted(text) => { root.set_duress_password(text); }
                     }
                     AuraButton { label: "🕊️  Arm Decoy"; width: 200px; clicked => { root.set_duress_password(root.duress_input); } }
-                    FieldLabel { text: "HONEYTOKENS (CANARY TRAP)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "হানিটোকেন (ক্যানারি ট্র্যাপ)" : "HONEYTOKENS (CANARY TRAP)"; }
                     Text { text: root.canary_count > 0 ? "🐤 " + root.canary_count + " planted — touch one and the alarm fires" : "No honeytokens yet — plant one and never touch it yourself"; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "🐤 Plant Honeytoken"; width: 200px; clicked => { root.plant_canary(); } }
-                    FieldLabel { text: "EMERGENCY TIMED GRANT"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "ইমার্জেন্সি টাইমড গ্রান্ট" : "EMERGENCY TIMED GRANT"; }
                     Text { text: "Grantee request → grantor approve → wait → sealed envelope. Takeover = the normal lock-screen shard recovery."; color: #8e99c0; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "🔑 New Grantee Keypair"; width: 220px; clicked => { root.emg_new_keypair(); } }
                     LineEdit { placeholder-text: "Grantee public key (base64, from grantee)"; text <=> root.emg_pubkey_input; height: 36px; }
@@ -2439,11 +2439,11 @@ export component MainWindow inherits Window {
                     }
                     VerticalLayout {
                         spacing: 2px;
-                        Text { text: "Master Reprompt"; font-size: 16px; font-weight: 800; color: #eef1ff; }
+                        Text { text: root.ui_lang == "bn" ? "মাস্টার রিপ্রম্পট" : "Master Reprompt"; font-size: 16px; font-weight: 800; color: #eef1ff; }
                         Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : (root.rp_export_fmt == 5 ? "Export to KeePass KDBX" : "Export vault PLAINTEXT")) : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
                     }
                 }
-                Text { text: "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "এই আইটেমের জন্য মাস্টার পাসওয়ার্ড নিশ্চিত করতে হবে।" : "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.rp_user != "" : Text { text: "for " + root.rp_user; color: #5b6589; font-size: 11px; horizontal-alignment: center; overflow: elide; }
                 rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text, root.rp_backup_pass, root.rp_backup_confirm); } }
                 if root.rp_action == 5 && (root.rp_export_fmt == 3 || root.rp_export_fmt == 5) : VerticalLayout { spacing: 6px;

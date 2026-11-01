@@ -35,9 +35,12 @@
   shares section labels. **Batch 2:** type labels (Login/Card/Identity/Note/
   License/SSH Key), TYPES/FOLDERS/APP, item-detail headings (credentials,
   username/password, notes, auto-fill, backup codes, custom fields, attachments,
-  history, autofill/attach actions) and the add/edit form headings. ~72
-  bilingual strings; the Quick Capture window (separate component without
-  `ui_lang`) and all Rust status strings stay English. `normalize_lang` only
+  history, autofill/attach actions) and the add/edit form headings. **Batch 3:**
+  Settings security headings (rotation, offline cache, PQ, 2FA clock, clipboard,
+  auto-lock, updates, paired devices, duress/honeytokens/emergency), GitHub
+  Sync + Local Wi-Fi P2P labels, Export Vault heading, and the Master Reprompt
+  title/description. ~89 bilingual strings; the Quick Capture window (separate
+  component without `ui_lang`) and all Rust status strings stay English. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

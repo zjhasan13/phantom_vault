@@ -13,7 +13,9 @@
 | Lock/unlock screen | password/PIN/shards tabs, master-password placeholder, unlock/Hello/PIN buttons, 2FA step, shard recovery (existing) |
 | Sidebar | VAULT, TYPES, FOLDERS, APP, All items, Favorites, 2FA Hub, Settings, Login, Card, Identity, Note, License, SSH Key |
 | Importer | “Universal Vault Importer” title |
-| Settings | “Settings & Dev Center”, Language row |
+| Settings | “Settings & Dev Center”, Language row, master rotation, offline cache, PQ-paranoid, 2FA clock, clipboard, auto-lock, updates, paired devices, duress/honeytokens/emergency headings |
+| Sync/export | GitHub Sync, Local Wi-Fi P2P title + enable/pairing/scan/empty labels, Export Vault heading |
+| Dialogs | Master Reprompt title + “demands master-password confirmation” |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
 | Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
 | Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |
