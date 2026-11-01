@@ -9511,7 +9511,14 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_rp_export_fmt(fmt);
         ui.set_rp_error(String::new().into());
         ui.set_rp_show(true);
-        ui.set_notification_text("🔒 Confirm master password — export writes PLAINTEXT to disk.".into());
+        ui.set_notification_text(
+            if fmt == 3 || fmt == 5 {
+                "🔒 Confirm master password — export writes an encrypted file with a separate password."
+            } else {
+                "🔒 Confirm master password — export writes PLAINTEXT to disk."
+            }
+            .into(),
+        );
     });
 
     // Hub trash section: restore one trashed passkey + re-seal.
@@ -10777,7 +10784,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // A6: an encrypted export is sealed with its own backup passphrase. The
         // master above only proves presence; it must never become the key that
         // opens the file. Keep the modal open on a bad passphrase.
-        if ui.get_rp_action() == 5 && ui.get_rp_export_fmt() == 3 {
+        if ui.get_rp_action() == 5 && (ui.get_rp_export_fmt() == 3 || ui.get_rp_export_fmt() == 5) {
             if let Some(err) =
                 backup_pass_error(backup_pass.as_str(), backup_confirm.as_str(), password.as_str())
             {
@@ -10950,6 +10957,36 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                     "{items} items, {atts} attachments ({atts_bytes} bytes) - encrypted"
                                 ),
                             )
+                        } else if fmt == 5 {
+                            let bytes = match importer::keepass::export_kdbx(&v, &export_backup) {
+                                Ok(b) => b,
+                                Err(e) => {
+                                    eprintln!("kdbx export refused: {e}");
+                                    return;
+                                }
+                            };
+                            let n = v
+                                .credentials
+                                .iter()
+                                .filter(|c| c.deleted_at.is_none())
+                                .count();
+                            let mut folders: Vec<&str> = v
+                                .credentials
+                                .iter()
+                                .filter(|c| c.deleted_at.is_none() && !c.folder.trim().is_empty())
+                                .map(|c| c.folder.as_str())
+                                .collect();
+                            folders.sort_unstable();
+                            folders.dedup();
+                            (
+                                bytes,
+                                "phantom-vault-export.kdbx".to_string(),
+                                vec![("KeePass KDBX", vec!["kdbx"])],
+                                format!(
+                                    "{n} logins in {} folders — KDBX4 (logins only)",
+                                    folders.len()
+                                ),
+                            )
                         } else if fmt == 4 {
                             let csv =
                                 match importer::exporter::export_csv_full_gated(&v, false) {
@@ -11004,7 +11041,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         .set_title("Export PLAINTEXT vault — anyone with this file reads everything")
                         .set_file_name(&filename)
                         .set_title(if fmt == 3 {
-                            "Export ENCRYPTED backup - master password required to open"
+                            "Export ENCRYPTED backup - backup passphrase required to open"
+                        } else if fmt == 5 {
+                            "Export KeePass KDBX - opens with the file password you entered"
                         } else {
                             "Export PLAINTEXT vault - anyone with this file reads everything"
                         });
@@ -11469,7 +11508,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             // Native dialog blocks this worker only — UI stays at 60 FPS.
             let picked = rfd::FileDialog::new()
                 .set_title("Import ANY vault export")
-                .add_filter("vault exports", &["json", "csv", "xml", "tsv", "txt", "pvx"])
+                .add_filter("vault exports", &["json", "csv", "xml", "tsv", "txt", "pvx", "kdbx"])
                 .add_filter("all files", &["*"])
                 .pick_file();
             let Some(path) = picked else {
@@ -11504,6 +11543,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let (staged, source) = match importer::parse_import_any(
                     &path,
                     Some(&master_pw),
+                    backup_opt.as_ref(),
                     backup_opt.as_ref(),
                 ) {
                     Ok(importer::ParsedImport::Rows(raws, s)) => (StagedImport::Rows(raws), s.source),

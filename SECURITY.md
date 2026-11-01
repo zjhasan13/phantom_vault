@@ -61,6 +61,8 @@ tell us the date in the report so the advisory can land first.
 - Container cryptography: Argon2id parameters, XChaCha20-Poly1305, ML-KEM/X25519
   hybrid, the `PV3` PQ-paranoid key chain (Argon2id + device decapsulation key),
   salt/keypair reuse, nonce handling, version detection and migration
+- KeePass KDBX import (A13): declared-KDF caps, wrong-password handling, the
+  `keepass` dependency boundary
 - Key handling: zeroization, page locking, DPAPI seals, Hello token, App PIN,
   extension PIN (Argon2id, host-side verification, attempt lockout), master-password rekey, rollback snapshot
 - Native-messaging bridge: origin pinning, frame MAC, request caps, `verify_master`
@@ -133,6 +135,12 @@ These are documented rather than secret; please do not report them as new findin
 - P2P sync serves **ciphertext without pairing** if no PIN is configured.
 - Backups, `.pvx` exports and printed recovery shards keep the **old** password
   after a rekey.
+- KDBX import runs an untrusted file through a third-party parser. The
+  plaintext KDF parameters are capped before any Argon2/AES-KDF work (see
+  `docs/A13_KDBX.md`), but the parser and its dependencies remain part of the
+  attack surface; attachments and entry history are not imported. KDBX export
+  is sealed with a separate user-chosen password (never the vault master) and
+  covers logins only.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

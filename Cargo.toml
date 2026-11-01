@@ -78,6 +78,9 @@ serde_json = "1.0"
 # keepass.rs uses only the stable core API (from_str/read_event_into/
 # Event/QName/unescape) — unchanged across the bump, verified by tests.
 quick-xml = "0.41"
+# A13: KeePass KDBX 3.1/4 interop. Read now; `save_kdbx4` also enables the
+# export slice. MIT, focused crypto (aes/cbc/argon2/flate2), no network.
+keepass = { version = "0.17", features = ["save_kdbx4"] }
 rfd = "0.14"
 
 # Phase 16 (Option 2): developer superpowers

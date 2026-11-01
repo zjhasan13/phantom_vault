@@ -65,7 +65,7 @@ third-party audit. Those are tracked as concrete work in
 - GitHub repository via API with a DPAPI-sealed token
 - **Revision chain (A16)**: every save increments `rev` and chains `prev_hash` inside the AEAD payload; stale or forked merges are refused
 - Peer-to-peer over LAN with **mandatory device pairing** (one-time code, HMAC proof, Ed25519-signed requests)
-- Import/export: Bitwarden JSON, CSV, native `.pvx` (with previews, merge modes, undo)
+- Import/export: Bitwarden JSON, CSV, native `.pvx`, KeePass XML/CSV and **KDBX 3.1/4** (import with password or password + key file; export logins to KDBX4 with a separate password) with previews, merge modes, undo
 
 ---
 
@@ -105,7 +105,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 519 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 528 passed / 2 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -184,8 +184,10 @@ These are real today. They are listed here so nobody discovers them the hard way
 - **A16 vault format is rev 2**: builds before this change cannot open it, so
   upgrade every device before syncing. On a fresh device the first pull is
   TOFU — there is no local revision to compare against.
-- **No KDBX import/export** (A13), no hardware-key unlock (A21), no serverless
-  Send-style share (A20), no reproducible builds yet (T5).
+- **KDBX export covers logins only** (A13): cards/notes/identities/passkeys and
+  attachment bytes need `.pvx`/CSV. KDBX import is full read support for
+  KDBX 3.1/4. No hardware-key unlock (A21), no serverless Send-style share
+  (A20).
 - **Offline cache is opt-in and read-only** (A11). It weakens closed-app
   isolation: a same-user process can unseal the DPAPI key without the Hello
   prompt, and the snapshot refreshes only at unlock. Mutations and
@@ -241,6 +243,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/REPRODUCIBLE_BUILDS.md`](docs/REPRODUCIBLE_BUILDS.md) | Pinned inputs, clean rebuild, hash/signature/provenance verification, honest limits |
 | [`docs/A22_PHASE_B.md`](docs/A22_PHASE_B.md) | PQ-paranoid container profile: `PV3` layout, key chain, exit tests, Phase C gate |
 | [`docs/A22_PHASE_D.md`](docs/A22_PHASE_D.md) | TPM-backed device-key custody: threat model, `PVT1` sidecar, NCrypt design, tests |
+| [`docs/A13_KDBX.md`](docs/A13_KDBX.md) | KeePass KDBX import: supported formats, KDF caps, fixtures, export slice |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |
 

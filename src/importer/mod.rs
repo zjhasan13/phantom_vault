@@ -194,7 +194,7 @@ fn to_custom(
 /// Powers the dry-run preview: the caller dry-merges the returned rows into
 /// a CLONED vault for exact counts, then merges for real only on confirm.
 pub fn parse_import_file(path: &std::path::Path) -> Result<(Vec<RawItem>, ImportSummary)> {
-    match parse_import_any(path, None, None)? {
+    match parse_import_any(path, None, None, None)? {
         ParsedImport::Rows(raws, summary) => Ok((raws, summary)),
         ParsedImport::Native(..) => Err(VaultError::Sync(
             "PhantomVault backups must be imported through the GUI".into(),
@@ -208,10 +208,13 @@ pub fn parse_import_file(path: &std::path::Path) -> Result<(Vec<RawItem>, Import
 /// before 0.4.x). A `PVBK1` backup is sealed with its own passphrase and is
 /// opened only by `backup` — the master is never tried for it, so "the backup
 /// does not open with the vault password" stays true by construction.
+/// A13: `kdbx` opens an encrypted KeePass database. The GUI reuses the
+/// per-file password field for it; the vault master is never tried.
 pub fn parse_import_any(
     path: &std::path::Path,
     master: Option<&secrecy::SecretString>,
     backup: Option<&secrecy::SecretString>,
+    kdbx: Option<&secrecy::SecretString>,
 ) -> Result<ParsedImport> {
     let bytes = std::fs::read(path)
         .map_err(|e| VaultError::Sync(format!("cannot read import file: {e}")))?;
@@ -266,6 +269,15 @@ pub fn parse_import_any(
         sniffer::Format::BitwardenCsv => bitwarden::parse_csv(&bytes, &mut summary)?,
         sniffer::Format::KeepassXml => keepass::parse_xml(&bytes, &mut summary)?,
         sniffer::Format::KeepassCsv => keepass::parse_csv(&bytes, &mut summary)?,
+        sniffer::Format::KeepassKdbx => {
+            let Some(pw) = kdbx else {
+                return Err(VaultError::Sync(
+                    "this KeePass database needs its password — enter it in the file-password field"
+                        .into(),
+                ));
+            };
+            keepass::parse_kdbx(&bytes, pw, None, &mut summary)?
+        }
         sniffer::Format::OnePasswordCsv => onepassword::parse_csv(&bytes, &mut summary)?,
         sniffer::Format::ProtonJson => onepassword::parse_proton(&bytes, &mut summary)?,
         sniffer::Format::ChromeCsv

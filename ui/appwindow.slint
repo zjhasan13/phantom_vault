@@ -1567,7 +1567,7 @@ export component MainWindow inherits Window {
             background: #080c14; horizontal-stretch: 1; clip: true;
             VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px;
-                    LineEdit { placeholder-text: "Backup passphrase — only for .pvx backups"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
+                    LineEdit { placeholder-text: "File password - .pvx backup or .kdbx database"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
                     AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; width: 260px; clicked => { root.pick_import_file(); } }
                 }
                 AuraButton { label: "🔍 Detect Browsers"; height: 42px; clicked => { root.detect_browsers(); } }
@@ -1813,8 +1813,9 @@ export component MainWindow inherits Window {
                 }}
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
-                    Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. Shred the file after moving it."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. .pvx/KDBX are encrypted with the separate password you enter. Shred plaintext after moving it."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: "Encrypted (.pvx)"; width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: "Full CSV (all kinds)"; width: 170px; clicked => { root.export_vault(4); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: "🗝️ Export KeePass KDBX"; width: 230px; clicked => { root.export_vault(5); } } }
                     Text { text: "JSON keeps everything (TOTP, history, custom fields). CSV keeps basics only."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.export_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                 }}
@@ -2373,16 +2374,16 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         spacing: 2px;
                         Text { text: "Master Reprompt"; font-size: 16px; font-weight: 800; color: #eef1ff; }
-                        Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : "Export vault PLAINTEXT") : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
+                        Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : (root.rp_export_fmt == 5 ? "Export to KeePass KDBX" : "Export vault PLAINTEXT")) : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
                     }
                 }
                 Text { text: "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.rp_user != "" : Text { text: "for " + root.rp_user; color: #5b6589; font-size: 11px; horizontal-alignment: center; overflow: elide; }
                 rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text, root.rp_backup_pass, root.rp_backup_confirm); } }
-                if root.rp_action == 5 && root.rp_export_fmt == 3 : VerticalLayout { spacing: 6px;
-                    Text { text: "A6: this .pvx is sealed with THIS passphrase — never with your master password. Store it separately; it cannot be recovered."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Backup passphrase (12+ characters)"; input-type: password; height: 40px; text: root.rp_backup_pass; edited(v) => { root.rp_backup_pass = v; } }
-                    LineEdit { placeholder-text: "Confirm backup passphrase"; input-type: password; height: 40px; text: root.rp_backup_confirm; edited(v) => { root.rp_backup_confirm = v; } }
+                if root.rp_action == 5 && (root.rp_export_fmt == 3 || root.rp_export_fmt == 5) : VerticalLayout { spacing: 6px;
+                    Text { text: root.rp_export_fmt == 5 ? "A13: this .kdbx opens in KeePassXC with THIS password — never your master password. 12+ characters; it cannot be recovered." : "A6: this .pvx is sealed with THIS passphrase — never with your master password. Store it separately; it cannot be recovered."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: root.rp_export_fmt == 5 ? "KDBX password (12+ characters)" : "Backup passphrase (12+ characters)"; input-type: password; height: 40px; text: root.rp_backup_pass; edited(v) => { root.rp_backup_pass = v; } }
+                    LineEdit { placeholder-text: "Confirm password"; input-type: password; height: 40px; text: root.rp_backup_confirm; edited(v) => { root.rp_backup_confirm = v; } }
                 }
                 if root.rp_error != "" : Text { text: root.rp_error; color: #fb7185; font-size: 12px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout {

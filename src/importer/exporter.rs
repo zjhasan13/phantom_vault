@@ -893,7 +893,7 @@ mod tests {
         let blob = export_native_encrypted(&v, &pw).unwrap();
         let path = std::env::temp_dir().join(format!("pv-native-{}.pvx", std::process::id()));
         std::fs::write(&path, &blob).unwrap();
-        let parsed = crate::importer::parse_import_any(&path, None, Some(&pw)).unwrap();
+        let parsed = crate::importer::parse_import_any(&path, None, Some(&pw), None).unwrap();
         let _ = std::fs::remove_file(&path);
         match parsed {
             crate::importer::ParsedImport::Native(src, _) => {
@@ -930,13 +930,13 @@ mod tests {
         let new_path = dir.join("new.pvx");
         std::fs::write(&new_path, export_native_gated(&v, false, &backup).unwrap()).unwrap();
         assert!(
-            crate::importer::parse_import_any(&new_path, Some(&master), None).is_err(),
+            crate::importer::parse_import_any(&new_path, Some(&master), None, None).is_err(),
             "a PVBK1 backup must not open with the master password"
         );
-        assert!(crate::importer::parse_import_any(&new_path, None, Some(&backup)).is_ok());
+        assert!(crate::importer::parse_import_any(&new_path, None, Some(&backup), None).is_ok());
         // Wrong backup passphrase fails loudly, vault untouched (parse only).
         let wrong = secrecy::SecretString::new("wrong-backup-pass".to_string());
-        assert!(crate::importer::parse_import_any(&new_path, None, Some(&wrong)).is_err());
+        assert!(crate::importer::parse_import_any(&new_path, None, Some(&wrong), None).is_err());
 
         // Legacy `.pvx` (no PVBK1 tag) still opens with the master password.
         let doc = export_native_json(&v);
@@ -944,8 +944,8 @@ mod tests {
         let legacy = crate::crypto::encrypt_vault_portable_secret(&master, &plain).unwrap();
         let legacy_path = dir.join("legacy.pvx");
         std::fs::write(&legacy_path, &legacy).unwrap();
-        assert!(crate::importer::parse_import_any(&legacy_path, Some(&master), None).is_ok());
-        assert!(crate::importer::parse_import_any(&legacy_path, None, Some(&backup)).is_err());
+        assert!(crate::importer::parse_import_any(&legacy_path, Some(&master), None, None).is_ok());
+        assert!(crate::importer::parse_import_any(&legacy_path, None, Some(&backup), None).is_err());
 
         let _ = std::fs::remove_dir_all(&dir);
     }

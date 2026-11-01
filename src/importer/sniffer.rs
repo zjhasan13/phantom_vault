@@ -8,6 +8,8 @@ pub enum Format {
     BitwardenCsv,
     KeepassXml,
     KeepassCsv,
+    /// A13: binary KeePass 2.x database (KDBX 3.1/4), needs its password.
+    KeepassKdbx,
     OnePasswordCsv,
     ProtonJson,
     ChromeCsv,
@@ -28,6 +30,7 @@ impl Format {
             Format::BitwardenCsv => "Bitwarden CSV".to_string(),
             Format::KeepassXml => "KeePass XML".to_string(),
             Format::KeepassCsv => "KeePass CSV".to_string(),
+            Format::KeepassKdbx => "KeePass KDBX".to_string(),
             Format::OnePasswordCsv => "1Password CSV".to_string(),
             Format::ProtonJson => "Proton Pass JSON".to_string(),
             Format::ChromeCsv => "Chrome/Brave/Edge CSV".to_string(),
@@ -120,6 +123,19 @@ pub fn sniff(bytes: &[u8]) -> Result<Format> {
     // run before text decoding (lossy UTF-8 would shred it into CSV noise).
     if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V2_PORTABLE_MAGIC {
         return Ok(Format::PhantomNativeEncrypted);
+    }
+    // A13: KeePass 2.x KDBX is binary (sig1+sig2), so check before decoding.
+    if bytes.len() >= 8 {
+        const KDBX_SIG: [u8; 8] = [0x03, 0xD9, 0xA2, 0x9A, 0x67, 0xFB, 0x4B, 0xB5];
+        const KDB_SIG: [u8; 8] = [0x03, 0xD9, 0xA2, 0x9A, 0x65, 0xFB, 0x4B, 0xB5];
+        if bytes[..8] == KDBX_SIG {
+            return Ok(Format::KeepassKdbx);
+        }
+        if bytes[..8] == KDB_SIG {
+            return Err(VaultError::Sync(
+                "KeePass 1.x KDB is not supported — export KDBX 4 from KeePass".into(),
+            ));
+        }
     }
     let text = decode_text(bytes);
     let trimmed = text.trim_start().to_lowercase();
@@ -229,6 +245,14 @@ mod tests {
     fn xml_detected() {
         let f = sniff(b"<?xml version=\"1.0\"?><KeePassFile><Root><Group>").unwrap();
         assert_eq!(f, Format::KeepassXml);
+    }
+
+    #[test]
+    fn kdbx_magic_detected_and_kdb_guided() {
+        let kdbx = [0x03, 0xD9, 0xA2, 0x9A, 0x67, 0xFB, 0x4B, 0xB5, 0, 0];
+        assert_eq!(sniff(&kdbx).unwrap(), Format::KeepassKdbx);
+        let kdb = [0x03, 0xD9, 0xA2, 0x9A, 0x65, 0xFB, 0x4B, 0xB5, 0, 0];
+        assert!(sniff(&kdb).is_err());
     }
 
     #[test]
