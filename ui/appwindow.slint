@@ -2858,6 +2858,8 @@ export component QuickBarWindow inherits Window {
     height: 380px;
     background: transparent;
     title: "PhantomVault Quick Bar";
+    // A26: mirrors MainWindow.ui_lang.
+    in-out property <string> ui_lang: "en";
 
     in-out property <string> quick_query;
     in-out property <[CredentialView]> filtered_results;
@@ -2918,7 +2920,7 @@ export component QuickBarWindow inherits Window {
                         alignment: center;
                         spacing: 0px;
                         Text { text: "Phantom Quick Bar"; color: #eef1ff; font-size: 14px; font-weight: 800; }
-                        Text { text: "Alt+Space  •  instant copy"; color: #5b6589; font-size: 11px; }
+                        Text { text: root.ui_lang == "bn" ? "Alt+Space • সাথে সাথে কপি" : "Alt+Space  •  instant copy"; color: #5b6589; font-size: 11px; }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: root.filtered_results.length + " hits"; color: #5b6589; font-size: 11px; vertical-alignment: center; }
@@ -2978,18 +2980,18 @@ export component QuickBarWindow inherits Window {
                                     if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; y: 2px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
                                     if item.url != "" : AuraButton { label: "🌐"; width: 44px; y: 2px; clicked => { root.qb_open_url(item.url); } }
                                     }
-                                    AuraButton { label: "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
+                                    AuraButton { label: root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                                 }
                             }
                         }
-                        if root.filtered_results.length == 0 : Text { text: "No matches — Esc, then + New in the vault."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; }
+                        if root.filtered_results.length == 0 : Text { text: root.ui_lang == "bn" ? "কিছু মেলেনি — Esc, তারপর ভল্টে + New।" : "No matches — Esc, then + New in the vault."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; }
                     }
                 }
 
                 HorizontalLayout {
                     alignment: space-between;
                     Text { text: "↑↓: pick  •  Enter: copy highlighted  •  🌐: open site  •  Esc: dismiss"; color: #8e99c0; font-size: 11px; vertical-alignment: center; }
-                    AuraButton { label: "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕ বন্ধ করুন" : "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
                 }
             }
         }

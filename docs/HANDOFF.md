@@ -48,8 +48,12 @@
   status/error strings, and many dialogs stay English; **Batch 6:** unlock
   status line (empty/wrong password, decrypting, unlocked, Hello/TOTP prompts),
   main share/API static statuses, and the Quick Capture window (its own
-  `ui_lang` copy synced by `set_language`). Remaining: most sync/import result
-  strings, Quick Bar, and various dialogs. `docs/A26_BN.md` tracks coverage. `normalize_lang` only
+  `ui_lang` copy synced by `set_language`). **Batch 7:** the `tr()` flag moved
+  to `src/i18n.rs` (shared with the importer); the import summary headline/counts,
+  Quick Bar (its own `ui_lang` copy: instant-copy, Copy, no-matches, Dismiss) and
+  sync offline/pushed/synced status lines are localized. Remaining: most
+  sync/import result strings, generator dialogs and long help copy.
+  `docs/A26_BN.md` tracks coverage. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

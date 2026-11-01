@@ -115,26 +115,48 @@ impl ImportSummary {
     }
 
     pub fn headline(&self) -> String {
+        let bn = crate::i18n::is_bn();
         let mut extra = String::new();
         if self.updated > 0 {
-            extra.push_str(&format!(", {} updated in place", self.updated));
+            if bn {
+                extra.push_str(&format!(", {}টি আপডেট হয়েছে", self.updated));
+            } else {
+                extra.push_str(&format!(", {} updated in place", self.updated));
+            }
         }
         if self.rows_failed > 0 {
-            extra.push_str(&format!(", ⚠️ {} bad rows skipped", self.rows_failed));
+            if bn {
+                extra.push_str(&format!(", ⚠️ {}টি খারাপ সারি বাদ", self.rows_failed));
+            } else {
+                extra.push_str(&format!(", ⚠️ {} bad rows skipped", self.rows_failed));
+            }
         }
         for w in &self.warnings {
             extra.push_str(&format!(" | ⚠️ {w}"));
         }
-        format!(
-            "✨ {} — ✅ {} items ({} logins, {} notes/cards) in {} folders, ⏭️ {} dupes skipped{}",
-            self.source,
-            self.total(),
-            self.logins,
-            self.notes + self.cards,
-            self.folders,
-            self.duplicates_skipped,
-            extra
-        )
+        if bn {
+            format!(
+                "✨ {} — ✅ {}টি আইটেম ({} লগইন, {} নোট/কার্ড), {} ফোল্ডার, ⏭️ {} ডুপ্লিকেট বাদ{}",
+                self.source,
+                self.total(),
+                self.logins,
+                self.notes + self.cards,
+                self.folders,
+                self.duplicates_skipped,
+                extra
+            )
+        } else {
+            format!(
+                "✨ {} — ✅ {} items ({} logins, {} notes/cards) in {} folders, ⏭️ {} dupes skipped{}",
+                self.source,
+                self.total(),
+                self.logins,
+                self.notes + self.cards,
+                self.folders,
+                self.duplicates_skipped,
+                extra
+            )
+        }
     }
 }
 

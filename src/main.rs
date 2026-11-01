@@ -9,6 +9,7 @@ mod models;
 #[allow(dead_code)]
 mod storage;
 mod api;
+mod i18n;
 mod share;
 mod share_cli;
 mod share_serve;
@@ -1056,21 +1057,9 @@ fn set_net_allowed(on: bool) {
     NET_ALLOWED.store(on, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// A26: process-wide UI language for Rust-generated status strings. Slint
-/// labels use the `ui_lang` property; this mirrors it for `tr()`.
-static UI_LANG_BN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-fn ui_lang_bn() -> bool {
-    UI_LANG_BN.load(std::sync::atomic::Ordering::Relaxed)
-}
-
-/// Pick the Bengali or English form of a static status string.
+/// A26: status-string bridge to the shared `i18n` flag (Slint uses `ui_lang`).
 fn tr<'a>(en: &'a str, bn: &'a str) -> &'a str {
-    if ui_lang_bn() {
-        bn
-    } else {
-        en
-    }
+    i18n::tr(en, bn)
 }
 
 /// A26: only English and Bengali are selectable; anything else falls back to EN.
@@ -1139,7 +1128,7 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
         };
         // Cat 8 kill-switch: never touch the network when offline.
         if !net_allowed() {
-            report("📴 Offline mode — sync skipped.".into());
+            report(tr("📴 Offline mode — sync skipped.", "📴 অফলাইন মোড — সিঙ্ক বাদ।").into());
             return;
         }
         // A22: a PQ-paranoid container opens only on this device; pushing it
@@ -1183,8 +1172,8 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
                 match res {
                     Ok(new_sha) => {
                         sync::github_sync::store_head_sha(&new_sha);
-                        ui.set_sync_status("☁️ Synced — ciphertext pushed.".into());
-                        ui.set_notification_text("☁️ Vault synced.".into());
+                        ui.set_sync_status(tr("☁️ Synced — ciphertext pushed.", "☁️ সিঙ্ক হয়েছে — শুধু ciphertext পুশ হয়েছে।").into());
+                        ui.set_notification_text(tr("☁️ Vault synced.", "☁️ ভল্ট সিঙ্ক হয়েছে।").into());
                         security::access_log::log_event("sync", "push ok");
                     }
                     Err(e) => {
@@ -3604,10 +3593,7 @@ fn main() -> Result<(), slint::PlatformError> {
     refresh_ls_rows(&main_window);
     let saved_lang = std::fs::read_to_string("lang.pref").unwrap_or_default();
     let saved_lang = normalize_lang(saved_lang.trim());
-    UI_LANG_BN.store(
-        saved_lang == "bn",
-        std::sync::atomic::Ordering::Relaxed,
-    );
+    i18n::set_bn(saved_lang == "bn");
     main_window.set_ui_lang(saved_lang.into());
     main_window.set_status_text(
         tr(
@@ -3662,6 +3648,7 @@ fn main() -> Result<(), slint::PlatformError> {
         ).into());
     }
     let quick_bar = QuickBarWindow::new()?;
+    quick_bar.set_ui_lang(saved_lang.into());
     let capture_window = QuickCaptureWindow::new()?;
     capture_window.set_ui_lang(saved_lang.into());
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -13568,9 +13555,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
     // `ui_lang` ternaries; the pref only has to outlive the process.
     let lang_weak = main_window.as_weak();
     let cap_lang_weak = capture_window.as_weak();
+    let qb_lang_weak = quick_bar.as_weak();
     main_window.on_set_language(move |lang| {
         let lang = normalize_lang(lang.as_str());
-        UI_LANG_BN.store(lang == "bn", std::sync::atomic::Ordering::Relaxed);
+        i18n::set_bn(lang == "bn");
         if let Err(e) = std::fs::write("lang.pref", lang) {
             eprintln!("lang.pref write failed: {e}");
         }
@@ -13579,6 +13567,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Some(cap) = cap_lang_weak.upgrade() {
             cap.set_ui_lang(lang.into());
+        }
+        if let Some(qb) = qb_lang_weak.upgrade() {
+            qb.set_ui_lang(lang.into());
         }
         security::access_log::log_event("ui", &format!("language {lang}"));
     });
