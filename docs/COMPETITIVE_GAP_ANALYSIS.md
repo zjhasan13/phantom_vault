@@ -194,7 +194,7 @@ security or parity gap; **S3** = polish or ecosystem.
 | E2 | No "Never save for this site" | `content.js:2371-2378` had only Save / Not Now | Users who never want a login stored for a site were re-prompted forever | Third button, persisted registrable-domain list, background refusal | **Shipped** |
 | E3 | Edit-before-save | `content.js:2352-2412` stored the page's username/password verbatim | A typo or a masked field was saved as-is; users had to open the desktop app to fix it | **Shipped (A9)** — `credentialToast` renders editable fields in a closed shadow root and re-classifies the corrected pair before the host call | — |
 | E4 | No offline cache in the extension | `background.js:140-168` requires a live native port; popup shows Retry when the desktop is closed (`popup.js:57`) | Extension is useless when the desktop app is not running, unlike Bitwarden's local cache | Encrypted read-only cache with a short TTL, unlocked by a separate extension PIN | S2 |
-| E5 | No settings UI for never-save list | This batch writes `never_save_domains` (`content.js:36,2344-2351`) but no popup surface exists | Users cannot review or undo a "Never" decision | Settings list with per-domain remove | S3 |
+| E5 | No settings UI for never-save list — **shipped (E5)** | Popup Settings now renders `never_save_domains` with a per-domain Remove; removal rewrites `chrome.storage.local`, and `content.js` already live-syncs via `storage.onChanged` | Users can review and undo a "Never" decision | Settings list with per-domain remove | S3 |
 
 ### 4.5 Trust and distribution
 
@@ -846,7 +846,7 @@ Ordered by risk reduction per unit of work. Each phase has an exit test.
 ### Phase 5 — Extension completion (1-2 weeks)
 
 1. **DONE (A9)** — edit-before-save in the toast (E3).
-2. Settings UI for the never-save list (E5).
+2. **DONE (E5)** — Settings UI for the never-save list with per-domain Remove.
 3. **DONE (A14)** — Argon2id extension PIN with host-side verification and a
    persistent 30s→5min lockout (P4).
 4. **DONE (A11)** — opt-in, Hello-gated **read-only** offline cache (E9).

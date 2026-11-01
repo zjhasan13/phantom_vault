@@ -824,6 +824,15 @@ test("A12: the scanner stays out of closed shadow roots", async (t) => {
   );
 });
 
+test("E5: never-save sites have a Settings list with Remove", () => {
+  const html = readFileSync(new URL("../../browser_extension/popup.html", import.meta.url), "utf8");
+  const js = readFileSync(new URL("../../browser_extension/popup.js", import.meta.url), "utf8");
+  assert.match(html, /id="neverSaveList"/);
+  assert.match(js, /function renderNeverSave\(/);
+  assert.match(js, /never_save_domains: list/);
+  assert.match(js, /btn\.dataset\.domain = d/);
+});
+
 test("A4: offscreen never blanks without a matching hash", () => {
   const O = readFileSync(
     new URL("../../browser_extension/offscreen.js", import.meta.url), "utf8");

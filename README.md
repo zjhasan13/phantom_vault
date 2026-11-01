@@ -108,7 +108,7 @@ cargo test                       # 505 passed / 1 ignored + 4 pv_sign tests at 0
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
-npm test                         # 132/132 at 0.4.1
+npm test                         # 133/133 at 0.4.1
 
 iscc installer.iss               # optional: installer-output\PhantomVault-Setup-*.exe
 

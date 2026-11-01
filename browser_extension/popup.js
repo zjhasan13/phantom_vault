@@ -16,6 +16,7 @@
     match_mode: "base",
     auto_submit: false,
     blocked_domains: [],
+    never_save_domains: [],
     clipboard_clear_sec: 30,
     lang: "en",
   };
@@ -277,6 +278,43 @@
   form.append(modeRow);
 
   const blockedEl = document.getElementById("blocked");
+  const neverListEl = document.getElementById("neverSaveList");
+  function renderNeverSave(list) {
+    neverListEl.textContent = "";
+    const domains = (Array.isArray(list) ? list : []).slice().sort();
+    if (!domains.length) {
+      const h = document.createElement("div");
+      h.className = "hint";
+      h.textContent = "None — the save prompt is active everywhere.";
+      neverListEl.append(h);
+      return;
+    }
+    for (const d of domains) {
+      const row = document.createElement("div");
+      row.className = "row";
+      row.style.display = "flex";
+      row.style.alignItems = "center";
+      row.style.justifyContent = "space-between";
+      row.style.marginTop = "6px";
+      const name = document.createElement("span");
+      name.textContent = d;
+      const btn = document.createElement("button");
+      btn.textContent = "Remove";
+      btn.dataset.domain = d;
+      row.append(name, btn);
+      neverListEl.append(row);
+    }
+  }
+  neverListEl.addEventListener("click", async (e) => {
+    const b = e.target.closest("button[data-domain]");
+    if (!b) return;
+    const d = b.dataset.domain;
+    const s = await chrome.storage.local.get({ never_save_domains: [] });
+    const list = (Array.isArray(s.never_save_domains) ? s.never_save_domains : [])
+      .filter((x) => x !== d);
+    await chrome.storage.local.set({ never_save_domains: list });
+    renderNeverSave(list);
+  });
   chrome.storage.local.get(DEFAULTS).then((s) => {
     const cur = { ...DEFAULTS, ...s };
     lang = cur.lang === "bn" ? "bn" : "en";
@@ -298,6 +336,7 @@
     for (const [key] of TOGGLES) inputs[key].checked = cur[key] !== false;
     modeSel.value = cur.match_mode || "base";
     blockedEl.value = (cur.blocked_domains || []).join("\n");
+    renderNeverSave(cur.never_save_domains || []);
   });
   document.getElementById("saveSettings").addEventListener("click", async () => {
     const out = { lang };

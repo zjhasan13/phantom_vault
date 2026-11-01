@@ -1,7 +1,7 @@
-# Session Handoff — PhantomVault
+# Session Handoff â€” PhantomVault
 
 > Read this fully in a fresh session BEFORE doing anything. Last updated: A19 remote canary alert (signed P2P + pending retry), after A18/A15c/A16/A12/A17/A11b/A14.
-> Companion: `rules.md` (architecture invariants — non-negotiable).
+> Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
 
@@ -14,7 +14,7 @@
   tripwire; popup mirrors the trust rank; carry clears only on a full fill.
 
 - **Import/export 0.4.0:** lossless native
-  `.pvx` backup (same master-password hybrid envelope — superseded by A6 below,
+  `.pvx` backup (same master-password hybrid envelope â€” superseded by A6 below,
   which adds the `PVBK1` backup-passphrase tag; passkeys, 2FA hub,
   SSH keys, attachment bytes), row-level preview with Skip / Update existing /
   Import all, URL-aware login dedupe, session-only undo guarded by a vault
@@ -27,7 +27,7 @@
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
 
-- **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
+- **A5 â€” master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new
   one (fresh Argon2id salt + fresh ML-KEM keypair, KDF params untouched),
   round-trip-verifies, proves the old password no longer opens it, rotates the
@@ -36,11 +36,11 @@
   confirm (`change_master_password`). On success: RAM master replaced, Hello
   token re-sealed, App PIN removed (PIN is unrecoverable), shard nudge reset,
   metadata-only `rekey` access-log event, sync push. Deliberate: `.pvx`, old
-  backups and GitHub history stay on the old password. Tests: +6 →
+  backups and GitHub history stay on the old password. Tests: +6 â†’
   `cargo test` **481 passed / 1 ignored**, `npm test` **118/118**. A4 hardware
-  clipboard QA still unverified (gap doc §5.7).
+  clipboard QA still unverified (gap doc Â§5.7).
 
-- **A9 — edit-before-save (this batch):** `content.js` now has one
+- **A9 â€” edit-before-save (this batch):** `content.js` now has one
   `credentialToast` builder behind `saverToast`/`updateToast`. The prompt shows
   the submitted username and password in real inputs (password masked) inside a
   **closed** shadow root, so the pair can be corrected before anything is
@@ -49,16 +49,16 @@
   error, and re-classifies against `existingSync` so a pair equal to a stored
   entry stops with "already saved" instead of a host round-trip. The 30 s timer
   re-arms on typing and refuses to close while a field is focused; Escape
-  inside a field keeps the edit, elsewhere it dismisses. Tests: +6 →
+  inside a field keeps the edit, elsewhere it dismisses. Tests: +6 â†’
   `npm test` **124/124**, `cargo test` 481 unchanged. Honest limit: a closed
-  shadow root is a DOM boundary, not a keyboard boundary — the page can still
+  shadow root is a DOM boundary, not a keyboard boundary â€” the page can still
   see key events, as it can for the original typing.
 
-- **A6 — independent backup passphrase (this batch):** new `.pvx` exports are
+- **A6 â€” independent backup passphrase (this batch):** new `.pvx` exports are
   `b"PVBK1"` + the unchanged portable envelope, sealed with a **backup
   passphrase** instead of the vault master (`exporter::export_native_encrypted`,
-  `BACKUP_V2_MAGIC`). Export gate (`backup_pass_error`): ≥12 characters, confirm
-  must match, and the value must **differ from the master** — reusing the master
+  `BACKUP_V2_MAGIC`). Export gate (`backup_pass_error`): â‰¥12 characters, confirm
+  must match, and the value must **differ from the master** â€” reusing the master
   is refused outright. The master reprompt stays as proof of presence. Import
   checks the tag first (`Format::PhantomBackupV2`) and decrypts a tagged file
   **only** with the backup field; a missing/wrong passphrase fails with an
@@ -66,10 +66,10 @@
   legacy path (master password) so pre-A6 backups still import. UI: two modal
   fields for encrypted export + an optional "Backup passphrase" field on the
   Import screen, both cleared once Rust owns the secret. `crypto.rs` unchanged;
-  fresh salt per export (asserted). Tests +4 → `cargo test` **485 passed / 1
+  fresh salt per export (asserted). Tests +4 â†’ `cargo test` **485 passed / 1
   ignored**, `npm test` **124/124**.
 
-- **A8a — certificate-free release pipeline (this batch):**
+- **A8a â€” certificate-free release pipeline (this batch):**
   `.github/workflows/release.yml` runs on `v*` tags: verifies tag == Cargo
   version, refuses without `PV_SIGNING_KEY`, then calls
   `scripts/package_release.ps1` (the same script used locally) to run
@@ -83,7 +83,7 @@
   installer and `PhantomVault-<ver>-windows-x64.exe`; `pick_asset` now skips
   `setup`/`installer` names and refuses an installer-only release, so the
   updater can never swap the installer over the live app. The workflow
-  publishes the release and a GitHub build-provenance attestation. **No UPX** —
+  publishes the release and a GitHub build-provenance attestation. **No UPX** â€”
   the old sub-8MB target came from v0.2.0 (6.7 MB); the published 0.4.1 exe is
   19.77 MB (0.4.0 was 19.55 MB) and the installer 8.98 MB, so
   `docs/RELEASE.md` records the real size instead.
@@ -98,12 +98,12 @@
   both zips, `.sig` + `.sha256` for each, CycloneDX SBOM (583 components) and
   `SHA256SUMS.txt`. Verified after download: both exes' `.sig` against the
   pinned key, hashes equal the API digests and `SHA256SUMS.txt`, and
-  `gh attestation verify … --repo zjhasan13/phantom_vault` exited 0.
+  `gh attestation verify â€¦ --repo zjhasan13/phantom_vault` exited 0.
   `security.yml` is green on the tag commit too.
-  Tests +4 → `cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
-  Authenticode (A8b) remains open — no certificate.
+  Tests +4 â†’ `cargo test` **485 passed / 1 ignored + 4 pv_sign tests**; `npm test` **124/124**.
+  Authenticode (A8b) remains open â€” no certificate.
 
-- **A11 — offline read-only extension cache (this batch):** Settings > Security
+- **A11 â€” offline read-only extension cache (this batch):** Settings > Security
   gains an opt-in toggle. On enable (and at every unlock while enabled) the app
   writes a **logins-only** snapshot (`vault_cache.enc`, `PVOC1` +
   XChaCha20-Poly1305) under a fresh 32-byte key sealed with DPAPI
@@ -117,65 +117,71 @@
   refused offline in both popup and content paths. Decoy unlock **deletes** the
   cache; rekey refreshes it; disabling deletes both files.
   Tests +4 Rust (Trash exclusion, AEAD tamper/wrong key, DPAPI disk round-trip,
-  clear) and +4 JS (fallback, TTL reuse, lock clearing, empty-query guard) →
+  clear) and +4 JS (fallback, TTL reuse, lock clearing, empty-query guard) â†’
   `cargo test` **489 passed / 1 ignored + 4 pv_sign tests**; `npm test`
-  **128/128**. Honest limit: Hello is a presence prompt, not a key factor — a
+  **128/128**. Honest limit: Hello is a presence prompt, not a key factor â€” a
   same-user process can unseal DPAPI without it, and the snapshot refreshes
   only at unlock.
 
-- **A15a — mandatory P2P pairing (this batch):** new `sync/p2p_pairing.rs`:
+- **A15a â€” mandatory P2P pairing (this batch):** new `sync/p2p_pairing.rs`:
   per-device Ed25519 key (DPAPI), one-time 64-bit code (5 min, single-use, never
   sent over the wire), HMAC pair proof, DPAPI-sealed paired-device list, and
-  Ed25519-signed `pull`/`sync` requests (timestamp ±120 s). `p2p_local.rs`
+  Ed25519-signed `pull`/`sync` requests (timestamp Â±120 s). `p2p_local.rs`
   now answers only `/p2p/pair` unauthenticated; every other request without a
   paired signature gets 403. The shown P2P "PIN" is now the pairing code; a
   paired device syncs without re-entering it (address-based lookup). Legacy PIN
-  code is retained only for old route tests/migration. Tests +3 →
+  code is retained only for old route tests/migration. Tests +3 â†’
   `cargo test` **499 passed / 1 ignored + 4 pv_sign**; `npm test` 132/132.
   **A15b:** beacons now carry only an ephemeral per-process ID (no head
   SHA/mtime; legacy parse fallback only), and Settings lists paired devices with
   a Forget action (`list_pairs/forget`). Remaining: response signing, QR, and
   wiring A16's fresh-device anchor to the paired head.
 
-- **A15b — ephemeral beacons + paired-device UI (this batch):** `Peer` no longer
+- **A15b â€” ephemeral beacons + paired-device UI (this batch):** `Peer` no longer
   carries `head_sha`/`pin_required`; `beacon_json` emits `{app,name,version,port,id,ts}`
   with a random per-process `id`, and `parse_beacon` accepts legacy `head_sha`
   only for discovery. Settings gains a paired-device list (name, key prefix,
   address) with **Forget**, which removes the key from `p2p_paired.dpapi` so the
-  next request is 403. Tests +1 → `cargo test` **500 passed / 1 ignored + 4
+  next request is 403. Tests +1 â†’ `cargo test` **500 passed / 1 ignored + 4
   pv_sign**; `npm test` 132/132.
 
-- **A19 — remote canary alert (this batch):** `record_trip` still writes the
+- **E5 â€” never-save Settings UI (this batch):** popup Settings lists
+  `never_save_domains` (sorted) with a per-domain **Remove**; removal rewrites
+  `chrome.storage.local` and `content.js`/`background.js` pick it up live via
+  `storage.onChanged`/the background lookup. Test +1 JS â†’ `npm test` **133/133**,
+  `cargo test` 505/1 unchanged.
+
+- **A19 â€” remote canary alert (this batch):** `record_trip` still writes the
   local log, then sends `{id,time,title_hash,via,device}` to paired peers via
   `POST /p2p/canary` (signed by A15 keys; no title/secret leaves). Unreachable
   alerts queue in `canary_pending.jsonl` and retry on P2P enable; the receiver
   appends a `CANARY-TRIPPED-REMOTE` line and a startup flag that `main` turns
-  into a notification. Tests +1 → `cargo test` **505 passed / 1 ignored + 4
+  into a notification. Tests +1 â†’ `cargo test` **505 passed / 1 ignored + 4
   pv_sign**; `npm test` 132/132. Honest limit: P2P reachability required for
   live delivery; no dead-drop yet.
 
-- **A18 — indistinguishable decoy provisioning (this batch):** decoy moved from
+- **A18 â€” indistinguishable decoy provisioning (this batch):** decoy moved from
   `decoy_vault.enc` to `my_secure_vault.enc.bak.0.enc` (looks like an extra
-  backup; rotation only touches 1–5) and is written with
+  backup; rotation only touches 1â€“5) and is written with
   `save_vault_secret_flat` (no nested backups). The `duress.dpapi` verifier is
-  gone — the decoy AEAD tag is the password proof. `storage.rs` pads every JSON
+  gone â€” the decoy AEAD tag is the password proof. `storage.rs` pads every JSON
   payload to a 1 MiB bucket, so a typical vault and decoy share the same
   container size. Legacy files migrate on first use and are in the factory-reset
-  list. Tests +2 → `cargo test` **504 passed / 1 ignored + 4 pv_sign**;
+  list. Tests +2 â†’ `cargo test` **504 passed / 1 ignored + 4 pv_sign**;
   `npm test` 132/132. Honest limits: mtimes are not aligned, >1 MiB attachments
   can change the size class, and the decoy is still a separate container.
 
-- **A15c — response signing, QR, A16 anchor (this batch):** every framed P2P
+- **A15c â€” response signing, QR, A16 anchor (this batch):** every framed P2P
   response is signed with the host device key (`sign_response/verify_response`,
   `X-PV-Key/Time/Sig`); clients verify before parsing. The one-time code renders
   as a self-contained SVG QR (`qr_svg`, Settings image) alongside the text.
   Pairing pins the host `rev`/`hash`, pull responses carry it, and `head_ok`
   refuses a lower revision / same-rev different hash; a successful pull updates
-  the pin. Tests +2 → `cargo test` **502 passed / 1 ignored + 4 pv_sign**.
+  the pin. Tests +2 â†’ `cargo test` **502 passed / 1 ignored + 4 pv_sign**.
   Push-side anchor now sends the client head and the server refuses a lower
   revision (409) before adopting. Remaining: re-pair on address change.
 
-- **A16 — signed container revision (this batch):** the AEAD payload is now a
+- **A16 â€” signed container revision (this batch):** the AEAD payload is now a
   rev-2 envelope `{meta:{format,version,rev,prev_hash}, vault}`. Save increments
   `rev` and sets `prev_hash = SHA-256(previous container)`; a per-path
   in-process head also refuses a save when the file changed underneath
@@ -183,23 +189,23 @@
   hash, or a newer rev that does not chain to the local hash; the GitHub merge
   path calls it before merging. Legacy plain-Vault payloads load as rev 0 and
   migrate to rev 1 on the next save; rekey writes rev N+1 chained to the old
-  container. Tests +3 → `cargo test` **496 passed / 1 ignored + 4 pv_sign**;
+  container. Tests +3 â†’ `cargo test` **496 passed / 1 ignored + 4 pv_sign**;
   `npm test` **132/132**. Honest limits: fresh-device first pull is TOFU (no
   local anchor), P2P still uses the mtime/SHA guard (A15), and **older builds
-  cannot open rev-2 vaults** — upgrade every device before syncing.
+  cannot open rev-2 vaults** â€” upgrade every device before syncing.
 
-- **A12 — shadow-DOM scan/observer (this batch):** `content.js` gains
+- **A12 â€” shadow-DOM scan/observer (this batch):** `content.js` gains
   `deepRoots`/`deepQuery`/`deepActiveElement` (open roots only, 200-root/20k-node
   caps, skips `__pv_*`). `findFields`, card/address queries, `passwordNear`, the
   OTP split-group anchor and `scanForms` use the deep query; `badgeGroup` treats
   a shadow tree as its own scope; `deepActiveElement` covers generate/auto-submit
   focus. Every discovered open root gets the same debounced `pvScheduleScan`
   observer, and `watchSubmit` attaches to deep `<form>` elements (submit does not
-  cross a shadow boundary). Closed roots remain untouched. Tests +3 JS → `npm
+  cross a shadow boundary). Closed roots remain untouched. Tests +3 JS â†’ `npm
   test` **132/132**; `cargo test` 493/1 + 4 pv_sign unchanged. Honest limit:
   closed components are invisible; traversal caps may skip pathological pages.
 
-- **A17 — same-origin favicons (this batch):** deleted the DuckDuckGo and Google
+- **A17 â€” same-origin favicons (this batch):** deleted the DuckDuckGo and Google
   fallbacks in `src/core/favicon.rs`. The only fetch is now
   `https://{domain}/favicon.ico`; the extension's page-declared icon harvest is
   unchanged and still preferred. Toggle/kill-switch/`can_net` gates untouched.
@@ -208,7 +214,7 @@
   tests**; `npm test` **129/129**. Honest limit: the site sees its own icon
   request and may redirect to its CDN; no bundled icon set yet.
 
-- **A11b — dual-gate offline cache (this batch):** the same DPAPI cache key can
+- **A11b â€” dual-gate offline cache (this batch):** the same DPAPI cache key can
   now be opened by **Windows Hello** (`cache_get method:"hello"`) or the
   **extension PIN** (`method:"pin"`), verified through A14's Argon2id record and
   the same persistent lockout. `cache_status` is prompt-free
@@ -221,20 +227,20 @@
   wrong PIN) and JS now 129. Honest limit: strength = min(Hello, PIN); a 4-digit
   PIN is 10k candidates, so the fallback stays opt-in and is labelled weaker.
 
-- **A14 — Argon2id extension PIN (this batch):** `ext_pin.dpapi` no longer
+- **A14 â€” Argon2id extension PIN (this batch):** `ext_pin.dpapi` no longer
   stores/serves a bare SHA-256. The record is `PVPIN2|salt|m|t|p|hash` with a
   16-byte salt and Argon2id (32 MiB, t=3, p=4), sealed with DPAPI. The host
   verifies (`ext_pin_verify`) and the bridge returns only `set: true/false`
   (`ext_pin_status`); the popup no longer hashes or compares anything. A
   file-backed attempt counter (`ext_pin_backoff`) survives restarts: 5 failures
-  → 30 s, then 60/120/300 s; success/set resets it. A legacy SHA-256 record is
+  â†’ 30 s, then 60/120/300 s; success/set resets it. A legacy SHA-256 record is
   refused with "re-set the PIN in Settings", never silently honoured.
-  Tests +2 → `cargo test` **491 passed / 1 ignored + 4 pv_sign tests**;
+  Tests +2 â†’ `cargo test` **491 passed / 1 ignored + 4 pv_sign tests**;
   `npm test` **128/128**. Honest limit: 4-digit PIN entropy is 10k; Argon2id +
   lockout raise the cost but same-user malware can grind the DPAPI record
   offline.
 
-- **A7 — trust documentation (this batch):** three files at the repo root, written
+- **A7 â€” trust documentation (this batch):** three files at the repo root, written
   from the code, not from marketing. `README.md` (features, container/KEM summary,
   build/test commands, repo map, doc index, and a "Known gaps and honest limits"
   section that names the unsigned installer, the missing external audit, Windows-only
@@ -247,36 +253,36 @@
   explicit in/out-of-scope lists, the 0.4.1 limitations and a safe-harbor statement.
   No code changed; `cargo check` and `npm test` (124) stay green.
 
-- Branch `main`. Tier 0 + audit Phases 1–6 committed (`117e38b`, `96b9330`,
+- Branch `main`. Tier 0 + audit Phases 1â€“6 committed (`117e38b`, `96b9330`,
   `b850ce7`, `05c0a36`, `e06d841`, `fc36e65`, `e6eadf5`).
-- **Deep audit (`docs/AUDIT.md`)** — 5-agent read-only sweep + inline
+- **Deep audit (`docs/AUDIT.md`)** â€” 5-agent read-only sweep + inline
   verification. Verified: "Lock" sidebar item exits the process
-  (`slint:1349`→`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
-  trust (`native_host.rs:507`, low reach — relay uses `assert_full`/`uv_token`);
+  (`slint:1349`â†’`main.rs:11665`; **FIXED in Phase 4**); legacy passkey `uv` boolean
+  trust (`native_host.rs:507`, low reach â€” relay uses `assert_full`/`uv_token`);
   `crypto.rs:131-136` skipped `zeroize()` on the decrypt-error branch
   (FIXED in Phase 1 below).
   Two agent claims marked FALSE POSITIVE (do not re-chase): `fill_counts`
-  serde panic (`native_host.rs:1670` — same pattern tested at `:2467`);
+  serde panic (`native_host.rs:1670` â€” same pattern tested at `:2467`);
   `backup_scheduler` "wrong file" (relative `VAULT_FILE` is a project-wide
   convention, `main.rs:44`).
-- **Tier 0 — extension capture engine** (`browser_extension/` ONLY, no Rust/exe
+- **Tier 0 â€” extension capture engine** (`browser_extension/` ONLY, no Rust/exe
   rebuild; `node --test tests/js/background.test.mjs` **19/19**, `build.ps1`
   chrome+firefox OK): fixes registration / multi-page credential capture
   "gives up".
-  - G1/G2/G3: `readFormCreds` replaces the inline submit reader — `new-password`
+  - G1/G2/G3: `readFormCreds` replaces the inline submit reader â€” `new-password`
     fallback so a pure-signup form (no non-new password input) is no longer
     skipped; `maybeOfferSpaSave` now consumes `findFields.newPass`; signup vs
     login classified by field shape; a confirm-password mismatch refuses to
     offer (typo guard).
   - C1/C2: `getExisting` is a 60 s in-flight-deduped credential-list cache.
     The submit verdict is computed **synchronously** off a warm cache (no
-    `await` before the banner → survives a full-page POST nav); invalidated on
+    `await` before the banner â†’ survives a full-page POST nav); invalidated on
     save. SPA ping reads the DOM immediately + one 400 ms retry (was a flat
     2500 ms wait). Badge probe (`probePageMatch`) shares the same cache.
   - K1/K2: non-secret username carry across pages in `chrome.storage.session`
-    (`pvCaptureCarry`, username only — P1-b intact; password never persisted) +
+    (`pvCaptureCarry`, username only â€” P1-b intact; password never persisted) +
     one-time `setAccessLevel(TRUSTED_AND_UNTRUSTED_CONTEXTS)` at SW start.
-  - Tests: `npm test` → **25/25** (19 background + 6 jsdom content). Added
+  - Tests: `npm test` â†’ **25/25** (19 background + 6 jsdom content). Added
     `package.json` + `jsdom` devDependency (dev-only, `node_modules` ignored);
     `tests/js/content.test.mjs` loads the REAL `content.js` in jsdom and covers
     login / signup-new-password / confirm-mismatch / multi-page carry /
@@ -285,24 +291,24 @@
     `docs/QA_CAPTURE_MATRIX.md` (CAP-01..16 + REG-01..06).
   - **Untouched by design:** `pvPending`, `chainPendingStep`, `sweepOtpOnce`,
     `otpObserver`, popup fill path, native host.
-- **Phase 1 — Rust data integrity (DONE `96b9330`):**
+- **Phase 1 â€” Rust data integrity (DONE `96b9330`):**
   - D5 (>1 MB sync data loss): `sync/github_sync.rs` gains `decode_remote_blob()`
-    — refuses an empty/whitespace body (GitHub Contents API returns `content:""`
+    â€” refuses an empty/whitespace body (GitHub Contents API returns `content:""`
     for files >1 MB) and bad base64. `main.rs` adopt path independently refuses a
-    zero-byte remote (defense in depth). Was: `""` → empty vault → fresh device
+    zero-byte remote (defense in depth). Was: `""` â†’ empty vault â†’ fresh device
     wrote 0 bytes.
   - D6: `crypto.rs` `decrypt_vault_secret` zeroizes the derived key on the error
     branch too (`?` used to skip it).
   - Unicode panics: `importer/mod.rs` `parse_bw_datetime` uses `str::get` for the
-    `±hh:mm` suffix (no `split_at`/byte indexing); `developer/secret_scanner.rs`
+    `Â±hh:mm` suffix (no `split_at`/byte indexing); `developer/secret_scanner.rs`
     `scan_line` uses `to_ascii_lowercase` + `get` (byte-length-preserving
     offsets). Multi-byte input can no longer panic.
   - Atomic backups: `storage/backup_scheduler.rs` writes `.vault_backup_*.tmp`
     then renames (crash/full-disk can't leave a truncated `.enc`).
   - Tests: +5 cases (github empty/garbage decode, datetime offsets+unicode,
-    scanner unicode, atomic backup). `cargo test` → **451 passed / 1 ignored**.
-- **Phase 2 — security (DONE `b850ce7`):**
-  - D3 access log fail-closed: `security/access_log.rs` — an unreadable chain
+    scanner unicode, atomic backup). `cargo test` â†’ **451 passed / 1 ignored**.
+- **Phase 2 â€” security (DONE `b850ce7`):**
+  - D3 access log fail-closed: `security/access_log.rs` â€” an unreadable chain
     key now REFUSES the append with a loud stderr line instead of falling back
     to unkeyed SHA-256 (`log_event_gated`). `verify_at_detailed` reads the key
     read-only (no mint) and can't create one as a side effect.
@@ -315,11 +321,11 @@
   - D2 passkey legacy `uv` boolean: confirmed unreachable from the extension
     (only `assert_full`/`attest` + `uv_token` are sent); legacy parity kept, no
     code change.
-  - Tests: `tests/js/domain.test.mjs` added → `npm test` **28/28**.
-- **Phase 3 — shared domain logic (DONE `05c0a36`):**
+  - Tests: `tests/js/domain.test.mjs` added â†’ `npm test` **28/28**.
+- **Phase 3 â€” shared domain logic (DONE `05c0a36`):**
   - E1: `domain.js` `registrable()` now keeps multi-label public suffixes
-    (`foo.co.uk` → `foo.co.uk`; `shop.foo.co.uk` → `foo.co.uk`,
-    `www.google.co.uk` → `google.co.uk`) using a pragmatic PSL subset.
+    (`foo.co.uk` â†’ `foo.co.uk`; `shop.foo.co.uk` â†’ `foo.co.uk`,
+    `www.google.co.uk` â†’ `google.co.uk`) using a pragmatic PSL subset.
   - E2: `EQUIV_CLUSTERS`/`memberHit`/`domainCands`/`domainsEquiv` exist only in
     `domain.js`; `content.js`, `background.js`, `popup.js` are thin wrappers.
   - Wiring: both manifests `"js": ["domain.js", "content.js"]` (order matters);
@@ -328,32 +334,32 @@
   - Harnesses: background sandbox stubs `importScripts`; the jsdom content
     harness evaluates `domain.js` before `content.js`.
   - Tests: +4`domain.test.mjs` cases (registrable ccTLD, pageBase, clusters,
-    ccTLD blocked gate) → `npm test` **32/32**; `cargo test` 452 unchanged.
-- **Phase 4 — real lock + iframe capture (DONE `e06d841`):**
-  - D1: sidebar Lock (`slint:1350` → `main.rs:11677`) and tray Lock
-    (`main.rs:3355`) now call the shared `lock_vault_now` pipeline — RAM scrub,
-    clipboard flush, access log, lock screen — instead of `process::exit(0)`.
+    ccTLD blocked gate) â†’ `npm test` **32/32**; `cargo test` 452 unchanged.
+- **Phase 4 â€” real lock + iframe capture (DONE `e06d841`):**
+  - D1: sidebar Lock (`slint:1350` â†’ `main.rs:11677`) and tray Lock
+    (`main.rs:3355`) now call the shared `lock_vault_now` pipeline â€” RAM scrub,
+    clipboard flush, access log, lock screen â€” instead of `process::exit(0)`.
     New sidebar **Exit** (`slint:1351`, `on_exit_app`) + tray **Exit** are the
     only quit paths (clipboard flushed first, log event `exit`). Unlock already
     existed in the Slint lock screen, so no new screen was added.
   - E4: both manifests `all_frames:true`; the original same-origin guard (removed in P6) returned before any
     setup unless the frame is top-level or SAME-ORIGIN (reads `top.location`,
-    throws on cross-origin ⇒ inert). No `match_about_blank` (hostless origin ⇒
+    throws on cross-origin â‡’ inert). No `match_about_blank` (hostless origin â‡’
     refused). Prevents a third-party iframe from raising a save prompt for its
     own host. (P6 later superseded this with frame-local-origin matching.)
-  - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression →
+  - Tests: `tests/js/content.test.mjs` +1 manifest/guard regression â†’
     `npm test` **33/33**; `cargo test` **452 passed / 1 ignored**.
-- **Phase 5 (audit) — E5 desktop-gate cache (DONE `fc36e65`):**
+- **Phase 5 (audit) â€” E5 desktop-gate cache (DONE `fc36e65`):**
   - `content.js` `extDeskOkPage` is no longer page-lifetime: success is cached
     for at most `EXT_DESK_OK_TTL_MS = 30 s`, and the cache is dropped on
     `window.focus`, tab-visibility return, and bfcache `pageshow`; a
     `PV_SESSION_STATE` locked reply clears it immediately. Worst-case staleness
     is 30 s, and every secret still rides the native bridge gate (UX-only fix).
   - Test: `E5: desktop gate is bounded by TTL and dropped on focus` stubs
-    `Date.now` → one probe warm, re-probe after 31 s, re-probe after `focus`.
+    `Date.now` â†’ one probe warm, re-probe after 31 s, re-probe after `focus`.
     `npm test` **34/34** (19 background + 8 content + 7 domain). Extension-only;
     no Rust rebuild.
-- **Phase 6 (audit) — E6 observer + lock broadcast (DONE `e6eadf5`):**
+- **Phase 6 (audit) â€” E6 observer + lock broadcast (DONE `e6eadf5`):**
   - E6: the two synchronous `documentElement` subtree observers became ONE
     120 ms-debounced observer (`pvScheduleScan`) running `scan()` +
     `scanForms()`; cold-page boot scans stay immediate.
@@ -362,62 +368,62 @@
     a `PV_PING` fails / reports `unlocked:false`; content drops its gate cache
     on receipt. Lock/timeout now invalidates all tabs immediately.
   - Tests: +3 (background broadcast fan-out, content broadcast invalidation,
-    E6 static guard) → `npm test` **37/37** (20 background + 10 content +
+    E6 static guard) â†’ `npm test` **37/37** (20 background + 10 content +
     7 domain). Extension-only; no Rust rebuild.
 - Extension OTP UX shipped (`ec789db`): multiple-2FA sites now open the
   account picker on OTP-field focus/sight (login-dropdown parity, gated by
-  `show_suggestions`); picker rows carry ♻️/🟡/🕰️ health icons joined
+  `show_suggestions`); picker rows carry â™»ï¸/ðŸŸ¡/ðŸ•°ï¸ health icons joined
   client-side from `PV_QUERY`. Working-badge + recency already native
-  (3rd-fill auto-verify `models.rs:601`) — untouched. Extension-only: rebuild
+  (3rd-fill auto-verify `models.rs:601`) â€” untouched. Extension-only: rebuild
   via `browser_extension/build.ps1`, NO exe rebuild. QA physical: 1-account
-  auto-fill, 2-account picker→choose, submit→✅ upore, health icons.
-- **P0 (fill strength) — URL-less web fill hole (DONE `6a4b0c6`):**
+  auto-fill, 2-account pickerâ†’choose, submitâ†’âœ… upore, health icons.
+- **P0 (fill strength) â€” URL-less web fill hole (DONE `6a4b0c6`):**
   - Finding: desktop items carry no URL (`urls: []`), but `content.js` and
     `popup.js` treated an empty URL list as allow (`entryAllowed`), and native
-    `query` is substring-based → lookalike domains could autofill desktop
+    `query` is substring-based â†’ lookalike domains could autofill desktop
     items. Fixed both gates to refuse URL-less entries; content skips them
     silently (phishing toast only for stored-URL mismatches), popup shows
-    "No site URL saved — edit this item and add one."
+    "No site URL saved â€” edit this item and add one."
   - Tests: +4 (url-less hotkey refusal + bound control in jsdom, popup
-    gate/source assertions) → `npm test` **41/41**; extension-only.
-- **P1 (fill strength) — capture URL/title quality (DONE `620bf68`):**
+    gate/source assertions) â†’ `npm test` **41/41**; extension-only.
+- **P1 (fill strength) â€” capture URL/title quality (DONE `620bf68`):**
   - `captureUrl()` stores origin+path only (query/hash stripped, trailing
     slashes normalized); `captureTitle()` prefers `og:site_name` /
     `application-name` / `apple-mobile-web-app-title`, else strips title
-    suffixes and skips generic segments ("Sign in", "Login", …), else host.
+    suffixes and skips generic segments ("Sign in", "Login", â€¦), else host.
   - Native `canonical_login_url()` mirrors the normalization in `save_login`
     (older clients can't inject query/fragment into the vault).
-  - Tests: +2 jsdom save-payload + 1 Rust canonicalization →
+  - Tests: +2 jsdom save-payload + 1 Rust canonicalization â†’
     `npm test` **43/43**, `cargo test` **453 passed / 1 ignored**.
-- **P2 (fill strength) — desktop app binding (DONE `ce43147`):**
+- **P2 (fill strength) â€” desktop app binding (DONE `ce43147`):**
   - `Credential.apps: Vec<String>` (`#[serde(default)]`, additive/export-safe).
     Smart-Grab stores lowercased exe + pretty name via hidden `cap_app`.
   - QuickBar (`Ctrl+Alt+A`) prefers items bound to the focused app; Auto-Type
     refuses bound items in any other app (`autotype-blocked-app` log). Unbound
     web items are unaffected.
-  - Tests: +2 (serde default, binding helper) → `cargo test` **455 passed /
+  - Tests: +2 (serde default, binding helper) â†’ `cargo test` **455 passed /
     1 ignored**; `npm test` 43/43 unchanged.
-- **P3 (fill strength) — popup fill parity (DONE `dbd721a`):**
+- **P3 (fill strength) â€” popup fill parity (DONE `dbd721a`):**
   - Popup fill/fill-submit now delegates to content.js `PV_FILL_ENTRY {id}`;
     content re-queries by domain, re-checks `entryAllowed`, fills through
     `fillLogin()` (React setters, multi-step, TOTP pending) and returns the
     field count. Direct inject is fallback only; refusals keep their reason.
-  - Tests: +2 jsdom + 1 popup source → `npm test` **46/46** (20 background +
+  - Tests: +2 jsdom + 1 popup source â†’ `npm test` **46/46** (20 background +
     16 content + 7 domain + 3 popup).
-- **P4 (fill strength) — UIA `SetValue` desktop fill (DONE `6e31196`):**
+- **P4 (fill strength) â€” UIA `SetValue` desktop fill (DONE `6e31196`):**
   - `desktop_autofill::set_focused_value()` writes the focused enabled,
     writable Edit via `ValuePattern.SetValue` (no keystrokes/IME/clipboard).
     Both `type_sequence` and `type_fields` try it per field and fall back to
     the verified Unicode SendInput path; read-only password boxes therefore
     keep working. Input still sanitized; focus token re-checked before every
     fill / Tab / Enter.
-  - Test: +1 policy gate → `cargo test` **456 passed / 1 ignored**.
-- **P5 (fill strength) — UIA login field-pairing (DONE `9f7c298`):**
+  - Test: +1 policy gate â†’ `cargo test` **456 passed / 1 ignored**.
+- **P5 (fill strength) â€” UIA login field-pairing (DONE `9f7c298`):**
   - App-bound desktop logins try `fill_login_pair()`: locate the password Edit
     (focused if password, else first) + nearest username Edit above it in the
     foreground window; verify both writable before writing; revert partial
     writes; refuse when focus is an Edit outside the pair (chat/search box).
-    Success = SetValue both, `autotype/uia-pair` log, Enter — no Tab dependency.
+    Success = SetValue both, `autotype/uia-pair` log, Enter â€” no Tab dependency.
   - Fallback chain stays: per-field UIA SetValue (P4) -> guarded Unicode typing.
   - Test: +1 `pick_login_pair` matrix -> `cargo test` **457 passed / 1 ignored**.
 - **P6 (web fill strength) - cross-origin iframe fill (DONE `7e6da61`):**
@@ -458,17 +464,17 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 505 passed / 1 ignored + 4 pv_sign tests, `npm test` 132/132 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 505 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets` 2 pre-existing `manual_clamp`
-  warnings (toolchain drift — `.clamp()` changes NaN semantics, intentionally
+  warnings (toolchain drift â€” `.clamp()` changes NaN semantics, intentionally
   untouched per no-break rule).
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
-- SecretString migration (Phases 1–5) DONE: crypto/storage `_secret` variants live,
-  all prod call sites (main unlock/save ×30+, bridge, CLI, decoy, app_pin) ride
+- SecretString migration (Phases 1â€“5) DONE: crypto/storage `_secret` variants live,
+  all prod call sites (main unlock/save Ã—30+, bridge, CLI, decoy, app_pin) ride
   `SecretString`/`Zeroizing`; legacy `&str` wrappers `#[deprecated]` (compat tests
   only, under `#[allow(deprecated)]`). Models fields stay `String` (disk format
-  frozen — deliberate). Remaining `&str` edges: decoy-verify, app_pin-enroll,
+  frozen â€” deliberate). Remaining `&str` edges: decoy-verify, app_pin-enroll,
   Hello-compare (OS/DPAPI boundaries, documented).
 - Release v0.2.0 tagged + pushed (`cargo build --release` + UPX 6.7 MB exe,
   chrome+firefox zips, SHA256SUMS in `Desktop/pv-release-0.2.0/`).
@@ -476,12 +482,12 @@
   Residual (justified): `rsa` (ignored), `bincode` (contained+documented),
   `paste`/`ttf-parser`/`yoke-derive` (transitive).
 - Git history purged of vault containers (C1) + force-pushed. **Everyone works
-  from fresh clones — never push from a stale pre-purge clone.**
+  from fresh clones â€” never push from a stale pre-purge clone.**
 - Build env: `CARGO_TARGET_DIR=C:\Users\FAHAD\pv-target` (persisted via setx,
   2026-10-31). D: is only 9.7 GB and filled up twice; C: has ~23 GB free.
   `scripts/package_release.ps1` and `installer.iss` honour the variable
   (`/DMySourceExe`), so a custom target dir does not break packaging.
-- Epic roadmap 6→7→2→4→1 SHIPPED (per-phase commit + push, no existing
+- Epic roadmap 6â†’7â†’2â†’4â†’1 SHIPPED (per-phase commit + push, no existing
   signatures/behavior broken):
   - #6 breach full-loop checklist (`fe30f10`): vault-side rotation progress
     per health row (`rotation_status` + `health_rows_with_rotation`);
@@ -489,13 +495,13 @@
   - #7 limited direct import (`ed10d48`): `importer/browser_direct.rs`
     read-only profile discovery (Chrome/Brave/Edge/Opera/Firefox) +
     guided CSV import; direct store decrypt OFF (needs SQLite+AES-GCM /
-    NSS key — refused loud, documented in module header).
+    NSS key â€” refused loud, documented in module header).
   - #2 emergency timed grant (`402e1df`): `security/emergency.rs`
-    (request→approve→wait→envelope, PQ+XChaCha, maturity enforced in
+    (requestâ†’approveâ†’waitâ†’envelope, PQ+XChaCha, maturity enforced in
     `seal_envelope`) + `emergency/<id>.<kind>.json` relay via existing
     private repo (fixed generic commit msg) + copy-paste transport;
     takeover = existing shard recovery. Shamir/PDF untouched.
-  - #4 CRDT merge (`d3c3235`): `sync/crdt_merge.rs` explicit preview →
+  - #4 CRDT merge (`d3c3235`): `sync/crdt_merge.rs` explicit preview â†’
     apply only; login LWW on `last_changed`, ties/delete-vs-edit keep
     local + conflict; device unlock factor never merges; grants union
     (revoke wins). Whole-blob adopt paths untouched.
@@ -503,21 +509,21 @@
     (other kinds refuse loud); `Vault.shared_grants` additive
     (`#[serde(default)]`, pre-sharing JSON loads); revoke = mark +
     mandatory password rotation (issued copies can't be un-issued).
-- Epic roadmap 9→3→5 SHIPPED (mobile/iOS excluded, per-phase commit + push):
-  - #9 secure-send (`ab909db`): `security/secure_send.rs` — expiring
+- Epic roadmap 9â†’3â†’5 SHIPPED (mobile/iOS excluded, per-phase commit + push):
+  - #9 secure-send (`ab909db`): `security/secure_send.rs` â€” expiring
     XChaCha notes, link-code = key (id = sha256(key)), relay
-    `send/<id>.json`, read → expiry-check → decrypt → DELETE (burn);
+    `send/<id>.json`, read â†’ expiry-check â†’ decrypt â†’ DELETE (burn);
     delete-fail after good read LOUD; copy-paste offline path included.
     `delete_file` verified in octocrab 0.41.2 vendored source first.
   - #3 passkey ceremony relay (`a8750ad` + test-fix `08dd887`):
     `core/passkey.rs` assertion + fmt-none attestation packaging;
     `native_host` `assert_full`/`attest` (uv-token OR legacy uv) +
-    `request_uv` (Hello system prompt → single-use rp-bound 120s token);
+    `request_uv` (Hello system prompt â†’ single-use rp-bound 120s token);
     hook 90s hold + timeout fallback; popup approve button; background
     sender-check + Hello-before-sign. Legacy `PV_ASSERT` fail-closed
     test untouched. Caught by tests: UV consume was remove-then-check
-    (burned on wrong-rp) → check-then-remove.
-  - #5 business admin (`1343968`): `security/admin.rs` — member CSV
+    (burned on wrong-rp) â†’ check-then-remove.
+  - #5 business admin (`1343968`): `security/admin.rs` â€” member CSV
     roster (machine-local `org_members.json`, factory-reset shredded),
     deprovision auto-revokes key-bound grants, OIDC userinfo email-verify
     (no JWT dep), chain-verified audit JSON export. Explicitly NOT:
@@ -527,35 +533,35 @@
 
 ## 2. How to resume (new PC / new OpenCode session, any model incl. Muse Spark)
 
-1. `git clone https://github.com/zjhasan13/phantom_vault.git` (fresh — no old clones).
+1. `git clone https://github.com/zjhasan13/phantom_vault.git` (fresh â€” no old clones).
 2. Read `rules.md`, then this file, then ask the user which pending item to start.
 3. Workflow (mandatory): **plan mode first** (spec + file:line touch list, no edits)
-   → user approves ("green signal") → **build mode** (implement + `cargo check` +
-   `cargo test` + `npm test`) → commit
-   (`type(scope): subject (test counts)`) → push `main`.
+   â†’ user approves ("green signal") â†’ **build mode** (implement + `cargo check` +
+   `cargo test` + `npm test`) â†’ commit
+   (`type(scope): subject (test counts)`) â†’ push `main`.
 4. Communication: short, direct, Bengali-mix OK. Every finding cites `file:line`
    + exact code quote. Verify with tools, don't speculate. Never use `bash` to
    communicate; never use comments for chain-of-thought.
 5. Quality bar that produced this history: no fix without a regression test,
    no refactor without `cargo check` clean, no push with red tests, honest
-   "I don't know yet — here is how we find out" instead of guessing.
+   "I don't know yet â€” here is how we find out" instead of guessing.
 
 ## 3. Pending queue (ordered)
 
-1. **A8b Authenticode — deferred by product decision (2026-10-31):** no paid
+1. **A8b Authenticode â€” deferred by product decision (2026-10-31):** no paid
    certificate for now; Ed25519 + SHA-256 + GitHub attestation is the current
    trust stack. If revisited, insert `signtool` after packaging and before
    hashing (never sign before the final bytes are fixed).
 2. **Tray X-still-exits (user reports FIXED on their side):** re-verify on the
-   next physical pass (X → process stays as background tray process; Access
+   next physical pass (X â†’ process stays as background tray process; Access
    Log close-path lines present). If it regresses, suspects in order:
-   handler never fires (Slint close-request path) → panic=abort in handler →
+   handler never fires (Slint close-request path) â†’ panic=abort in handler â†’
    env-specific tray failure.
 3. **Live measurements (partial, needs the user's machine):** observed
-   minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) — still needed:
-   locked+minimized release-build reading, idle CPU 0.00% × 5 min, bridge
+   minimized+unlocked 7.3 MB / 0.1% CPU (screenshot) â€” still needed:
+   locked+minimized release-build reading, idle CPU 0.00% Ã— 5 min, bridge
    warm p50 ~5 ms. Record in release notes.
-4. **Master Password Rotation** — shipped in-app (A5, Settings > Security).
+4. **Master Password Rotation** â€” shipped in-app (A5, Settings > Security).
    The old export/import rotation is no longer needed. After a rekey, reprint
    the recovery shards and re-enroll the App PIN (both stay on the old secret
    until redone).
@@ -566,7 +572,7 @@
    works too). Releases are now built and uploaded by `release.yml` (0.4.1 was
    the first automated run); no manual web-UI upload is needed.
 6. **Follow-ups for the other line:** legacy host `assert` unreachable from
-   extension (fails-closed test pinned — relay now uses
+   extension (fails-closed test pinned â€” relay now uses
    `assert_full`/`attest`). Resolved (`621892c`): `write_adopted_head` is wired on BOTH
    adopt paths (`serve_conn`, `sync_with_peer`) and the guard is now a tested
    pure function (`adopt_rollback_blocked`); `AgentKey` is explicitly
@@ -586,23 +592,23 @@
 - Commit style: `type(scope): subject (test counts)`.
 - Never force-push without explicit user approval (kills collaborators' work).
 - Never commit `*.enc*`, `*.dpapi`, `access.log`, `com.phantomvault.host.json`
-  (all gitignored — the C1 leak must never recur).
-- Release folder (`Desktop/pv-release-0.2.0/`) is DISTRIBUTION only — never run
+  (all gitignored â€” the C1 leak must never recur).
+- Release folder (`Desktop/pv-release-0.2.0/`) is DISTRIBUTION only â€” never run
   the app from it (vault/seals accumulate there and could ship by accident).
 - installer.iss references a firefox host JSON that the app button (not the
-  installer) actually writes — placeholder pattern, keep in sync.
-- Roadmap no-break contract (6→7→2→4→1 proven): additive model fields only
+  installer) actually writes â€” placeholder pattern, keep in sync.
+- Roadmap no-break contract (6â†’7â†’2â†’4â†’1 proven): additive model fields only
   (`#[serde(default)]`), no existing signature/semantics changes, new
   network/merge paths explicit + preview-first + default-OFF, every new
   behavior ships with regression tests, decoy refused on all new grantor
   paths, access log metadata-only.
-- Do NOT "fix" the 2 `manual_clamp` clippy warnings with `.clamp()` — NaN
+- Do NOT "fix" the 2 `manual_clamp` clippy warnings with `.clamp()` â€” NaN
   propagation semantics differ from `.max().min()`; layout sizing must not
   change silently. An `#[allow(clippy::manual_clamp)]` on `push_hub_width`
   keeps CI's `-D warnings` green without changing behaviour.
 - First-run audit-key creation is serialized (`chain_key_bytes` static mutex,
   double-checked). Without it, parallel first writes on a clean machine can
-  each seal a different key and orphan every chain but their own — this is
+  each seal a different key and orphan every chain but their own â€” this is
   what made `chain_verifies_and_tamper_breaks` flake on a fresh CI runner.
 - Test hygiene (proven twice): env-mutating tests sharing one process-global
   var MUST serialize via a static `Mutex` (see `browser_direct` ENV_LOCK
@@ -610,23 +616,23 @@
   attempts never burn); brand-new relay message names keep old fail-closed
   pins green (`PV_ASSERT` vs `PV_ASSERT_SIGN`).
 - Crate `Result<T>` alias collision: new String-error fns use
-  `std::result::Result` or a local `StdResult<T>` alias — never bare
+  `std::result::Result` or a local `StdResult<T>` alias â€” never bare
   `Result<_, String>` next to `use crate::error::Result`.
 - A5 rekey invariants: the rollback snapshot is the normal `.bak.1.enc`
   (sealed with the OLD password); App PIN is removed on rotation because the
   PIN cannot re-seal itself; old `.pvx` exports, backups and GitHub history
-  stay on the old password — never claim otherwise in UI or docs.
+  stay on the old password â€” never claim otherwise in UI or docs.
 - A6 backup invariants: `PVBK1` is a 5-byte prefix, not a new container
-  version — `crypto.rs` stays untouched. A tagged file is opened ONLY with the
+  version â€” `crypto.rs` stays untouched. A tagged file is opened ONLY with the
   backup passphrase (the master is never tried); untagged files keep the
   legacy master path, so pre-A6 `.pvx` files must never be broken. The export
   gate refuses a passphrase equal to the master (not a warning). Clearing the
   Slint fields happens on the event loop; property writes never cross threads.
-- A11b dual-gate invariants: one cache key, two gates — never duplicate the
+- A11b dual-gate invariants: one cache key, two gates â€” never duplicate the
   ciphertext or wrap the key with the PIN. PIN unlock requires BOTH a set PIN
   and the explicit `offline_cache_pin.pref` consent; replacing/removing the PIN
   revokes it. `cache_status` must never prompt; `PV_QUERY` never prompts
-  implicitly. Strength is min(Hello, PIN) — keep the fallback default OFF.
+  implicitly. Strength is min(Hello, PIN) â€” keep the fallback default OFF.
 - A19 canary invariant: alerts carry only `id/time/title_hash/via/device` and
   are signed by a paired device; never send the title or secret. Pending retry
   is best-effort until P2P is reachable (no dead-drop yet).
@@ -641,7 +647,7 @@
   every save increments the chain; never reset a revision when the file merely
   disappeared (refuse). `check_incoming` is the only freshness gate: lower rev =
   stale, equal rev + different hash = conflict, newer rev without the local hash
-  as `prev_hash` = fork. Fresh-device first pull is TOFU — never claim otherwise.
+  as `prev_hash` = fork. Fresh-device first pull is TOFU â€” never claim otherwise.
   Rev-2 containers are unreadable by older builds; release notes must say so.
 - A12 shadow-DOM invariants: traverse OPEN roots only (closed roots are
   inaccessible by design); every shadow observer must call the same debounced
@@ -653,22 +659,22 @@
 - A14 PIN invariants: the verifier never crosses the bridge (`ext_pin_status`
   is boolean only); Argon2id params live in the record; the lockout counter is
   file-backed and reset only by success/set/clear; a legacy SHA-256 record MUST
-  fail closed. 4-digit PINs are shoulder-surfing protection — never call them
+  fail closed. 4-digit PINs are shoulder-surfing protection â€” never call them
   vault-grade.
 - A11 cache invariants: the snapshot is logins-only, read-only, refreshed at
   unlock; the key is DPAPI-sealed and the host requires a Hello prompt; the
   extension keeps plaintext only in SW memory (never `storage`) for 15 min.
   `cache_get` is the ONLY command allowed before the heartbeat gate. Decoy
   unlock MUST clear the cache (deniability), and reprompt-armed items MUST NOT
-  fill from the cache. Hello is presence UI, not a key factor — never claim the
+  fill from the cache. Hello is presence UI, not a key factor â€” never claim the
   cache is tamper-proof against same-user malware.
 - A8a release invariants: `src/release_pubkey.rs` is the ONLY definition of
   the pinned key (updater + signer both consume it). `pv-sign` fails closed on
   a key mismatch and never prints the seed. CI and local builds call the same
   `scripts/package_release.ps1`. The updater asset is the portable
-  `PhantomVault-<ver>-windows-x64.exe`, never the Inno installer — `pick_asset`
+  `PhantomVault-<ver>-windows-x64.exe`, never the Inno installer â€” `pick_asset`
   skips `setup`/`installer` and returns `None` when only an installer exists.
   Sign AFTER the installer/zip bytes are final; hash after signing. Never
-  rebuild/overwrite a published tag — the workflow refuses an existing release
+  rebuild/overwrite a published tag â€” the workflow refuses an existing release
   on manual dispatch. No UPX: the sub-8MB target was v0.2.0-only and
   compressing an unsigned binary raises AV false positives.
