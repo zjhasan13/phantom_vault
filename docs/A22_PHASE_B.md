@@ -117,10 +117,12 @@ pub fn save_vault_secret_with_profile(
 ) -> Result<(), String>;
 ```
 
-- `save_vault_secret` becomes `…with_profile(…, Portable)` (no behaviour change).
-- Paranoid save requires `pq_profile::exists()`; if the sidecar is missing,
-  generate once and use the returned encapsulation key (or refuse — decide in
-  Phase C; Phase B tests may generate explicitly).
+- `save_vault_secret` resolves the on-disk profile **under the save lock** and
+  preserves it (no silent downgrade); `convert_vault_profile` is the only
+  explicit profile switch.
+- A paranoid save requires the device key; a missing sidecar is refused with a
+  distinct error — no generation inside the save path. The Settings enable flow
+  creates/reuses the key before converting.
 - `load_vault_versioned_secret` dispatches on `meta.profile` **after** AEAD
   decrypt? No: the profile is inside the AEAD payload, so the key derivation
   must be chosen before decrypt. The profile therefore needs to be readable
