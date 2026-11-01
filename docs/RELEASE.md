@@ -43,6 +43,15 @@ container, so the notes MUST require upgrading every device before syncing.
 Pre-A16 backups still load and migrate on the next save. A fresh device's first
 pull is TOFU; later stale pulls are refused.
 
+**PQ-paranoid container (A22, `PV3\0`):** opt-in only; portable stays the
+default. A paranoid vault opens **only** on the device that sealed it
+(password + that Windows profile's DPAPI-sealed ML-KEM key) and refuses sync,
+P2P and remote merge. Notes MUST state: (1) `pq_device.dpapi` is not portable
+and losing it or the Windows profile means data loss; (2) the portable `.pvx`
+backup is the restore path and is mandatory before enabling; (3) builds older
+than this release cannot open `PV3` at all, so every device stays on a
+compatible build.
+
 ## 3. Rollback plan (tag discipline)
 
 - `v0.4.1` is tagged + pushed and published — it is the current rollback

@@ -1,14 +1,20 @@
 # A22 Phase B — PQ-paranoid container profile
 
-> Status: **implemented (Phase B)**. No production/UI path uses it yet; A22 is
-> not shipped until Phase C (Settings toggle + mandatory portable `.pvx` backup +
-> sync guards) lands. Portable remains the default.
+> Status: **implemented — Phase A/B (container) + Phase C (Settings gate,
+> sync/P2P guards)**. Portable remains the default; the paranoid profile is
+> opt-in, gated behind a portable `.pvx` export in the same session.
 >
 > Landed: `PV3\0` + `encrypt/decrypt_vault_paranoid_secret`
-> (`src/crypto.rs`), profile dispatch + `save_vault_secret_with_profile`
-> (`src/storage.rs`), device keypair load (`src/security/pq_profile.rs`).
-> Tests: `cargo test` **509 passed / 1 ignored** (+ 4 `pv_sign`), `npm test`
+> (`src/crypto.rs`), profile dispatch + `convert_vault_profile` +
+> `save_vault_secret_with_profile` (`src/storage.rs`), device keypair load
+> (`src/security/pq_profile.rs`), Settings card/`convert_pq_profile`
+> (`ui/appwindow.slint`, `src/main.rs`), and sync/P2P/merge refusal.
+> Tests: `cargo test` **511 passed / 1 ignored** (+ 4 `pv_sign`), `npm test`
 > **133/133**, clippy clean.
+>
+> Honest limits: DPAPI is user+machine bound (not a TPM); the offline cache and
+> `.pvx` exports are still password-sealed copies; all devices/backups must
+> stay on a compatible build.
 
 ## Goal
 
@@ -27,11 +33,9 @@ The decapsulation key is the DPAPI-sealed sidecar from Phase A
 - Portable (`PV2\0`) bytes stay unchanged. Paranoid uses a **new** `PV3\0`
   magic so a reader never has to guess the key chain from an authenticated
   field it cannot read yet.
-- No UI toggle yet (Phase C). A paranoid save is reachable only from tests until
-  the mandatory portable-backup gate exists.
-- No sync of paranoid vaults (sync merge already refuses `PV3` blobs; Phase C
-  refuses it at the button).
-- No TPM-backed key yet (later hardening; DPAPI is user+machine bound).
+- No sync of paranoid vaults: GitHub/P2P/merge/startup-pull refuse `PV3`
+  (container + UI), because the peer lacks this device's key.
+- TPM-backed key custody is **not** included yet (DPAPI is user+machine bound).
 
 ## Facts this design builds on
 
@@ -178,8 +182,9 @@ pub fn save_vault_secret_with_profile(
 
 1. **Profile marker:** `PV3\0` magic + authenticated `meta.profile` (both must
    agree; either alone is not enough).
-2. **Sidecar lifecycle:** explicit device-key creation in Phase C, gated behind
-   a portable `.pvx` export. Phase B has no UI.
+2. **Sidecar lifecycle:** created on the first paranoid enable (reused if
+   healthy), gated behind a portable `.pvx` export; kept on disable so older
+   paranoid backups stay openable.
 3. **Locked-vault UX:** missing sidecar surfaces as “requires this device's PQ
    key”, never as a password error.
 4. **Rekey with sidecar missing:** refuse (the load proof fails); rekey preserves
@@ -203,9 +208,43 @@ Exit criteria 1–8, 10 are covered by
 `crypto::tests::paranoid_roundtrip_needs_password_and_device_key`; 9 by the
 sync merge guard.
 
-## Phase C gate (do not skip)
+## Phase C (shipped)
 
-- Settings toggle only after a successful portable `.pvx` export.
-- Sync + P2P buttons refuse paranoid vaults with an explanation.
-- Warning text: losing `pq_device.dpapi` or this Windows profile means data loss.
-- Docs: README/SECURITY/RELEASE + release-note upgrade requirement.
+- **Settings card** (`ui/appwindow.slint`): shows the current profile
+  (`PORTABLE`/`PARANOID`), the mandatory-backup state, and a two-tap
+  **Disable (portable)** path. Copy states plainly that the password alone will
+  not open a paranoid vault and that losing `pq_device.dpapi`/the Windows
+  profile means data loss.
+- **Backup gate:** enabling is refused until an **encrypted `.pvx` export
+  succeeds in the same session** (`PARANOID_BACKUP_READY`, set only on the
+  fmt-3 export path). The backup is password-openable and independent of the
+  device key, so it is the documented restore path. Honest limit: it is a
+  session gate, not a persistent audit — restarting requires a fresh export.
+- **Conversion:** `storage::convert_vault_profile` holds the save lock, writes
+  the next A16 revision, round-trip-decrypts the new container before replacing
+  the old one, rotates `.bak.1.enc`, and only then swaps. Any failure leaves the
+  previous container intact.
+- **No silent downgrade:** `save_vault_secret` reads the on-disk magic and keeps
+  `PV3`; a missing sidecar makes the save fail loudly. Only the explicit
+  Settings path converts back to portable.
+- **Device key lifecycle:** enabling reuses a healthy sidecar (so older paranoid
+  backups stay openable) and generates one only when absent/corrupt. Disabling
+  **keeps** `pq_device.dpapi` for the same reason; factory reset shreds it via
+  the `*.dpapi` sweep.
+- **Sync/P2P guards:** GitHub save/sync/startup-pull/merge, P2P pull/push/adopt,
+  and the P2P listener all refuse `PV3` with a clear message. A paranoid blob
+  can neither leave nor enter this device.
+- **Decoy stays portable** (`save_vault_secret_flat`), so the duress password
+  still works under coercion.
+
+## Honest limits (post-Phase C)
+
+- DPAPI is user+machine bound, **not** a TPM: same-user malware can unseal the
+  sidecar. TPM/CNG custody is the next hardening step.
+- The offline extension cache is an independent DPAPI-sealed login copy; it does
+  not inherit the paranoid guarantee.
+- `.pvx` exports and printed shards remain password-based by design.
+- Paranoia is single-device: no GitHub sync, no LAN P2P, no cross-device restore
+  of the container itself (the `.pvx` backup is the restore path).
+- Release notes must require all devices to stay on a build that understands
+  `PV3`; older builds cannot open it.

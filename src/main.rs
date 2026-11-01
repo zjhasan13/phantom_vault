@@ -1050,6 +1050,17 @@ fn set_net_allowed(on: bool) {
     NET_ALLOWED.store(on, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// A22 Phase C: a portable `.pvx` was exported successfully in this session.
+/// Enabling the paranoid profile requires it, so the user always holds a
+/// password-openable fallback before the device key becomes mandatory.
+static PARANOID_BACKUP_READY: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// A22: does the live container use the device-bound profile?
+fn paranoid_active() -> bool {
+    storage::current_profile(VAULT_FILE) == storage::ContainerProfile::Paranoid
+}
+
 /// Phase 15 (Option 1): canary lookup by leaked password material.
 /// Returns the tripped honeytoken title (and records the trip) if matched.
 fn check_canary_trip(
@@ -1081,6 +1092,12 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
         // Cat 8 kill-switch: never touch the network when offline.
         if !net_allowed() {
             report("📴 Offline mode — sync skipped.".into());
+            return;
+        }
+        // A22: a PQ-paranoid container opens only on this device; pushing it
+        // would hand peers an unopenable blob.
+        if paranoid_active() {
+            report("⛔ PQ-paranoid vault — GitHub sync is disabled.".into());
             return;
         }
         let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
@@ -1193,6 +1210,28 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             return;
         }
         let local = std::fs::read(VAULT_FILE).unwrap_or_default();
+        // A22: a device-bound container is not syncable; never adopt one either.
+        if crypto::detect_version(&local) == crypto::VaultVersion::V3Paranoid {
+            let w = main_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = w.upgrade() {
+                    ui.set_sync_status("⛔ PQ-paranoid vault — sync is disabled.".into());
+                }
+            });
+            return;
+        }
+        if crypto::detect_version(&bytes) == crypto::VaultVersion::V3Paranoid {
+            let w = main_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = w.upgrade() {
+                    ui.set_sync_status(
+                        "⛔ Remote is a PQ-paranoid vault (device-bound) — refusing to adopt."
+                            .into(),
+                    );
+                }
+            });
+            return;
+        }
         if local.is_empty() {
             // Fresh device: adopt the remote ciphertext as-is (shred-guarded).
             if security::shredder::secure_write(std::path::Path::new(VAULT_FILE), &bytes).is_ok() {
@@ -3510,6 +3549,7 @@ fn main() -> Result<(), slint::PlatformError> {
     let main_window = MainWindow::new()?;
     main_window.set_offline_cache_on(security::offline_cache::enabled());
     main_window.set_offline_pin_on(security::offline_cache::pin_allowed_at(Path::new(".")));
+    main_window.set_pq_paranoid_on(paranoid_active());
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -7708,6 +7748,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_sync_status("⛔ Decoy mode is read-only.".into());
             return;
         }
+        if paranoid_active() {
+            ui.set_sync_status(
+                "⛔ PQ-paranoid vault — GitHub sync is disabled. Convert to portable first."
+                    .into(),
+            );
+            return;
+        }
         let owner = owner.as_str().trim().to_string();
         let repo = repo.as_str().trim().to_string();
         let token_in = token.as_str().trim().to_string();
@@ -7745,6 +7792,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = sync_weak_now.upgrade() else {
             return;
         };
+        if paranoid_active() {
+            ui.set_sync_status(
+                "⛔ PQ-paranoid vault — sync is disabled. Convert to portable first."
+                    .into(),
+            );
+            return;
+        }
         ui.set_sync_status("⏳ Syncing…".into());
         trigger_sync_push(ui.as_weak());
     });
@@ -7761,6 +7815,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         if ui.get_is_decoy() {
             ui.set_merge_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if paranoid_active() {
+            ui.set_merge_status(
+                "⛔ PQ-paranoid vault — remote merge is disabled. Convert to portable first."
+                    .into(),
+            );
             return;
         }
         ui.set_merge_status("⏳ Fetching remote vault…".into());
@@ -7870,6 +7931,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let apply_search = Arc::clone(&search_state);
     let apply_qb = quick_bar.as_weak();
     main_window.on_merge_apply(move || {
+        if let Some(ui) = apply_weak.upgrade() {
+            if paranoid_active() {
+                ui.set_merge_status(
+                    "⛔ PQ-paranoid vault — remote merge is disabled. Convert to portable first."
+                        .into(),
+                );
+                return;
+            }
+        }
         let staged = pending_merge_store().lock().unwrap().take();
         let Some(staged) = staged else {
             if let Some(ui) = apply_weak.upgrade() {
@@ -8553,11 +8623,20 @@ fn launch_url(ui: &MainWindow, url: &str) {
         slint::Image::load_from_path(&path).unwrap_or_default()
     }
     let p2p_stop = Arc::new(std::sync::atomic::AtomicBool::new(true));
+    // A22: enabling the paranoid profile also stops LAN discovery.
+    let p2p_stop_for_pq = Arc::clone(&p2p_stop);
     let p2p_weak = main_window.as_weak();
     main_window.on_set_p2p(move |on| {
         let Some(ui) = p2p_weak.upgrade() else {
             return;
         };
+        if on && paranoid_active() {
+            ui.set_p2p_enabled(false);
+            ui.set_p2p_status(
+                "⛔ PQ-paranoid vault — P2P is disabled. Convert to portable first.".into(),
+            );
+            return;
+        }
         ui.set_p2p_enabled(on);
         if on {
             p2p_stop.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -8657,6 +8736,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         if ui.get_is_decoy() {
             ui.set_p2p_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if paranoid_active() {
+            ui.set_p2p_status(
+                "⛔ PQ-paranoid vault — P2P sync is disabled. Convert to portable first."
+                    .into(),
+            );
             return;
         }
         ui.set_p2p_status(format!("⏳ Syncing with {ip}…").into());
@@ -10922,6 +11008,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if let Some(ui) = weak.upgrade() {
                             match res {
                                 Ok(()) => {
+                                    if fmt == 3 {
+                                        // A22: portable, password-openable
+                                        // fallback exists for this session.
+                                        PARANOID_BACKUP_READY.store(
+                                            true,
+                                            std::sync::atomic::Ordering::SeqCst,
+                                        );
+                                        ui.set_pq_backup_ready(true);
+                                    }
                                     ui.set_export_status(
                                         format!("✅ Exported {summary} → {path_str}. Shred it after moving!")
                                             .into(),
@@ -12777,6 +12872,108 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_rekey_status(format!("❌ Rekey failed: {e}").into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+    // A22 Phase C: enable/disable the PQ-paranoid container profile. Enabling
+    // is gated on a successful encrypted `.pvx` export in this session, so a
+    // password-openable fallback exists before the device key becomes mandatory.
+    let pq_weak = main_window.as_weak();
+    let pq_vault = Arc::clone(&active_vault);
+    let pq_master = Arc::clone(&active_master_pw);
+    main_window.on_convert_pq_profile(move |enable| {
+        let Some(ui) = pq_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_pq_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let Some(master) = lock_master_pw(&pq_master).clone() else {
+            ui.set_pq_status("❌ Vault not unlocked!".into());
+            return;
+        };
+        if enable && !PARANOID_BACKUP_READY.load(std::sync::atomic::Ordering::SeqCst) {
+            ui.set_pq_status(
+                "⚠️ Export an encrypted .pvx backup first — it is the only restore path if pq_device.dpapi is lost."
+                    .into(),
+            );
+            return;
+        }
+        ui.set_pq_status(
+            if enable {
+                "⏳ Creating device key + re-encrypting (Argon2id)…"
+            } else {
+                "⏳ Converting back to portable (Argon2id)…"
+            }
+            .into(),
+        );
+        let weak = pq_weak.clone();
+        let vault_arc = Arc::clone(&pq_vault);
+        let p2p_stop_thread = Arc::clone(&p2p_stop_for_pq);
+        let target = if enable {
+            storage::ContainerProfile::Paranoid
+        } else {
+            storage::ContainerProfile::Portable
+        };
+        std::thread::spawn(move || {
+            let result = (|| {
+                if enable {
+                    // Reuse a healthy existing device key so older paranoid
+                    // backups stay openable; mint one only when none exists
+                    // (or the sidecar cannot be unsealed).
+                    if crate::security::pq_profile::load_encapsulation().is_err() {
+                        crate::security::pq_profile::generate_and_seal()?;
+                    }
+                }
+                let vault = lock_vault(&vault_arc);
+                storage::convert_vault_profile(&vault, &master, VAULT_FILE, target)
+            })();
+            match result {
+                Ok(()) => {
+                    security::access_log::log_event(
+                        "pq-profile",
+                        if enable { "enable paranoid" } else { "disable paranoid" },
+                    );
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            if enable {
+                                p2p_stop_thread.store(
+                                    true,
+                                    std::sync::atomic::Ordering::SeqCst,
+                                );
+                                ui.set_p2p_enabled(false);
+                                ui.set_p2p_status(
+                                    "P2P discovery stopped — PQ-paranoid vault.".into(),
+                                );
+                            }
+                            ui.set_pq_paranoid_on(enable);
+                            ui.set_pq_status(
+                                if enable {
+                                    "✅ PQ-paranoid ON. This vault needs this device's key. Sync and P2P are disabled."
+                                } else {
+                                    "✅ Back to portable — the password alone opens it again."
+                                }
+                                .into(),
+                            );
+                            ui.set_notification_text(
+                                if enable {
+                                    "⚠️ pq_device.dpapi cannot be copied to another PC. Losing it = data loss; keep the .pvx backup safe."
+                                } else {
+                                    "Container is portable again."
+                                }
+                                .into(),
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_pq_status(format!("❌ Profile change failed: {e}").into());
                         }
                     });
                 }

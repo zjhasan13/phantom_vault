@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase B (PV3 PQ-paranoid container, not yet UI-reachable), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A22 Phase C (PV3 PQ-paranoid container + Settings gate + sync guards), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -40,9 +40,17 @@
   a portable fallback. Rekey preserves the profile (rev+1, same device key).
   `meta.profile` is validated against the magic; unknown/downgrade fails closed.
   Tests +3 → `cargo test` **509 passed / 1 ignored + 4 pv_sign**; `npm test`
-  **133/133**. NOT user-reachable yet: Phase C (Settings toggle, mandatory
-  portable `.pvx` backup, sync button guards) is still required, and DPAPI is
-  user+machine bound, not a TPM.
+  **133/133**. Phase C (this batch) adds the Settings card + two-tap disable,
+  the mandatory in-session encrypted `.pvx` export gate
+  (`PARANOID_BACKUP_READY`), `storage::convert_vault_profile` (lock →
+  round-trip proof → rotate `.bak.1.enc` → swap), profile-preserving saves
+  (no silent downgrade; missing sidecar fails loudly), `current_profile`
+  magic read, and sync/P2P/merge/startup-pull refusal for `PV3`. Device key is
+  reused on re-enable and kept on disable so older paranoid backups stay
+  openable. Tests +2 → `cargo test` **511 passed / 1 ignored + 4 pv_sign**;
+  `npm test` **133/133**. Honest limits: DPAPI is user+machine bound (not a
+  TPM), the offline cache/`.pvx` stay password-sealed, and paranoid is
+  single-device by design.
 
 - **A5 — master password rekey (this batch):** `storage::rekey_vault_secret`
   proves the old password against the live container, encrypts under the new
@@ -486,7 +494,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 509 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 511 passed / 1 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

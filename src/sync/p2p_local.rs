@@ -775,6 +775,17 @@ fn serve_conn_inner(
         let _ = stream.write_all(&http_response(200, r#"{"ok":true}"#));
         return;
     }
+    // A22: a PQ-paranoid vault is device-bound — never serve it to peers and
+    // never accept a paranoid blob over P2P.
+    if !blob.is_empty()
+        && crate::crypto::detect_version(blob) == crate::crypto::VaultVersion::V3Paranoid
+    {
+        let _ = stream.write_all(&http_response(
+            409,
+            r#"{"ok":false,"error":"PQ-paranoid vault is not syncable"}"#,
+        ));
+        return;
+    }
     // A15 push-side anchor: a paired client cannot push a lower revision.
     let mut push_rev = 0u64;
     let mut push_hash = String::new();
@@ -802,6 +813,14 @@ fn serve_conn_inner(
         &method, &path, &body, blob, local_sha, local_mtime, &peer_ip, true, local_rev, &local_hash,
     );
     if let Some((sha, mtime, data)) = adopt {
+        // A22: never adopt a device-bound paranoid container.
+        if crate::crypto::detect_version(&data) == crate::crypto::VaultVersion::V3Paranoid {
+            let _ = stream.write_all(&http_response(
+                409,
+                r#"{"ok":false,"error":"PQ-paranoid vault is not syncable"}"#,
+            ));
+            return;
+        }
         // Newer-or-different remote head: adopt atomically. mtime comparison
         // happens client-side (sync_with_peer); the listener trusts the
         // pusher's decision, verified by SHA above.
@@ -1120,7 +1139,14 @@ pub fn sync_with_peer(
     let addr: SocketAddr = format!("{ip}:{P2P_PORT}").parse().map_err(|e| format!("bad peer ip: {e}"))?;
     let (local_sha, local_mtime) = local_head();
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
+    // A22: device-bound containers are not syncable in either direction.
+    if crate::crypto::detect_version(&local_blob) == crate::crypto::VaultVersion::V3Paranoid {
+        return Err("PQ-paranoid vault is not syncable".to_string());
+    }
     let (remote_sha, remote_mtime, remote_blob) = pull_peer(addr, pin)?;
+    if crate::crypto::detect_version(&remote_blob) == crate::crypto::VaultVersion::V3Paranoid {
+        return Err("peer has a PQ-paranoid vault — not syncable".to_string());
+    }
     if remote_sha == local_sha {
         return Ok("ðŸ“¡ Already in sync (identical heads).".to_string());
     }

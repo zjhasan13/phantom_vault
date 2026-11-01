@@ -51,6 +51,7 @@ third-party audit. Those are tracked as concrete work in
 - Auto-lock on idle, on session lock, and on **proximity** (paired Bluetooth device leaves)
 - Panic wipe path; decoy vault with its own password — stored as a backup-like, 1 MiB-padded container with no duress verifier file
 - Canary honeytoken trips a local alert **and** a signed alert to paired devices (pending retry if offline)
+- **Opt-in PQ-paranoid container** (`PV3`): password **plus** this PC's DPAPI-sealed ML-KEM key; sync/P2P refused, mandatory `.pvx` backup before enabling (A22)
 
 **Browser extension**
 - Autofill logins, cards, identities and TOTP from the popup, context menu or `Ctrl+Shift+L`
@@ -104,7 +105,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 509 passed / 1 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 511 passed / 1 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -163,11 +164,11 @@ These are real today. They are listed here so nobody discovers them the hard way
 - **No third-party security audit.** `docs/AUDIT.md` is an internal, reproducible
   review; it is not a substitute for an external audit.
 - **Windows only.** No macOS, Linux or mobile client (A10).
-- **Post-quantum is a hedge, not a second factor — in the portable profile.** A
-  correct password still opens a portable container. A device-bound
-  "PQ-paranoid" container profile (`PV3`, password + DPAPI-sealed ML-KEM key) is
-  implemented at the container layer but **not user-reachable yet** (A22 Phase C:
-  Settings toggle + mandatory portable backup + sync guards).
+- **PQ-paranoid is opt-in and single-device.** The default *portable* container
+  opens with the password alone (the PQ layer is a hedge). The `PV3` paranoid
+  profile additionally requires this Windows profile's DPAPI-sealed ML-KEM key
+  (`pq_device.dpapi`): losing that file or profile means data loss, and
+  sync/P2P are disabled for that vault. DPAPI is user+machine bound, not a TPM.
 - **A closed shadow root is a DOM boundary, not a keyboard boundary.** The page
   cannot read the corrected save-toast value from the DOM, but it can still observe
   key events, exactly as it observes the original login typing.

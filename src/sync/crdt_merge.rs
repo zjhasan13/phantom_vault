@@ -488,4 +488,13 @@ mod tests {
         let wrong = SecretString::new("wrong".to_string());
         assert!(decrypt_blob_to_vault(&wrong, &blob).is_err());
     }
+
+    #[test]
+    fn paranoid_blob_is_refused_by_sync_merge() {
+        let mut fake = Vec::from(*b"PV3\0");
+        fake.extend_from_slice(&[0u8; 64]);
+        let master = SecretString::new("merge-test-master-pw".to_string());
+        let err = decrypt_blob_to_envelope(&master, &fake).unwrap_err();
+        assert!(err.contains("PQ-paranoid"), "unexpected: {err}");
+    }
 }

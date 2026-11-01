@@ -670,6 +670,11 @@ export component MainWindow inherits Window {
     in-out property <bool> offline_cache_on: false;
     in-out property <bool> offline_pin_on: false;
     in-out property <string> offline_cache_status: "";
+    // A22 Phase C: PQ-paranoid container (password + this device's ML-KEM key).
+    in-out property <bool> pq_paranoid_on: false;
+    in-out property <bool> pq_backup_ready: false;
+    in-out property <bool> pq_confirm_off: false;
+    in-out property <string> pq_status: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -978,6 +983,8 @@ export component MainWindow inherits Window {
     callback change_master_password(string, string, string);
     callback set_offline_cache(bool);
     callback set_offline_cache_pin(bool);
+    // A22 Phase C: true = convert to PQ-paranoid, false = back to portable.
+    callback convert_pq_profile(bool);
     callback setup_ext_pin(string, string);
     callback disable_ext_pin();
     callback type_credential_requested(string, string, string);
@@ -1622,6 +1629,19 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Allow extension PIN unlock (weaker than Hello)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_pin_on ? "ON" : "OFF"; primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
                     if root.offline_cache_status != "" : Text { text: root.offline_cache_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    // A22 Phase C: device-bound container profile. Correct
+                    // password alone cannot open it — the DPAPI-sealed ML-KEM
+                    // key for this Windows profile is required too.
+                    FieldLabel { text: "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
+                    Text { text: "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Container profile"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    Text { text: root.pq_backup_ready ? "✅ A backup was exported this session." : "⚠️ Export an encrypted .pvx backup first (Importer → Encrypted (.pvx)) — required before enabling."; color: root.pq_backup_ready ? #34d399 : #fbbf24; font-size: 11px; wrap: word-wrap; }
+                    if !root.pq_paranoid_on : AuraButton { label: "Enable PQ-paranoid"; width: 190px; height: 34px; clicked => { root.convert_pq_profile(true); } }
+                    if root.pq_paranoid_on : HorizontalLayout { spacing: 8px;
+                        AuraButton { label: root.pq_confirm_off ? "Sure? Convert back" : "Disable (portable)"; primary: !root.pq_confirm_off; danger: root.pq_confirm_off; width: root.pq_confirm_off ? 200px : 180px; height: 34px; clicked => { if root.pq_confirm_off { root.pq_confirm_off = false; root.convert_pq_profile(false); } else { root.pq_confirm_off = true; } } }
+                        if root.pq_confirm_off : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.pq_confirm_off = false; } }
+                    }
+                    if root.pq_status != "" : Text { text: root.pq_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }

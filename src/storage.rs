@@ -360,8 +360,23 @@ fn next_meta(path: &Path, old: &[u8], master: &SecretString) -> Result<(u64, Str
     Ok((rev + 1, hash))
 }
 
-/// Save as the portable self-contained v2 container (fresh PQ keypair + DK
-/// wrapped by the password key, every save). No sidecar is created.
+/// A22: which profile the container on disk uses, WITHOUT decrypting it.
+/// Missing/too-short/unknown files read as `Portable` (the legacy default).
+pub fn current_profile<P: AsRef<Path>>(path: P) -> ContainerProfile {
+    match fs::read(path) {
+        Ok(bytes)
+            if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V3_PARANOID_MAGIC =>
+        {
+            ContainerProfile::Paranoid
+        }
+        _ => ContainerProfile::Portable,
+    }
+}
+
+/// Save in the container's current profile: a fresh portable v2 container
+/// (fresh PQ keypair + DK wrapped by the password key) for a portable vault, or
+/// the device-bound `PV3` profile for a paranoid vault. No sidecar is created
+/// here; `convert_vault_profile` owns explicit profile changes.
 ///
 /// A16: the inner payload is a rev-2 JSON envelope (`meta` + `vault`). `rev`
 /// increments on every save and `prev_hash` is the SHA-256 of the container
@@ -375,7 +390,10 @@ pub fn save_vault_secret<P: AsRef<Path>>(
     master_password: &SecretString,
     file_path: P,
 ) -> Result<(), String> {
-    save_vault_secret_inner(vault, master_password, file_path, true, ContainerProfile::Portable)
+    // A22: never silently downgrade an existing PQ-paranoid container. The
+    // explicit switch lives in `convert_vault_profile` / the Settings toggle.
+    let profile = current_profile(file_path.as_ref());
+    save_vault_secret_inner(vault, master_password, file_path, true, profile)
 }
 
 /// A22: save with an explicit container profile. `Portable` is byte-identical
@@ -480,6 +498,45 @@ fn save_vault_secret_inner<P: AsRef<Path>>(
 #[deprecated(note = "use save_vault_secret with a SecretString")]
 pub fn save_vault<P: AsRef<Path>>(vault: &Vault, master_password: &str, file_path: P) -> Result<(), String> {
     save_vault_secret(vault, &SecretString::new(master_password.to_string()), file_path)
+}
+
+/// A22 Phase C: explicitly convert the container between profiles.
+///
+/// This is the ONLY downgrade path (paranoid → portable) and the only upgrade
+/// path (portable → paranoid). Unlike [`save_vault_secret`], which preserves
+/// the on-disk profile, this rewrites the container under `profile` after a
+/// successful round-trip proof. The caller owns device-key generation/removal.
+pub fn convert_vault_profile<P: AsRef<Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+    profile: ContainerProfile,
+) -> Result<(), String> {
+    let path = file_path.as_ref();
+    let _guard = FileLock::acquire(path)?;
+    if current_profile(path) == profile {
+        return Ok(());
+    }
+    let old = fs::read(path).map_err(|e| format!("File read error: {e}"))?;
+    let (rev, prev_hash) = next_meta(path, &old, master_password)?;
+    let mut serialized = envelope_bytes(vault, rev, prev_hash, profile)?;
+    let encrypted_payload = encrypt_container(profile, master_password, &serialized)?;
+
+    // Proof-first: never replace the only good copy with an unopenable one.
+    let mut probe = decrypt_container(profile, master_password, &encrypted_payload)?;
+    let roundtrip_ok = probe == serialized;
+    probe.zeroize();
+    serialized.zeroize();
+    if !roundtrip_ok {
+        return Err(
+            "Profile conversion failed: the new container did not round-trip.".to_string(),
+        );
+    }
+
+    rotate_backups(path)?;
+    crate::security::shredder::secure_write(path, &encrypted_payload)?;
+    remember_head(path, rev, sha256_hex(&encrypted_payload));
+    Ok(())
 }
 
 /// A5: master-password rotation (rekey).
@@ -1162,6 +1219,22 @@ mod tests {
     }
 
     #[test]
+    fn current_profile_reads_the_magic_without_decrypting() {
+        let dir = std::env::temp_dir().join(format!("pv_profile_magic_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("vault.enc");
+        assert_eq!(current_profile(&path), ContainerProfile::Portable);
+        std::fs::write(&path, b"PV3\0anything").unwrap();
+        assert_eq!(current_profile(&path), ContainerProfile::Paranoid);
+        std::fs::write(&path, b"PV2\0anything").unwrap();
+        assert_eq!(current_profile(&path), ContainerProfile::Portable);
+        std::fs::write(&path, b"PV2x").unwrap();
+        assert_eq!(current_profile(&path), ContainerProfile::Portable);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn paranoid_profile_requires_sidecar_and_never_downgrades() {
         let _guard = crate::security::pq_profile::TEST_ENV_LOCK
             .lock()
@@ -1200,7 +1273,7 @@ mod tests {
 
         // With a device key: PV3 container, opens only with password + sidecar.
         crate::security::pq_profile::generate_and_seal().unwrap();
-        save_vault_secret_with_profile(
+        convert_vault_profile(
             &demo_vault(),
             &pw,
             &path,
@@ -1238,9 +1311,32 @@ mod tests {
         assert!(load_vault_secret(&new_pw, &path).is_ok());
         assert!(container_head(&path).map(|(rev, _)| rev) >= Some(3));
 
-        // A portable save still never consults the sidecar.
+        // No silent downgrade: a plain save over PV3 stays PV3 and refuses
+        // when the device key is missing.
         std::fs::remove_file(&sidecar).unwrap();
+        let err = save_vault_secret(&demo_vault(), &new_pw, &path).unwrap_err();
+        assert!(err.contains("device key"), "unexpected: {err}");
+        std::fs::write(&sidecar, &good_sidecar).unwrap();
         save_vault_secret(&demo_vault(), &new_pw, &path).unwrap();
+        assert_eq!(
+            detect_version(&std::fs::read(&path).unwrap()),
+            VaultVersion::V3Paranoid
+        );
+
+        // Explicit conversion is the only downgrade path; after it the sidecar
+        // is no longer consulted.
+        convert_vault_profile(
+            &demo_vault(),
+            &new_pw,
+            &path,
+            ContainerProfile::Portable,
+        )
+        .unwrap();
+        assert_eq!(
+            detect_version(&std::fs::read(&path).unwrap()),
+            VaultVersion::V2Portable
+        );
+        std::fs::remove_file(&sidecar).unwrap();
         assert!(load_vault_secret(&new_pw, &path).is_ok());
 
         // Profile marker is validated on load (downgrade/unknown fails closed).

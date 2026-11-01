@@ -119,10 +119,12 @@ These are documented rather than secret; please do not report them as new findin
   guessing expensive, but a same-user process can read the DPAPI record and
   grind it offline at local CPU cost. Prefer 6–8 digits.
 - The post-quantum layer is a **hedge, not a second factor** in the **portable**
-  profile: a correct master password still opens it. The `PV3` PQ-paranoid
-  profile (password + DPAPI-sealed ML-KEM key) exists at the container layer but
-  is not user-reachable until A22 Phase C; DPAPI is user+machine bound, not a
-  TPM, so same-user malware can still unseal the device key.
+  profile: a correct master password still opens it. The opt-in `PV3`
+  PQ-paranoid profile additionally requires the DPAPI-sealed ML-KEM key for this
+  Windows profile (Settings → PQ-paranoid) and refuses sync/P2P. DPAPI is
+  user+machine bound, not a TPM: same-user malware can unseal the device key.
+  Losing `pq_device.dpapi` or the Windows profile means data loss; enabling is
+  gated behind a password-openable `.pvx` export.
 - Favicon lookup is **same-origin only** (`/favicon.ico`); no third-party service
   is contacted. The site itself naturally sees its own icon request.
 - P2P sync serves **ciphertext without pairing** if no PIN is configured.
