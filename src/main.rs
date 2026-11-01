@@ -3575,6 +3575,7 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.set_offline_pin_on(security::offline_cache::pin_allowed_at(Path::new(".")));
     main_window.set_pq_paranoid_on(paranoid_active());
     set_pq_backend_ui(&main_window);
+    refresh_ls_rows(&main_window);
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -8637,6 +8638,36 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .collect();
         ui.set_p2p_paired(ModelRc::new(VecModel::from(rows)));
     }
+    fn refresh_ls_rows(ui: &MainWindow) {
+        share_store::purge_expired();
+        let now = share::now_secs();
+        let rows: Vec<SendView> = share_store::list()
+            .into_iter()
+            .map(|r| {
+                let left = r.expires_at.saturating_sub(now);
+                SendView {
+                    id: r.id.clone().into(),
+                    detail: format!(
+                        "{} • {} left • views {}/{}",
+                        &r.id[..r.id.len().min(12)],
+                        if left >= 3600 {
+                            format!("{}h", left / 3600)
+                        } else {
+                            format!("{}m", left / 60)
+                        },
+                        r.views,
+                        if r.max_views == 0 {
+                            "∞".to_string()
+                        } else {
+                            r.max_views.to_string()
+                        }
+                    )
+                    .into(),
+                }
+            })
+            .collect();
+        ui.set_ls_rows(ModelRc::new(VecModel::from(rows)));
+    }
     fn p2p_qr_image(code: &str) -> slint::Image {
         let Some(svg) = sync::p2p_pairing::qr_svg(code) else {
             return slint::Image::default();
@@ -13237,6 +13268,261 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
         },
     );
+    // A20: expiring shares (GUI reuses the CLI's store/format/transport).
+    let send_weak = main_window.as_weak();
+    let send_vault = Arc::clone(&active_vault);
+    let ls_server: Arc<Mutex<Option<share_serve::ServeHandle>>> =
+        Arc::new(Mutex::new(None));
+    let ls_server_create = Arc::clone(&ls_server);
+    main_window.on_login_share_create(move |title, ttl, views, serve| {
+        let Some(ui) = send_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let Some(ttl_secs) = share_cli::parse_ttl(ttl.as_str()) else {
+            ui.set_ls_status("⚠️ TTL must look like 30m, 24h or 7d".into());
+            return;
+        };
+        let views: u32 = match views.trim().parse() {
+            Ok(v) => v,
+            Err(_) => {
+                ui.set_ls_status("⚠️ views must be a number (0 = unlimited)".into());
+                return;
+            }
+        };
+        let item = {
+            let vault = lock_vault(&send_vault);
+            let mut matches: Vec<_> = vault
+                .credentials
+                .iter()
+                .filter(|c| {
+                    c.deleted_at.is_none() && c.title.eq_ignore_ascii_case(title.as_str())
+                })
+                .collect();
+            if matches.len() != 1 {
+                ui.set_ls_status(
+                    if matches.is_empty() {
+                        "⚠️ no login with that title"
+                    } else {
+                        "⚠️ that title is ambiguous — rename one first"
+                    }
+                    .into(),
+                );
+                return;
+            }
+            share::ShareItem::from_credential(matches.pop().unwrap())
+        };
+        let created = match share::create(vec![item], ttl_secs, views) {
+            Ok(c) => c,
+            Err(e) => {
+                ui.set_ls_status(format!("⚠️ {e}").into());
+                return;
+            }
+        };
+        if let Err(e) = share_store::save(&created) {
+            ui.set_ls_status(format!("⚠️ {e}").into());
+            return;
+        }
+        let mut link = created.link();
+        if serve {
+            let mut guard = ls_server_create
+                .lock()
+                .unwrap_or_else(|p| p.into_inner());
+            if guard.is_none() {
+                match share_serve::serve("0.0.0.0:0") {
+                    Ok(server) => *guard = Some(server),
+                    Err(e) => {
+                        ui.set_ls_status(format!("⚠️ {e}").into());
+                        return;
+                    }
+                }
+            }
+            if let Some(server) = guard.as_ref() {
+                let ip =
+                    share_serve::local_ipv4().unwrap_or_else(|| "127.0.0.1".to_string());
+                link = created.link_via(&format!("{ip}:{}", server.port));
+            }
+        }
+        ui.set_ls_title("".into());
+        ui.set_ls_link(link.into());
+        ui.set_ls_status(
+            "✅ Share created — the link fragment is the key; send it over a trusted channel."
+                .into(),
+        );
+        refresh_ls_rows(&ui);
+        security::access_log::log_event("share", "created from UI");
+    });
+
+    let send_copy_weak = main_window.as_weak();
+    main_window.on_login_share_copy(move || {
+        let Some(ui) = send_copy_weak.upgrade() else {
+            return;
+        };
+        let link = ui.get_ls_link().to_string();
+        if link.is_empty() {
+            return;
+        }
+        secure_copy_with_feedback(
+            ui.as_weak(),
+            link,
+            "🔗 Share link copied (masked from Win+V, auto-clears)",
+            30,
+        );
+    });
+
+    let login_share_open_weak = main_window.as_weak();
+    let send_pending: Arc<Mutex<Option<share::SharePayload>>> = Arc::new(Mutex::new(None));
+    let login_share_open_pending = Arc::clone(&send_pending);
+    main_window.on_login_share_open(move |link, file| {
+        let Some(ui) = login_share_open_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        ui.set_ls_ready(false);
+        ui.set_ls_preview("⏳ Opening share…".into());
+        ui.set_ls_status("".into());
+        let weak = login_share_open_weak.clone();
+        let pending = Arc::clone(&login_share_open_pending);
+        std::thread::spawn(move || {
+            let link_s = link.as_str().to_string();
+            let file_s = file.as_str().trim().to_string();
+            let result = (|| -> Result<share::SharePayload, String> {
+                let parsed =
+                    share::parse_link(&link_s).ok_or("bad share link (expected pvshare://…)")?;
+                let bundle = if !file_s.is_empty() {
+                    std::fs::read(&file_s).map_err(|e| format!("read {file_s}: {e}"))?
+                } else if let Some(host) = parsed.host.as_deref() {
+                    share_cli::fetch_bundle(&format!("http://{host}/{}", parsed.id))?
+                } else {
+                    return Err("this is a file link — choose the .pvsh bundle too".to_string());
+                };
+                share::open(&bundle, &parsed.key)
+            })();
+            match result {
+                Ok(payload) => {
+                    let preview = payload
+                        .items
+                        .iter()
+                        .map(|i| format!("• {} — {}", i.title, i.username))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    let text = format!(
+                        "{} item(s), expires in {}s:\n{preview}",
+                        payload.items.len(),
+                        payload.expires_at.saturating_sub(share::now_secs())
+                    );
+                    *pending.lock().unwrap_or_else(|p| p.into_inner()) = Some(payload);
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_ls_preview(text.into());
+                            ui.set_ls_ready(true);
+                            ui.set_ls_status(
+                                "✅ Decrypted. Review, then Add to my vault.".into(),
+                            );
+                        }
+                    });
+                }
+                Err(e) => {
+                    let _ = slint::invoke_from_event_loop(move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.set_ls_preview("".into());
+                            ui.set_ls_status(format!("⚠️ {e}").into());
+                        }
+                    });
+                }
+            }
+        });
+    });
+
+    let login_share_add_weak = main_window.as_weak();
+    let login_share_add_pending = Arc::clone(&send_pending);
+    let login_share_add_vault = Arc::clone(&active_vault);
+    let login_share_add_master = Arc::clone(&active_master_pw);
+    let login_share_add_search = Arc::clone(&search_state);
+    let login_share_add_qb = quick_bar.as_weak();
+    main_window.on_login_share_add(move || {
+        let Some(ui) = login_share_add_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        let payload = login_share_add_pending
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .take();
+        let Some(payload) = payload else {
+            ui.set_ls_status("⚠️ open a share first.".into());
+            return;
+        };
+        let Some(master) = lock_master_pw(&login_share_add_master).clone() else {
+            ui.set_ls_status("❌ Vault not unlocked!".into());
+            return;
+        };
+        let mut vault = lock_vault(&login_share_add_vault);
+        let snapshot = vault.clone();
+        let added = share::add_items_to_vault(&mut vault, &payload.items);
+        if added == 0 {
+            ui.set_ls_status("ℹ️ Those logins are already in this vault.".into());
+            ui.set_ls_ready(false);
+            return;
+        }
+        if let Err(e) = storage::save_vault_secret(&vault, &master, VAULT_FILE) {
+            *vault = snapshot;
+            ui.set_ls_status(format!("⚠️ Import failed: {e}").into());
+            return;
+        }
+        let f = login_share_add_search.lock().unwrap().clone();
+        set_paged_credentials(&ui, vault_to_items(&vault, &f));
+        sync_folders_to_ui(&vault, &ui);
+        if let Some(qb) = login_share_add_qb.upgrade() {
+            qb.set_filtered_results(vault_quickbar(
+                &vault,
+                "",
+                login_share_add_search.lock().unwrap().travel_only,
+            ));
+        }
+        drop(vault);
+        ui.set_ls_ready(false);
+        ui.set_ls_preview("".into());
+        ui.set_ls_status(format!("✅ Imported {added} login(s) from share.").into());
+        ui.set_notification_text(format!("✅ Imported {added} login(s) from share.").into());
+        security::access_log::log_event("share", "imported from UI");
+    });
+
+    let login_share_revoke_weak = main_window.as_weak();
+    let login_share_revoke_server = Arc::clone(&ls_server);
+    main_window.on_login_share_revoke(move |id| {
+        let Some(ui) = login_share_revoke_weak.upgrade() else {
+            return;
+        };
+        let _ = share_store::revoke(id.as_str());
+        if share_store::list().is_empty() {
+            if let Some(server) = login_share_revoke_server
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            {
+                server.stop();
+            }
+        }
+        refresh_ls_rows(&ui);
+        ui.set_ls_status(format!("🗑️ Revoked {id}.").into());
+    });
+
+    let login_share_refresh_weak = main_window.as_weak();
+    main_window.on_login_share_refresh(move || {
+        if let Some(ui) = login_share_refresh_weak.upgrade() {
+            refresh_ls_rows(&ui);
+        }
+    });
     // Extension PIN management (Settings is the ONLY writer — the extension
     // itself only reads the served hash). Unlocked + non-decoy required.
     // Raw PINs arrive here (Slint has no SHA-256); they are hashed then

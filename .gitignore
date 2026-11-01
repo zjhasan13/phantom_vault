@@ -16,6 +16,11 @@ test_vault.enc
 *.dpapi
 # A22 D1: TPM/CNG-sealed device key sidecar (PVT1), test-only software KSP.
 *.tpm
+# A20: expiring share bundles (ciphertext; never commit).
+pvshares/
+*.pvsh
+# A23: local API runtime port (token is *.dpapi above).
+pv_api_port
 *.enc
 *.enc.*
 *.enc.bak

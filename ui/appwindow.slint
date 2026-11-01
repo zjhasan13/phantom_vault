@@ -113,6 +113,12 @@ struct PairedView {
     detail: string,
 }
 
+// A20: active outgoing share row (`id` is the revoke handle).
+struct SendView {
+    id: string,
+    detail: string,
+}
+
 // --- Phantom palette (single source of truth) ---
 global PhantomTheme {
     in-out property <color> void: #080c14;
@@ -682,6 +688,18 @@ export component MainWindow inherits Window {
     in-out property <string> api_status: "";
     in-out property <bool> api_prompt_show: false;
     in-out property <string> api_prompt_text: "";
+    // A20: expiring shares (Send-style); CLI + GUI share the same store.
+    in-out property <[SendView]> ls_rows;
+    in-out property <string> ls_title: "";
+    in-out property <string> ls_ttl: "24h";
+    in-out property <string> ls_views: "1";
+    in-out property <bool> ls_serve: false;
+    in-out property <string> ls_link: "";
+    in-out property <string> ls_status: "";
+    in-out property <string> ls_open_link: "";
+    in-out property <string> ls_open_file: "";
+    in-out property <string> ls_preview: "";
+    in-out property <bool> ls_ready: false;
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -994,6 +1012,13 @@ export component MainWindow inherits Window {
     callback set_api(bool);
     callback api_allow();
     callback api_deny();
+    // A20: expiring shares.
+    callback login_share_create(string, string, string, bool);
+    callback login_share_open(string, string);
+    callback login_share_add();
+    callback login_share_revoke(string);
+    callback login_share_refresh();
+    callback login_share_copy();
     // A22 Phase C: true = convert to PQ-paranoid, false = back to portable.
     callback convert_pq_profile(bool);
     // A22 Phase D2: re-seal the device key with TPM 2.0 (explicit, proof-first).
@@ -1662,6 +1687,30 @@ export component MainWindow inherits Window {
                     Text { text: "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
                     if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    // A20: expiring shares (Send-style). Same store/format as the CLI.
+                    FieldLabel { text: "EXPIRING SHARES (SEND)"; }
+                    Text { text: "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share …"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; }
+                    HorizontalLayout { spacing: 6px;
+                        LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
+                        LineEdit { placeholder-text: "Views (1, 0=∞)"; text <=> root.ls_views; width: 130px; height: 36px; }
+                        AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; } }
+                        AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve); } }
+                    }
+                    if root.ls_link != "" : Text { text: root.ls_link; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.ls_link != "" : AuraButton { label: "📋 Copy link"; width: 130px; height: 30px; clicked => { root.login_share_copy(); } }
+                    if root.ls_status != "" : Text { text: root.ls_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    Text { text: "Open a share you received:"; color: #8e99c0; font-size: 11px; }
+                    LineEdit { placeholder-text: "pvshare://…"; text <=> root.ls_open_link; height: 36px; }
+                    HorizontalLayout { spacing: 6px;
+                        LineEdit { placeholder-text: "…or bundle file (.pvsh)"; text <=> root.ls_open_file; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "Open"; width: 100px; height: 34px; clicked => { root.login_share_open(root.ls_open_link, root.ls_open_file); } }
+                    }
+                    if root.ls_preview != "" : Text { text: root.ls_preview; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.ls_ready : AuraButton { label: "Add to my vault"; primary: true; width: 180px; height: 34px; clicked => { root.login_share_add(); } }
+                    if root.ls_rows.length == 0 : Text { text: "No active shares."; color: #5b6589; font-size: 11px; }
+                    for s in root.ls_rows : Rectangle { background: #121927; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; Text { text: s.detail; color: #eef1ff; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } AuraButton { label: "Revoke"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.login_share_revoke(s.id); } } } }
+                    AuraButton { label: "Refresh shares"; width: 140px; height: 30px; clicked => { root.login_share_refresh(); } }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }

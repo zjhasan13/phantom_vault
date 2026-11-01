@@ -1,9 +1,27 @@
 # A20 — serverless expiring share (Send-style)
 
-> Status: **slices 1–2 shipped.** Bundle crypto + an on-disk store with TTL/
-> one-view accounting + a LAN/file transport and the `share` CLI work today.
-> The desktop UI (selection, link display, recipient preview) is slice 3; until
-> then sharing is CLI-only.
+> Status: **slices 1–3 shipped.** Bundle crypto, on-disk TTL/one-view store,
+> LAN/file transport, the `share` CLI, and a desktop **Settings → Expiring
+> shares** card (create/copy/open/preview/import/revoke) are in. The pre-existing
+> Phase 9 **Secure Send** card (notes via the GitHub relay) remains a separate
+> surface; A20 is the item/bundle + LAN/file path.
+
+## GUI (slice 3)
+
+Settings → **EXPIRING SHARES (SEND)**:
+
+- type a login title, TTL (`24h`) and views (`0` = unlimited), toggle **LAN**,
+  press **Create share**;
+- the link (`pvshare://…`) appears once with a masked **Copy link** button;
+- **Open** accepts a `pvshare://…` link (LAN) or a `.pvsh` bundle file, shows a
+  title/username preview, then **Add to my vault** (duplicate-safe, saved with
+  the vault master);
+- active shares list with per-share **Revoke**; revoking the last one stops the
+  LAN listener.
+
+The older **Secure Send** card (seal a note → GitHub relay → read + burn) is
+unchanged and still notes-only. Use it for async text; use Expiring shares for
+logins over LAN/file.
 
 ## CLI (slice 2)
 
@@ -100,16 +118,18 @@ pvshare://<share-id>#k=<base64url 256-bit key>     <- key lives in the fragment
 No third-party relay is needed for the LAN path, which is the strongest claim we
 can make without running infrastructure.
 
-## UX plan (slice 3)
+## UX (shipped in slice 3)
 
-1. Item context menu / bulk select → **Share…**
-2. Choose TTL (1h / 24h / 7d) and max views (1 / N / unlimited).
-3. Show the link **once** + copy button + QR; warn that the link is the key.
-4. Recipient opens `pvshare://…` → app fetches the blob, decrypts, shows a
-   preview (titles/fields) → **Add to my vault** (never auto-import).
-5. Sender sees active shares and can **Revoke** (delete the blob).
+1. Settings → Expiring shares card (title input; no context-menu selection yet).
+2. TTL text (`24h`) + views (`1`, `0` = unlimited) + LAN toggle.
+3. Show the link **once** with a masked copy button; warn that the link is the
+   key. (QR is still a follow-up.)
+4. Recipient pastes the link / picks the `.pvsh` file → app fetches, decrypts,
+   shows a title/username preview → **Add to my vault** (never auto-import).
+5. Sender sees active shares and can **Revoke**; the LAN listener stops when the
+   last share is revoked.
 
-The CLI already covers 1–5 headlessly; the Slint UI is the remaining surface.
+Not yet: item context-menu/bulk selection, QR rendering, GitHub async relay.
 
 ## Exit tests
 
@@ -121,16 +141,17 @@ The CLI already covers 1–5 headlessly; the Slint UI is the remaining surface.
 6. Padded bundles of different field sizes are the same length.
 
 Slice 1 covers 2, 5 (bundle half) and 6. Slice 2 covers 3 (store expiry), 4
-(loopback one-view test) and the create/fetch/decrypt path; `--import` is
-interactive, so its exact UI flow is manual QA until slice 3. 5 is true for the
-LAN transport (the key is only in the fragment; the store never sees it).
+(loopback one-view test) and the create/fetch/decrypt path. Slice 3 wires the
+GUI; the exact desktop import click-through is manual QA (no UI automation),
+while the shared backend is covered by tests. 5 is true for the LAN transport
+(the key is only in the fragment; the store never sees it).
 
 ## Effort
 
 - Slice 1 (done): 0.5 day.
 - Slice 2 (store + LAN/file transport + CLI): 1 day.
-- Slice 3 (Slint share UI + QR + import preview, optional async relay): 3–5 days.
-- Total target: 2–3 weeks including docs/QA.
+- Slice 3 (Slint card, copy, open/preview/import, revoke): 1 day.
+- Remaining: QR + context-menu/bulk selection + async relay (2–3 days).
 
 ## Non-goals
 

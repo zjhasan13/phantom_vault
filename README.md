@@ -67,7 +67,7 @@ third-party audit. Those are tracked as concrete work in
 - Peer-to-peer over LAN with **mandatory device pairing** (one-time code, HMAC proof, Ed25519-signed requests)
 - Import/export: Bitwarden JSON, CSV, native `.pvx`, KeePass XML/CSV and **KDBX 3.1/4** (import with password or password + key file; export logins to KDBX4 with a separate password) with previews, merge modes, undo
 - **Local API + `pv` CLI** (opt-in, A23): loopback-only `pv status` / `pv get`; a script reads one field only after an in-app Allow prompt, with a DPAPI-sealed 24h token and audit logging
-- **Expiring shares** (A20, CLI): `phantom_vault share create "Gmail" --ttl 24h --views 1 [--serve]`; the key is in the link fragment, one-view/TTL are enforced by the sender, and `share open --import` adds the login. Desktop share UI is pending.
+- **Expiring shares** (A20): Settings → Expiring shares (or `phantom_vault share …`) creates a login share whose key travels only in the link fragment; LAN one-view/TTL are sender-enforced, file transport is expiry-only, and the receiver gets a preview before **Add to my vault**. (The older Secure Send card still covers async notes via the GitHub relay.)
 
 ---
 
@@ -107,7 +107,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 538 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 539 passed / 2 ignored + 4 pv_sign tests at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -188,9 +188,9 @@ These are real today. They are listed here so nobody discovers them the hard way
   TOFU — there is no local revision to compare against.
 - **KDBX export covers logins only** (A13): cards/notes/identities/passkeys and
   attachment bytes need `.pvx`/CSV. KDBX import is full read support for
-  KDBX 3.1/4. No hardware-key unlock (A21). A20 shares work via
-  `phantom_vault share` (LAN one-view or file); the desktop share UI is not
-  shipped yet.
+  KDBX 3.1/4. No hardware-key unlock (A21). A20 login shares are LAN/file
+  (sender must stay online for LAN; file transport cannot enforce one-view);
+  async relay and QR are follow-ups.
 - **Local API is opt-in and read-only** (A23): only `pv status` / `pv get`;
   `run`/`inject` and scopes are later. Same-user malware can steal the
   DPAPI-sealed token, so every read still requires the in-app Allow prompt.

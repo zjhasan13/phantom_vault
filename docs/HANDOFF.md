@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A20 slices 1-2 (expiring share bundle + LAN/file CLI transport), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A20 slices 1-3 (expiring share + LAN/file + desktop card), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -35,8 +35,14 @@
   before returning), `src/share_serve.rs` (`GET /<id>` one-view/TTL, `health`,
   LAN or loopback; **no pairing/auth by design** — 128-bit id + fragment key),
   and `src/share_cli.rs` (`share create [--serve] / serve / open [--file]
-  [--json] [--import] / list / revoke`). Tests +6 → `cargo test` **538 passed /
-  2 ignored + 4 pv_sign**; `npm test` **133/133**. Desktop share UI is slice 3.
+  [--json] [--import] / list / revoke`). **Slice 3 (this batch):** Settings →
+  **Expiring shares** card (`login_share_*` — deliberately namespaced away from
+  the pre-existing Phase 9 Secure Send card): create by title/TTL/views/LAN,
+  masked copy, open link or `.pvsh`, preview, duplicate-safe **Add to my vault**
+  (saved with the master), active-share rows with per-share **Revoke**; the LAN
+  listener stops when the last share is revoked. Tests +7 → `cargo test`
+  **539 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**. The desktop
+  import click-through is manual QA; async relay/QR remain.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -559,7 +565,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 538 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 539 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

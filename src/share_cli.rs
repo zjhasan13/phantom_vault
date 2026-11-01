@@ -52,8 +52,7 @@ fn load_vault(what: &str) -> Option<crate::models::Vault> {
     }
 }
 
-fn parse_ttl(text: &str) -> Option<u64> {
-    let t = text.trim().to_ascii_lowercase();
+pub(crate) fn parse_ttl(text: &str) -> Option<u64> {    let t = text.trim().to_ascii_lowercase();
     let (num, unit) = match t.chars().last()? {
         's' => (&t[..t.len() - 1], 1u64),
         'm' => (&t[..t.len() - 1], 60),
@@ -125,21 +124,7 @@ fn create(args: &[String]) -> i32 {
         return 1;
     }
     let c = matches[0];
-    let item = ShareItem {
-        kind: "login".to_string(),
-        title: c.title.clone(),
-        username: c.username.clone(),
-        password: c.password.clone(),
-        url: c.urls.first().map(|u| u.url().to_string()).unwrap_or_default(),
-        notes: c.notes.clone(),
-        totp: c.totp_secret.clone(),
-        custom_fields: c
-            .custom_fields
-            .iter()
-            .filter(|f| !matches!(f.field_type, crate::models::CustomFieldType::Linked))
-            .map(|f| (f.name.clone(), f.value.clone()))
-            .collect(),
-    };
+    let item = ShareItem::from_credential(c);
     let created = match share::create(vec![item], ttl_secs, views) {
         Ok(c) => c,
         Err(e) => {
@@ -247,7 +232,7 @@ fn serve(args: &[String]) -> i32 {
     }
 }
 
-fn fetch_bundle(url: &str) -> Result<Vec<u8>, String> {
+pub(crate) fn fetch_bundle(url: &str) -> Result<Vec<u8>, String> {
     let rest = url
         .strip_prefix("http://")
         .ok_or_else(|| "share host must be http://host:port".to_string())?;
@@ -410,53 +395,7 @@ fn open(args: &[String]) -> i32 {
         let Some(mut vault) = load_vault("Master password (import into this vault)") else {
             return 1;
         };
-        let mut added = 0;
-        for item in &payload.items {
-            if item.kind != "login" {
-                continue;
-            }
-            let exists = vault.credentials.iter().any(|c| {
-                c.deleted_at.is_none()
-                    && c.title.eq_ignore_ascii_case(&item.title)
-                    && c.username.eq_ignore_ascii_case(&item.username)
-            });
-            if exists {
-                continue;
-            }
-            vault.credentials.push(crate::models::Credential {
-                id: format!("share-{}", crate::models::current_timestamp()),
-                title: item.title.clone(),
-                username: item.username.clone(),
-                password: item.password.clone(),
-                totp_secret: item.totp.clone(),
-                urls: if item.url.is_empty() {
-                    Vec::new()
-                } else {
-                    vec![crate::models::LoginUrl::Plain(item.url.clone())]
-                },
-                apps: Vec::new(),
-                backup_codes: Vec::new(),
-                custom_fields: item
-                    .custom_fields
-                    .iter()
-                    .map(|(k, v)| crate::models::CustomField {
-                        name: k.clone(),
-                        value: v.clone(),
-                        field_type: crate::models::CustomFieldType::Text,
-                    })
-                    .collect(),
-                notes: item.notes.clone(),
-                folder: String::new(),
-                reprompt: false,
-                attachments: Vec::new(),
-                travel_safe: false,
-                last_changed: crate::models::current_timestamp(),
-                password_history: Vec::new(),
-                favorite: false,
-                deleted_at: None,
-            });
-            added += 1;
-        }
+        let added = share::add_items_to_vault(&mut vault, &payload.items);
         let pw = prompt_password("Master password (confirm save)");
         let Some(pw) = pw else {
             return 1;

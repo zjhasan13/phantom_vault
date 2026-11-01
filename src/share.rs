@@ -54,8 +54,81 @@ pub struct SharePayload {
     pub items: Vec<ShareItem>,
 }
 
-pub struct CreatedShare {
-    /// `PVSH1 | nonce | ciphertext+tag` — safe to store/upload.
+impl ShareItem {
+    /// Map a vault login to the share shape (linked custom fields are skipped).
+    pub fn from_credential(c: &crate::models::Credential) -> Self {
+        Self {
+            kind: "login".to_string(),
+            title: c.title.clone(),
+            username: c.username.clone(),
+            password: c.password.clone(),
+            url: c.urls.first().map(|u| u.url().to_string()).unwrap_or_default(),
+            notes: c.notes.clone(),
+            totp: c.totp_secret.clone(),
+            custom_fields: c
+                .custom_fields
+                .iter()
+                .filter(|f| !matches!(f.field_type, crate::models::CustomFieldType::Linked))
+                .map(|f| (f.name.clone(), f.value.clone()))
+                .collect(),
+        }
+    }
+}
+
+/// Import shared logins into a vault, skipping title+username duplicates.
+/// Returns the number added. Non-login kinds are ignored.
+pub fn add_items_to_vault(vault: &mut crate::models::Vault, items: &[ShareItem]) -> usize {
+    let mut added = 0;
+    for item in items {
+        if item.kind != "login" {
+            continue;
+        }
+        let exists = vault.credentials.iter().any(|c| {
+            c.deleted_at.is_none()
+                && c.title.eq_ignore_ascii_case(&item.title)
+                && c.username.eq_ignore_ascii_case(&item.username)
+        });
+        if exists {
+            continue;
+        }
+        vault.credentials.push(crate::models::Credential {
+            id: format!("share-{}-{}", crate::models::current_timestamp(), added),
+            title: item.title.clone(),
+            username: item.username.clone(),
+            password: item.password.clone(),
+            totp_secret: item.totp.clone(),
+            urls: if item.url.is_empty() {
+                Vec::new()
+            } else {
+                vec![crate::models::LoginUrl::Plain(item.url.clone())]
+            },
+            apps: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: item
+                .custom_fields
+                .iter()
+                .map(|(k, v)| crate::models::CustomField {
+                    name: k.clone(),
+                    value: v.clone(),
+                    field_type: crate::models::CustomFieldType::Text,
+                })
+                .collect(),
+            notes: item.notes.clone(),
+            folder: String::new(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: crate::models::current_timestamp(),
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        });
+        added += 1;
+    }
+    added
+}
+
+pub struct CreatedShare {    /// `PVSH1 | nonce | ciphertext+tag` — safe to store/upload.
     pub bundle: Vec<u8>,
     pub id: String,
     /// The only secret in the share; keep it out of logs and out of the blob.
@@ -310,5 +383,17 @@ mod tests {
             })
         );
         assert!(parse_link("pvshare://host:1/#k=k").is_none());
+    }
+
+    #[test]
+    fn add_items_to_vault_dedupes_and_skips_non_logins() {
+        let mut vault = crate::models::Vault::new();
+        let mut login = item("Gmail", "pw");
+        login.kind = "login".to_string();
+        let mut note = item("Note", "");
+        note.kind = "note".to_string();
+        assert_eq!(add_items_to_vault(&mut vault, &[login.clone(), note]), 1);
+        assert_eq!(add_items_to_vault(&mut vault, &[login]), 0, "duplicate");
+        assert_eq!(vault.credentials.len(), 1);
     }
 }
