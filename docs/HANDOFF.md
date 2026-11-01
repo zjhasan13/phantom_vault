@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A13 KDBX import + login export (round-trip tested), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A23 slice 1 (loopback read API + pv CLI), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -26,6 +26,19 @@
   `675196E7EC550471`, excludes `browser_extension/dist`); exe 19.55 MB
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
+
+- **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
+  starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
+  token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on
+  disable. Every `pv get` enqueues a pending request; the UI thread polls with a
+  200 ms Slint `Timer` and shows an **Allow once / Deny** modal (the worker never
+  touches Slint — component handles are thread-affine). Decision window 30s,
+  pending TTL 60s, 30 requests/min, audit log stores credential id + field only.
+  CLI: `phantom_vault pv status | pv get <title|--id> [--field password|username]
+  [--json]`; the client polls `/v1/result`. Locked vault → 423, wrong/expired
+  token → 401. Tests +4 (token, handler, loopback e2e, CLI parse) →
+  `cargo test` **532 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**.
+  Read-only slice: `run`/`inject`, scopes and auto-start are next.
 
 - **A13 slice 1 — KeePass KDBX import (this batch):** `.kdbx` (KDBX 3.1/4) is
   sniffed by its binary magic and opened with the per-file password (or
@@ -535,7 +548,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 528 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 532 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

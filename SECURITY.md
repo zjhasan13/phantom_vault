@@ -63,6 +63,8 @@ tell us the date in the report so the advisory can land first.
   salt/keypair reuse, nonce handling, version detection and migration
 - KeePass KDBX import (A13): declared-KDF caps, wrong-password handling, the
   `keepass` dependency boundary
+- Local API (A23): loopback-only binding, DPAPI token storage, per-request
+  approval, rate limits and the `pv` CLI surface
 - Key handling: zeroization, page locking, DPAPI seals, Hello token, App PIN,
   extension PIN (Argon2id, host-side verification, attempt lockout), master-password rekey, rollback snapshot
 - Native-messaging bridge: origin pinning, frame MAC, request caps, `verify_master`
@@ -141,6 +143,10 @@ These are documented rather than secret; please do not report them as new findin
   attack surface; attachments and entry history are not imported. KDBX export
   is sealed with a separate user-chosen password (never the vault master) and
   covers logins only.
+- The local API (`pv`) is read-only and loopback-only. Its bearer token is
+  DPAPI-sealed for the current user, so same-user malware can steal it; every
+  read still requires an explicit in-app Allow prompt and is audit-logged. The
+  API does not auto-start after a restart and has no TLS/process attestation.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

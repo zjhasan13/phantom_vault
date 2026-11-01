@@ -677,6 +677,11 @@ export component MainWindow inherits Window {
     in-out property <string> pq_status: "";
     in-out property <string> pq_backend: "";
     in-out property <string> pq_backend_detail: "";
+    // A23: loopback-only local API for the `pv` CLI (opt-in, read-only).
+    in-out property <bool> api_on: false;
+    in-out property <string> api_status: "";
+    in-out property <bool> api_prompt_show: false;
+    in-out property <string> api_prompt_text: "";
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -985,6 +990,10 @@ export component MainWindow inherits Window {
     callback change_master_password(string, string, string);
     callback set_offline_cache(bool);
     callback set_offline_cache_pin(bool);
+    // A23: local-only API + pv CLI.
+    callback set_api(bool);
+    callback api_allow();
+    callback api_deny();
     // A22 Phase C: true = convert to PQ-paranoid, false = back to portable.
     callback convert_pq_profile(bool);
     // A22 Phase D2: re-seal the device key with TPM 2.0 (explicit, proof-first).
@@ -1648,6 +1657,11 @@ export component MainWindow inherits Window {
                         if root.pq_confirm_off : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.pq_confirm_off = false; } }
                     }
                     if root.pq_status != "" : Text { text: root.pq_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    // A23: loopback-only, read-only API for scripts (`pv` CLI).
+                    FieldLabel { text: "LOCAL API (pv CLI)"; }
+                    Text { text: "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
+                    if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
@@ -2391,6 +2405,38 @@ export component MainWindow inherits Window {
                     alignment: center;
                     AuraButton { label: "Confirm"; primary: true; width: 150px; height: 42px; clicked => { root.reprompt_confirm(rp_input.text, root.rp_backup_pass, root.rp_backup_confirm); } }
                     AuraButton { label: "✕ Cancel"; width: 130px; height: 42px; clicked => { root.rp_show = false; root.rp_error = ""; } }
+                }
+            }
+        }
+    }
+
+    // ==== A23: local API approval (blocking request from the pv CLI) ====
+    if root.api_prompt_show : Rectangle {
+        x: 0;
+        y: 0;
+        width: parent.width;
+        height: parent.height;
+        background: #04060ecc;
+        Rectangle {
+            width: 470px;
+            height: 210px;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            background: #0d1430;
+            border-radius: 14px;
+            border-width: 1.5px;
+            border-color: #fbbf24;
+            VerticalLayout {
+                padding: 20px;
+                spacing: 12px;
+                Text { text: "🔐 pv CLI request"; color: #eef1ff; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
+                Text { text: root.api_prompt_text; color: #eef1ff; font-size: 13px; wrap: word-wrap; horizontal-alignment: center; }
+                Text { text: "A local script wants to read one vault field. Deny if you did not start it. This prompt auto-denies after 30 seconds."; color: #8e99c0; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: center;
+                    AuraButton { label: "Allow once"; primary: true; width: 150px; height: 40px; clicked => { root.api_allow(); } }
+                    AuraButton { label: "Deny"; danger: true; width: 130px; height: 40px; clicked => { root.api_deny(); } }
                 }
             }
         }

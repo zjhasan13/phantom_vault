@@ -8,6 +8,7 @@ mod crypto;
 mod models;
 #[allow(dead_code)]
 mod storage;
+mod api;
 mod totp_engine;
 // Diet: mi-malloc returns freed pages to Windows instead of hoarding heap.
 #[global_allocator]
@@ -3504,6 +3505,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let code = match argv[1].as_str() {
             "run" => developer::vault_run::run_cli(&argv[2..]),
             "scan" => developer::vault_run::scan_cli(&argv[2..]),
+            "pv" => api::cli::pv_cli(&argv[2..]),
             "ssh-agent" => developer::ssh_agent::serve_cli(),
             origin if is_native_host_launch(origin) => {
                 if let Some(pos) = argv.iter().position(|a| a == "--print-manifest") {
@@ -13133,6 +13135,103 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
         });
     });
+    // A23: loopback-only read API for the `pv` CLI. Opt-in per session, 24h
+    // token, explicit Allow/Deny for every secret read, audit-logged.
+    let api_weak = main_window.as_weak();
+    let api_vault = Arc::clone(&active_vault);
+    let api_master = Arc::clone(&active_master_pw);
+    let api_handle: Arc<Mutex<Option<api::local::ApiServer>>> = Arc::new(Mutex::new(None));
+    main_window.on_set_api(move |on| {
+        let Some(ui) = api_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_api_status("⛔ Decoy mode is read-only.".into());
+            return;
+        }
+        if on {
+            if api_handle
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .is_some()
+            {
+                ui.set_api_status("✅ Local API is already running.".into());
+                return;
+            }
+            api::token::revoke();
+            let token = match api::token::create() {
+                Ok(t) => t,
+                Err(e) => {
+                    ui.set_api_status(format!("⚠️ {e}").into());
+                    return;
+                }
+            };
+            match api::local::start(Arc::clone(&api_vault), Arc::clone(&api_master)) {
+                Ok(server) => {
+                    let port = server.port;
+                    *api_handle.lock().unwrap_or_else(|p| p.into_inner()) = Some(server);
+                    ui.set_api_on(true);
+                    let hours = token
+                        .expires
+                        .saturating_sub(api::token::now_secs())
+                        / 3600;
+                    ui.set_api_status(
+                        format!(
+                            "✅ API on 127.0.0.1:{port} — every read asks for approval; token expires in ~{hours}h."
+                        )
+                        .into(),
+                    );
+                    security::access_log::log_event("api", "local API enabled");
+                }
+                Err(e) => {
+                    api::token::revoke();
+                    ui.set_api_on(false);
+                    ui.set_api_status(format!("⚠️ {e}").into());
+                }
+            }
+        } else {
+            if let Some(server) = api_handle
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .take()
+            {
+                server.stop();
+            }
+            api::token::revoke();
+            ui.set_api_on(false);
+            ui.set_api_status("Local API off; token revoked.".into());
+            security::access_log::log_event("api", "local API disabled");
+        }
+    });
+    main_window.on_api_allow(|| api::local::decide_current(true));
+    main_window.on_api_deny(|| api::local::decide_current(false));
+    // A23: show/hide the approval prompt from the UI thread. The HTTP worker
+    // only enqueues requests; it never touches Slint.
+    let _api_timer = slint::Timer::default();
+    let api_timer_weak = main_window.as_weak();
+    _api_timer.start(
+        slint::TimerMode::Repeated,
+        Duration::from_millis(200),
+        move || {
+            let Some(ui) = api_timer_weak.upgrade() else {
+                return;
+            };
+            match api::local::pending_front() {
+                Some((_id, prompt)) => {
+                    if !ui.get_api_prompt_show() {
+                        ui.set_api_prompt_text(prompt.into());
+                        ui.set_api_prompt_show(true);
+                    }
+                }
+                None => {
+                    if ui.get_api_prompt_show() {
+                        ui.set_api_prompt_show(false);
+                        ui.set_api_prompt_text("".into());
+                    }
+                }
+            }
+        },
+    );
     // Extension PIN management (Settings is the ONLY writer — the extension
     // itself only reads the served hash). Unlocked + non-decoy required.
     // Raw PINs arrive here (Slint has no SHA-256); they are hashed then
