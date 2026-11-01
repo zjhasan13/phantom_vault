@@ -1,0 +1,2 @@
+tests/fixtures/keepass/*.kdbx binary
+tests/fixtures/keepass/*.keyx binary
