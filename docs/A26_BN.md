@@ -20,7 +20,8 @@
 | Quick Capture | window title row, service/username/password/2FA labels + placeholders, Save/Dismiss (separate `ui_lang` copy) |
 | Quick Bar | instant-copy hint, Copy, no-matches, Dismiss (separate `ui_lang` copy) |
 | Generator | Complex/Diceware, LENGTH/WORDS/ENTROPY/NO AMBIGUOUS, Regenerate/Use This, entropy unit, empty-set warning |
-| Item actions | Delete/Sure?, Permanently Shred/Sure? Shred, Restore Item |
+| Item actions | Delete/Sure?, Permanently Shred/Sure? Shred, Restore Item, Empty Trash & Shred All dialog |
+| Add/edit form | item-kind placeholders for login/card/identity/license/SSH/note (username, cardholder, card number, CVV, expiry, NID/passport, public/private key, address/company/city/state/ZIP/country, alias) |
 | P2P results | already-in-sync, adopted/pushed, conflict (Rust `i18n`) |
 | Import summary | headline + counts, updated-in-place, bad rows (Rust `i18n`) |
 | Sync results | offline-skip, ciphertext-pushed, vault-synced status lines |

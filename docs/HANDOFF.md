@@ -54,7 +54,10 @@
   sync offline/pushed/synced status lines are localized. **Batch 8:** the
   generator panel (its own `ui_lang` passed down), delete/shred/restore item
   buttons, and P2P result lines (already-in-sync, adopted, pushed, conflict) via
-  the shared `i18n` flag; the Bengali Confirm-Import button was widened. A full
+  the shared `i18n` flag; the Bengali Confirm-Import button was widened. **Batch
+  9:** a `root.tr(en, bn)` helper, add/edit placeholders for card/identity/
+  license/SSH/note kinds (cardholder, number, CVV, expiry, NID, keys, address/
+  city/state/ZIP/country, alias), and the Empty Trash & Shred All dialog. A full
   100%/125% visual layout pass is still manual. `docs/A26_BN.md` tracks coverage. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —

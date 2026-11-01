@@ -670,6 +670,8 @@ export component MainWindow inherits Window {
     changed is_unlocked => { if !root.is_unlocked { root.unlock_busy = false; } }
     // Lock-screen language: static labels only (Rust-driven status stays EN).
     in-out property <string> ui_lang: "en";
+    // A26: compact translator for the many form placeholders below.
+    function tr(en: string, bn: string) -> string { return root.ui_lang == "bn" ? bn : en; }
     in-out property <string> pin_error: "";
     in-out property <string> pin_status: "";
     // A5: master-password rotation status (Settings card).
@@ -2059,13 +2061,13 @@ export component MainWindow inherits Window {
                     }
                     if root.show_fav_only && !root.showing_trash : Text { text: "⭐ Showing favorites only"; color: #fbbf24; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
                     if root.showing_trash : VerticalLayout { spacing: 8px;
-                        Text { text: "🗑️ Trash (items shredded after 30 days)"; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
-                        if !root.show_empty_confirm : AuraButton { label: "🔥 Empty Trash & Shred All"; danger: true; height: 34px; clicked => { root.show_empty_confirm = true; } }
+                        Text { text: root.ui_lang == "bn" ? "🗑️ ট্র্যাশ (৩০ দিন পর আইটেম ধ্বংস)" : "🗑️ Trash (items shredded after 30 days)"; color: #fb7185; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                        if !root.show_empty_confirm : AuraButton { label: root.ui_lang == "bn" ? "🔥 ট্র্যাশ খালি করে সব ধ্বংস" : "🔥 Empty Trash & Shred All"; danger: true; height: 34px; clicked => { root.show_empty_confirm = true; } }
                         if root.show_empty_confirm : VerticalLayout { spacing: 6px;
-                            Text { text: "Shred EVERYTHING in Trash? No undo."; color: #fb7185; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
+                            Text { text: root.ui_lang == "bn" ? "ট্র্যাশের সবকিছু ধ্বংস করবেন? ফেরানো যাবে না।" : "Shred EVERYTHING in Trash? No undo."; color: #fb7185; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                             HorizontalLayout { spacing: 8px; alignment: center;
-                                AuraButton { label: "Yes, shred all"; danger: true; width: 140px; height: 32px; clicked => { root.empty_trash(); } }
-                                AuraButton { label: "Cancel"; width: 100px; height: 32px; clicked => { root.show_empty_confirm = false; } }
+                                AuraButton { label: root.ui_lang == "bn" ? "হ্যাঁ, সব ধ্বংস করুন" : "Yes, shred all"; danger: true; width: 140px; height: 32px; clicked => { root.empty_trash(); } }
+                                AuraButton { label: root.ui_lang == "bn" ? "বাতিল" : "Cancel"; width: 100px; height: 32px; clicked => { root.show_empty_confirm = false; } }
                             }
                         }
                     }
@@ -2125,26 +2127,26 @@ export component MainWindow inherits Window {
                         LineEdit { placeholder-text: "Item name (required)"; text <=> root.f_title; height: 36px; }
                         ComboBox { model: root.folders_list; current-value <=> root.f_folder; }
                         FieldLabel { text: root.ui_lang == "bn" ? "লগইন তথ্য" : "LOGIN CREDENTIALS"; }
-                        HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Username / Email" : (root.new_kind == 2 ? "License Key" : (root.new_kind == 4 ? "Cardholder name" : (root.new_kind == 5 ? "Full name" : (root.new_kind == 6 ? "Public Key" : "Note content")))); text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: "🎭 Alias"; width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
-                        HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? "Password" : (root.new_kind == 2 ? "Expiry (optional)" : (root.new_kind == 4 ? "Card number" : (root.new_kind == 5 ? "NID / Passport" : (root.new_kind == 6 ? "Private Key" : "Field B (secret)")))); input-type: root.new_kind == 1 || root.new_kind == 6 ? password : text; text <=> root.f_b; height: 36px; horizontal-stretch: 1; } AuraButton { label: "🎲"; width: 52px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } } }
+                        HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? root.tr("Username / Email", "ইউজারনেম / ইমেইল") : (root.new_kind == 2 ? root.tr("License Key", "লাইসেন্স কী") : (root.new_kind == 4 ? root.tr("Cardholder name", "কার্ডহোল্ডারের নাম") : (root.new_kind == 5 ? root.tr("Full name", "পূর্ণ নাম") : (root.new_kind == 6 ? root.tr("Public Key", "পাবলিক কী") : root.tr("Note content", "নোটের বিষয়বস্তু"))))); text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: root.tr("Alias", "উপনাম"); width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
+                        HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? root.tr("Password", "পাসওয়ার্ড") : (root.new_kind == 2 ? root.tr("Expiry (optional)", "মেয়াদ (ঐচ্ছিক)") : (root.new_kind == 4 ? root.tr("Card number", "কার্ড নম্বর") : (root.new_kind == 5 ? root.tr("NID / Passport", "এনআইডি / পাসপোর্ট") : (root.new_kind == 6 ? root.tr("Private Key", "প্রাইভেট কী") : root.tr("Field B (secret)", "ফিল্ড B (সিক্রেট)"))))); input-type: root.new_kind == 1 || root.new_kind == 6 ? password : text; text <=> root.f_b; height: 36px; horizontal-stretch: 1; } AuraButton { label: "🎲"; width: 52px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } } }
                         if root.new_kind == 1 : Text { text: "Use the generator 🎲 to create a strong unique password"; color: #5b6589; font-size: 11px; }
                         // Non-login kinds: Field C/D/E have NO inputs elsewhere
                         // (f_d/f_e were unwritable) — per-kind labels here.
                         if root.new_kind == 4 || root.new_kind == 5 || root.new_kind == 6 : VerticalLayout { spacing: 8px;
                             FieldLabel { text: root.ui_lang == "bn" ? "অতিরিক্ত ফিল্ড" : "EXTRA FIELDS"; }
-                            LineEdit { placeholder-text: root.new_kind == 4 ? "Expiry MM/YY" : (root.new_kind == 5 ? "Email" : "Fingerprint"); text <=> root.f_c; height: 36px; }
+                            LineEdit { placeholder-text: root.new_kind == 4 ? root.tr("Expiry MM/YY", "মেয়াদ MM/YY") : (root.new_kind == 5 ? root.tr("Email", "ইমেইল") : root.tr("Fingerprint", "ফিঙ্গারপ্রিন্ট")); text <=> root.f_c; height: 36px; }
                         }
                         if root.new_kind == 4 || root.new_kind == 5 : VerticalLayout { spacing: 8px;
-                            LineEdit { placeholder-text: root.new_kind == 4 ? "CVV" : "Phone"; text <=> root.f_d; height: 36px; }
+                            LineEdit { placeholder-text: root.new_kind == 4 ? "CVV" : root.tr("Phone", "ফোন"); text <=> root.f_d; height: 36px; }
                         }
-                        if root.new_kind == 5 : LineEdit { placeholder-text: "Address"; text <=> root.f_e; height: 36px; }
-                        if root.new_kind == 5 : LineEdit { placeholder-text: "Company (optional)"; text <=> root.f_company; height: 36px; }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: root.tr("Address", "ঠিকানা"); text <=> root.f_e; height: 36px; }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: root.tr("Company (optional)", "প্রতিষ্ঠান (ঐচ্ছিক)"); text <=> root.f_company; height: 36px; }
                         if root.new_kind == 5 : HorizontalLayout { spacing: 6px;
-                            LineEdit { placeholder-text: "City"; text <=> root.f_city; height: 36px; horizontal-stretch: 2; }
-                            LineEdit { placeholder-text: "State"; text <=> root.f_state; height: 36px; horizontal-stretch: 1; }
-                            LineEdit { placeholder-text: "ZIP"; text <=> root.f_zip; height: 36px; horizontal-stretch: 1; }
+                            LineEdit { placeholder-text: root.tr("City", "শহর"); text <=> root.f_city; height: 36px; horizontal-stretch: 2; }
+                            LineEdit { placeholder-text: root.tr("State", "রাজ্য"); text <=> root.f_state; height: 36px; horizontal-stretch: 1; }
+                            LineEdit { placeholder-text: root.tr("ZIP", "জিপ"); text <=> root.f_zip; height: 36px; horizontal-stretch: 1; }
                         }
-                        if root.new_kind == 5 : LineEdit { placeholder-text: "Country (optional)"; text <=> root.f_country; height: 36px; }
+                        if root.new_kind == 5 : LineEdit { placeholder-text: root.tr("Country (optional)", "দেশ (ঐচ্ছিক)"); text <=> root.f_country; height: 36px; }
                         if root.new_kind == 1 : VerticalLayout { spacing: 8px;
                             FieldLabel { text: root.ui_lang == "bn" ? "অথেনটিকেটর কী (TOTP)" : "AUTHENTICATOR KEY (TOTP)"; }
                             LineEdit { placeholder-text: "Paste otpauth secret…"; text <=> root.f_totp; height: 36px; }
