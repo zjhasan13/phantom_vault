@@ -1019,6 +1019,8 @@ export component MainWindow inherits Window {
     callback login_share_revoke(string);
     callback login_share_refresh();
     callback login_share_copy();
+    // A26: persist the UI language (lock-screen toggle + Settings).
+    callback set_language(string);
     // A22 Phase C: true = convert to PQ-paranoid, false = back to portable.
     callback convert_pq_profile(bool);
     // A22 Phase D2: re-seal the device key with TPM 2.0 (explicit, proof-first).
@@ -1169,7 +1171,7 @@ export component MainWindow inherits Window {
                     padding: 28px;
                     spacing: 14px;
                     HorizontalLayout { alignment: end;
-                        AuraButton { label: root.ui_lang == "bn" ? "BN ✓" : "EN"; width: 76px; height: 28px; clicked => { root.ui_lang = root.ui_lang == "bn" ? "en" : "bn"; } }
+                        AuraButton { label: root.ui_lang == "bn" ? "BN ✓" : "EN"; width: 76px; height: 28px; clicked => { root.ui_lang = root.ui_lang == "bn" ? "en" : "bn"; root.set_language(root.ui_lang); } }
                     }
                     Text { text: root.status_text; font-size: 13px; color: #8e99c0; horizontal-alignment: center; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px; alignment: center;
@@ -1393,11 +1395,11 @@ export component MainWindow inherits Window {
                 if !root.sidebar_collapsed : VerticalLayout { alignment: center; spacing: 0px; Text { text: "PHANTOM"; font-size: 14px; font-weight: 900; color: #eef1ff; } Text { text: "VAULT"; font-size: 11px; font-weight: 700; color: #8b7cf6; } }
             }
             AuraButton { label: root.sidebar_collapsed ? "»" : "« Collapse"; height: 28px; clicked => { root.sidebar_collapsed = !root.sidebar_collapsed; } }
-            if !root.sidebar_collapsed : FieldLabel { text: "VAULT"; }
+            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ভল্ট" : "VAULT"; }
             ScrollView { vertical-stretch: 1;
             VerticalLayout { spacing: 6px;
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🔍"; label: "All items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🔍"; label: root.ui_lang == "bn" ? "সব আইটেম" : "All items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🗑️"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
             Rectangle { height: 10px; }
             if !root.sidebar_collapsed : FieldLabel { text: "TYPES"; }
@@ -1421,9 +1423,9 @@ export component MainWindow inherits Window {
                 NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: "SSH Key"; tapped => { root.open_new_form(6); } }
             }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🛡️"; label: "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "🛡️"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
+            NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: root.ui_lang == "bn" ? "সেটিংস" : "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
             NavItem { collapsed: root.sidebar_collapsed; icon: "🚪"; label: "Exit"; tapped => { root.exit_app(); } }
             if root.is_travel_mode : Rectangle { background: #2a1f08; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL ON"; color: #fbbf24; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
@@ -1599,7 +1601,7 @@ export component MainWindow inherits Window {
         }
         if root.active_nav == 2 : Rectangle {
             background: #080c14; horizontal-stretch: 1; clip: true;
-            VerticalLayout { padding: 22px; spacing: 14px; Text { text: "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+            VerticalLayout { padding: 22px; spacing: 14px; Text { text: root.ui_lang == "bn" ? "📥 ইউনিভার্সাল ভল্ট ইমপোর্টার" : "📥 Universal Vault Importer"; color: #eef1ff; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px;
                     LineEdit { placeholder-text: "File password - .pvx backup or .kdbx database"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
                     AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; width: 260px; clicked => { root.pick_import_file(); } }
@@ -1627,7 +1629,8 @@ export component MainWindow inherits Window {
         if root.active_nav == 3 : Rectangle {
             background: #080c14; horizontal-stretch: 1; clip: true;
             ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
-                Text { text: "⚙️ Settings & Dev Center"; color: #eef1ff; font-size: 18px; font-weight: 900; }
+                Text { text: root.ui_lang == "bn" ? "⚙️ সেটিংস ও ডেভ সেন্টার" : "⚙️ Settings & Dev Center"; color: #eef1ff; font-size: 18px; font-weight: 900; }
+                HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "ভাষা" : "Language"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "English"; primary: root.ui_lang == "en"; width: 100px; height: 30px; clicked => { root.set_language("en"); } } AuraButton { label: "বাংলা"; primary: root.ui_lang == "bn"; width: 100px; height: 30px; clicked => { root.set_language("bn"); } } }
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Security"; color: #8b7cf6; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 8px; Text { text: "Screen Blackout"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.blackout_enabled ? "ON" : "OFF"; primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
@@ -1683,12 +1686,12 @@ export component MainWindow inherits Window {
                     }
                     if root.pq_status != "" : Text { text: root.pq_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A23: loopback-only, read-only API for scripts (`pv` CLI).
-                    FieldLabel { text: "LOCAL API (pv CLI)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "লোকাল এপিআই (pv CLI)" : "LOCAL API (pv CLI)"; }
                     Text { text: "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
                     if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
-                    FieldLabel { text: "EXPIRING SHARES (SEND)"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "সময়সীমাবদ্ধ শেয়ার (সেন্ড)" : "EXPIRING SHARES (SEND)"; }
                     Text { text: "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share …"; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; }
                     HorizontalLayout { spacing: 6px;

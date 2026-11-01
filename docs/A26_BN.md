@@ -1,0 +1,61 @@
+# A26 — Bengali UI (pilot)
+
+> Status: **pilot shipped.** The lock screen already had an in-place EN/BN
+> toggle; A26 adds **persistence** (`lang.pref`), a Settings language control,
+> and Bengali for the main navigation + Settings/section headings. The rest of
+> the desktop UI is still English. This is an incremental translation, not a
+> completed A26.
+
+## What is translated now
+
+| Surface | Strings |
+|---|---|
+| Lock/unlock screen | password/PIN/shards tabs, master-password placeholder, unlock/Hello/PIN buttons, 2FA step, shard recovery (existing) |
+| Sidebar | VAULT, All items, Favorites, 2FA Hub, Settings |
+| Importer | “Universal Vault Importer” title |
+| Settings | “Settings & Dev Center”, Language row |
+| Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
+
+Everything else — item forms, dialogs, notifications, sync/P2P, import/export
+details, security copy — remains English.
+
+## How the switch works
+
+- The Slint property `ui_lang` (`"en"` / `"bn"`) drives inline ternaries:
+  `text: root.ui_lang == "bn" ? "বাংলা" : "English"`.
+- The lock-screen toggle and the Settings → Language row both call the Rust
+  `set_language(string)` callback, which writes `lang.pref` and sets `ui_lang`.
+- Startup reads `lang.pref` before the UI is used. No gettext/`.po` bundle is
+  involved; nothing changes if the pref is missing (English).
+- `normalize_lang()` only accepts `bn` (case/space tolerant); everything else
+  falls back to English.
+
+## Honest limits
+
+- **Partial translation.** A Bengali user still sees English in most dialogs.
+- Rust-generated status strings (errors, notifications, sync results) are not
+  translated; only static Slint labels are.
+- Layout QA (clipping/overflow with longer Bengali strings) is manual; only the
+  translated surfaces were checked by reasoning, not by a full visual pass.
+- No `@tr()`/translation-catalogue yet. Inline ternaries are simple and
+  dependency-free but will get unwieldy past a few hundred strings; a later
+  slice can migrate to Slint bundled translations (`@tr` + `.po`) without
+  changing the user-facing setting.
+- `lang.pref` is local UI state (gitignored), not synced.
+
+## How to extend (next slices)
+
+1. Pick a surface (item detail, add/edit form, import preview).
+2. Replace `text: "English"` with
+   `text: root.ui_lang == "bn" ? "বাংলা" : "English"`.
+3. Keep placeholders/`Accessible` labels in sync.
+4. Add the pair to this table, then do a visual pass at 100% and 125% scaling.
+5. Prefer translating **actions and errors** next (highest user value), then
+   long help text.
+
+## Verification
+
+- `cargo test` includes `ui_language_normalizes_to_en_or_bn`.
+- Manual: toggle BN on the lock screen and in Settings → restart → the choice
+  persists; switch back to English.
+- No new dependency, no network.

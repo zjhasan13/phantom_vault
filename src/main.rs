@@ -1056,6 +1056,15 @@ fn set_net_allowed(on: bool) {
     NET_ALLOWED.store(on, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// A26: only English and Bengali are selectable; anything else falls back to EN.
+fn normalize_lang(lang: &str) -> &'static str {
+    if lang.trim().eq_ignore_ascii_case("bn") {
+        "bn"
+    } else {
+        "en"
+    }
+}
+
 /// A22 Phase C: a portable `.pvx` was exported successfully in this session.
 /// Enabling the paranoid profile requires it, so the user always holds a
 /// password-openable fallback before the device key becomes mandatory.
@@ -3576,6 +3585,8 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.set_pq_paranoid_on(paranoid_active());
     set_pq_backend_ui(&main_window);
     refresh_ls_rows(&main_window);
+    let saved_lang = std::fs::read_to_string("lang.pref").unwrap_or_default();
+    main_window.set_ui_lang(normalize_lang(saved_lang.trim()).into());
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -13523,6 +13534,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
             refresh_ls_rows(&ui);
         }
     });
+    // A26: persist the UI language. Visible bilingual strings are inline
+    // `ui_lang` ternaries; the pref only has to outlive the process.
+    let lang_weak = main_window.as_weak();
+    main_window.on_set_language(move |lang| {
+        let lang = normalize_lang(lang.as_str());
+        if let Err(e) = std::fs::write("lang.pref", lang) {
+            eprintln!("lang.pref write failed: {e}");
+        }
+        if let Some(ui) = lang_weak.upgrade() {
+            ui.set_ui_lang(lang.into());
+        }
+        security::access_log::log_event("ui", &format!("language {lang}"));
+    });
     // Extension PIN management (Settings is the ONLY writer — the extension
     // itself only reads the served hash). Unlocked + non-decoy required.
     // Raw PINs arrive here (Slint has no SHA-256); they are hashed then
@@ -14584,8 +14608,18 @@ mod grid_tests {
         assert!(app_binding_matches(&apps, "discord", "Discord"));
         assert!(app_binding_matches(&apps, "Discord", ""));
         assert!(!app_binding_matches(&apps, "notepad", "Notepad"));
-        assert!(app_binding_matches(&[], "notepad", "Notepad"),
-            "web items (no binding) type anywhere");
+        assert!(
+            app_binding_matches(&[], "notepad", "Notepad"),
+            "web items (no binding) type anywhere"
+        );
+    }
+
+    #[test]
+    fn ui_language_normalizes_to_en_or_bn() {
+        assert_eq!(normalize_lang("bn"), "bn");
+        assert_eq!(normalize_lang(" BN "), "bn");
+        assert_eq!(normalize_lang("fr"), "en");
+        assert_eq!(normalize_lang(""), "en");
     }
 
     #[test]

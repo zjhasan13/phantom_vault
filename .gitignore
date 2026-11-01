@@ -21,6 +21,8 @@ pvshares/
 *.pvsh
 # A23: local API runtime port (token is *.dpapi above).
 pv_api_port
+# A26: remembered UI language (local preference).
+lang.pref
 *.enc
 *.enc.*
 *.enc.bak

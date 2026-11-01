@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A20 slices 1-3 (expiring share + LAN/file + desktop card), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A26 pilot (Bengali UI + persisted language), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -26,6 +26,17 @@
   `675196E7EC550471`, excludes `browser_extension/dist`); exe 19.55 MB
   ProductVersion 0.4.0; zips `dist/phantomvault-{chrome,firefox}-0.4.0.zip`
   (111002 / 111054 bytes). Release upload is user-side (`gh` unauthenticated).
+
+- **A26 pilot — Bengali UI + persistence (this batch):** the lock screen already
+  had an EN/BN `ui_lang` toggle; it now persists to `lang.pref` through the Rust
+  `set_language` callback, and Settings gains an **English / বাংলা** row. Inline
+  `ui_lang` ternaries translate the sidebar (VAULT, All items, Favorites, 2FA
+  Hub, Settings), the importer/Settings headings, and the LOCAL API / Expiring
+  shares section labels. `normalize_lang` only accepts `bn` (case/space
+  tolerant); anything else falls back to English. Honest: most dialogs and all
+  Rust-generated status strings remain English — `docs/A26_BN.md` lists the
+  coverage and how to extend. Tests +1 → `cargo test` **540 passed / 2 ignored +
+  4 pv_sign**; `npm test` **133/133**.
 
 - **A20 slices 1–2 — expiring share (this batch):** `src/share.rs` adds the
   transport-agnostic `PVSH1` bundle (random 256-bit key never in the blob, meant
@@ -565,7 +576,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 539 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 540 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
