@@ -39,8 +39,11 @@
   Settings security headings (rotation, offline cache, PQ, 2FA clock, clipboard,
   auto-lock, updates, paired devices, duress/honeytokens/emergency), GitHub
   Sync + Local Wi-Fi P2P labels, Export Vault heading, and the Master Reprompt
-  title/description. ~89 bilingual strings; the Quick Capture window (separate
-  component without `ui_lang`) and all Rust status strings stay English. `normalize_lang` only
+  title/description. **Batch 4:** reprompt action/field/Confirm/Cancel, the API
+  approval dialog (Allow/Deny + warning), and the import dry-run preview
+  (mode buttons, Confirm/Cancel, Undo). ~107 bilingual strings; the Quick
+  Capture window (separate component without `ui_lang`) and all Rust status
+  strings stay English. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

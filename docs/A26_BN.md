@@ -15,7 +15,7 @@
 | Importer | “Universal Vault Importer” title |
 | Settings | “Settings & Dev Center”, Language row, master rotation, offline cache, PQ-paranoid, 2FA clock, clipboard, auto-lock, updates, paired devices, duress/honeytokens/emergency headings |
 | Sync/export | GitHub Sync, Local Wi-Fi P2P title + enable/pairing/scan/empty labels, Export Vault heading |
-| Dialogs | Master Reprompt title + “demands master-password confirmation” |
+| Dialogs | Master Reprompt title/action/field/Confirm/Cancel, “demands master-password confirmation”, API approval (Allow/Deny + warning), import dry-run preview (mode buttons, Confirm/Cancel, Undo) |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
 | Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
 | Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |

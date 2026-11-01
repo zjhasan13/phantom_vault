@@ -141,10 +141,26 @@ mod tests {
     use secrecy::SecretString;
 
     fn fetch(port: u16, path: &str) -> (u16, Vec<u8>) {
-        let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
-        s.set_read_timeout(Some(Duration::from_secs(3))).unwrap();
+        let mut last = String::new();
+        for attempt in 0..3 {
+            match try_fetch(port, path) {
+                Ok(v) => return v,
+                Err(e) => {
+                    last = e;
+                    if attempt < 2 {
+                        std::thread::sleep(Duration::from_millis(30));
+                    }
+                }
+            }
+        }
+        panic!("share fetch failed after retries: {last}");
+    }
+
+    fn try_fetch(port: u16, path: &str) -> Result<(u16, Vec<u8>), String> {
+        let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
+        s.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
         write!(s, "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n")
-            .unwrap();
+            .map_err(|e| e.to_string())?;
         let mut raw = Vec::new();
         let _ = s.read_to_end(&mut raw);
         let text = String::from_utf8_lossy(&raw);
@@ -155,7 +171,7 @@ mod tests {
             .and_then(|l| l.split_whitespace().nth(1))
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        (status, body.as_bytes().to_vec())
+        Ok((status, body.as_bytes().to_vec()))
     }
 
     #[test]

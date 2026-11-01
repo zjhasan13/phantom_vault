@@ -1610,18 +1610,18 @@ export component MainWindow inherits Window {
                 if root.browser_detect_status != "" : Rectangle { background: #0d131f; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: #38e1ff; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 Rectangle { background: #121927; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? #fb7185 : (root.import_kind == "success" ? #34d399 : #38e1ff); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.show_import_preview : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
+                    Text { text: root.ui_lang == "bn" ? "👁️ ড্রাই-রান প্রিভিউ" : "👁️ Dry-Run Preview"; color: #eef1ff; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
                     Text { text: root.import_preview_text; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                     ScrollView { height: 150px; VerticalLayout { spacing: 2px; for r in root.import_preview_rows : Text { text: r; color: #8e99c0; font-size: 11px; overflow: elide; } } }
                     HorizontalLayout { spacing: 6px; alignment: center;
-                        AuraButton { label: "Skip dupes"; primary: root.import_merge_mode == 0; width: 118px; height: 30px; clicked => { root.import_mode_changed(0); } }
-                        AuraButton { label: "Update existing"; primary: root.import_merge_mode == 1; width: 138px; height: 30px; clicked => { root.import_mode_changed(1); } }
-                        AuraButton { label: "Import all"; primary: root.import_merge_mode == 2; width: 118px; height: 30px; clicked => { root.import_mode_changed(2); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "ডুপ্লিকেট বাদ" : "Skip dupes"; primary: root.import_merge_mode == 0; width: 118px; height: 30px; clicked => { root.import_mode_changed(0); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "বিদ্যমান আপডেট" : "Update existing"; primary: root.import_merge_mode == 1; width: 138px; height: 30px; clicked => { root.import_mode_changed(1); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সব ইমপোর্ট" : "Import all"; primary: root.import_merge_mode == 2; width: 118px; height: 30px; clicked => { root.import_mode_changed(2); } }
                     }
-                    if root.import_undo_available : AuraButton { label: "Undo last import"; width: 160px; height: 30px; clicked => { root.undo_import(); } }
+                    if root.import_undo_available : AuraButton { label: root.ui_lang == "bn" ? "শেষ ইমপোর্ট আনডু" : "Undo last import"; width: 160px; height: 30px; clicked => { root.undo_import(); } }
                     HorizontalLayout { spacing: 8px; alignment: center;
-                        AuraButton { label: "✅ Confirm Import"; primary: true; width: 170px; height: 38px; clicked => { root.confirm_import_file(); } }
-                        AuraButton { label: "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "✅ ইমপোর্ট নিশ্চিত" : "✅ Confirm Import"; primary: true; width: 170px; height: 38px; clicked => { root.confirm_import_file(); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "✕ বাতিল" : "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
                     }
                 }}
             }
@@ -1737,7 +1737,7 @@ export component MainWindow inherits Window {
                             spacing: 8px;
                             alignment: center;
                             totp_confirm_input := LineEdit { placeholder-text: "6-digit code"; height: 38px; width: 150px; accepted(text) => { root.confirm_totp_unlock(text); } }
-                            AuraButton { label: "Confirm"; primary: true; width: 110px; clicked => { root.confirm_totp_unlock(totp_confirm_input.text); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "নিশ্চিত করুন" : "Confirm"; primary: true; width: 110px; clicked => { root.confirm_totp_unlock(totp_confirm_input.text); } }
                         }
                     }
                     if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Disarm Unlock 2FA"; danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
@@ -2440,12 +2440,12 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         spacing: 2px;
                         Text { text: root.ui_lang == "bn" ? "মাস্টার রিপ্রম্পট" : "Master Reprompt"; font-size: 16px; font-weight: 800; color: #eef1ff; }
-                        Text { text: root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : (root.rp_export_fmt == 5 ? "Export to KeePass KDBX" : "Export vault PLAINTEXT")) : "Reveal this secret")); color: #fbbf24; font-size: 12px; font-weight: 700; }
+                        Text { text: root.ui_lang == "bn" ? (root.rp_action == 2 ? "এই লগইন অটোফিল" : (root.rp_action == 3 ? "এই আইটেম মুছুন" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "ভল্ট এনক্রিপ্টেড এক্সপোর্ট" : (root.rp_export_fmt == 5 ? "KeePass KDBX-এ এক্সপোর্ট" : "ভল্ট প্লেইনটেক্সট এক্সপোর্ট")) : "এই সিক্রেট দেখান"))) : (root.rp_action == 2 ? "Auto-fill this login" : (root.rp_action == 3 ? "Delete this item" : (root.rp_action == 5 ? (root.rp_export_fmt == 3 ? "Export vault ENCRYPTED" : (root.rp_export_fmt == 5 ? "Export to KeePass KDBX" : "Export vault PLAINTEXT")) : "Reveal this secret"))); color: #fbbf24; font-size: 12px; font-weight: 700; }
                     }
                 }
                 Text { text: root.ui_lang == "bn" ? "এই আইটেমের জন্য মাস্টার পাসওয়ার্ড নিশ্চিত করতে হবে।" : "This item demands master-password confirmation."; color: #8e99c0; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
-                if root.rp_user != "" : Text { text: "for " + root.rp_user; color: #5b6589; font-size: 11px; horizontal-alignment: center; overflow: elide; }
-                rp_input := LineEdit { placeholder-text: "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text, root.rp_backup_pass, root.rp_backup_confirm); } }
+                if root.rp_user != "" : Text { text: root.ui_lang == "bn" ? "জন্য " + root.rp_user : "for " + root.rp_user; color: #5b6589; font-size: 11px; horizontal-alignment: center; overflow: elide; }
+                rp_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড…" : "Master password…"; input-type: password; height: 46px; font-size: 15px; accepted(text) => { root.reprompt_confirm(text, root.rp_backup_pass, root.rp_backup_confirm); } }
                 if root.rp_action == 5 && (root.rp_export_fmt == 3 || root.rp_export_fmt == 5) : VerticalLayout { spacing: 6px;
                     Text { text: root.rp_export_fmt == 5 ? "A13: this .kdbx opens in KeePassXC with THIS password — never your master password. 12+ characters; it cannot be recovered." : "A6: this .pvx is sealed with THIS passphrase — never with your master password. Store it separately; it cannot be recovered."; color: #fbbf24; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: root.rp_export_fmt == 5 ? "KDBX password (12+ characters)" : "Backup passphrase (12+ characters)"; input-type: password; height: 40px; text: root.rp_backup_pass; edited(v) => { root.rp_backup_pass = v; } }
@@ -2455,8 +2455,8 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: center;
-                    AuraButton { label: "Confirm"; primary: true; width: 150px; height: 42px; clicked => { root.reprompt_confirm(rp_input.text, root.rp_backup_pass, root.rp_backup_confirm); } }
-                    AuraButton { label: "✕ Cancel"; width: 130px; height: 42px; clicked => { root.rp_show = false; root.rp_error = ""; } }
+                    AuraButton { label: root.ui_lang == "bn" ? "নিশ্চিত করুন" : "Confirm"; primary: true; width: 150px; height: 42px; clicked => { root.reprompt_confirm(rp_input.text, root.rp_backup_pass, root.rp_backup_confirm); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕ বাতিল" : "✕ Cancel"; width: 130px; height: 42px; clicked => { root.rp_show = false; root.rp_error = ""; } }
                 }
             }
         }
@@ -2481,14 +2481,14 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 padding: 20px;
                 spacing: 12px;
-                Text { text: "🔐 pv CLI request"; color: #eef1ff; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
+                Text { text: root.ui_lang == "bn" ? "🔐 pv CLI অনুরোধ" : "🔐 pv CLI request"; color: #eef1ff; font-size: 16px; font-weight: 800; horizontal-alignment: center; }
                 Text { text: root.api_prompt_text; color: #eef1ff; font-size: 13px; wrap: word-wrap; horizontal-alignment: center; }
-                Text { text: "A local script wants to read one vault field. Deny if you did not start it. This prompt expires after 60 seconds; the CLI gives up at 50."; color: #8e99c0; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                Text { text: root.ui_lang == "bn" ? "একটি লোকাল স্ক্রিপ্ট একটি ভল্ট ফিল্ড পড়তে চায়। আপনি শুরু না করলে অস্বীকার করুন। ৬০ সেকেন্ডে মেয়াদ শেষ; CLI ৫০ সেকেন্ডে থেমে যায়।" : "A local script wants to read one vault field. Deny if you did not start it. This prompt expires after 60 seconds; the CLI gives up at 50."; color: #8e99c0; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
                 HorizontalLayout {
                     spacing: 10px;
                     alignment: center;
-                    AuraButton { label: "Allow once"; primary: true; width: 150px; height: 40px; clicked => { root.api_allow(); } }
-                    AuraButton { label: "Deny"; danger: true; width: 130px; height: 40px; clicked => { root.api_deny(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "একবার অনুমতি" : "Allow once"; primary: true; width: 150px; height: 40px; clicked => { root.api_allow(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "অস্বীকার" : "Deny"; danger: true; width: 130px; height: 40px; clicked => { root.api_deny(); } }
                 }
             }
         }
