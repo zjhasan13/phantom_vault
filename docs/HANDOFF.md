@@ -41,9 +41,12 @@
   Sync + Local Wi-Fi P2P labels, Export Vault heading, and the Master Reprompt
   title/description. **Batch 4:** reprompt action/field/Confirm/Cancel, the API
   approval dialog (Allow/Deny + warning), and the import dry-run preview
-  (mode buttons, Confirm/Cancel, Undo). ~107 bilingual strings; the Quick
-  Capture window (separate component without `ui_lang`) and all Rust status
-  strings stay English. `normalize_lang` only
+  (mode buttons, Confirm/Cancel, Undo). **Batch 5:** a `tr()` + `UI_LANG_BN`
+  bridge now localizes the most frequent Rust status strings (decoy read-only
+  across all handlers, vault-not-unlocked, import waiting/no-file/preview/
+  merging/restore) and the duplicate-import choice buttons. Remaining Rust
+  status/error strings, the Quick Capture window and many dialogs stay English;
+  `docs/A26_BN.md` tracks coverage. `normalize_lang` only
   accepts `bn` (case/space tolerant); anything else falls back to English.
   Honest: most dialogs and all Rust-generated status strings remain English —
   `docs/A26_BN.md` lists the coverage and how to extend. Tests +1 → `cargo test`

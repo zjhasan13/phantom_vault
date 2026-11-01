@@ -1594,7 +1594,7 @@ export component MainWindow inherits Window {
                     Text { text: root.dup_body; color: #8e99c0; font-size: 12px; wrap: word-wrap; }
                     AuraButton { label: "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
                     Text { text: "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "♻️ Replace the existing card's secret"; height: 34px; danger: true; clicked => { root.dup_confirm_replace(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "⚠️ বিদ্যমান কার্ডের সিক্রেট প্রতিস্থাপন" : "⚠️ Replace the existing card's secret"; height: 34px; danger: true; clicked => { root.dup_confirm_replace(); } }
                     AuraButton { label: "Cancel — import nothing"; height: 34px; clicked => { root.dup_confirm_cancel(); } }
                 }
             }

@@ -15,7 +15,8 @@
 | Importer | “Universal Vault Importer” title |
 | Settings | “Settings & Dev Center”, Language row, master rotation, offline cache, PQ-paranoid, 2FA clock, clipboard, auto-lock, updates, paired devices, duress/honeytokens/emergency headings |
 | Sync/export | GitHub Sync, Local Wi-Fi P2P title + enable/pairing/scan/empty labels, Export Vault heading |
-| Dialogs | Master Reprompt title/action/field/Confirm/Cancel, “demands master-password confirmation”, API approval (Allow/Deny + warning), import dry-run preview (mode buttons, Confirm/Cancel, Undo) |
+| Dialogs | Master Reprompt title/action/field/Confirm/Cancel, “demands master-password confirmation”, API approval (Allow/Deny + warning), import dry-run preview (mode buttons, Confirm/Cancel, Undo), duplicate-import choice buttons |
+| Rust status strings | “decoy mode is read-only” (all handlers), “vault not unlocked”, import flow: waiting for picker, no file chosen, preview ready, nothing staged, merging, restoring |
 | Sections | LOCAL API (pv CLI), EXPIRING SHARES (SEND), PQ-paranoid labels (partial) |
 | Item detail | LOGIN CREDENTIALS, USERNAME, PASSWORD, NOTES, AUTO-FILL OPTIONS, BACKUP / RECOVERY CODES, CUSTOM FIELDS, ATTACHMENTS, ITEM HISTORY, Autofill/Type, Copy All Codes, attach buttons, empty-attachment text |
 | Add/edit form | ITEM DETAILS, LOGIN CREDENTIALS, EXTRA FIELDS, AUTHENTICATOR KEY (TOTP), BACKUP / RECOVERY CODES, AUTOFILL OPTIONS, USERNAME, PASSWORD, NOTES |
@@ -28,8 +29,11 @@ security copy, and the Quick Capture window (a separate Slint component without
 
 - The Slint property `ui_lang` (`"en"` / `"bn"`) drives inline ternaries:
   `text: root.ui_lang == "bn" ? "বাংলা" : "English"`.
+- Rust-generated status strings use `tr("English", "বাংলা")`, backed by a
+  process-wide `UI_LANG_BN` flag set by the same toggle/startup path.
 - The lock-screen toggle and the Settings → Language row both call the Rust
-  `set_language(string)` callback, which writes `lang.pref` and sets `ui_lang`.
+  `set_language(string)` callback, which writes `lang.pref`, sets `ui_lang` and
+  the `tr()` flag.
 - Startup reads `lang.pref` before the UI is used. No gettext/`.po` bundle is
   involved; nothing changes if the pref is missing (English).
 - `normalize_lang()` only accepts `bn` (case/space tolerant); everything else

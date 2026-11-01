@@ -1056,6 +1056,23 @@ fn set_net_allowed(on: bool) {
     NET_ALLOWED.store(on, std::sync::atomic::Ordering::SeqCst);
 }
 
+/// A26: process-wide UI language for Rust-generated status strings. Slint
+/// labels use the `ui_lang` property; this mirrors it for `tr()`.
+static UI_LANG_BN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+fn ui_lang_bn() -> bool {
+    UI_LANG_BN.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// Pick the Bengali or English form of a static status string.
+fn tr<'a>(en: &'a str, bn: &'a str) -> &'a str {
+    if ui_lang_bn() {
+        bn
+    } else {
+        en
+    }
+}
+
 /// A26: only English and Bengali are selectable; anything else falls back to EN.
 fn normalize_lang(lang: &str) -> &'static str {
     if lang.trim().eq_ignore_ascii_case("bn") {
@@ -3586,7 +3603,12 @@ fn main() -> Result<(), slint::PlatformError> {
     set_pq_backend_ui(&main_window);
     refresh_ls_rows(&main_window);
     let saved_lang = std::fs::read_to_string("lang.pref").unwrap_or_default();
-    main_window.set_ui_lang(normalize_lang(saved_lang.trim()).into());
+    let saved_lang = normalize_lang(saved_lang.trim());
+    UI_LANG_BN.store(
+        saved_lang == "bn",
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    main_window.set_ui_lang(saved_lang.into());
     if let Some(msg) = security::canary::take_remote_alert() {
         main_window.set_notification_text(msg.into());
     }
@@ -4622,7 +4644,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(main_ui) = cap_main_save.upgrade() {
             if main_ui.get_is_decoy() {
                 if let Some(cap) = cap_weak_save.upgrade() {
-                    cap.set_cap_hint("⛔ Decoy mode is read-only.".into());
+                    cap.set_cap_hint(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 }
                 return;
             }
@@ -4961,7 +4983,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let mut raw = [0u8; 20];
@@ -5068,7 +5090,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&disable_master).clone();
@@ -5228,12 +5250,12 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_new_device_error("⛔ Decoy mode is read-only.".into());
+            ui.set_new_device_error(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&reenroll_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_new_device_error("❌ Vault not unlocked!".into());
+            ui.set_new_device_error(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         // SecretString clone: zeroizing buffer, no plaintext String anywhere.
@@ -5390,7 +5412,7 @@ fn main() -> Result<(), slint::PlatformError> {
             if let Some(ui) = window_weak_add.upgrade() {
                 // Decoy vaults are read-mostly cover: never write through them.
                 if ui.get_is_decoy() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                     return;
                 }
             }
@@ -5510,7 +5532,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 let Some(master_pw) = master_opt else {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_notification_text("❌ Vault not unlocked!".into());
+                            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                         }
                     });
                     return;
@@ -5732,7 +5754,7 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.on_delete_item_requested(move |kind, id| {
         if let Some(ui) = window_weak_del.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             ui.set_notification_text("⏳ Deleting…".into());
@@ -5748,7 +5770,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -5839,7 +5861,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let weak = window_weak_restore.clone();
@@ -5853,7 +5875,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -5913,7 +5935,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_fr_password(String::new().into());
@@ -5969,7 +5991,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_fr_error("⛔ Decoy mode is read-only.".into());
+            ui.set_fr_error(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let pw = ui.get_fr_password().to_string();
@@ -6030,7 +6052,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_fr_error("⛔ Decoy mode is read-only.".into());
+            ui.set_fr_error(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if !ui.get_fr_armed() {
@@ -6150,7 +6172,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let weak = window_weak_empty.clone();
@@ -6163,7 +6185,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -6348,12 +6370,12 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&master_pw_fav).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = window_weak_fav.clone();
@@ -6434,7 +6456,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if kind != 1 {
@@ -6443,7 +6465,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         let master_opt = lock_master_pw(&ver_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = ver_weak.clone();
@@ -6555,7 +6577,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -6645,7 +6667,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move || {
             if weak.upgrade().map(|ui| ui.get_is_decoy()).unwrap_or(false) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 }
                 return;
             }
@@ -6673,7 +6695,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move |folder| {
             if weak.upgrade().map(|ui| ui.get_is_decoy()).unwrap_or(false) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 }
                 return;
             }
@@ -6720,7 +6742,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move || {
             if weak.upgrade().map(|ui| ui.get_is_decoy()).unwrap_or(false) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 }
                 return;
             }
@@ -6765,7 +6787,7 @@ fn main() -> Result<(), slint::PlatformError> {
         move || {
             if weak.upgrade().map(|ui| ui.get_is_decoy()).unwrap_or(false) {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 }
                 return;
             }
@@ -6833,7 +6855,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -6915,7 +6937,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.on_import_url_requested(move |url_text| {
         if let Some(ui) = window_weak_url.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
         }
@@ -6960,10 +6982,10 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.on_import_2fa_file(move || {
         if let Some(ui) = window_weak_2faf.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_import_2fa_status("⏳ Waiting for file picker…".into());
+            ui.set_import_2fa_status(tr("⏳ Waiting for file picker…", "⏳ ফাইল পিকার অপেক্ষায়…").into());
         }
         let weak = window_weak_2faf.clone();
         let vault_clone = Arc::clone(&vault_arc_2faf);
@@ -6978,7 +7000,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let Some(path) = picked else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_import_2fa_status("No file chosen.".into());
+                        ui.set_import_2fa_status(tr("No file chosen.", "কোনো ফাইল বাছা হয়নি।").into());
                     }
                 });
                 return;
@@ -7028,7 +7050,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     main_window.on_scan_qr_requested(move || {
         if let Some(ui) = window_weak_qr.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             ui.set_notification_text("⏳ Scanning clipboard QR…".into());
@@ -7087,7 +7109,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -7263,7 +7285,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak_in.upgrade() {
                                 ui.set_show_webcam_scan(false);
-                                ui.set_notification_text("❌ Vault not unlocked!".into());
+                                ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                             }
                         });
                         return;
@@ -7346,7 +7368,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let cams = authenticator::camera_scanner::list_cameras();
         if let Some(ui) = window_weak_cam.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             if cams.is_empty() {
@@ -7583,7 +7605,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if let Ok(mut t) = qc_activity.lock() {
@@ -7782,7 +7804,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+            ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if paranoid_active() {
@@ -7851,7 +7873,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_merge_status("⛔ Decoy mode is read-only.".into());
+            ui.set_merge_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if paranoid_active() {
@@ -7980,7 +8002,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let staged = pending_merge_store().lock().unwrap().take();
         let Some(staged) = staged else {
             if let Some(ui) = apply_weak.upgrade() {
-                ui.set_merge_status("⚠️ Nothing staged — preview first.".into());
+                ui.set_merge_status(tr("⚠️ Nothing staged — pick a file first.", "⚠️ কিছু স্টেজ হয়নি — আগে ফাইল বাছুন।").into());
             }
             return;
         };
@@ -8044,7 +8066,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            ui.set_share_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&share_master).clone();
@@ -8124,7 +8146,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            ui.set_share_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&revoke_master).clone();
@@ -8180,7 +8202,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_share_status("⛔ Decoy mode is read-only.".into());
+            ui.set_share_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         use base64::Engine as _;
@@ -8229,7 +8251,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            ui.set_send_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_send_status("⏳ Sealing + publishing…".into());
@@ -8288,7 +8310,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            ui.set_send_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_send_status("⏳ Fetching + opening…".into());
@@ -8366,7 +8388,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_send_status("⛔ Decoy mode is read-only.".into());
+            ui.set_send_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         use base64::Engine as _;
@@ -8397,7 +8419,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let now = crate::models::current_timestamp();
@@ -8428,7 +8450,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&deprov_master).clone();
@@ -8501,7 +8523,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_admin_status("⏳ Verifying with provider…".into());
@@ -8546,7 +8568,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let mut roster = security::admin::load_members();
@@ -8584,7 +8606,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_admin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if lock_master_pw(&audit_master).as_ref().is_none() {
@@ -8802,7 +8824,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_p2p_status("⛔ Decoy mode is read-only.".into());
+            ui.set_p2p_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if paranoid_active() {
@@ -9047,7 +9069,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         // Synchronous: one DPAPI seal + two tiny file writes.
@@ -9075,7 +9097,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_notification_text("🎭 Requesting alias…".into());
@@ -9143,7 +9165,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+            ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         match security::decoy::provision_decoy(duress.as_str()) {
@@ -9166,7 +9188,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+            ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&plant_master).clone();
@@ -9231,7 +9253,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let rp_id = rp.as_str().trim().to_lowercase();
@@ -9246,7 +9268,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&pk_reg_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         ui.set_notification_text("⏳ Generating Ed25519 passkey…".into());
@@ -9298,12 +9320,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&pk_del_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = pk_del_weak.clone();
@@ -9373,12 +9395,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&auth_del_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = auth_del_weak.clone();
@@ -9442,7 +9464,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let accounts = lock_vault(&ga_vault).totp_accounts.clone();
@@ -9553,7 +9575,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_rp_action(5);
@@ -9580,7 +9602,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let weak = pk_res_weak.clone();
@@ -9593,7 +9615,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("❌ Vault not unlocked!".into());
+                        ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
                     }
                 });
                 return;
@@ -9645,12 +9667,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&pk_fav_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = pk_fav_weak.clone();
@@ -9711,7 +9733,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let target = id.as_str().to_string();
@@ -9847,11 +9869,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         ui.set_show_dup_confirm(false);
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let Some(master_pw) = lock_master_pw(&dup_master).clone() else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         // Snapshot before merging: `ReplaceExisting` edits cards IN PLACE, so a
@@ -9906,12 +9928,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&totp_fav_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let weak = totp_fav_weak.clone();
@@ -9995,12 +10017,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&sheet_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         ui.set_notification_text("🖨️ Choose where to save the recovery sheet…".into());
@@ -10064,7 +10086,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         *form_editing.lock().unwrap() = None;
@@ -10120,7 +10142,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+            ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let name = name.as_str().trim().to_string();
@@ -10318,7 +10340,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // Same vault-destruction vector as HOTP: the toggle re-seals the file.
         if let Some(ui) = cfs_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
         }
@@ -10696,7 +10718,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let vault = lock_vault(&edit_vault);
@@ -10970,7 +10992,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 // Zero-lockin file export (master verified above; decoy refused).
                 let fmt = ui.get_rp_export_fmt();
                 if ui.get_is_decoy() {
-                    ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                    ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                     return;
                 }
                 ui.set_export_status("⚠️ Plaintext export — pick a destination…".into());
@@ -11269,7 +11291,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let kp = crate::core::pq_hybrid::PqHybridEngine::generate_keypair();
@@ -11293,7 +11315,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_emg_status("⏳ Publishing grant request…".into());
@@ -11364,7 +11386,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let master_opt = lock_master_pw(&emgrel_master).clone();
@@ -11437,7 +11459,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_emg_status("⏳ Fetching envelope…".into());
@@ -11500,7 +11522,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_emg_status("⛔ Decoy mode is read-only.".into());
+            ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         use base64::Engine as _;
@@ -11539,10 +11561,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
     main_window.on_pick_import_file(move || {
         if let Some(ui) = import_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_import_status("⛔ Decoy mode is read-only.".into());
+                ui.set_import_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_import_status("⏳ Waiting for file picker…".into());
+            ui.set_import_status(tr("⏳ Waiting for file picker…", "⏳ ফাইল পিকার অপেক্ষায়…").into());
         }
         // A6: read the optional backup passphrase on the event loop, then hand
         // it to the worker. Empty = "this export has no separate passphrase".
@@ -11563,7 +11585,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(path) = picked else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_import_status("No file chosen.".into());
+                        ui.set_import_status(tr("No file chosen.", "কোনো ফাইল বাছা হয়নি।").into());
                     }
                 });
                 return;
@@ -11620,7 +11642,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             format!("👁️ Preview — {} — review, then Confirm to merge.", summary.headline()).into(),
                         );
                         ui.set_show_import_preview(true);
-                        ui.set_import_status("👁️ Preview ready — nothing merged yet.".into());
+                        ui.set_import_status(tr("👁️ Preview ready — nothing merged yet.", "👁️ প্রিভিউ প্রস্তুত — এখনো কিছু merge হয়নি।").into());
                         ui.set_import_kind("success".into());
                         // The passphrase is not needed past this point.
                         ui.set_import_backup_pass("".into());
@@ -11642,7 +11664,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let staged = pending_import_store().lock().unwrap().take();
         let Some(staged) = staged else {
             if let Some(ui) = confirm_weak.upgrade() {
-                ui.set_import_status("⚠️ Nothing staged — pick a file first.".into());
+                ui.set_import_status(tr("⚠️ Nothing staged — pick a file first.", "⚠️ কিছু স্টেজ হয়নি — আগে ফাইল বাছুন।").into());
             }
             return;
         };
@@ -11791,7 +11813,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = undo_weak.upgrade() else {
             return;
         };
-        ui.set_import_status("Restoring the pre-import vault...".into());
+        ui.set_import_status(tr("Restoring the pre-import vault...", "ইমপোর্টের আগের ভল্ট ফিরিয়ে আনা হচ্ছে...").into());
         let weak = undo_weak.clone();
         let vault_arc = Arc::clone(&undo_vault);
         let master_arc = Arc::clone(&undo_master);
@@ -11866,7 +11888,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_browser_detect_status("⛔ Decoy mode is read-only.".into());
+            ui.set_browser_detect_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let found = importer::browser_direct::detect();
@@ -11916,7 +11938,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     main_window.on_stego_hide(move || {
         if let Some(ui) = stego_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+                ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             ui.set_sync_status("⏳ Pick a carrier PNG…".into());
@@ -11978,7 +12000,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     main_window.on_stego_restore(move || {
         if let Some(ui) = stegor_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_sync_status("⛔ Decoy mode is read-only.".into());
+                ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             ui.set_sync_status("⏳ Pick a concealed PNG…".into());
@@ -12042,7 +12064,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if !on {
@@ -12078,7 +12100,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if !is_attachable(kind) {
@@ -12293,7 +12315,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let weak = del_main.clone();
@@ -12360,7 +12382,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let weak = trav_weak.clone();
@@ -12422,7 +12444,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // real vault file with decoy content under the duress password.
         if let Some(ui) = hotp_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+                ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
         }
@@ -12510,7 +12532,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_offline_cache_status("⛔ Decoy mode is read-only.".into());
+            ui.set_offline_cache_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let msg = if on {
@@ -12542,7 +12564,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_offline_cache_status("⛔ Decoy mode is read-only.".into());
+            ui.set_offline_cache_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if on && !security::offline_cache::enabled() {
@@ -12716,7 +12738,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let id = id.as_str().to_string();
@@ -12861,7 +12883,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_pin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_pin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
@@ -12871,7 +12893,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&pinset_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_pin_status("❌ Vault not unlocked!".into());
+            ui.set_pin_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         use secrecy::ExposeSecret;
@@ -12891,7 +12913,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_pin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_pin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         security::app_pin::disable(Path::new("."));
@@ -12908,11 +12930,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_rekey_status("⛔ Decoy mode is read-only.".into());
+            ui.set_rekey_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if lock_master_pw(&rekey_master).is_none() {
-            ui.set_rekey_status("❌ Vault not unlocked!".into());
+            ui.set_rekey_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         }
         if let Some(err) = rekey_input_error(old.as_str(), new.as_str(), confirm.as_str()) {
@@ -12996,11 +13018,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_pq_status("⛔ Decoy mode is read-only.".into());
+            ui.set_pq_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let Some(master) = lock_master_pw(&pq_master).clone() else {
-            ui.set_pq_status("❌ Vault not unlocked!".into());
+            ui.set_pq_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         if enable && !PARANOID_BACKUP_READY.load(std::sync::atomic::Ordering::SeqCst) {
@@ -13112,11 +13134,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_pq_status("⛔ Decoy mode is read-only.".into());
+            ui.set_pq_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let Some(master) = lock_master_pw(&mv_master).clone() else {
-            ui.set_pq_status("❌ Vault not unlocked!".into());
+            ui.set_pq_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         if !paranoid_active() {
@@ -13193,7 +13215,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_api_status("⛔ Decoy mode is read-only.".into());
+            ui.set_api_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if on {
@@ -13290,7 +13312,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            ui.set_ls_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let Some(ttl_secs) = share_cli::parse_ttl(ttl.as_str()) else {
@@ -13392,7 +13414,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            ui.set_ls_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         ui.set_ls_ready(false);
@@ -13462,7 +13484,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_ls_status("⛔ Decoy mode is read-only.".into());
+            ui.set_ls_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let payload = login_share_add_pending
@@ -13474,7 +13496,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         let Some(master) = lock_master_pw(&login_share_add_master).clone() else {
-            ui.set_ls_status("❌ Vault not unlocked!".into());
+            ui.set_ls_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
         let mut vault = lock_vault(&login_share_add_vault);
@@ -13539,6 +13561,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let lang_weak = main_window.as_weak();
     main_window.on_set_language(move |lang| {
         let lang = normalize_lang(lang.as_str());
+        UI_LANG_BN.store(lang == "bn", std::sync::atomic::Ordering::Relaxed);
         if let Err(e) = std::fs::write("lang.pref", lang) {
             eprintln!("lang.pref write failed: {e}");
         }
@@ -13558,7 +13581,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_ext_pin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_ext_pin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
@@ -13572,7 +13595,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&epinset_master).clone();
         if master_opt.is_none() {
-            ui.set_ext_pin_status("❌ Vault not unlocked!".into());
+            ui.set_ext_pin_status(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         }
         match security::ext_pin::set(Path::new("."), &pin) {
@@ -13594,7 +13617,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_ext_pin_status("⛔ Decoy mode is read-only.".into());
+            ui.set_ext_pin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         security::ext_pin::clear(Path::new("."));
@@ -13764,11 +13787,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
-            ui.set_notification_text("⛔ Decoy mode is read-only.".into());
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         if lock_master_pw(&start_master).is_none() {
-            ui.set_notification_text("❌ Vault not unlocked!".into());
+            ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         }
         let keys = developer::ssh_agent::collect_keys(&lock_vault(&start_vault));
@@ -14024,7 +14047,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .unwrap_or(false);
         if let Some(ui) = audit_weak.upgrade() {
             if ui.get_is_decoy() {
-                ui.set_health_status("⛔ Decoy mode is read-only.".into());
+                ui.set_health_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
             ui.set_health_status(if offline {
