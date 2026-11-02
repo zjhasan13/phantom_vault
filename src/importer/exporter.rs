@@ -713,6 +713,8 @@ mod tests {
             mime_type: "application/octet-stream".into(),
             size_bytes: 3,
             data: vec![1, 2, 3],
+            storage: crate::models::AttachmentStorage::Inline,
+            sidecar: None,
         });
         v.totp_accounts.push(crate::models::TotpAccount {
             id: "t1".into(),

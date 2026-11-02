@@ -19,6 +19,10 @@ test_vault.enc
 # A20: expiring share bundles (ciphertext; never commit).
 pvshares/
 *.pvsh
+# A24: encrypted attachment sidecars (ciphertext; never commit).
+attachments/
+*.pvab
+*.pvab.tmp
 # A23: local API runtime port (token is *.dpapi above).
 pv_api_port
 # A26: remembered UI language (local preference).

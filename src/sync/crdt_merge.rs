@@ -152,6 +152,17 @@ where
 /// and non-login divergence all keep local + report. Never touches disk or
 /// network — pure.
 pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String> {
+    // A24: two independently generated attachment roots cannot be merged
+    // without rewrapping every sidecar; refuse loudly instead of losing bytes.
+    if !local.attachment_root.is_empty()
+        && !remote.attachment_root.is_empty()
+        && local.attachment_root != remote.attachment_root
+    {
+        return Err(
+            "attachment roots differ — sidecar merge/sync is not supported yet (A24c)"
+                .to_string(),
+        );
+    }
     let mut took_remote = 0usize;
     let mut conflicts: Vec<ItemConflict> = Vec::new();
 
@@ -232,6 +243,13 @@ pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String
         totp_unlock_secret: local.totp_unlock_secret.clone(),
         verified_ids,
         shared_grants,
+        // A24: sidecar roots are not merged until A24c; keep a single root so
+        // a vault that only has sidecars on one side does not silently lose it.
+        attachment_root: if local.attachment_root.is_empty() {
+            remote.attachment_root.clone()
+        } else {
+            local.attachment_root.clone()
+        },
     };
     let mut merged = merged;
     {

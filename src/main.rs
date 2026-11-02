@@ -11075,8 +11075,25 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let (payload, filename, filters, summary) = {
                         let v = lock_vault(&vault_clone);
                         if fmt == 3 {
+                            // A24: `.pvx` stays a single self-contained blob;
+                            // large sidecars are decrypted back into this clone
+                            // only for the export (the vault at rest stays lean).
+                            let export_vault = if crate::attachment_store::has_sidecars(&v) {
+                                match crate::attachment_store::inline_all(
+                                    &v,
+                                    Path::new(VAULT_FILE),
+                                ) {
+                                    Ok(x) => x,
+                                    Err(e) => {
+                                        eprintln!("export refused: {e}");
+                                        return;
+                                    }
+                                }
+                            } else {
+                                v.clone()
+                            };
                             let bytes = match importer::exporter::export_native_gated(
-                                &v,
+                                &export_vault,
                                 false,
                                 &export_backup,
                             ) {
@@ -11086,7 +11103,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                     return;
                                 }
                             };
-                            let (items, atts, atts_bytes) = importer::exporter::native_stats(&v);
+                            let (items, atts, atts_bytes) =
+                                importer::exporter::native_stats(&export_vault);
                             (
                                 bytes,
                                 "phantom-vault-export.pvx".to_string(),
@@ -12186,12 +12204,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let id = id.as_str().to_string();
         std::thread::spawn(move || {
             let picked = rfd::FileDialog::new()
-                .set_title("Attach file (max 5MB, sealed into vault)")
+                .set_title("Attach file (max 50MB; >5MB stored separately)")
                 .pick_file();
             let Some(path) = picked else {
                 return;
             };
-            let bytes = match std::fs::read(&path) {
+            let mut bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(e) => {
                     let msg = format!("⚠️ Cannot read file: {e}");
@@ -12203,10 +12221,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 }
             };
-            if bytes.len() > models::MAX_ATTACHMENT_BYTES {
+            if bytes.len() > models::MAX_SIDECAR_ATTACHMENT_BYTES {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ File exceeds 5MB.".into());
+                        ui.set_notification_text("⚠️ File exceeds 50MB.".into());
                     }
                 });
                 return;
@@ -12221,13 +12239,29 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(master_pw) = master_opt else {
                 return;
             };
-            let new_id = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map(|d| format!("att{}", d.as_millis()))
-                .unwrap_or_else(|_| "att0".to_string());
+            let mut id_raw = [0u8; 16];
+            OsRng.fill_bytes(&mut id_raw);
+            let new_id: String = id_raw.iter().map(|b| format!("{b:02x}")).collect();
+            let use_sidecar = bytes.len() > models::MAX_ATTACHMENT_BYTES;
+            let mut sidecar_written: Option<std::path::PathBuf> = None;
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
+                let sidecar_root = if use_sidecar {
+                    match crate::attachment_store::ensure_root(&mut vault) {
+                        Ok(r) => Some(r),
+                        Err(e) => {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_notification_text(format!("⚠️ {e}").into());
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } else {
+                    None
+                };
                 let Some(list) = attachments_mut(&mut vault, kind, &id) else {
                     return;
                 };
@@ -12239,21 +12273,74 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     });
                     return;
                 }
-                list.push(models::EncryptedAttachment {
-                    id: new_id,
-                    filename,
-                    mime_type: mime,
-                    size_bytes: bytes.len(),
-                    data: bytes,
-                });
+                let attachment = if use_sidecar {
+                    let root = sidecar_root.expect("root checked above");
+                    let sidecar = crate::attachment_store::sidecar_path(
+                        std::path::Path::new(VAULT_FILE),
+                        &new_id,
+                    );
+                    if let Some(parent) = sidecar.parent() {
+                        if let Err(e) = std::fs::create_dir_all(parent) {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_notification_text(
+                                        format!("⚠️ Attachment folder: {e}").into(),
+                                    );
+                                }
+                            });
+                            return;
+                        }
+                    }
+                    match crate::attachment_store::write_sidecar_bytes(
+                        &sidecar, &bytes, &root, &new_id,
+                    ) {
+                        Ok(meta) => {
+                            sidecar_written = Some(sidecar);
+                            models::EncryptedAttachment {
+                                id: new_id,
+                                filename,
+                                mime_type: mime,
+                                size_bytes: bytes.len(),
+                                data: Vec::new(),
+                                storage: models::AttachmentStorage::Sidecar,
+                                sidecar: Some(meta),
+                            }
+                        }
+                        Err(e) => {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_notification_text(format!("⚠️ {e}").into());
+                                }
+                            });
+                            return;
+                        }
+                    }
+                } else {
+                    models::EncryptedAttachment {
+                        id: new_id,
+                        filename,
+                        mime_type: mime,
+                        size_bytes: bytes.len(),
+                        data: std::mem::take(&mut bytes),
+                        storage: models::AttachmentStorage::Inline,
+                        sidecar: None,
+                    }
+                };
+                list.push(attachment);
                 match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
                     Ok(()) => Ok(vault.clone()),
                     Err(e) => {
                         *vault = snapshot;
+                        if let Some(p) = sidecar_written.take() {
+                            let _ = std::fs::remove_file(p);
+                        }
                         Err(e)
                     }
                 }
             };
+            if use_sidecar {
+                bytes.zeroize();
+            }
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak_main.upgrade() else {
                     return;
@@ -12268,8 +12355,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
-                        ui.set_notification_text("📎 File sealed into vault.".into());
-                        trigger_sync_push(ui.as_weak());
+                        if use_sidecar {
+                            ui.set_notification_text(
+                                "📎 Large file stored separately; sync/P2P is disabled until A24c — export .pvx."
+                                    .into(),
+                            );
+                        } else {
+                            ui.set_notification_text("📎 File sealed into vault.".into());
+                            trigger_sync_push(ui.as_weak());
+                        }
                     }
                     Err(e) => {
                         ui.set_notification_text(format!("❌ Attach failed: {e}").into());
@@ -12287,14 +12381,31 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         let vault = lock_vault(&dl_vault);
-        let found: Option<(String, Vec<u8>)> = attachments_of(&vault, kind, id.as_str())
-            .iter()
-            .find(|a| a.id == att_id.as_str())
-            .map(|a| (a.filename.clone(), a.data.clone()));
+        let found: Option<(String, Result<Vec<u8>, String>)> =
+            attachments_of(&vault, kind, id.as_str())
+                .iter()
+                .find(|a| a.id == att_id.as_str())
+                .map(|a| {
+                    (
+                        a.filename.clone(),
+                        crate::attachment_store::attachment_bytes(
+                            &vault,
+                            a,
+                            std::path::Path::new(VAULT_FILE),
+                        ),
+                    )
+                });
         drop(vault);
         let Some((filename, data)) = found else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
             return;
+        };
+        let data = match data {
+            Ok(d) => d,
+            Err(e) => {
+                ui.set_notification_text(format!("⚠️ {e}").into());
+                return;
+            }
         };
         let weak = dl_weak.clone();
         std::thread::spawn(move || {
@@ -12329,14 +12440,31 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         let vault = lock_vault(&pv_vault);
-        let found: Option<(String, Vec<u8>)> = attachments_of(&vault, kind, id.as_str())
-            .iter()
-            .find(|a| a.id == att_id.as_str())
-            .map(|a| (a.filename.clone(), a.data.clone()));
+        let found: Option<(String, Result<Vec<u8>, String>)> =
+            attachments_of(&vault, kind, id.as_str())
+                .iter()
+                .find(|a| a.id == att_id.as_str())
+                .map(|a| {
+                    (
+                        a.filename.clone(),
+                        crate::attachment_store::attachment_bytes(
+                            &vault,
+                            a,
+                            std::path::Path::new(VAULT_FILE),
+                        ),
+                    )
+                });
         drop(vault);
         let Some((filename, data)) = found else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
             return;
+        };
+        let data = match data {
+            Ok(d) => d,
+            Err(e) => {
+                ui.set_notification_text(format!("⚠️ {e}").into());
+                return;
+            }
         };
         let ext = filename.rsplit('.').next().unwrap_or("").to_lowercase();
         let info = format!("{} • {}", filename, human_bytes(data.len()));
@@ -12396,13 +12524,23 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(master_pw) = master_opt else {
                 return;
             };
+            let mut sidecar_to_delete: Option<std::path::PathBuf> = None;
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
                 let removed = attachments_mut(&mut vault, kind, &id).map(|list| {
-                    let before = list.len();
-                    list.retain(|a| a.id != att_id);
-                    before != list.len()
+                    if let Some(pos) = list.iter().position(|a| a.id == att_id) {
+                        let a = list.remove(pos);
+                        if a.storage == models::AttachmentStorage::Sidecar {
+                            sidecar_to_delete = Some(crate::attachment_store::sidecar_path(
+                                std::path::Path::new(VAULT_FILE),
+                                &a.id,
+                            ));
+                        }
+                        true
+                    } else {
+                        false
+                    }
                 });
                 if removed != Some(true) {
                     Err("Attachment not found".to_string())
@@ -12416,6 +12554,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                 }
             };
+            if saved.is_ok() {
+                if let Some(p) = sidecar_to_delete {
+                    let _ = std::fs::remove_file(p);
+                }
+            }
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else {
                     return;

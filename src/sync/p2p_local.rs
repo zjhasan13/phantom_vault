@@ -1169,6 +1169,14 @@ pub fn sync_with_peer(
     pin: &str,
     adopt_local: &mut dyn FnMut(Vec<u8>) -> Result<(), String>,
 ) -> Result<String, String> {
+    if crate::attachment_store::dir_has_sidecars(std::path::Path::new(
+        crate::developer::vault_run::VAULT_FILE,
+    )) {
+        return Err(
+            "large attachments are stored separately and are not synced yet (A24c) — export .pvx instead"
+                .to_string(),
+        );
+    }
     let addr: SocketAddr = format!("{ip}:{P2P_PORT}").parse().map_err(|e| format!("bad peer ip: {e}"))?;
     let (local_sha, local_mtime) = local_head();
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();

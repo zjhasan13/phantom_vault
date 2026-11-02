@@ -1056,6 +1056,8 @@ mod tests {
             mime_type: "application/octet-stream".into(),
             size_bytes: all_bytes.len(),
             data: all_bytes.clone(),
+            storage: crate::models::AttachmentStorage::Inline,
+            sidecar: None,
         });
         save_vault(&v, "bytes-pass-1", &path).unwrap();
         let file_bytes = std::fs::read(&path).unwrap();

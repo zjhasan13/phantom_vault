@@ -67,8 +67,36 @@ pub mod serde_b64 {
     }
 }
 
-/// Encrypted file attachment (stored sealed inside the vault container).
-/// 5MB per-file cap enforced at ingestion; never written to disk plaintext.
+/// How an attachment's bytes are stored.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum AttachmentStorage {
+    /// Legacy/compact: base64 bytes inside the encrypted vault JSON.
+    #[default]
+    Inline,
+    /// A24: separate `attachments/<id>.pvab` sidecar (chunked, own key).
+    Sidecar,
+}
+
+impl zeroize::Zeroize for AttachmentStorage {
+    fn zeroize(&mut self) {
+        *self = Self::Inline;
+    }
+}
+
+/// Vault-side metadata for one `PVAB1` sidecar. The sidecar header must match.
+#[derive(
+    Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop,
+)]
+pub struct SidecarMeta {
+    pub chunk_size: u32,
+    pub chunk_count: u32,
+    pub size_bytes: u64,
+    #[serde(with = "serde_b64")]
+    pub wrapped_key: Vec<u8>,
+}
+
+/// Encrypted file attachment. Legacy rows keep their bytes in `data`; A24
+/// large files keep only metadata here and their chunks in a sidecar.
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default)]
 pub struct EncryptedAttachment {
     pub id: String,
@@ -77,9 +105,15 @@ pub struct EncryptedAttachment {
     pub size_bytes: usize,
     #[serde(with = "serde_b64")]
     pub data: Vec<u8>,
+    #[serde(default)]
+    pub storage: AttachmentStorage,
+    #[serde(default)]
+    pub sidecar: Option<SidecarMeta>,
 }
 
 pub const MAX_ATTACHMENT_BYTES: usize = 5 * 1024 * 1024;
+/// A24: ceiling for sidecar-backed large attachments; the old inline cap stays.
+pub const MAX_SIDECAR_ATTACHMENT_BYTES: usize = 50 * 1024 * 1024;
 
 /// One retired password + when it was replaced. Cap enforced by `push_history`.
 #[derive(Debug, Clone, Serialize, Deserialize, Zeroize, ZeroizeOnDrop, Default, PartialEq)]
@@ -588,6 +622,11 @@ pub struct Vault {
     /// Stale ids (deleted/unknown) are ignored by readers and swept on write.
     #[serde(default)]
     pub verified_ids: Vec<String>,
+    /// A24: 32-byte root that wraps per-attachment file keys. Generated
+    /// lazily when the first sidecar attachment is written; lives inside the
+    /// encrypted vault, so rekey/profile changes protect it automatically.
+    #[serde(default, with = "serde_b64")]
+    pub attachment_root: Vec<u8>,
     /// Phase 1 sharing grants (metadata only). `serde(default)` keeps
     /// pre-sharing vaults loading — same pattern as verified_ids.
     #[serde(default)]
@@ -622,6 +661,7 @@ impl Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         }
     }
@@ -1028,6 +1068,7 @@ impl From<VaultLegacy> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         };
         v.ensure_folders();
@@ -1197,6 +1238,7 @@ impl From<VaultGen1> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         };
         v.ensure_folders();
@@ -1419,6 +1461,7 @@ impl From<VaultGen2> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         };
         v.ensure_folders();
@@ -1484,6 +1527,7 @@ impl From<VaultGen3> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         };
         v.ensure_folders();
@@ -1524,6 +1568,7 @@ impl From<VaultGen4> for Vault {
             totp_unlock_enabled: false,
             totp_unlock_secret: String::new(),
             verified_ids: Vec::new(),
+            attachment_root: Vec::new(),
             shared_grants: Vec::new(),
         };
         v.ensure_folders();

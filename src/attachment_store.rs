@@ -13,21 +13,22 @@
 
 #![allow(dead_code)] // slice A24a: wired into the vault in A24b
 
+use crate::models::{
+    AttachmentStorage, EncryptedAttachment, SidecarMeta, Vault,
+};
 use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
 use chacha20poly1305::{Key, XChaCha20Poly1305};
 use rand_core::{OsRng, RngCore};
-use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use zeroize::Zeroize;
 
 pub const SIDECAR_MAGIC: &[u8; 5] = b"PVAB1";
 pub const SIDECAR_EXT: &str = "pvab";
 /// 1 MiB keeps peak memory predictable for large files.
 pub const CHUNK_SIZE: u32 = 1024 * 1024;
-/// Ceiling for one attachment sidecar (the vault's existing 5 MB cap is raised
-/// only when the whole A24 path lands).
-pub const MAX_SIDECAR_BYTES: u64 = 50 * 1024 * 1024;
+/// Ceiling for one attachment sidecar (kept in sync with models).
+pub const MAX_SIDECAR_BYTES: u64 = crate::models::MAX_SIDECAR_ATTACHMENT_BYTES as u64;
 const FLAGS: u8 = 0;
 const NONCE_LEN: usize = 24;
 const TAG_LEN: usize = 16;
@@ -36,24 +37,14 @@ const WRAPPED_KEY_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
 const HEADER_LEN: usize = 5 + 1 + 4 + 4 + 8 + WRAPPED_KEY_LEN;
 
 /// Vault-side metadata for one sidecar. The sidecar header must match this.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SidecarMeta {
-    pub chunk_size: u32,
-    pub chunk_count: u32,
-    pub size_bytes: u64,
-    #[serde(with = "crate::models::serde_b64")]
-    pub wrapped_key: Vec<u8>,
-}
-
-impl SidecarMeta {
-    pub fn chunk_len(&self, index: u32) -> Result<usize, String> {
-        if index >= self.chunk_count {
-            return Err("attachment chunk index out of range".to_string());
-        }
-        let start = u64::from(index) * u64::from(self.chunk_size);
-        let left = self.size_bytes.saturating_sub(start);
-        Ok(left.min(u64::from(self.chunk_size)) as usize)
+/// (The type lives in `models` because it is serialized into the vault.)
+fn chunk_len(meta: &SidecarMeta, index: u32) -> Result<usize, String> {
+    if index >= meta.chunk_count {
+        return Err("attachment chunk index out of range".to_string());
     }
+    let start = u64::from(index) * u64::from(meta.chunk_size);
+    let left = meta.size_bytes.saturating_sub(start);
+    Ok(left.min(u64::from(meta.chunk_size)) as usize)
 }
 
 fn key_aad(id: &str) -> Vec<u8> {
@@ -330,7 +321,7 @@ pub fn read_sidecar(
     let mut file_key = unwrap_file_key(root, id, &header.wrapped_key)?;
     let mut out = Vec::with_capacity(header.size_bytes as usize);
     for index in 0..header.chunk_count {
-        let want = header.chunk_len(index)?;
+        let want = chunk_len(&header, index)?;
         let record_len = NONCE_LEN + want + TAG_LEN;
         let mut record = vec![0u8; record_len];
         file.read_exact(&mut record)
@@ -355,10 +346,154 @@ pub fn read_sidecar(
     Ok(out)
 }
 
+/// 32-byte attachment root from the vault. Fails closed when a sidecar exists
+/// but the root was lost (never mint a new root silently).
+pub fn root_from_vault(vault: &Vault) -> Result<[u8; 32], String> {
+    if vault.attachment_root.len() != 32 {
+        return Err(
+            "attachment key missing or malformed — restore the vault backup".to_string(),
+        );
+    }
+    let mut root = [0u8; 32];
+    root.copy_from_slice(&vault.attachment_root);
+    Ok(root)
+}
+
+/// Generate the root on first use (only for a vault that has no sidecars yet).
+pub fn ensure_root(vault: &mut Vault) -> Result<[u8; 32], String> {
+    if vault.attachment_root.is_empty() {
+        let mut root = [0u8; 32];
+        OsRng.fill_bytes(&mut root);
+        vault.attachment_root = root.to_vec();
+        Ok(root)
+    } else {
+        root_from_vault(vault)
+    }
+}
+
+pub fn sidecar_dir(vault_path: &Path) -> PathBuf {
+    vault_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."))
+        .join("attachments")
+}
+
+pub fn sidecar_path(vault_path: &Path, id: &str) -> PathBuf {
+    sidecar_dir(vault_path).join(format!("{id}.{SIDECAR_EXT}"))
+}
+
+/// True when the on-disk attachment directory has any sidecar (used to block
+/// sync/P2P until A24c can transfer sidecars). Conservative: orphans count.
+pub fn dir_has_sidecars(vault_path: &Path) -> bool {
+    let Ok(rd) = std::fs::read_dir(sidecar_dir(vault_path)) else {
+        return false;
+    };
+    rd.flatten().any(|e| {
+        e.path()
+            .extension()
+            .and_then(|x| x.to_str())
+            .map(|x| x.eq_ignore_ascii_case(SIDECAR_EXT))
+            .unwrap_or(false)
+    })
+}
+
+fn list_has_sidecar<'a>(mut items: impl Iterator<Item = &'a EncryptedAttachment>) -> bool {
+    items.any(|a| a.storage == AttachmentStorage::Sidecar)
+}
+
+pub fn has_sidecars(vault: &Vault) -> bool {
+    list_has_sidecar(vault.credentials.iter().flat_map(|i| i.attachments.iter()))
+        || list_has_sidecar(vault.licenses.iter().flat_map(|i| i.attachments.iter()))
+        || list_has_sidecar(vault.notes.iter().flat_map(|i| i.attachments.iter()))
+        || list_has_sidecar(vault.cards.iter().flat_map(|i| i.attachments.iter()))
+        || list_has_sidecar(vault.identities.iter().flat_map(|i| i.attachments.iter()))
+        || list_has_sidecar(vault.ssh_keys.iter().flat_map(|i| i.attachments.iter()))
+}
+
+/// Decrypt/read one attachment's bytes (inline legacy or sidecar).
+pub fn attachment_bytes(
+    vault: &Vault,
+    att: &EncryptedAttachment,
+    vault_path: &Path,
+) -> Result<Vec<u8>, String> {
+    match att.storage {
+        AttachmentStorage::Inline => Ok(att.data.clone()),
+        AttachmentStorage::Sidecar => {
+            let meta = att
+                .sidecar
+                .as_ref()
+                .ok_or_else(|| "attachment sidecar metadata is missing".to_string())?;
+            let root = root_from_vault(vault)?;
+            read_sidecar(
+                &sidecar_path(vault_path, &att.id),
+                &root,
+                &att.id,
+                meta,
+            )
+        }
+    }
+}
+
+fn inline_list(
+    list: &mut [EncryptedAttachment],
+    root: &[u8; 32],
+    vault_path: &Path,
+) -> Result<(), String> {
+    for att in list {
+        if att.storage != AttachmentStorage::Sidecar {
+            continue;
+        }
+        let meta = att
+            .sidecar
+            .as_ref()
+            .ok_or_else(|| "attachment sidecar metadata is missing".to_string())?;
+        let bytes = read_sidecar(
+            &sidecar_path(vault_path, &att.id),
+            root,
+            &att.id,
+            meta,
+        )?;
+        att.data = bytes;
+        att.storage = AttachmentStorage::Inline;
+        att.sidecar = None;
+    }
+    Ok(())
+}
+
+/// Return a clone with every sidecar decrypted back into `data` — used by the
+/// legacy single-blob `.pvx` export so old files stay readable. The clone can
+/// be large; export is an explicit, infrequent action.
+pub fn inline_all(vault: &Vault, vault_path: &Path) -> Result<Vault, String> {
+    if !has_sidecars(vault) {
+        return Ok(vault.clone());
+    }
+    let root = root_from_vault(vault)?;
+    let mut out = vault.clone();
+    for item in &mut out.credentials {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    for item in &mut out.licenses {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    for item in &mut out.notes {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    for item in &mut out.cards {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    for item in &mut out.identities {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    for item in &mut out.ssh_keys {
+        inline_list(&mut item.attachments, &root, vault_path)?;
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn tmp(name: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("pv-a24-{}-{}", std::process::id(), name));
         let _ = std::fs::remove_dir_all(&dir);
@@ -451,5 +586,41 @@ mod tests {
         .is_err());
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn root_generation_and_export_inlining_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("pv-a24-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vault_path = dir.join("vault.enc");
+
+        let mut vault = Vault::default();
+        assert!(root_from_vault(&vault).is_err(), "no silent root");
+        let root = ensure_root(&mut vault).unwrap();
+        assert_eq!(root_from_vault(&vault).unwrap(), root);
+
+        let data = pattern(4096);
+        let path = sidecar_path(&vault_path, "ab12");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let meta = write_sidecar_bytes(&path, &data, &root, "ab12").unwrap();
+        assert!(dir_has_sidecars(&vault_path));
+        assert!(!has_sidecars(&vault));
+
+        let mut list = vec![EncryptedAttachment {
+            id: "ab12".into(),
+            filename: "x.bin".into(),
+            mime_type: "application/octet-stream".into(),
+            size_bytes: data.len(),
+            data: Vec::new(),
+            storage: AttachmentStorage::Sidecar,
+            sidecar: Some(meta),
+        }];
+        inline_list(&mut list, &root, &vault_path).unwrap();
+        assert_eq!(list[0].data, data);
+        assert_eq!(list[0].storage, AttachmentStorage::Inline);
+        assert!(list[0].sidecar.is_none());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

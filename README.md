@@ -108,7 +108,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 549 passed / 2 ignored at 0.4.1
+cargo test                       # 550 passed / 2 ignored at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -198,6 +198,10 @@ These are real today. They are listed here so nobody discovers them the hard way
   link includes your GitHub login (needed for the tokenless raw fetch).
   **Bengali is a pilot (A26)** — many
   dialogs and Rust-generated messages are still English.
+- **Large attachments are local-only for now** (A24b-lite): files over 5 MB are
+  stored as separately encrypted sidecars and no longer re-encrypt the vault;
+  GitHub/P2P sync refuses while sidecars exist (use `.pvx` export/import) until
+  A24c. Pre-A24 builds must not open such a vault.
 - **Local API is opt-in and read-only** (A23): only `pv status` / `pv get`;
   `run`/`inject` and scopes are later. Same-user malware can steal the
   DPAPI-sealed token, so every read still requires the in-app Allow prompt.
@@ -259,7 +263,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/A13_KDBX.md`](docs/A13_KDBX.md) | KeePass KDBX import: supported formats, KDF caps, fixtures, export slice |
 | [`docs/A23_LOCAL_API.md`](docs/A23_LOCAL_API.md) | Loopback API + `pv` CLI: endpoints, approval flow, token, threat model |
 | [`docs/A20_SEND.md`](docs/A20_SEND.md) | Expiring share: bundle crypto (`PVSH1`/`PVSH2`), link-fragment key, optional passphrase, QR, LAN/file/gist transport, honest limits |
-| [`docs/A24_ATTACHMENTS.md`](docs/A24_ATTACHMENTS.md) | Chunked, separately encrypted attachments: `PVAB1` sidecar format, key hierarchy, migration, export/sync plan |
+| [`docs/A24_ATTACHMENTS.md`](docs/A24_ATTACHMENTS.md) | Chunked, separately encrypted attachments: `PVAB1` sidecar format, 50 MiB large-file path, key hierarchy, export/sync plan |
 | [`docs/A26_BN.md`](docs/A26_BN.md) | Bengali UI pilot: what is translated, persistence, how to extend, honest limits |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |

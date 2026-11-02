@@ -139,12 +139,26 @@ pub(crate) fn is_not_found(e: &octocrab::Error) -> bool {
     msg.contains("404") || msg.to_lowercase().contains("not found")
 }
 
+/// A24b guard: sidecar attachments are local-only until A24c transfers them.
+fn sidecar_sync_guard() -> Result<()> {
+    if crate::attachment_store::dir_has_sidecars(std::path::Path::new(
+        crate::developer::vault_run::VAULT_FILE,
+    )) {
+        return Err(VaultError::Sync(
+            "large attachments are stored separately and are not synced yet (A24c) — export .pvx instead"
+                .into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Pull the remote ciphertext. Returns None when the repo has no vault yet.
 pub async fn pull_remote(
     owner: &str,
     repo: &str,
     token: &str,
 ) -> Result<Option<(Vec<u8>, String)>> {
+    sidecar_sync_guard()?;
     let octo = client(token)?;
     let items = match octo
         .repos(owner, repo)
@@ -206,6 +220,7 @@ pub async fn push_remote(
     sha: Option<String>,
     expected_remote_sha: Option<String>,
 ) -> Result<String> {
+    sidecar_sync_guard()?;
     if blob.is_empty() || blob.len() > MAX_BLOB_BYTES {
         return Err(VaultError::Sync("local blob invalid".into()));
     }
