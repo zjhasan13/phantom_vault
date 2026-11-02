@@ -706,6 +706,8 @@ export component MainWindow inherits Window {
     in-out property <bool> ls_ready: false;
     in-out property <bool> ls_pass_on: false;
     in-out property <bool> ls_relay: false;
+    in-out property <int> ls_stage_count: 0;
+    in-out property <bool> settings_scroll_share: false;
     in-out property <string> ls_pass: "";
     in-out property <string> ls_pass_confirm: "";
     in-out property <string> ls_pass_input: "";
@@ -1025,6 +1027,9 @@ export component MainWindow inherits Window {
     // A20: expiring shares.
     callback login_share_create(string, string, string, bool, bool, bool, string, string);
     callback login_share_open(string, string, string);
+    callback share_item(int, string);
+    callback bulk_share();
+    callback clear_share_stage();
     callback login_share_add();
     callback login_share_revoke(string);
     callback login_share_refresh();
@@ -1638,7 +1643,7 @@ export component MainWindow inherits Window {
         }
         if root.active_nav == 3 : Rectangle {
             background: #080c14; horizontal-stretch: 1; clip: true;
-            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+            settings_scroll := ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
                 Text { text: root.ui_lang == "bn" ? "⚙️ সেটিংস ও ডেভ সেন্টার" : "⚙️ Settings & Dev Center"; color: #eef1ff; font-size: 18px; font-weight: 900; }
                 HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "ভাষা" : "Language"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "English"; primary: root.ui_lang == "en"; width: 100px; height: 30px; clicked => { root.set_language("en"); } } AuraButton { label: "বাংলা"; primary: root.ui_lang == "bn"; width: 100px; height: 30px; clicked => { root.set_language("bn"); } } }
                 Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #26315c; VerticalLayout { padding: 16px; spacing: 10px;
@@ -1701,10 +1706,16 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
                     if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
+                    share_anchor := Rectangle { height: 0px; }
+                    Timer { interval: 200ms; running: root.settings_scroll_share; triggered => { settings_scroll.content-y = share_anchor.y - 10px; root.settings_scroll_share = false; } }
                     FieldLabel { text: root.ui_lang == "bn" ? "সময়সীমাবদ্ধ শেয়ার (সেন্ড)" : "EXPIRING SHARES (SEND)"; }
                     Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন), ফাইল, বা GitHub secret gist (async) দিয়ে যায়; key শুধু link fragment-এ। LAN-এ TTL/one-view এই অ্যাপ enforce করে; gist-এ expiry best-effort। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves), a file, or a secret GitHub gist (async); the key is only in the link fragment. LAN TTL/one-view are enforced by this app; gist expiry is best-effort. CLI: phantom_vault share ...."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    if root.ls_stage_count > 0 : HorizontalLayout { spacing: 6px;
+                        Text { text: "📤 " + root.ls_stage_count + " selected login(s) staged — the title field is ignored."; color: #38e1ff; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+                        AuraButton { label: "Clear"; width: 80px; height: 30px; clicked => { root.clear_share_stage(); } }
+                    }
                     HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; horizontal-stretch: 1; enabled: root.ls_stage_count == 0; }
                     }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
@@ -2092,7 +2103,13 @@ export component MainWindow inherits Window {
                     }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
                         for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? #1a2450 : (touch.has-hover ? #1a2333 : #101834); border-radius: 10px; border-width: root.d_id == cred.id ? 2px : 1px; border-color: root.d_id == cred.id ? #38bdf8 : (touch.has-hover ? #38bdf855 : #26315c); height: 62px;
-                            touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); } }
+                            touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); }
+                                pointer-event(event) => {
+                                    if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right && cred.kind == 1) {
+                                        root.share_item(cred.kind, cred.id);
+                                    }
+                                }
+                            }
                             if root.d_id == cred.id : Rectangle { width: 3px; height: 40px; x: 0; y: 11px; border-radius: 2px; background: #38bdf8; drop-shadow-blur: 8px; drop-shadow-color: #38bdf888; }
                             HorizontalLayout { padding-left: 14px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 8px; alignment: space-between;
                                 if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 36px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
@@ -2103,6 +2120,7 @@ export component MainWindow inherits Window {
                                 if cred.kind == 1 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "📋"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 if cred.kind == 4 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "💳"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
                                 if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                if cred.kind == 1 : AuraButton { label: "📤"; width: 36px; height: 30px; clicked => { root.share_item(cred.kind, cred.id); } }
                                 }
                                 AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
                                 if cred.health != "" : TouchArea { mouse-cursor: pointer; clicked => { col2_scroll.content-y = 0; root.filter_health(cred.health); } Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : cred.health == "reused" ? "♻️" : cred.health == "stale" ? "🕰️" : ""; font-size: 12px; vertical-alignment: center; } }
@@ -2120,6 +2138,7 @@ export component MainWindow inherits Window {
                     // Floating bulk action bar (Select mode, non-empty selection)
                     if root.select_mode && root.selected_count > 0 : Rectangle { background: #0d131f; border-radius: 12px; border-width: 1px; border-color: #8b7cf6; VerticalLayout { padding: 10px; spacing: 8px;
                         Text { text: root.selected_label; color: #eef1ff; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+                        AuraButton { label: "📤 Share Selected"; primary: true; height: 34px; clicked => { root.bulk_share(); } }
                         HorizontalLayout { spacing: 6px;
                             AuraButton { label: "⭐ Favorite All"; horizontal-stretch: 1; height: 34px; clicked => { root.bulk_favorite(); } }
                             AuraButton { label: root.confirm_bulk_trash ? "Sure? Trash" : "🗑️ Trash"; danger: true; horizontal-stretch: 1; height: 34px; clicked => { if root.confirm_bulk_trash { root.confirm_bulk_trash = false; root.bulk_trash(); } else { root.confirm_bulk_trash = true; } } }
@@ -2306,6 +2325,7 @@ export component MainWindow inherits Window {
                         HorizontalLayout { spacing: 8px;
                             if root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "🔄 আইটেম ফিরিয়ে আনুন" : "🔄 Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
                             if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? ধ্বংস" : "Sure? Shred") : (root.ui_lang == "bn" ? "🔥 স্থায়ীভাবে ধ্বংস" : "🔥 Permanently Shred"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
+                            if !root.d_trashed && root.d_kind == 1 : AuraButton { label: "📤 Share"; width: 110px; height: 36px; clicked => { root.share_item(root.d_kind, root.d_id); } }
                             if !root.d_trashed && root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
                             if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? মুছুন" : "Sure? Delete") : (root.ui_lang == "bn" ? "🗑 মুছুন" : "🗑 Delete"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
                             AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.close_detail(); } }

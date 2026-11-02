@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A20b (async gist relay), after A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A20c (item Share + bulk staging), after A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -122,8 +122,21 @@
   **545 passed / 2 ignored**; `npm test` **133/133**.
   Honest: gist TTL/one-view are **not** enforced and the gist owner's GitHub
   login is in the link (needed for the tokenless raw fetch); labelled
-  best-effort, not one-time. A20's functional scope is now closed; only item
-  context-menu/bulk selection remains.
+  best-effort, not one-time.
+
+- **A20c — item Share + bulk staging (this batch):** right-click a vault row
+  (`PointerEventKind.down` + `PointerEventButton.right`) or use the hover /
+  detail **📤 Share** button to stage that login and jump to Settings →
+  Expiring shares; Select mode gains **📤 Share Selected** for the whole
+  selection. `share_stage()` is a RAM-only global (cleared on lock, decoy
+  unlock, Clear, and after a successful create); `shareable_item` /
+  `selected_share_items` keep only active logins (non-logins, trashed rows and
+  unknown ids are skipped, sorted by title). The card shows the staged count,
+  disables the title field, offers **Clear**, and a 200 ms Timer scrolls the
+  Settings view to the card (`share_anchor`). The create path uses the staged
+  items when present, otherwise the title lookup. Tests +1
+  (`bulk_share_stages_only_active_logins`) → `cargo test` **546 passed / 2
+  ignored**; `npm test` **133/133**. All A20 slices are now shipped.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -646,7 +659,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 545 passed / 2 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 546 passed / 2 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

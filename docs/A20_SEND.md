@@ -1,10 +1,11 @@
 # A20 — serverless expiring share (Send-style)
 
-> Status: **slices 1–5 shipped.** Bundle crypto, on-disk TTL/one-view store,
+> Status: **slices 1–6 shipped.** Bundle crypto, on-disk TTL/one-view store,
 > LAN/file transport, the `share` CLI, a desktop **Settings → Expiring
 > shares** card (create/copy/open/preview/import/revoke), A20a's optional
-> **recipient passphrase** (`PVSH2`) and **QR code**, plus A20b's async
-> **GitHub secret-gist relay** (recipient needs no token). The pre-existing
+> **recipient passphrase** (`PVSH2`) and **QR code**, A20b's async
+> **GitHub secret-gist relay** (recipient needs no token), and A20c's
+> **right-click / bulk-share staging** from the vault list. The pre-existing
 > Phase 9 **Secure Send** card (notes via the GitHub relay) remains a separate
 > surface; A20 is the item/bundle path.
 
@@ -229,9 +230,19 @@ LAN is the strongest claim we can make without running infrastructure. Gist is
 the only async option that needs no recipient account, but it cannot enforce
 TTL/one-view.
 
-## UX (shipped in slice 3 + A20a/A20b)
+## UX (shipped in slice 3 + A20a/A20b/A20c)
 
-1. Settings → Expiring shares card (title input; no context-menu selection yet).
+1. Settings → Expiring shares card can share by **exact login title**, or stage
+   items from the vault:
+   - **right-click** any login row (or click the hover **📤** button / the
+     **📤 Share** button in the detail panel) to stage that login and jump to
+     the card;
+   - **Select mode → 📤 Share Selected** stages every selected login at once
+     (non-logins and trashed rows are skipped; the selection is cleared so it
+     cannot feed a destructive bulk action).
+   The card shows “N selected login(s) staged”, disables the title field, and
+   offers **Clear**; the stage lives in RAM only and is cleared on lock/decoy
+   and after a successful create.
 2. TTL text (`24h`) + views (`1`, `0` = unlimited) + LAN **or** Async gist
    (mutually exclusive).
 3. Show the link **once** with a masked copy button and a QR code; warn that
@@ -243,7 +254,7 @@ TTL/one-view.
 5. Sender sees active shares and can **Revoke**; gist deletion is attempted,
    and the LAN listener stops when the last LAN share is revoked.
 
-Not yet: item context-menu/bulk selection.
+Bulk sharing is GUI-only for now; the CLI accepts one title per `share create`.
 
 ## Exit tests
 
@@ -261,14 +272,17 @@ Not yet: item context-menu/bulk selection.
 9. Gist relay: publish → fetch → delete round-trips over a loopback mock API;
    the gist link parses with `is_gist()`; fetch rejects missing/oversized/
    truncated objects; an expired relay share stays local so it can be revoked.
+10. Bulk staging keeps only active logins: non-login kinds, trashed rows and
+    unknown ids are skipped (`grid_tests::bulk_share_stages_only_active_logins`).
 
 Slices 1–2 cover 2, 5 (bundle half) and 6. Slice 2 covers 3 (store expiry) and 4
 (loopback one-view test). Slice 3 wires the GUI; the exact desktop import
 click-through is manual QA (no UI automation), while the shared backend is
 covered by tests. A20a adds 7–8 (`share::tests::passphrase_*`,
 `share_store::tests::passphrase_flag_*`). A20b adds 9
-(`share_relay::tests::*`, `share_store::tests::store_enforces_*`). 5 is true for
-the LAN transport (the key is only in the fragment; the store never sees it).
+(`share_relay::tests::*`, `share_store::tests::store_enforces_*`). A20c adds 10
+and is otherwise manual UI QA. 5 is true for the LAN transport (the key is only
+in the fragment; the store never sees it).
 
 ## Effort
 
@@ -277,7 +291,8 @@ the LAN transport (the key is only in the fragment; the store never sees it).
 - Slice 3 (Slint card, copy, open/preview/import, revoke): 1 day.
 - Slice 4 / A20a (optional passphrase + QR): 0.5 day.
 - Slice 5 / A20b (async gist relay): 0.75 day.
-- Remaining: item context-menu/bulk selection only.
+- Slice 6 / A20c (item action + bulk staging): 0.5 day.
+- A20 functional scope is complete; no remaining slices.
 
 ## Non-goals
 

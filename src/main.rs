@@ -963,6 +963,8 @@ fn lock_vault_now(
         // Bulk-select is session state, never persisted — drop it with the
         // secret-holding models so a stale check can't survive re-unlock.
         selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
+        // A20c: staged share items are secret copies — drop them on lock.
+        clear_share_stage();
         // Staged import rows are plaintext-adjacent — never survive lock.
         // H8: poison-recovering (a poisoned mutex under panic=abort would
         // otherwise kill the lock-scrub mid-wipe, leaving secrets in UI).
@@ -971,6 +973,8 @@ fn lock_vault_now(
         ui.set_select_mode(false);
         ui.set_selected_count(0);
         ui.set_selected_label(String::new().into());
+        ui.set_ls_stage_count(0);
+        ui.set_settings_scroll_share(false);
         // Purge every secret-holding list model…
         ui.set_credentials(ModelRc::new(VecModel::from(Vec::<CredentialView>::new())));
         ui.set_total_matches_count(0);
@@ -1831,6 +1835,9 @@ fn unlock_with_password(    pass: SecretString,
                         ui.set_is_unlocked(true);
                         ui.set_show_onboarding(false);
                         ui.set_is_decoy(true);
+                        clear_share_stage();
+                        ui.set_ls_stage_count(0);
+                        ui.set_settings_scroll_share(false);
     ui.set_status_text(tr("🔓 Vault unlocked", "🔓 ভল্ট আনলক হয়েছে").into());
                         // Deliberately NO access-log line here: writing
                         // "decoy cover" to the real log would blow the cover
@@ -2865,6 +2872,51 @@ fn selection_count() -> usize {
         .lock()
         .unwrap_or_else(|p| p.into_inner())
         .len()
+}
+
+/// A20c: vault items staged for the Expiring shares card. RAM-only, cleared
+/// on lock/decoy, after a successful create, or by the card's Clear button.
+fn share_stage() -> &'static Mutex<Vec<share::ShareItem>> {
+    static STAGE: std::sync::OnceLock<Mutex<Vec<share::ShareItem>>> =
+        std::sync::OnceLock::new();
+    STAGE.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+fn clear_share_stage() {
+    share_stage()
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+        .clear();
+}
+
+/// Only logins are shareable today: the recipient's `add_items_to_vault`
+/// skips every other kind, so staging one would silently do nothing.
+fn shareable_item(vault: &Vault, kind: i32, id: &str) -> Option<share::ShareItem> {
+    if kind != 1 {
+        return None;
+    }
+    vault
+        .credentials
+        .iter()
+        .find(|c| c.id == id && c.deleted_at.is_none())
+        .map(share::ShareItem::from_credential)
+}
+
+/// Build the bulk-share staging list from `"kind:id"` selection keys.
+fn selected_share_items(
+    vault: &Vault,
+    selected: &std::collections::HashSet<String>,
+) -> Vec<share::ShareItem> {
+    let mut out: Vec<_> = selected
+        .iter()
+        .filter_map(|key| {
+            let (kind, id) = key.split_once(':')?;
+            let kind: i32 = kind.parse().ok()?;
+            shareable_item(vault, kind, id)
+        })
+        .collect();
+    out.sort_by_key(|i| i.title.to_lowercase());
+    out
 }
 
 /// Staged import rows awaiting user Confirm (dry-run preview). RAM-only,
@@ -13321,6 +13373,125 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let ls_server: Arc<Mutex<Option<share_serve::ServeHandle>>> =
         Arc::new(Mutex::new(None));
     let ls_server_create = Arc::clone(&ls_server);
+    // A20c: item-level and bulk staging into the Expiring shares card.
+    let share_one_weak = main_window.as_weak();
+    let share_one_vault = Arc::clone(&active_vault);
+    main_window.on_share_item(move |kind, id| {
+        let Some(ui) = share_one_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ls_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
+            return;
+        }
+        let item = {
+            let vault = lock_vault(&share_one_vault);
+            shareable_item(&vault, kind, id.as_str())
+        };
+        let Some(item) = item else {
+            ui.set_ls_status(
+                tr(
+                    "⚠️ Only logins can be shared right now.",
+                    "⚠️ এখন শুধু লগইন শেয়ার করা যায়।",
+                )
+                .into(),
+            );
+            return;
+        };
+        *share_stage().lock().unwrap_or_else(|p| p.into_inner()) = vec![item];
+        ui.set_ls_title("".into());
+        ui.set_active_nav(3);
+        ui.set_ls_stage_count(1);
+        ui.set_settings_scroll_share(true);
+        ui.set_ls_status(
+            tr(
+                "📤 1 login staged — choose TTL/transport/passphrase, then Create share.",
+                "📤 ১টি লগইন প্রস্তুত — TTL/transport/passphrase বেছে Create share চাপুন।",
+            )
+            .into(),
+        );
+        ui.set_notification_text(
+            tr(
+                "📤 1 login staged in Settings → Expiring shares.",
+                "📤 Settings → Expiring shares-এ ১টি লগইন প্রস্তুত।",
+            )
+            .into(),
+        );
+    });
+
+    let share_bulk_weak = main_window.as_weak();
+    let share_bulk_vault = Arc::clone(&active_vault);
+    let share_bulk_search = Arc::clone(&search_state);
+    main_window.on_bulk_share(move || {
+        let Some(ui) = share_bulk_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_ls_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
+            return;
+        }
+        let selected = selection_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let (items, selected_count) = {
+            let vault = lock_vault(&share_bulk_vault);
+            let items = selected_share_items(&vault, &selected);
+            (items, selected.len())
+        };
+        if items.is_empty() {
+            ui.set_ls_status(
+                tr(
+                    "⚠️ Select at least one login to share.",
+                    "⚠️ শেয়ার করতে অন্তত একটি লগইন বাছুন।",
+                )
+                .into(),
+            );
+            return;
+        }
+        let n = items.len();
+        let skipped = selected_count.saturating_sub(n);
+        *share_stage().lock().unwrap_or_else(|p| p.into_inner()) = items;
+        // Staging is a snapshot; drop the checkmarks so the same selection
+        // cannot accidentally feed a destructive bulk action.
+        selection_registry()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clear();
+        ui.set_select_mode(false);
+        {
+            let vault = lock_vault(&share_bulk_vault);
+            let f = share_bulk_search.lock().unwrap().clone();
+            refresh_selection_ui(&ui, &vault, &f);
+        }
+        ui.set_ls_title("".into());
+        ui.set_active_nav(3);
+        ui.set_ls_stage_count(n as i32);
+        ui.set_settings_scroll_share(true);
+        let suffix = if skipped > 0 {
+            format!(" ({skipped} non-login/trashed selection(s) skipped)")
+        } else {
+            String::new()
+        };
+        ui.set_ls_status(
+            format!(
+                "📤 {n} login(s) staged{suffix} — choose TTL/transport/passphrase, then Create share."
+            )
+            .into(),
+        );
+        ui.set_notification_text(
+            format!("📤 {n} login(s) staged in Settings → Expiring shares.").into(),
+        );
+    });
+
+    let share_clear_weak = main_window.as_weak();
+    main_window.on_clear_share_stage(move || {
+        if let Some(ui) = share_clear_weak.upgrade() {
+            clear_share_stage();
+            ui.set_ls_stage_count(0);
+            ui.set_ls_status("".into());
+        }
+    });
     main_window.on_login_share_create(move |title, ttl, views, serve, relay, pass_on, pass, pass_confirm| {
         let Some(ui) = send_weak.upgrade() else {
             return;
@@ -13343,27 +13514,37 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // A20b: the gist relay cannot enforce a view budget; recording one
         // would be a false claim. LAN remains the only one-view transport.
         let views = if relay { 0 } else { views };
-        let item = {
-            let vault = lock_vault(&send_vault);
-            let mut matches: Vec<_> = vault
-                .credentials
-                .iter()
-                .filter(|c| {
-                    c.deleted_at.is_none() && c.title.eq_ignore_ascii_case(title.as_str())
-                })
-                .collect();
-            if matches.len() != 1 {
-                ui.set_ls_status(
-                    if matches.is_empty() {
-                        "⚠️ no login with that title"
-                    } else {
-                        "⚠️ that title is ambiguous — rename one first"
-                    }
-                    .into(),
-                );
-                return;
-            }
-            share::ShareItem::from_credential(matches.pop().unwrap())
+        let staged = share_stage()
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .clone();
+        let items = if staged.is_empty() {
+            let item = {
+                let vault = lock_vault(&send_vault);
+                let mut matches: Vec<_> = vault
+                    .credentials
+                    .iter()
+                    .filter(|c| {
+                        c.deleted_at.is_none()
+                            && c.title.eq_ignore_ascii_case(title.as_str())
+                    })
+                    .collect();
+                if matches.len() != 1 {
+                    ui.set_ls_status(
+                        if matches.is_empty() {
+                            "⚠️ no login with that title"
+                        } else {
+                            "⚠️ that title is ambiguous — rename one first"
+                        }
+                        .into(),
+                    );
+                    return;
+                }
+                share::ShareItem::from_credential(matches.pop().unwrap())
+            };
+            vec![item]
+        } else {
+            staged
         };
         let pass_secret = if pass_on {
             let p = pass.as_str().trim();
@@ -13401,7 +13582,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             std::thread::spawn(move || {
                 let result = (|| -> Result<(share::CreatedShare, String), String> {
                     let created = share::create_with_passphrase(
-                        vec![item],
+                        items,
                         ttl_secs,
                         views,
                         pass_secret.as_ref(),
@@ -13427,6 +13608,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             if let Some(ui) = weak.upgrade() {
                                 ui.set_ls_title("".into());
                                 ui.set_ls_qr(p2p_qr_image(&link));
+                                clear_share_stage();
+                                ui.set_ls_stage_count(0);
                                 ui.set_ls_pass("".into());
                                 ui.set_ls_pass_confirm("".into());
                                 ui.set_ls_pass_on(false);
@@ -13466,7 +13649,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         let created = match share::create_with_passphrase(
-            vec![item],
+            items,
             ttl_secs,
             views,
             pass_secret.as_ref(),
@@ -13503,6 +13686,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         ui.set_ls_title("".into());
         ui.set_ls_qr(p2p_qr_image(&link));
+        clear_share_stage();
+        ui.set_ls_stage_count(0);
         ui.set_ls_pass("".into());
         ui.set_ls_pass_confirm("".into());
         ui.set_ls_pass_on(false);
@@ -14824,6 +15009,52 @@ mod grid_tests {
         assert_eq!(normalize_lang(" BN "), "bn");
         assert_eq!(normalize_lang("fr"), "en");
         assert_eq!(normalize_lang(""), "en");
+    }
+
+    fn test_login(id: &str, title: &str) -> models::Credential {
+        models::Credential {
+            id: id.into(),
+            title: title.into(),
+            username: "u@example.com".into(),
+            password: "pw".into(),
+            totp_secret: String::new(),
+            urls: Vec::new(),
+            apps: Vec::new(),
+            backup_codes: Vec::new(),
+            custom_fields: Vec::new(),
+            notes: String::new(),
+            folder: models::DEFAULT_FOLDER.to_string(),
+            reprompt: false,
+            attachments: Vec::new(),
+            travel_safe: false,
+            last_changed: models::current_timestamp(),
+            password_history: Vec::new(),
+            favorite: false,
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn bulk_share_stages_only_active_logins() {
+        let mut v = Vault::new();
+        v.credentials.push(test_login("l1", "Gmail"));
+        v.credentials.push(test_login("l2", "GitHub"));
+        let mut deleted = test_login("l3", "Gone");
+        deleted.deleted_at = Some(1);
+        v.credentials.push(deleted);
+        let selected: std::collections::HashSet<String> = [
+            "1:l1", "1:l2", "1:l3", "3:note-1",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
+        let items = selected_share_items(&v, &selected);
+        assert_eq!(items.len(), 2);
+        assert!(items.iter().any(|i| i.title == "Gmail"));
+        assert!(shareable_item(&v, 1, "l1").is_some());
+        assert!(shareable_item(&v, 3, "l1").is_none(), "non-login kind");
+        assert!(shareable_item(&v, 1, "missing").is_none());
+        assert!(shareable_item(&v, 1, "l3").is_none(), "trashed login");
     }
 
     #[test]
