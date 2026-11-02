@@ -108,7 +108,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 550 passed / 2 ignored at 0.4.1
+cargo test                       # 552 passed / 2 ignored at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
@@ -198,10 +198,10 @@ These are real today. They are listed here so nobody discovers them the hard way
   link includes your GitHub login (needed for the tokenless raw fetch).
   **Bengali is a pilot (A26)** — many
   dialogs and Rust-generated messages are still English.
-- **Large attachments are local-only for now** (A24b-lite): files over 5 MB are
-  stored as separately encrypted sidecars and no longer re-encrypt the vault;
-  GitHub/P2P sync refuses while sidecars exist (use `.pvx` export/import) until
-  A24c. Pre-A24 builds must not open such a vault.
+- **Large attachments** (A24b-lite/A24c): files over 5 MB are stored as
+  separately encrypted sidecars and no longer re-encrypt the vault; GitHub sync
+  uploads/pulls them (delete tombstones included), but P2P still refuses and
+  `.pvx` is the offline transfer path. Pre-A24 builds must not open such a vault.
 - **Local API is opt-in and read-only** (A23): only `pv status` / `pv get`;
   `run`/`inject` and scopes are later. Same-user malware can steal the
   DPAPI-sealed token, so every read still requires the in-app Allow prompt.

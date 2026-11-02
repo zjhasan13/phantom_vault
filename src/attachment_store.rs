@@ -383,6 +383,105 @@ pub fn sidecar_path(vault_path: &Path, id: &str) -> PathBuf {
     sidecar_dir(vault_path).join(format!("{id}.{SIDECAR_EXT}"))
 }
 
+/// Local encrypted sidecars `(id, path)`; ignores temp/tombstone files.
+pub fn sidecar_files(vault_path: &Path) -> Vec<(String, PathBuf)> {
+    let Ok(rd) = std::fs::read_dir(sidecar_dir(vault_path)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf)> = rd
+        .flatten()
+        .filter_map(|e| {
+            let path = e.path();
+            if path.extension().and_then(|x| x.to_str()) != Some(SIDECAR_EXT) {
+                return None;
+            }
+            let id = path.file_stem()?.to_str()?.to_string();
+            if id.is_empty()
+                || id.len() > 128
+                || !id.bytes().all(|b| b.is_ascii_hexdigit())
+            {
+                return None;
+            }
+            Some((id, path))
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.cmp(&b.0));
+    out
+}
+
+/// Store an already-encrypted sidecar downloaded from a relay. Temp+rename;
+/// refuses empty/oversized payloads and non-hex ids.
+pub fn write_sidecar_raw(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    if bytes.is_empty() || bytes.len() as u64 > MAX_SIDECAR_BYTES {
+        return Err("downloaded attachment sidecar has an invalid size".to_string());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("attachment folder: {e}"))?;
+    }
+    let tmp = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("attachment.pvab")
+    ));
+    std::fs::write(&tmp, bytes).map_err(|e| format!("attachment temp write: {e}"))?;
+    if path.exists() {
+        let _ = std::fs::remove_file(path);
+    }
+    std::fs::rename(&tmp, path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("attachment swap: {e}")
+    })
+}
+
+fn deleted_path(vault_path: &Path) -> PathBuf {
+    sidecar_dir(vault_path).join(".deleted")
+}
+
+/// Record a sidecar id for remote deletion on the next sync (delete-on-revoke).
+pub fn append_deleted(vault_path: &Path, id: &str) {
+    if id.is_empty() || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return;
+    }
+    let path = deleted_path(vault_path);
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    use std::io::Write as _;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(f, "{id}");
+    }
+}
+
+/// Pending remote-delete ids (does not clear them; call `clear_deleted` after
+/// the relay delete succeeds).
+pub fn pending_deleted(vault_path: &Path) -> Vec<String> {
+    let Ok(text) = std::fs::read_to_string(deleted_path(vault_path)) else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = text
+        .lines()
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_hexdigit()))
+        .map(str::to_string)
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+pub fn clear_deleted(vault_path: &Path, id: &str) {
+    let path = deleted_path(vault_path);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let rest: Vec<&str> = text.lines().filter(|l| l.trim() != id).collect();
+    if rest.is_empty() {
+        let _ = std::fs::remove_file(&path);
+    } else {
+        let _ = std::fs::write(&path, rest.join("\n") + "\n");
+    }
+}
+
 /// True when the on-disk attachment directory has any sidecar (used to block
 /// sync/P2P until A24c can transfer sidecars). Conservative: orphans count.
 pub fn dir_has_sidecars(vault_path: &Path) -> bool {
@@ -586,6 +685,31 @@ mod tests {
         .is_err());
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    fn sidecar_files_and_delete_tombstones_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("pv-a24-files-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vault_path = dir.join("vault.enc");
+        std::fs::create_dir_all(sidecar_dir(&vault_path)).unwrap();
+        std::fs::write(sidecar_path(&vault_path, "a1"), b"x").unwrap();
+        std::fs::write(sidecar_path(&vault_path, "b2"), b"y").unwrap();
+        std::fs::write(sidecar_dir(&vault_path).join(".deleted"), b"").unwrap();
+        let files = sidecar_files(&vault_path);
+        assert_eq!(files.len(), 2);
+        assert!(files.iter().all(|(id, _)| id == "a1" || id == "b2"));
+
+        append_deleted(&vault_path, "a1");
+        append_deleted(&vault_path, "a1");
+        append_deleted(&vault_path, "bad!");
+        assert_eq!(pending_deleted(&vault_path), vec!["a1".to_string()]);
+        clear_deleted(&vault_path, "a1");
+        assert!(pending_deleted(&vault_path).is_empty());
+        assert!(!dir.join("attachments/.deleted").exists());
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

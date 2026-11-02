@@ -1163,6 +1163,19 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
             return;
         };
         let head = sync::github_sync::load_head_sha();
+        // A24c: upload encrypted sidecars before the vault blob so a failure
+        // cannot publish a vault that references a missing attachment.
+        if let Err(e) = rt.block_on(sync::github_sync::push_sidecars(
+            &cfg.owner,
+            &cfg.repo,
+            &token,
+            Path::new(VAULT_FILE),
+        )) {
+            use zeroize::Zeroize;
+            token.zeroize();
+            report(format!("⚠️ Attachments: {e}"));
+            return;
+        }
         let res = rt.block_on(sync::github_sync::push_remote(
             &cfg.owner,
             &cfg.repo,
@@ -1232,6 +1245,17 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         };
         let remote =
             rt.block_on(sync::github_sync::pull_remote(&cfg.owner, &cfg.repo, &token));
+        // A24c: fetch sidecars only when a remote vault exists, and do it
+        // before adoption so the app never loads a vault with missing files.
+        let sidecars = match &remote {
+            Ok(Some(_)) => rt.block_on(sync::github_sync::pull_sidecars(
+                &cfg.owner,
+                &cfg.repo,
+                &token,
+                std::path::Path::new(VAULT_FILE),
+            )),
+            _ => Ok(0),
+        };
         use zeroize::Zeroize;
         token.zeroize();
         let Ok(remote) = remote else {
@@ -1240,6 +1264,15 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         let Some((bytes, sha)) = remote else {
             return;
         };
+        if let Err(e) = sidecars {
+            let w = main_weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = w.upgrade() {
+                    ui.set_sync_status(format!("⚠️ Attachments: {e}").into());
+                }
+            });
+            return;
+        }
         // Defense in depth: never adopt a zero-byte remote. A >1 MB GitHub file
         // comes back with an empty inline body; `pull_remote` refuses it first,
         // and this gate protects the write below regardless.
@@ -7980,6 +8013,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 }
             };
+            // A24c: pull the encrypted sidecars before merging the vault that
+            // references them; a failure aborts the merge (local kept).
+            if let Err(e) = rt.block_on(sync::github_sync::pull_sidecars(
+                &cfg.owner,
+                &cfg.repo,
+                &token,
+                std::path::Path::new(VAULT_FILE),
+            )) {
+                use zeroize::Zeroize;
+                token.zeroize();
+                report(format!("⚠️ Attachments: {e}"));
+                return;
+            }
             use zeroize::Zeroize;
             token.zeroize();
             let (remote_vault, remote_meta) =
@@ -12209,10 +12255,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(path) = picked else {
                 return;
             };
-            let mut bytes = match std::fs::read(&path) {
-                Ok(b) => b,
+            let file_size = match std::fs::metadata(&path) {
+                Ok(m) => m.len(),
                 Err(e) => {
-                    let msg = format!("⚠️ Cannot read file: {e}");
+                    let msg = format!("⚠️ Cannot stat file: {e}");
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -12221,10 +12267,35 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 }
             };
-            if bytes.len() > models::MAX_SIDECAR_ATTACHMENT_BYTES {
+            if file_size > models::MAX_SIDECAR_ATTACHMENT_BYTES as u64 {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_notification_text("⚠️ File exceeds 50MB.".into());
+                    }
+                });
+                return;
+            }
+            let use_sidecar = file_size > models::MAX_ATTACHMENT_BYTES as u64;
+            let mut bytes = if use_sidecar {
+                Vec::new()
+            } else {
+                match std::fs::read(&path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        let msg = format!("⚠️ Cannot read file: {e}");
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_notification_text(msg.into());
+                            }
+                        });
+                        return;
+                    }
+                }
+            };
+            if !use_sidecar && bytes.len() > models::MAX_ATTACHMENT_BYTES {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ File changed size while reading; retry.".into());
                     }
                 });
                 return;
@@ -12242,7 +12313,6 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let mut id_raw = [0u8; 16];
             OsRng.fill_bytes(&mut id_raw);
             let new_id: String = id_raw.iter().map(|b| format!("{b:02x}")).collect();
-            let use_sidecar = bytes.len() > models::MAX_ATTACHMENT_BYTES;
             let mut sidecar_written: Option<std::path::PathBuf> = None;
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
@@ -12291,8 +12361,21 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             return;
                         }
                     }
-                    match crate::attachment_store::write_sidecar_bytes(
-                        &sidecar, &bytes, &root, &new_id,
+                    let reader = match std::fs::File::open(&path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            let _ = slint::invoke_from_event_loop(move || {
+                                if let Some(ui) = weak.upgrade() {
+                                    ui.set_notification_text(
+                                        format!("⚠️ Cannot open file: {e}").into(),
+                                    );
+                                }
+                            });
+                            return;
+                        }
+                    };
+                    match crate::attachment_store::write_sidecar(
+                        &sidecar, reader, file_size, &root, &new_id,
                     ) {
                         Ok(meta) => {
                             sidecar_written = Some(sidecar);
@@ -12300,7 +12383,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 id: new_id,
                                 filename,
                                 mime_type: mime,
-                                size_bytes: bytes.len(),
+                                size_bytes: file_size as usize,
                                 data: Vec::new(),
                                 storage: models::AttachmentStorage::Sidecar,
                                 sidecar: Some(meta),
@@ -12357,9 +12440,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                         if use_sidecar {
                             ui.set_notification_text(
-                                "📎 Large file stored separately; sync/P2P is disabled until A24c — export .pvx."
+                                "📎 Large file stored separately; syncing (P2P still unavailable)."
                                     .into(),
                             );
+                            trigger_sync_push(ui.as_weak());
                         } else {
                             ui.set_notification_text("📎 File sealed into vault.".into());
                             trigger_sync_push(ui.as_weak());
@@ -12525,6 +12609,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             };
             let mut sidecar_to_delete: Option<std::path::PathBuf> = None;
+            let mut deleted_sidecar_id: Option<String> = None;
             let saved: Result<Vault, String> = {
                 let mut vault = lock_vault(&vault_clone);
                 let snapshot = vault.clone();
@@ -12532,6 +12617,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     if let Some(pos) = list.iter().position(|a| a.id == att_id) {
                         let a = list.remove(pos);
                         if a.storage == models::AttachmentStorage::Sidecar {
+                            deleted_sidecar_id = Some(a.id.clone());
                             sidecar_to_delete = Some(crate::attachment_store::sidecar_path(
                                 std::path::Path::new(VAULT_FILE),
                                 &a.id,
@@ -12555,6 +12641,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 }
             };
             if saved.is_ok() {
+                if let Some(id) = deleted_sidecar_id {
+                    crate::attachment_store::append_deleted(
+                        std::path::Path::new(VAULT_FILE),
+                        &id,
+                    );
+                }
                 if let Some(p) = sidecar_to_delete {
                     let _ = std::fs::remove_file(p);
                 }

@@ -139,26 +139,12 @@ pub(crate) fn is_not_found(e: &octocrab::Error) -> bool {
     msg.contains("404") || msg.to_lowercase().contains("not found")
 }
 
-/// A24b guard: sidecar attachments are local-only until A24c transfers them.
-fn sidecar_sync_guard() -> Result<()> {
-    if crate::attachment_store::dir_has_sidecars(std::path::Path::new(
-        crate::developer::vault_run::VAULT_FILE,
-    )) {
-        return Err(VaultError::Sync(
-            "large attachments are stored separately and are not synced yet (A24c) — export .pvx instead"
-                .into(),
-        ));
-    }
-    Ok(())
-}
-
 /// Pull the remote ciphertext. Returns None when the repo has no vault yet.
 pub async fn pull_remote(
     owner: &str,
     repo: &str,
     token: &str,
 ) -> Result<Option<(Vec<u8>, String)>> {
-    sidecar_sync_guard()?;
     let octo = client(token)?;
     let items = match octo
         .repos(owner, repo)
@@ -220,7 +206,6 @@ pub async fn push_remote(
     sha: Option<String>,
     expected_remote_sha: Option<String>,
 ) -> Result<String> {
-    sidecar_sync_guard()?;
     if blob.is_empty() || blob.len() > MAX_BLOB_BYTES {
         return Err(VaultError::Sync("local blob invalid".into()));
     }
@@ -272,6 +257,208 @@ pub async fn push_remote(
     Ok(new_sha)
 }
 
+// ---- A24c: encrypted attachment sidecars (one remote file per id) --------
+
+const ATTACHMENTS_PREFIX: &str = "attachments";
+
+fn attachment_remote_path(id: &str) -> Result<String> {
+    if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(VaultError::Sync("bad attachment id".into()));
+    }
+    Ok(format!("{ATTACHMENTS_PREFIX}/{id}.pvab"))
+}
+
+/// Upload one encrypted sidecar unless the id already exists remotely. Sidecar
+/// contents for an id are immutable (a new attachment gets a new id), so an
+/// existing remote file is treated as already synced.
+pub async fn push_attachment(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    id: &str,
+    bytes: &[u8],
+) -> Result<bool> {
+    if bytes.is_empty() || bytes.len() > crate::models::MAX_SIDECAR_ATTACHMENT_BYTES {
+        return Err(VaultError::Sync("attachment sidecar has an invalid size".into()));
+    }
+    let path = attachment_remote_path(id)?;
+    let octo = client(token)?;
+    let exists = match octo
+        .repos(owner, repo)
+        .get_content()
+        .path(&path)
+        .send()
+        .await
+    {
+        Ok(items) => !items.items.is_empty(),
+        Err(e) if is_not_found(&e) => false,
+        Err(e) => return Err(VaultError::Sync(format!("attachment check failed: {e}"))),
+    };
+    if exists {
+        return Ok(false);
+    }
+    let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
+    octo.repos(owner, repo)
+        .create_file(&path, COMMIT_MESSAGE, b64)
+        .branch("main")
+        .send()
+        .await
+        .map_err(|e| VaultError::Sync(format!("attachment upload failed: {e}")))?;
+    Ok(true)
+}
+
+/// Fetch one encrypted sidecar (no decryption needed) or None if absent.
+pub async fn pull_attachment(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    id: &str,
+) -> Result<Option<Vec<u8>>> {
+    let path = attachment_remote_path(id)?;
+    let octo = client(token)?;
+    let items = match octo
+        .repos(owner, repo)
+        .get_content()
+        .path(&path)
+        .send()
+        .await
+    {
+        Ok(items) => items,
+        Err(e) if is_not_found(&e) => return Ok(None),
+        Err(e) => return Err(VaultError::Sync(format!("attachment fetch failed: {e}"))),
+    };
+    let Some(first) = items.items.first() else {
+        return Ok(None);
+    };
+    let decoded = first
+        .decoded_content()
+        .ok_or_else(|| VaultError::Sync("attachment object unreadable".into()))?;
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(decoded.trim())
+        .map_err(|e| VaultError::Sync(format!("attachment object corrupt: {e}")))?;
+    if raw.is_empty() || raw.len() > crate::models::MAX_SIDECAR_ATTACHMENT_BYTES {
+        return Err(VaultError::Sync("attachment object has an invalid size".into()));
+    }
+    Ok(Some(raw))
+}
+
+/// List remote sidecar ids. A missing `attachments/` directory is empty.
+pub async fn list_attachments(owner: &str, repo: &str, token: &str) -> Result<Vec<String>> {
+    let octo = client(token)?;
+    let items = match octo
+        .repos(owner, repo)
+        .get_content()
+        .path(ATTACHMENTS_PREFIX)
+        .send()
+        .await
+    {
+        Ok(items) => items,
+        Err(e) if is_not_found(&e) => return Ok(Vec::new()),
+        Err(e) => return Err(VaultError::Sync(format!("attachment list failed: {e}"))),
+    };
+    let mut ids: Vec<String> = items
+        .items
+        .iter()
+        .filter_map(|i| {
+            let id = i.name.strip_suffix(".pvab")?;
+            if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            Some(id.to_string())
+        })
+        .collect();
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// Delete one remote sidecar (delete-on-revoke). A missing object is already gone.
+pub async fn delete_attachment(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    id: &str,
+) -> Result<()> {
+    let path = attachment_remote_path(id)?;
+    let octo = client(token)?;
+    let items = match octo
+        .repos(owner, repo)
+        .get_content()
+        .path(&path)
+        .send()
+        .await
+    {
+        Ok(items) => items,
+        Err(e) if is_not_found(&e) => return Ok(()),
+        Err(e) => return Err(VaultError::Sync(format!("attachment delete check: {e}"))),
+    };
+    let Some(first) = items.items.first() else {
+        return Ok(());
+    };
+    let sha = first.sha.clone();
+    octo.repos(owner, repo)
+        .delete_file(&path, COMMIT_MESSAGE, sha)
+        .branch("main")
+        .send()
+        .await
+        .map_err(|e| VaultError::Sync(format!("attachment delete failed: {e}")))?;
+    Ok(())
+}
+
+/// Upload all local sidecars (skipping ids already remote) then process local
+/// delete tombstones. Runs before the vault blob so a failure never publishes a
+/// vault that references a missing sidecar.
+pub async fn push_sidecars(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    vault_path: &std::path::Path,
+) -> Result<usize> {
+    let mut uploaded = 0;
+    for (id, path) in crate::attachment_store::sidecar_files(vault_path) {
+        let bytes = std::fs::read(&path)
+            .map_err(|e| VaultError::Sync(format!("attachment read {id}: {e}")))?;
+        if push_attachment(owner, repo, token, &id, &bytes).await? {
+            uploaded += 1;
+        }
+    }
+    for id in crate::attachment_store::pending_deleted(vault_path) {
+        delete_attachment(owner, repo, token, &id).await?;
+        crate::attachment_store::clear_deleted(vault_path, &id);
+    }
+    Ok(uploaded)
+}
+
+/// Download every remote sidecar that is missing locally. Orphans are harmless
+/// (the vault metadata decides which ids matter); existing files are trusted
+/// because sidecar content for an id never changes.
+pub async fn pull_sidecars(
+    owner: &str,
+    repo: &str,
+    token: &str,
+    vault_path: &std::path::Path,
+) -> Result<usize> {
+    let mut downloaded = 0;
+    let deleted = crate::attachment_store::pending_deleted(vault_path);
+    for id in list_attachments(owner, repo, token).await? {
+        // A locally deleted attachment must not reappear on the next pull
+        // before the tombstone is pushed.
+        if deleted.iter().any(|d| d == &id) {
+            continue;
+        }
+        let path = crate::attachment_store::sidecar_path(vault_path, &id);
+        if path.is_file() {
+            continue;
+        }
+        if let Some(bytes) = pull_attachment(owner, repo, token, &id).await? {
+            crate::attachment_store::write_sidecar_raw(&path, &bytes)
+                .map_err(VaultError::Sync)?;
+            downloaded += 1;
+        }
+    }
+    Ok(downloaded)
+}
+
 /// Convenience: load stored repo + token for worker threads.
 /// The token rides zeroized; pass `&token` (deref coercion) — never clone
 /// it into a plain `String`. NOTE: octocrab clones it once inside `client()`
@@ -317,6 +504,17 @@ mod tests {
         let token = Zeroizing::new("ghp_test".to_string());
         let as_str: &str = &token;
         assert_eq!(as_str, "ghp_test");
+    }
+
+    #[test]
+    fn attachment_remote_paths_are_strict() {
+        assert_eq!(
+            attachment_remote_path("a1b2").unwrap(),
+            "attachments/a1b2.pvab"
+        );
+        assert!(attachment_remote_path("").is_err());
+        assert!(attachment_remote_path("../x").is_err());
+        assert!(attachment_remote_path("not-hex").is_err());
     }
 
     #[test]
