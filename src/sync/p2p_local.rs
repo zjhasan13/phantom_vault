@@ -20,7 +20,7 @@ pub const P2P_PORT: u16 = 52199;
 /// Peer discovery beacon interval.
 const BEACON_EVERY: Duration = Duration::from_secs(5);
 /// Cap: vault blobs bigger than this are refused (DoS guard, mirrors import).
-const MAX_BLOB_BYTES: usize = 64 * 1024 * 1024;
+const MAX_BLOB_BYTES: usize = 80 * 1024 * 1024;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Peer {
@@ -786,6 +786,118 @@ fn serve_conn_inner(
         ));
         return;
     }
+    // A24d: encrypted attachment sidecars over the same paired/signed channel.
+    // The vault blob routes below are untouched; these endpoints are file-level
+    // and never decrypt anything.
+    let vault_path = std::path::Path::new(crate::developer::vault_run::VAULT_FILE);
+    if method == "GET" && path == "/p2p/attach/list" {
+        let ids: Vec<String> = crate::attachment_store::sidecar_files(vault_path)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        let body = serde_json::json!({ "ok": true, "ids": ids }).to_string();
+        let _ = stream.write_all(&http_response(200, &body));
+        return;
+    }
+    if method == "GET" && path.starts_with("/p2p/attach/") {
+        let id = path.trim_start_matches("/p2p/attach/");
+        if !crate::attachment_store::valid_id(id) {
+            let _ = stream.write_all(&http_response(
+                400,
+                r#"{"ok":false,"error":"bad attachment id"}"#,
+            ));
+            return;
+        }
+        let data = match std::fs::read(crate::attachment_store::sidecar_path(vault_path, id)) {
+            Ok(d) => d,
+            Err(_) => {
+                let _ = stream.write_all(&http_response(
+                    404,
+                    r#"{"ok":false,"error":"attachment not found"}"#,
+                ));
+                return;
+            }
+        };
+        if data.is_empty() || data.len() > crate::models::MAX_SIDECAR_ATTACHMENT_BYTES {
+            let _ = stream.write_all(&http_response(
+                413,
+                r#"{"ok":false,"error":"attachment too large"}"#,
+            ));
+            return;
+        }
+        let body = serde_json::json!({
+            "ok": true,
+            "id": id,
+            "sha": sha_hex(&data),
+            "blob_b64": base64_encode(&data),
+        })
+        .to_string();
+        let _ = stream.write_all(&http_response(200, &body));
+        return;
+    }
+    if method == "DELETE" && path.starts_with("/p2p/attach/") {
+        let id = path.trim_start_matches("/p2p/attach/");
+        if !crate::attachment_store::valid_id(id) {
+            let _ = stream.write_all(&http_response(
+                400,
+                r#"{"ok":false,"error":"bad attachment id"}"#,
+            ));
+            return;
+        }
+        let _ = std::fs::remove_file(crate::attachment_store::sidecar_path(vault_path, id));
+        let _ = stream.write_all(&http_response(200, r#"{"ok":true}"#));
+        return;
+    }
+    if method == "POST" && path.starts_with("/p2p/attach/") {
+        let id = path.trim_start_matches("/p2p/attach/");
+        if !crate::attachment_store::valid_id(id) {
+            let _ = stream.write_all(&http_response(
+                400,
+                r#"{"ok":false,"error":"bad attachment id"}"#,
+            ));
+            return;
+        }
+        let v: serde_json::Value = match serde_json::from_slice(&body) {
+            Ok(v) => v,
+            Err(_) => {
+                let _ = stream.write_all(&http_response(
+                    400,
+                    r#"{"ok":false,"error":"bad json"}"#,
+                ));
+                return;
+            }
+        };
+        let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("");
+        let b64 = v.get("blob_b64").and_then(|x| x.as_str()).unwrap_or("");
+        let data = match base64_decode(b64) {
+            Some(d)
+                if !d.is_empty()
+                    && d.len() <= crate::models::MAX_SIDECAR_ATTACHMENT_BYTES
+                    && sha_hex(&d) == sha =>
+            {
+                d
+            }
+            _ => {
+                let _ = stream.write_all(&http_response(
+                    400,
+                    r#"{"ok":false,"error":"bad attachment blob"}"#,
+                ));
+                return;
+            }
+        };
+        if let Err(e) = crate::attachment_store::write_sidecar_raw(
+            &crate::attachment_store::sidecar_path(vault_path, id),
+            &data,
+        ) {
+            let _ = stream.write_all(&http_response(
+                500,
+                &format!(r#"{{"ok":false,"error":"{e}"}}"#),
+            ));
+            return;
+        }
+        let _ = stream.write_all(&http_response(200, r#"{"ok":true}"#));
+        return;
+    }
     // A15 push-side anchor: a paired client cannot push a lower revision.
     let mut push_rev = 0u64;
     let mut push_hash = String::new();
@@ -937,7 +1049,7 @@ fn http_call(
 ) -> Result<HttpResponse, String> {
     let mut stream =
         TcpStream::connect_timeout(&addr, Duration::from_secs(8)).map_err(|e| e.to_string())?;
-    let _ = stream.set_read_timeout(Some(Duration::from_secs(30)));
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(120)));
     let mut head = format!(
         "{method} {path} HTTP/1.1\r\nHost: pv\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
@@ -1161,6 +1273,165 @@ pub fn push_peer(addr: SocketAddr, sha: &str, mtime: u64, blob: &[u8], code: &st
     }
 }
 
+/// A24d: list the peer's encrypted attachment ids.
+pub fn list_peer_attachments(addr: SocketAddr, code: &str) -> Result<Vec<String>, String> {
+    ensure_paired(addr, code)?;
+    let path = "/p2p/attach/list";
+    let headers = signed_headers("GET", path, "")?;
+    let (status, resp, rh) = http_call(addr, "GET", path, "", &headers)?;
+    // An older peer has no attachment endpoint; vault sync still works.
+    if status == 404 {
+        return Ok(Vec::new());
+    }
+    let host_pub = verify_peer_response(status, &resp, &rh)?;
+    if status != 200 {
+        return Err(format!("attachment list refused (HTTP {status})"));
+    }
+    let _ = crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp).map_err(|e| format!("bad attachment list: {e}"))?;
+    let mut ids = Vec::new();
+    if let Some(arr) = v.get("ids").and_then(|x| x.as_array()) {
+        for id in arr.iter().filter_map(|x| x.as_str()) {
+            if crate::attachment_store::valid_id(id) {
+                ids.push(id.to_string());
+            }
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    Ok(ids)
+}
+
+/// A24d: pull one encrypted attachment sidecar from a paired peer.
+pub fn pull_peer_attachment(
+    addr: SocketAddr,
+    code: &str,
+    id: &str,
+) -> Result<Vec<u8>, String> {
+    if !crate::attachment_store::valid_id(id) {
+        return Err("bad attachment id".to_string());
+    }
+    ensure_paired(addr, code)?;
+    let path = format!("/p2p/attach/{id}");
+    let headers = signed_headers("GET", &path, "")?;
+    let (status, resp, rh) = http_call(addr, "GET", &path, "", &headers)?;
+    let host_pub = verify_peer_response(status, &resp, &rh)?;
+    if status != 200 {
+        return Err(format!("attachment pull refused (HTTP {status})"));
+    }
+    let _ = crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp).map_err(|e| format!("bad attachment body: {e}"))?;
+    let sha = v.get("sha").and_then(|x| x.as_str()).unwrap_or("");
+    let b64 = v.get("blob_b64").and_then(|x| x.as_str()).unwrap_or("");
+    let data = base64_decode(b64).ok_or_else(|| "bad attachment blob".to_string())?;
+    if data.is_empty()
+        || data.len() > crate::models::MAX_SIDECAR_ATTACHMENT_BYTES
+        || sha_hex(&data) != sha
+    {
+        return Err("attachment integrity failed".to_string());
+    }
+    Ok(data)
+}
+
+/// A24d: push one encrypted attachment sidecar to a paired peer.
+pub fn push_peer_attachment(
+    addr: SocketAddr,
+    code: &str,
+    id: &str,
+    bytes: &[u8],
+) -> Result<(), String> {
+    if !crate::attachment_store::valid_id(id) {
+        return Err("bad attachment id".to_string());
+    }
+    if bytes.is_empty() || bytes.len() > crate::models::MAX_SIDECAR_ATTACHMENT_BYTES {
+        return Err("attachment has an invalid size".to_string());
+    }
+    ensure_paired(addr, code)?;
+    let path = format!("/p2p/attach/{id}");
+    let body = serde_json::json!({
+        "sha": sha_hex(bytes),
+        "blob_b64": base64_encode(bytes),
+    })
+    .to_string();
+    let headers = signed_headers("POST", &path, &body)?;
+    let (status, resp, rh) = http_call(addr, "POST", &path, &body, &headers)?;
+    let host_pub = verify_peer_response(status, &resp, &rh)?;
+    if status != 200 {
+        return Err(format!("attachment push refused (HTTP {status})"));
+    }
+    let _ = crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())?;
+    let v: serde_json::Value =
+        serde_json::from_slice(&resp).map_err(|e| format!("bad attachment ack: {e}"))?;
+    if v.get("ok").and_then(|o| o.as_bool()).unwrap_or(false) {
+        Ok(())
+    } else {
+        Err("attachment push was not acknowledged".to_string())
+    }
+}
+
+/// A24d: delete one remote attachment sidecar (delete-on-revoke).
+pub fn delete_peer_attachment(addr: SocketAddr, code: &str, id: &str) -> Result<(), String> {
+    if !crate::attachment_store::valid_id(id) {
+        return Err("bad attachment id".to_string());
+    }
+    ensure_paired(addr, code)?;
+    let path = format!("/p2p/attach/{id}");
+    let headers = signed_headers("DELETE", &path, "")?;
+    let (status, resp, rh) = http_call(addr, "DELETE", &path, "", &headers)?;
+    if status == 404 {
+        return Ok(());
+    }
+    let host_pub = verify_peer_response(status, &resp, &rh)?;
+    if status != 200 {
+        return Err(format!("attachment delete refused (HTTP {status})"));
+    }
+    let _ = crate::sync::p2p_pairing::bind_peer_addr(&host_pub, &addr.ip().to_string())?;
+    Ok(())
+}
+
+/// A24d: reconcile sidecars with a paired peer (pull missing, push new,
+/// process local delete tombstones).
+fn sync_peer_attachments(addr: SocketAddr, pin: &str) -> Result<(usize, usize), String> {
+    let vault_path = std::path::Path::new(crate::developer::vault_run::VAULT_FILE);
+    let remote = list_peer_attachments(addr, pin)?;
+    let local = crate::attachment_store::sidecar_files(vault_path);
+    let remote_set: std::collections::HashSet<&str> =
+        remote.iter().map(String::as_str).collect();
+    let deleted = crate::attachment_store::pending_deleted(vault_path);
+    let mut pulled = 0usize;
+    for id in &remote {
+        if deleted.iter().any(|d| d == id) {
+            continue;
+        }
+        if local.iter().any(|(l, _)| l == id) {
+            continue;
+        }
+        let data = pull_peer_attachment(addr, pin, id)?;
+        crate::attachment_store::write_sidecar_raw(
+            &crate::attachment_store::sidecar_path(vault_path, id),
+            &data,
+        )?;
+        pulled += 1;
+    }
+    let mut pushed = 0usize;
+    for (id, path) in &local {
+        if remote_set.contains(id.as_str()) {
+            continue;
+        }
+        let data = std::fs::read(path)
+            .map_err(|e| format!("attachment read {id}: {e}"))?;
+        push_peer_attachment(addr, pin, id, &data)?;
+        pushed += 1;
+    }
+    for id in deleted {
+        delete_peer_attachment(addr, pin, &id)?;
+        crate::attachment_store::clear_deleted(vault_path, &id);
+    }
+    Ok((pulled, pushed))
+}
+
 /// Full sync against one peer IP: newer mtime wins; equal-mtime divergence
 /// is a CONFLICT (local kept, loud report). Returns a human status line.
 /// `adopt_local` persists an adopted remote blob (caller = secure_write).
@@ -1169,14 +1440,6 @@ pub fn sync_with_peer(
     pin: &str,
     adopt_local: &mut dyn FnMut(Vec<u8>) -> Result<(), String>,
 ) -> Result<String, String> {
-    if crate::attachment_store::dir_has_sidecars(std::path::Path::new(
-        crate::developer::vault_run::VAULT_FILE,
-    )) {
-        return Err(
-            "large attachments are stored separately and are not synced yet (A24c) — export .pvx instead"
-                .to_string(),
-        );
-    }
     let addr: SocketAddr = format!("{ip}:{P2P_PORT}").parse().map_err(|e| format!("bad peer ip: {e}"))?;
     let (local_sha, local_mtime) = local_head();
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
@@ -1189,20 +1452,34 @@ pub fn sync_with_peer(
         return Err("peer has a PQ-paranoid vault — not syncable".to_string());
     }
     if remote_sha == local_sha {
-        return Ok(crate::i18n::tr("📡 Already in sync (identical heads).", "📡 ইতিমধ্যে সিঙ্কে আছে (হেড একই)।").to_string());
+        let msg = crate::i18n::tr("📡 Already in sync (identical heads).", "📡 ইতিমধ্যে সিঙ্কে আছে (হেড একই)।").to_string();
+        let (pulled, pushed) = sync_peer_attachments(addr, pin)?;
+        return Ok(attachment_suffix(msg, pulled, pushed));
     }
     if remote_mtime > local_mtime {
         adopt_local(remote_blob)?;
         write_adopted_head(remote_mtime, &remote_sha);
         crate::security::access_log::log_event("p2p", &format!("adopted {remote_sha} from {ip}"));
-        return Ok(crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (adopted newer remote)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন remote নেওয়া হয়েছে)").to_string());
+        let msg = crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (adopted newer remote)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন remote নেওয়া হয়েছে)").to_string();
+        let (pulled, pushed) = sync_peer_attachments(addr, pin)?;
+        return Ok(attachment_suffix(msg, pulled, pushed));
     }
     if local_mtime > remote_mtime {
         push_peer(addr, &local_sha, local_mtime, &local_blob, pin)?;
         crate::security::access_log::log_event("p2p", &format!("pushed {local_sha} to {ip}"));
-        return Ok(crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (pushed newer local)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন local পুশ হয়েছে)").to_string());
+        let msg = crate::i18n::tr("📡 Synced with local peer via Wi-Fi! (pushed newer local)", "📡 লোকাল পিয়ারের সাথে সিঙ্ক হয়েছে! (নতুন local পুশ হয়েছে)").to_string();
+        let (pulled, pushed) = sync_peer_attachments(addr, pin)?;
+        return Ok(attachment_suffix(msg, pulled, pushed));
     }
     Err(crate::i18n::tr("⚠️ Sync CONFLICT: same age, different vaults — local kept. Resolve manually.", "⚠️ সিঙ্ক দ্বন্দ্ব: একই বয়স, আলাদা ভল্ট — local রাখা হয়েছে। নিজে সমাধান করুন।").to_string())
+}
+
+fn attachment_suffix(msg: String, pulled: usize, pushed: usize) -> String {
+    if pulled == 0 && pushed == 0 {
+        msg
+    } else {
+        format!("{msg} · attachments ↓{pulled} ↑{pushed}")
+    }
 }
 
 #[cfg(test)]
@@ -1334,6 +1611,55 @@ mod tests {
         let _ = server.join();
         let _ = std::fs::remove_file(&dev);
         let _ = std::fs::remove_file(&paired);
+    }
+
+    #[test]
+    fn loopback_attachment_endpoints_roundtrip() {
+        let _guard = pin_env_lock();
+        let dir = std::env::temp_dir().join(format!("pv-p2p-att-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PV_ATTACH_DIR", &dir);
+        let a1 = b"encrypted-sidecar-a1".to_vec();
+        crate::attachment_store::write_sidecar_raw(&dir.join("a1.pvab"), &a1).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let blob = b"loopback-ct".to_vec();
+        let sha = sha_hex(&blob);
+        let server = std::thread::spawn(move || {
+            let _ = listener.set_nonblocking(false);
+            for _ in 0..5 {
+                if let Ok((stream, _)) = listener.accept() {
+                    serve_conn_with_blob(stream, blob.clone(), sha.clone(), 7);
+                }
+            }
+        });
+        let addr: SocketAddr = format!("127.0.0.1:{port}").parse().unwrap();
+        let dev = std::env::temp_dir().join(format!("pv-p2p-dev-att-{}", std::process::id()));
+        let paired = std::env::temp_dir().join(format!("pv-p2p-paired-att-{}", std::process::id()));
+        std::env::set_var("PV_P2P_DEVICE_FILE", &dev);
+        std::env::set_var("PV_P2P_PAIRED_FILE", &paired);
+        let _ = std::fs::remove_file(&dev);
+        let _ = std::fs::remove_file(&paired);
+        crate::sync::p2p_pairing::revoke_session();
+        let code = crate::sync::p2p_pairing::open_session();
+
+        assert_eq!(list_peer_attachments(addr, &code).unwrap(), vec!["a1"]);
+        assert_eq!(pull_peer_attachment(addr, "", "a1").unwrap(), a1);
+        let b2 = b"encrypted-sidecar-b2".to_vec();
+        push_peer_attachment(addr, "", "b2", &b2).unwrap();
+        assert_eq!(std::fs::read(dir.join("b2.pvab")).unwrap(), b2);
+        delete_peer_attachment(addr, "", "b2").unwrap();
+        assert!(!dir.join("b2.pvab").exists());
+
+        let _ = server.join();
+        let _ = std::fs::remove_file(&dev);
+        let _ = std::fs::remove_file(&paired);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::remove_var("PV_ATTACH_DIR");
+        std::env::remove_var("PV_P2P_DEVICE_FILE");
+        std::env::remove_var("PV_P2P_PAIRED_FILE");
     }
 
     /// Test-only serve with an injected blob (production serve_conn reads disk).

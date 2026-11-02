@@ -1378,6 +1378,9 @@ fn publish_unlocked_vault(
     ui.set_folder_filter("All".into());
     let mut vault = vault;
     vault.ensure_folders();
+    let (att_inline, att_side) = crate::attachment_store::attachment_counts(&vault);
+    ui.set_att_inline_count(att_inline as i32);
+    ui.set_att_sidecar_count(att_side as i32);
     // A11: refresh the opt-in read-only extension cache at every unlock.
     // Failures are non-fatal — the bridge never depends on this file.
     if let Some(Err(e)) = crate::security::offline_cache::refresh_if_enabled(&vault) {
@@ -12438,6 +12441,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
+                        let (att_inline, att_side) =
+                            crate::attachment_store::attachment_counts(&v);
+                        ui.set_att_inline_count(att_inline as i32);
+                        ui.set_att_sidecar_count(att_side as i32);
                         if use_sidecar {
                             ui.set_notification_text(
                                 "📎 Large file stored separately; syncing (P2P still unavailable)."
@@ -12464,34 +12471,21 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = dl_weak.upgrade() else {
             return;
         };
-        let vault = lock_vault(&dl_vault);
-        let found: Option<(String, Result<Vec<u8>, String>)> =
-            attachments_of(&vault, kind, id.as_str())
+        let id_s = id.as_str().to_string();
+        let att_s = att_id.as_str().to_string();
+        let filename = {
+            let vault = lock_vault(&dl_vault);
+            attachments_of(&vault, kind, &id_s)
                 .iter()
-                .find(|a| a.id == att_id.as_str())
-                .map(|a| {
-                    (
-                        a.filename.clone(),
-                        crate::attachment_store::attachment_bytes(
-                            &vault,
-                            a,
-                            std::path::Path::new(VAULT_FILE),
-                        ),
-                    )
-                });
-        drop(vault);
-        let Some((filename, data)) = found else {
+                .find(|a| a.id == att_s)
+                .map(|a| a.filename.clone())
+        };
+        let Some(filename) = filename else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
             return;
         };
-        let data = match data {
-            Ok(d) => d,
-            Err(e) => {
-                ui.set_notification_text(format!("⚠️ {e}").into());
-                return;
-            }
-        };
         let weak = dl_weak.clone();
+        let vault_clone = Arc::clone(&dl_vault);
         std::thread::spawn(move || {
             let dest = rfd::FileDialog::new()
                 .set_title("Export attachment")
@@ -12500,10 +12494,62 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(dest) = dest else {
                 return;
             };
-            let msg = match std::fs::write(&dest, &data) {
-                Ok(()) => {
+            let result: Result<u64, String> = {
+                let vault = lock_vault(&vault_clone);
+                let Some(att) = attachments_of(&vault, kind, &id_s)
+                    .into_iter()
+                    .find(|a| a.id == att_s)
+                else {
+                    return;
+                };
+                let tmp_name = format!(
+                    "{}.pvtmp",
+                    dest.file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("attachment")
+                );
+                let tmp = dest.with_file_name(tmp_name);
+                let mut f = match std::fs::File::create(&tmp) {
+                    Ok(f) => f,
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_notification_text(
+                                    format!("⚠️ Export failed: {e}").into(),
+                                );
+                            }
+                        });
+                        return;
+                    }
+                };
+                let r = crate::attachment_store::attachment_write_to(
+                    &vault,
+                    &att,
+                    std::path::Path::new(VAULT_FILE),
+                    &mut f,
+                );
+                drop(f);
+                match r {
+                    Ok(n) => {
+                        let _ = std::fs::remove_file(&dest);
+                        match std::fs::rename(&tmp, &dest) {
+                            Ok(()) => Ok(n),
+                            Err(e) => {
+                                let _ = std::fs::remove_file(&tmp);
+                                Err(format!("rename: {e}"))
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&tmp);
+                        Err(e)
+                    }
+                }
+            };
+            let msg = match result {
+                Ok(n) => {
                     security::access_log::log_event("export", "attachment");
-                    format!("💾 Exported '{}'.", filename)
+                    format!("💾 Exported '{}' ({}).", filename, human_bytes(n as usize))
                 }
                 Err(e) => format!("⚠️ Export failed: {e}"),
             };
@@ -12524,29 +12570,43 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         let vault = lock_vault(&pv_vault);
-        let found: Option<(String, Result<Vec<u8>, String>)> =
-            attachments_of(&vault, kind, id.as_str())
-                .iter()
-                .find(|a| a.id == att_id.as_str())
-                .map(|a| {
-                    (
-                        a.filename.clone(),
-                        crate::attachment_store::attachment_bytes(
-                            &vault,
-                            a,
-                            std::path::Path::new(VAULT_FILE),
-                        ),
-                    )
-                });
-        drop(vault);
-        let Some((filename, data)) = found else {
+        let Some(att) = attachments_of(&vault, kind, id.as_str())
+            .into_iter()
+            .find(|a| a.id == att_id.as_str())
+        else {
             ui.set_notification_text("⚠️ Attachment not found.".into());
             return;
         };
+        let filename = att.filename.clone();
+        let size = att.size_bytes;
+        // Preview is allowed only for small files; large ones are export-only.
+        let data = if size > 8 * 1024 * 1024 {
+            None
+        } else {
+            Some(crate::attachment_store::attachment_bytes(
+                &vault,
+                &att,
+                std::path::Path::new(VAULT_FILE),
+            ))
+        };
+        drop(vault);
         let data = match data {
-            Ok(d) => d,
-            Err(e) => {
+            Some(Ok(d)) => d,
+            Some(Err(e)) => {
                 ui.set_notification_text(format!("⚠️ {e}").into());
+                return;
+            }
+            None => {
+                ui.set_att_preview_id(att_id);
+                ui.set_att_preview_name(filename.clone().into());
+                ui.set_att_preview_info(
+                    format!("{} • too large to preview", human_bytes(size)).into(),
+                );
+                ui.set_att_preview_text(
+                    "Too large to preview — use Export to open it.".into(),
+                );
+                ui.set_att_preview_kind("other".into());
+                ui.set_att_preview(true);
                 return;
             }
         };
@@ -12664,11 +12724,90 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
+                        let (att_inline, att_side) =
+                            crate::attachment_store::attachment_counts(&v);
+                        ui.set_att_inline_count(att_inline as i32);
+                        ui.set_att_sidecar_count(att_side as i32);
                         ui.set_notification_text("🗑️ Attachment deleted.".into());
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
                         ui.set_notification_text(format!("❌ Delete failed: {e}").into());
+                    }
+                }
+            });
+        });
+    });
+
+    // A24d: one-time move of legacy inline attachments to encrypted sidecars.
+    let mig_weak = main_window.as_weak();
+    let mig_vault = Arc::clone(&active_vault);
+    let mig_master = Arc::clone(&active_master_pw);
+    main_window.on_migrate_attachments(move || {
+        let Some(ui) = mig_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
+            return;
+        }
+        let weak = mig_weak.clone();
+        let vault_clone = Arc::clone(&mig_vault);
+        let master_clone = Arc::clone(&mig_master);
+        ui.set_notification_text("⏳ Moving inline attachments to sidecars…".into());
+        std::thread::spawn(move || {
+            let master = lock_master_pw(&master_clone).clone();
+            let Some(master) = master else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_notification_text("⚠️ Vault not unlocked.".into());
+                    }
+                });
+                return;
+            };
+            let result: Result<(usize, usize, usize), String> = {
+                let mut vault = lock_vault(&vault_clone);
+                let snapshot = vault.clone();
+                match crate::attachment_store::migrate_inline_all(
+                    &mut vault,
+                    std::path::Path::new(VAULT_FILE),
+                ) {
+                    Ok(0) => Ok((0, 0, 0)),
+                    Ok(moved) => match save_vault_secret(&vault, &master, VAULT_FILE) {
+                        Ok(()) => {
+                            let (inline, side) =
+                                crate::attachment_store::attachment_counts(&vault);
+                            Ok((moved, inline, side))
+                        }
+                        Err(e) => {
+                            *vault = snapshot;
+                            Err(e)
+                        }
+                    },
+                    Err(e) => Err(e),
+                }
+            };
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    match result {
+                        Ok((0, _, _)) => {
+                            ui.set_notification_text("📎 No inline attachments to move.".into())
+                        }
+                        Ok((moved, inline, side)) => {
+                            ui.set_att_inline_count(inline as i32);
+                            ui.set_att_sidecar_count(side as i32);
+                            ui.set_notification_text(
+                                format!(
+                                    "📎 Moved {moved} attachment(s) to encrypted sidecars."
+                                )
+                                .into(),
+                            );
+                            security::access_log::log_event(
+                                "attachments",
+                                "migrated inline to sidecars",
+                            );
+                        }
+                        Err(e) => ui.set_notification_text(format!("⚠️ Migration: {e}").into()),
                     }
                 }
             });

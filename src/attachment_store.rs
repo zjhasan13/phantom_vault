@@ -311,6 +311,20 @@ pub fn read_sidecar(
     id: &str,
     meta: &SidecarMeta,
 ) -> Result<Vec<u8>, String> {
+    let mut out = Vec::with_capacity(meta.size_bytes as usize);
+    copy_sidecar_to_writer(path, root, id, meta, &mut out)?;
+    Ok(out)
+}
+
+/// Stream-decrypt a sidecar into `out` (bounded 1 MiB chunks; no full-file
+/// allocation). Returns the number of plaintext bytes written.
+pub fn copy_sidecar_to_writer<W: Write>(
+    path: &Path,
+    root: &[u8; 32],
+    id: &str,
+    meta: &SidecarMeta,
+    out: &mut W,
+) -> Result<u64, String> {
     if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err("attachment id must be short hex".to_string());
     }
@@ -319,7 +333,7 @@ pub fn read_sidecar(
         return Err("attachment metadata does not match its sidecar".to_string());
     }
     let mut file_key = unwrap_file_key(root, id, &header.wrapped_key)?;
-    let mut out = Vec::with_capacity(header.size_bytes as usize);
+    let mut written = 0u64;
     for index in 0..header.chunk_count {
         let want = chunk_len(&header, index)?;
         let record_len = NONCE_LEN + want + TAG_LEN;
@@ -329,7 +343,9 @@ pub fn read_sidecar(
         let plain = open_chunk(&file_key, id, index, &record);
         record.zeroize();
         let mut plain = plain?;
-        out.extend_from_slice(&plain);
+        out.write_all(&plain)
+            .map_err(|e| format!("attachment write: {e}"))?;
+        written += plain.len() as u64;
         plain.zeroize();
     }
     // Reject trailing records/bytes even if the geometry says otherwise.
@@ -340,10 +356,10 @@ pub fn read_sidecar(
         Err(e) => return Err(format!("attachment tail read: {e}")),
     }
     file_key.zeroize();
-    if out.len() as u64 != header.size_bytes {
+    if written != header.size_bytes {
         return Err("attachment plaintext length mismatch".to_string());
     }
-    Ok(out)
+    Ok(written)
 }
 
 /// 32-byte attachment root from the vault. Fails closed when a sidecar exists
@@ -372,6 +388,13 @@ pub fn ensure_root(vault: &mut Vault) -> Result<[u8; 32], String> {
 }
 
 pub fn sidecar_dir(vault_path: &Path) -> PathBuf {
+    // Test/portable override; production uses the vault's sibling directory.
+    if let Ok(dir) = std::env::var("PV_ATTACH_DIR") {
+        let dir = dir.trim();
+        if !dir.is_empty() {
+            return PathBuf::from(dir);
+        }
+    }
     vault_path
         .parent()
         .filter(|p| !p.as_os_str().is_empty())
@@ -381,6 +404,11 @@ pub fn sidecar_dir(vault_path: &Path) -> PathBuf {
 
 pub fn sidecar_path(vault_path: &Path, id: &str) -> PathBuf {
     sidecar_dir(vault_path).join(format!("{id}.{SIDECAR_EXT}"))
+}
+
+/// Attachment ids are short hex (random 16 bytes rendered as hex).
+pub fn valid_id(id: &str) -> bool {
+    !id.is_empty() && id.len() <= 128 && id.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
 /// Local encrypted sidecars `(id, path)`; ignores temp/tombstone files.
@@ -534,6 +562,36 @@ pub fn attachment_bytes(
     }
 }
 
+/// Stream one attachment (inline or sidecar) into `out`.
+pub fn attachment_write_to<W: Write>(
+    vault: &Vault,
+    att: &EncryptedAttachment,
+    vault_path: &Path,
+    out: &mut W,
+) -> Result<u64, String> {
+    match att.storage {
+        AttachmentStorage::Inline => {
+            out.write_all(&att.data)
+                .map_err(|e| format!("attachment write: {e}"))?;
+            Ok(att.data.len() as u64)
+        }
+        AttachmentStorage::Sidecar => {
+            let meta = att
+                .sidecar
+                .as_ref()
+                .ok_or_else(|| "attachment sidecar metadata is missing".to_string())?;
+            let root = root_from_vault(vault)?;
+            copy_sidecar_to_writer(
+                &sidecar_path(vault_path, &att.id),
+                &root,
+                &att.id,
+                meta,
+                out,
+            )
+        }
+    }
+}
+
 fn inline_list(
     list: &mut [EncryptedAttachment],
     root: &[u8; 32],
@@ -560,6 +618,126 @@ fn inline_list(
     Ok(())
 }
 
+fn count_list(list: &[EncryptedAttachment], sidecar: bool) -> usize {
+    list.iter()
+        .filter(|a| (a.storage == AttachmentStorage::Sidecar) == sidecar)
+        .count()
+}
+
+pub fn attachment_counts(vault: &Vault) -> (usize, usize) {
+    let mut inline = 0;
+    let mut sidecar = 0;
+    for item in &vault.credentials {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    for item in &vault.licenses {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    for item in &vault.notes {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    for item in &vault.cards {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    for item in &vault.identities {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    for item in &vault.ssh_keys {
+        inline += count_list(&item.attachments, false);
+        sidecar += count_list(&item.attachments, true);
+    }
+    (inline, sidecar)
+}
+
+fn migrate_list(
+    list: &mut [EncryptedAttachment],
+    root: &[u8; 32],
+    vault_path: &Path,
+    written: &mut Vec<PathBuf>,
+) -> Result<usize, String> {
+    if list.iter().any(|a| a.storage == AttachmentStorage::Inline) {
+        std::fs::create_dir_all(sidecar_dir(vault_path))
+            .map_err(|e| format!("attachment folder: {e}"))?;
+    }
+    let mut moved = 0;
+    for att in list {
+        if att.storage != AttachmentStorage::Inline {
+            continue;
+        }
+        if !valid_id(&att.id) {
+            let mut raw = [0u8; 16];
+            OsRng.fill_bytes(&mut raw);
+            att.id = raw.iter().map(|b| format!("{b:02x}")).collect();
+        }
+        let path = sidecar_path(vault_path, &att.id);
+        let meta = write_sidecar_bytes(&path, &att.data, root, &att.id)?;
+        written.push(path);
+        att.data.zeroize();
+        att.data.clear();
+        att.sidecar = Some(meta);
+        att.storage = AttachmentStorage::Sidecar;
+        moved += 1;
+    }
+    Ok(moved)
+}
+
+/// A24d: one-time move of every inline attachment into a sidecar. The vault is
+/// cloned first, so a failure leaves the original unchanged; newly written
+/// sidecars are removed on failure. Returns the number moved.
+pub fn migrate_inline_all(vault: &mut Vault, vault_path: &Path) -> Result<usize, String> {
+    if attachment_counts(vault).0 == 0 {
+        return Ok(0);
+    }
+    let mut out = vault.clone();
+    let root = if out.attachment_root.is_empty() {
+        if has_sidecars(&out) {
+            return Err("attachment root missing — restore the vault backup".to_string());
+        }
+        ensure_root(&mut out)?
+    } else {
+        root_from_vault(&out)?
+    };
+    let mut written: Vec<PathBuf> = Vec::new();
+    let result = (|| -> Result<usize, String> {
+        let mut moved = 0;
+        for item in &mut out.credentials {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        for item in &mut out.licenses {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        for item in &mut out.notes {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        for item in &mut out.cards {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        for item in &mut out.identities {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        for item in &mut out.ssh_keys {
+            moved += migrate_list(&mut item.attachments, &root, vault_path, &mut written)?;
+        }
+        Ok(moved)
+    })();
+    match result {
+        Ok(moved) => {
+            *vault = out;
+            Ok(moved)
+        }
+        Err(e) => {
+            for path in written {
+                let _ = std::fs::remove_file(path);
+            }
+            Err(e)
+        }
+    }
+}
 /// Return a clone with every sidecar decrypted back into `data` — used by the
 /// legacy single-blob `.pvx` export so old files stay readable. The clone can
 /// be large; export is an explicit, infrequent action.
@@ -685,6 +863,54 @@ mod tests {
         .is_err());
         assert!(!path.exists());
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[test]
+    #[ignore = "50 MiB manual QA: run with --ignored"]
+    fn fifty_mib_sidecar_roundtrip() {
+        let dir = std::env::temp_dir().join(format!("pv-a24-50m-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("big.pvab");
+        let root = [7u8; 32];
+        let data = vec![0xABu8; 50 * 1024 * 1024];
+        let meta = write_sidecar_bytes(&path, &data, &root, "a1").unwrap();
+        assert_eq!(meta.chunk_count, 50);
+        assert_eq!(meta.size_bytes, 50 * 1024 * 1024);
+        let got = read_sidecar(&path, &root, "a1", &meta).unwrap();
+        assert_eq!(got.len(), data.len());
+        assert_eq!(&got[..1024], &data[..1024]);
+        assert_eq!(&got[data.len() - 1024..], &data[data.len() - 1024..]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn inline_migration_moves_bytes_without_loss() {
+        let dir = std::env::temp_dir().join(format!("pv-a24-migrate-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let vault_path = dir.join("vault.enc");
+        let root = [4u8; 32];
+        let data = pattern(1234);
+        let mut list = vec![EncryptedAttachment {
+            // Legacy ids were not hex (`att<millis>`); migration must remap.
+            id: "att123".into(),
+            filename: "x.bin".into(),
+            mime_type: "application/octet-stream".into(),
+            size_bytes: data.len(),
+            data: data.clone(),
+            storage: AttachmentStorage::Inline,
+            sidecar: None,
+        }];
+        let mut written = Vec::new();
+        assert_eq!(migrate_list(&mut list, &root, &vault_path, &mut written).unwrap(), 1);
+        assert!(list[0].data.is_empty());
+        assert_eq!(list[0].storage, AttachmentStorage::Sidecar);
+        assert!(valid_id(&list[0].id));
+        let meta = list[0].sidecar.as_ref().unwrap();
+        let got = read_sidecar(&written[0], &root, &list[0].id, meta).unwrap();
+        assert_eq!(got, data);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

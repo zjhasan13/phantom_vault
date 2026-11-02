@@ -1,11 +1,12 @@
 # A24 — chunked, separately encrypted attachments
 
-> Status: **A24a (format) + A24b-lite (50 MiB sidecars) + A24c-GitHub (sidecar
-> sync + streaming add) shipped.** New files over 5 MiB are stored as `PVAB1`
-> sidecars; GitHub sync uploads encrypted sidecars before the vault and pulls
-> missing ones before adoption, with delete tombstones. **P2P sidecar transfer
-> and old-inline migration remain** (P2P still refuses with a clear error). No
-> new dependencies; app size impact is code-only.
+> Status: **A24a–d shipped.** Files over 5 MiB are stored as `PVAB1` sidecars
+> (vault saves no longer re-encrypt attachment bytes); GitHub and P2P sync both
+> transfer sidecars; deletes leave tombstones for remote cleanup; a Settings
+> action migrates legacy inline attachments; download streams to disk and
+> preview is capped at 8 MiB. No new dependencies; app size impact is code-only.
+> A 50 MiB sidecar roundtrip is covered by an ignored manual test; live sync
+> calls still need a token/peer.
 
 ## Why
 
@@ -99,8 +100,11 @@ filenames/MIME stay inside the encrypted vault JSON.
   only after the vault save succeeds.
 - Missing sidecar on read → explicit “attachment file is missing — restore it
   from a backup”; never return empty bytes.
-- **A24c (pending):** lazy migration of old inline attachments, streaming
-  preview/download, orphan sweep and background gc.
+- **A24d migration (implemented):** Settings → Attachment storage →
+  “Move inline to encrypted sidecars” clones the vault, writes every non-empty
+  inline attachment to a sidecar, then saves; a failure restores the in-memory
+  snapshot and removes the newly written files. Legacy `att<millis>` ids are
+  remapped to hex. The action is explicit, not automatic.
 - `MAX_ATTACHMENT_BYTES` stays 5 MiB as the inline threshold;
   `MAX_SIDECAR_ATTACHMENT_BYTES` is 50 MiB; the per-item count stays 10.
 
@@ -128,12 +132,17 @@ filenames/MIME stay inside the encrypted vault JSON.
   and download every sidecar that is missing locally **before** adopting the
   vault. Delete tombstones (`attachments/.deleted`) remove remote ids on the
   next push.
-- **P2P (pending):** `p2p_local::sync_with_peer` still refuses while `.pvab`
-  files exist (clear “export .pvx instead” error); its single-blob protocol
-  would need chunked sidecar endpoints.
-- **Old-inline migration (pending):** existing inline attachments stay inline;
-  only new >5 MiB files use sidecars. The CRDT merge refuses two different
-  attachment roots instead of dropping one side.
+- **P2P (implemented, A24d):** the paired/signed channel gains
+  `GET /p2p/attach/list`, `GET|POST|DELETE /p2p/attach/<id>`. `sync_with_peer`
+  reconciles sidecars after the vault (pull missing, push new, process local
+  tombstones) and reports `attachments ↓n ↑n`. A 50 MiB sidecar travels as
+  base64 JSON, so the HTTP body cap is 80 MiB and memory peaks higher. An older
+  peer without the endpoints lists zero attachments; vault sync still works
+  when there are no local sidecars. If local sidecars exist, the attachment
+  push fails loudly and the user must update the peer.
+- **Old-inline migration (implemented):** Settings action described above.
+- **CRDT merge:** two different attachment roots are refused rather than
+  dropping one side.
 - Orphans: a remote sidecar may remain after a delete on another device; it is
   ciphertext with a random id and harmless. A manifest/revision is future work.
 
@@ -144,10 +153,13 @@ filenames/MIME stay inside the encrypted vault JSON.
 - ≤5 MiB files keep the inline path; preview/download resolve inline bytes or
   decrypt the sidecar; delete removes the sidecar after the vault save and
   records a remote-delete tombstone.
+- **Download streams** the sidecar to a temp file next to the destination and
+  renames it; a 50 MiB export no longer holds the whole file in RAM.
+- **Preview is capped at 8 MiB**; larger files show “Too large to preview —
+  use Export”.
+- Settings shows inline/sidecar counts and offers the explicit migration
+  action.
 - Missing sidecars surface an explicit error.
-- No new plaintext-on-disk path: preview stays in RAM, download is the existing
-  explicit user action. Preview/download still load the file into RAM; streaming
-  those is A24d.
 
 ## Tests
 
@@ -160,21 +172,26 @@ filenames/MIME stay inside the encrypted vault JSON.
   file discovery, delete tombstone roundtrip, add-streaming path exercised by
   the `PVAB1` reader/writer tests. Live GitHub calls are not unit-tested (no
   token in CI); they use the same octocrab client and error mapping as sync.
-- A24d (pending): old inline migration, P2P sidecar endpoints, preview/download
-  streaming, 50 MiB export roundtrip, manual QA (add/cancel, lock mid-add,
-  disk-full, antivirus-locked file, 100%/125% layout).
+- A24d (done): loopback P2P attachment list/pull/push/delete over the real
+  paired/signed channel; inline→sidecar migration keeps bytes; download
+  streaming helper; preview cap. A 50 MiB `PVAB1` roundtrip is an ignored test
+  (`cargo test fifty_mib -- --ignored`, ~39 s) and passed locally.
+- Manual QA still required: 50 MiB `.pvx` export/import, lock mid-migration,
+  disk-full, antivirus-locked file, 100%/125% layout.
 
 ## Honest limits / non-goals
 
-- **P2P still refuses sidecar vaults**; GitHub sync is the supported sidecar
-  transport. `.pvx` export/import remains the offline transfer path.
-- Existing inline attachments are not migrated yet; only new >5 MiB files use
-  sidecars.
+- **Existing inline attachments require the Settings migration action**; they
+  are not moved automatically.
 - Pull downloads remote sidecars that are missing locally **before** adoption;
   ids with a local delete tombstone are skipped. A per-vault manifest would
-  avoid downloading unrelated orphans in A24d.
+  avoid downloading unrelated orphans.
 - Remote delete is best-effort via tombstones; another device can re-upload a
   sidecar it still has. There is no cross-device tombstone reconciliation yet.
+- **P2P sidecars travel as base64 JSON** with an 80 MiB body cap; a 50 MiB
+  attachment peaks at several hundred MiB of RAM. GitHub uses one file per id.
+- Export re-inlines sidecars, so a 50 MiB `.pvx` export can still need several
+  hundred MiB; add/download stream, preview is capped at 8 MiB.
 - **Vault `.bak` rotation does not include sidecars.** A `.bak` restore only
   works with the `attachments/` folder from the same point in time; `.pvx`
   export is the self-contained backup. Deleting a sidecar cannot be undone by
@@ -184,7 +201,7 @@ filenames/MIME stay inside the encrypted vault JSON.
   say this; the sidecars remain on disk for a restore, but the old vault won't
   reference them. Back up before downgrading.
 - Export re-inlines sidecars, so a 50 MiB attachment can need several hundred
-  MiB at peak. Add/preview also hold the file in RAM in this slice.
+  MiB at peak.
 - No compression or deduplication; two identical files cost twice.
 - Sidecars are only as strong as the vault root; a stolen vault + sidecars is
   still offline-brute-forceable at the master-password cost.
@@ -200,7 +217,7 @@ filenames/MIME stay inside the encrypted vault JSON.
 | A24a | `PVAB1` format + crypto + tests | **done (~0.5 day)** |
 | A24b-lite | vault root/metadata, >5 MiB sidecar store, 50 MiB cap, UI add/read/delete, `.pvx` export re-inline, sync guard, tests | **done (~1 day)** |
 | A24c | GitHub sidecar push/pull + tombstones, streaming add, strict remote paths | **done (~1 day)** |
-| A24d | old inline migration, P2P sidecar endpoints, preview/download streaming, 50 MiB export roundtrip, progress/missing-file UX, manual QA | 2–3 days |
+| A24d | Settings migration, P2P list/pull/push/delete, download streaming, preview cap, 50 MiB roundtrip test | **done (~1.5 days)** |
 
 ## Decisions (resolved)
 
@@ -209,4 +226,5 @@ filenames/MIME stay inside the encrypted vault JSON.
    encrypted blob; GitHub sync uses one remote file per sidecar id.
 3. App size impact is code-only (the `attachment_store` module + a few sync
    calls); no new crate, asset or bundled dependency.
-4. GitHub sync transfers sidecars; P2P keeps its guard until A24d.
+4. Both GitHub and P2P transfer sidecars; P2P uses paired/signed endpoints and
+   an 80 MiB JSON cap.

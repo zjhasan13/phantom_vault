@@ -708,6 +708,8 @@ export component MainWindow inherits Window {
     in-out property <bool> ls_relay: false;
     in-out property <int> ls_stage_count: 0;
     in-out property <bool> settings_scroll_share: false;
+    in-out property <int> att_inline_count: 0;
+    in-out property <int> att_sidecar_count: 0;
     in-out property <string> ls_pass: "";
     in-out property <string> ls_pass_confirm: "";
     in-out property <string> ls_pass_input: "";
@@ -1030,6 +1032,7 @@ export component MainWindow inherits Window {
     callback share_item(int, string);
     callback bulk_share();
     callback clear_share_stage();
+    callback migrate_attachments();
     callback login_share_add();
     callback login_share_revoke(string);
     callback login_share_refresh();
@@ -1748,6 +1751,9 @@ export component MainWindow inherits Window {
                     if root.ls_rows.length == 0 : Text { text: "No active shares."; color: #5b6589; font-size: 11px; }
                     for s in root.ls_rows : Rectangle { background: #121927; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; Text { text: s.detail; color: #eef1ff; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } AuraButton { label: "Revoke"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.login_share_revoke(s.id); } } } }
                     AuraButton { label: "Refresh shares"; width: 140px; height: 30px; clicked => { root.login_share_refresh(); } }
+                    FieldLabel { text: root.ui_lang == "bn" ? "অ্যাটাচমেন্ট স্টোরেজ" : "ATTACHMENT STORAGE"; }
+                    Text { text: "Inline: " + root.att_inline_count + " • Sidecar: " + root.att_sidecar_count + " — inline files are re-encrypted with every vault save; sidecars are separate (50MB max, GitHub sync supported)."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: "Move inline to encrypted sidecars"; width: 260px; height: 34px; clicked => { root.migrate_attachments(); } }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: #eef1ff; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? #34d399 : #5b6589; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
                         ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
