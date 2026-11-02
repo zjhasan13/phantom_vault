@@ -153,15 +153,17 @@
   dependencies; app size impact is code-only. Manual QA still: 50 MiB `.pvx`
   export/import, lock mid-migration, disk-full/antivirus, 100%/125% layout.
 
-- **UI token foundation (this batch):** `design/tokens.json` is now the single
-  source for the frontmatter palette/type/radius/spacing; `ui/appwindow.slint`
-  `PhantomTheme` carries canonical tokens + compatibility aliases, and
-  `browser_extension/design-tokens.css` carries the `--pv-*` mirror (not linked
-  yet). `scripts/check_ui_tokens.ps1` / `npm run test:tokens` fail on drift.
-  No component was restyled yet and `PhantomTheme` is still unused by call
-  sites, so there is **no visual change**; 611 component hex literals remain
-  for the P0 sweep. Font/icon bundling is deferred for app-size reasons
-  (`docs/UI_TOKENS.md`). See `docs/UI_PARITY_MAP.md` §30 for the 13-screen plan.
+- **UI token foundation + P0 palette pilot (this batch):**
+  `design/tokens.json` is the single source for the frontmatter
+  palette/type/radius/spacing; `ui/appwindow.slint` `PhantomTheme` carries the
+  canonical tokens + aliases, and `browser_extension/design-tokens.css` mirrors
+  them (not linked yet). `scripts/check_ui_tokens.ps1` / `npm run test:tokens`
+  fail on drift. The common app colors were swept (~554 literals; 57 alpha/
+  one-off remain); sidebar/list/detail now use the zinc/purple palette, the list
+  is 420px, rows 66px, and a type-filter strip was added. This is a **visible
+  P0 pilot**, not full parity: the top bar still does not span both panes, row
+  strength/tags need model fields, and fonts/icons remain system fallbacks
+  (size decision). See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte

@@ -14,11 +14,11 @@ promises is either implemented or deliberately rejected.
 - Rule: property/callback names in `appwindow.slint` are a frozen contract with `src/main.rs`.
   A restyle may move visuals; it may **not** rename these.
 
-Measured baseline (after A20/A24 + token foundation): 3170 lines, **645** hex colour
-occurrences (34 are `PhantomTheme` declarations, 611 are component literals);
-210 callbacks, 8 components, 3 windows; no bundled fonts. Tests: `cargo test`
-**554 passed / 3 ignored**, `npm test` **133/133**. Token source: `design/tokens.json`
-(gate: `npm run test:tokens`).
+Measured baseline (after A20/A24 + token foundation + P0 pilot): 3177 lines,
+**91** hex colour occurrences (34 are `PhantomTheme` declarations, 57 are
+component/alpha literals); 210 callbacks, 8 components, 3 windows; no bundled
+fonts. Tests: `cargo test` **554 passed / 3 ignored**, `npm test` **133/133**.
+Token source: `design/tokens.json` (gate: `npm run test:tokens`).
 
 Caveat: `expected ui/` is **tracked in git** now. The 3 loose PNGs (`bpi…`, `chrome_…`,
 `all_vault_items` placeholder) are not referenced by any folder; §14/§30 are the authoritative
@@ -332,9 +332,9 @@ Windows Hello (no YubiKey code); `SLIP-39/Reed-Solomon` → **GF(2^8) Shamir + E
 2. Every **MAP** row matches the mockup's region/order; deviations listed in the PR description.
 3. Every **NEW** row is either implemented or explicitly deferred with a ticket.
 4. Every **REJECT** label replaced by our real term (grep the UI strings for the banned list).
-5. Every colour flows through the token global (`PhantomTheme` now carries the
-   design tokens but is not used by components); the 611 component-literal
-   count must drop and stay down.
+5. Every colour flows through the token global (`PhantomTheme`); the remaining
+   57 component/alpha literals must not grow and should be tokenised where a
+   token exists.
 6. Secrets still never enter row models (`import_preview_rows`, `AuthView` rules at `:63-91`).
 7. Two-tap confirms, disabled states, and EN/BN lock strings unchanged.
 8. `cargo test` count ≥ baseline (554 passed / 3 ignored) and `npm test` 133/133.
@@ -349,11 +349,13 @@ Windows Hello (no YubiKey code); `SLIP-39/Reed-Solomon` → **GF(2^8) Shamir + E
 4. Anything < 4/5 either gets fixed or gets a line in §15 explaining why not.
 
 
-## 18. Design tokens (adopt once, then delete 611 component literals)
+## 18. Design tokens (adopted; 57 component/alpha literals remain)
 
-**Source of truth is now `design/tokens.json`**; `ui/appwindow.slint` `PhantomTheme`
+**Source of truth is `design/tokens.json`**; `ui/appwindow.slint` `PhantomTheme`
 and `browser_extension/design-tokens.css` carry the values, and
-`npm run test:tokens` fails on drift. See `docs/UI_TOKENS.md`.
+`npm run test:tokens` fails on drift. The P0 pilot swept ~554 component
+literals; the remaining 57 are mostly alpha shades (`#d0bcff33`), white/black
+overlays, and a few one-off status tints. See `docs/UI_TOKENS.md`.
 
 **The design doc contradicts itself** — frontmatter is generated Material-3, the prose describes a
 different zinc/violet palette. Decide once and record it here; screenshots follow the frontmatter.
@@ -440,7 +442,7 @@ before `MainWindow::new()`), with `Path` fallback for the 10 security-critical m
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| 611 component literals + unused `PhantomTheme` | every restyle edit touches raw hex | tokens now match `design/tokens.json`; sweep components, add the token gate to CI |
+| 57 component/alpha literals + token global | every restyle edit touches raw hex | tokens match `design/tokens.json`; add the token gate to CI; tokenise alpha shades next |
 | Software renderer + many shadows/rings | frame drops on 1280 wide lists | hairline borders instead of shadows; cap one glow per view |
 | Custom titlebar (`no-frame`) | window drag/snap/a11y regressions on Windows | keep OS frame for v1; revisit with explicit win32 hit-test |
 | `LineEdit`/`ComboBox`/`CheckBox` skinning | focus ring, IME, RTL, a11y names | wrap, don't reimplement; test keyboard-only path |
@@ -796,7 +798,7 @@ effects and fabricated labels, not missing layouts.
 |---|---|---|---|
 | Flexbox / CSS grid | `HorizontalLayout` / `VerticalLayout` / `GridLayout` | ✅ | Manual sizing; no `auto-fill`; responsive columns need width branches |
 | 3-pane shell, 5/7 split | `HorizontalLayout` + fixed/preferred widths + `horizontal-stretch` | ✅ | Current shell already does this |
-| CSS variables | `global PhantomTheme` (`ui/appwindow.slint:123`), source `design/tokens.json` | ✅ | Tokens wired; sweep 611 component literals next |
+| CSS variables | `global PhantomTheme` (`ui/appwindow.slint:123`), source `design/tokens.json` | ✅ | Wired; ~554 literals swept, 57 alpha/one-off remain |
 | Media queries | `if root.width < 1024px : ...` branches | ⚠️ | Manual breakpoints; no CSS cascade |
 | `:hover` / `:focus` / `:active` | `TouchArea.has-hover`, `LineEdit` focus, explicit state props | ✅ | More verbose; no pseudo-classes |
 | CSS transitions/keyframes | `animate { duration: ...; easing: ...; }` | ✅ | Animate colour/opacity/position only; avoid per-frame layout |
@@ -860,7 +862,7 @@ reference shots, not screens; excluded.
 
 | Phase | Scope | Depends on | Estimate |
 |---|---|---|---|
-| **P0 — tokens/fonts/shell** | **Tokens wired (foundation shipped).** Sweep 611 component literals; bundle Inter + JetBrains Mono + icon codepoints; restyle sidebar/top bar/filter/select bar, list/detail (#1–2) | font/icon decision; model fields for row badges | 2–3 wk |
+| **P0 — tokens/fonts/shell** | **Pilot shipped:** tokens wired, ~554 component literals swept, sidebar/list/detail palette, 420px list, type-filter strip, 66px rows. Remaining: true top bar spanning list+detail, select bar, row strength/tags data, font/icon decision | font/icon decision; model fields for row badges | 1–2 wk remaining |
 | **P1 — core screens** | 2FA hub (#3), Settings IA (#4), Generator (#5) | P0 tokens/atoms | 2–3 wk |
 | **P2 — specialist screens** | Migration (#6), Secure Send (#7), Emergency Kit (#8), Forensic/Duress (#9) | P0/P1; some new features (envelope, decoy generator) | 3–4 wk |
 | **Extension track** | HUD 2.0/3.0, save prompt, in-page dropdown (#10–13) — HTML/CSS, not Slint | popup/content refactor | 2–3 wk |

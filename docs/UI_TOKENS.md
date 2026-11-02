@@ -1,8 +1,10 @@
 # PhantomVault UI tokens (single source of truth)
 
-> Status: **foundation shipped.** `design/tokens.json` is the source; the Slint
-> `PhantomTheme` and the extension `design-tokens.css` must match it. No screen
-> has been restyled yet — this is the P0 foundation slice.
+> Status: **foundation + P0 palette pilot shipped.** `design/tokens.json` is the
+> source; the Slint `PhantomTheme` and the extension `design-tokens.css` must
+> match it. The app's common colors are swept onto tokens (~554 literals);
+> 57 alpha/one-off literals remain. Layout parity is still in progress (the
+> filter strip is inside the list column, not the full top bar yet).
 
 ## Source
 
@@ -15,7 +17,7 @@
 
 | Consumer | File | Status |
 |---|---|---|
-| Slint desktop | `ui/appwindow.slint` → `global PhantomTheme` | canonical tokens + compatibility aliases; **not yet used by components** |
+| Slint desktop | `ui/appwindow.slint` → `global PhantomTheme` | canonical tokens + compatibility aliases; common component colors swept, 57 alpha/one-off literals remain |
 | Extension | `browser_extension/design-tokens.css` (`--pv-*`) | file exists, **not linked** from `popup.html` yet (HUD 2.0 slice) |
 
 The Slint aliases (`void`, `abyss`, `panel`, `card`, `edge`, `aura`, `pulse`,
@@ -68,11 +70,11 @@ The mockup labels that are not true for PhantomVault are listed in
 
 ## Next (P0)
 
-1. Sweep atoms (`AuraButton`, `NavItem`, `FieldLabel`) and the vault shell onto
-   the semantic tokens; drop the raw-hex count from 624.
-2. Add the top filter/select strip and 5/7 list/detail layout from
-   `all_vault_items`.
-3. Then the extension HUD 2.0 links `design-tokens.css` and adopts `--pv-*`.
+1. ~~Sweep the common atoms/shell hex colors~~ (done; 57 alpha/one-off remain).
+2. Add the true top bar spanning list+detail (search, security status, New Item),
+   the select action bar, and the 5/7 split from `all_vault_items`.
+3. Add row strength %/badges (needs the model fields in §30.3).
+4. Then the extension HUD 2.0 links `design-tokens.css` and adopts `--pv-*`.
 
 Acceptance for each slice: `npm run test:tokens`, `cargo test`, `npm test`,
 clippy clean; no callback/property renames (see `UI_PARITY_MAP.md` Appendix B).
