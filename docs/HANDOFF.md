@@ -166,6 +166,20 @@
   recent audit-trail card. Honest: `0M LEAK`/`⌘K` are not fabricated; row tags/
   last-used/expires still need model fields; fonts/icons remain system
   fallbacks (size decision); `PWNED` shows "Not scanned" until an audit runs.
+  **Desktop visual QA (this batch):** compared against
+  `expected ui/.../all_vault_items/code.html` at 1280x800 logical on a
+  125%-scaled 1920x1080 display. Restructured to the mockup's real markup:
+  search-first command bar (no redundant brand label; pill chips for
+  ZERO-KNOWLEDGE / RAM-SAFE / LOCAL; compact `+ New`), a 42px filter strip with
+  76px buttons and a right-pinned Select, a real list header (`VAULT ITEMS` +
+  `total_matches_count`, `LOCAL INDEX`), and 76px rows with a 36px rounded icon
+  tile, title + health/type badge pill on one line, handle line, then the
+  strength bar/% — selected row = surface-highest + 3px primary bar, matching
+  the design. New `fit_window_to_work_area` clamps the initial 1280x800 window
+  to the monitor work area in physical px so a 125% / small panel does not hide
+  the right pane. Tooling note: capture the window from a **DPI-aware** process
+  (SetProcessDpiAwarenessContext) — a DPI-unaware `PrintWindow` crop made the
+  right pane look clipped when it was not.
   See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
@@ -689,7 +703,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 554 passed / 3 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 554 passed / 4 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

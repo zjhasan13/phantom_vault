@@ -2086,25 +2086,27 @@ export component MainWindow inherits Window {
         if root.active_nav == 0 : VerticalLayout {
             spacing: 0px; horizontal-stretch: 1;
             // P0: full-width command bar (spans list + detail).
-            Rectangle { height: 52px; background: PhantomTheme.surface-lowest;
-                HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 10px; alignment: center;
-                    Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; vertical-alignment: center; }
-                    search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 34px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
+            Rectangle { height: 56px; background: PhantomTheme.surface-lowest;
+                HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px;
+                    search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 34px; min-width: 160px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
                     if root.search_query != "" : AuraButton { label: "✕"; width: 34px; height: 34px; clicked => { root.search_query = ""; root.search_changed(""); } }
-                    if root.width > 1100px : Text { text: "● ZERO-KNOWLEDGE"; color: PhantomTheme.success; font-size: 10px; font-weight: 800; vertical-alignment: center; }
-                    if root.width > 1100px : Text { text: root.ui_lang == "bn" ? "🛡 RAM-সেফ · টেলিমেট্রি নেই" : "🛡 RAM-SAFE · NO TELEMETRY"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 800; vertical-alignment: center; }
-                    Rectangle { background: PhantomTheme.surface; border-radius: 9999px; border-width: 1px; border-color: PhantomTheme.border; height: 30px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 6px; Text { text: "●"; color: PhantomTheme.success; font-size: 10px; vertical-alignment: center; } Text { text: root.ui_lang == "bn" ? "লোকাল সেশন" : "LOCAL • UNLOCKED"; color: PhantomTheme.text; font-size: 10px; font-weight: 800; vertical-alignment: center; } } }
-                    AuraButton { label: root.ui_lang == "bn" ? "+ নতুন" : "+ New Item"; primary: true; width: 120px; height: 34px; clicked => { root.show_new_menu = !root.show_new_menu; } }
+                    Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: "ZERO-KNOWLEDGE"; color: PhantomTheme.success; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                    Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "🛡"; font-size: 10px; vertical-alignment: center; } Text { text: "RAM-SAFE"; color: PhantomTheme.text-muted; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                    Rectangle { height: 26px; border-radius: 9999px; background: PhantomTheme.surface; border-width: 1px; border-color: PhantomTheme.border; HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: root.ui_lang == "bn" ? "লোকাল" : "LOCAL"; color: PhantomTheme.text; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                    AuraButton { label: root.ui_lang == "bn" ? "+ নতুন" : "+ New"; primary: true; width: 96px; height: 34px; clicked => { root.show_new_menu = !root.show_new_menu; } }
                 }
             }
             // P0: filter strip + select action bar span both panes.
-            Rectangle { height: 40px; background: PhantomTheme.surface-low;
-                HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 4px; alignment: center;
-                    AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; horizontal-stretch: 1; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
-                    AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; horizontal-stretch: 1; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-                    AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; horizontal-stretch: 1; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                    AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; horizontal-stretch: 1; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                    AuraButton { label: "SSH"; primary: root.type_filter == 6; horizontal-stretch: 1; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+            Rectangle { height: 42px; background: PhantomTheme.surface-low;
+                HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px;
+                    HorizontalLayout { spacing: 4px;
+                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                    }
+                    Rectangle { horizontal-stretch: 1; }
                     AuraButton { label: root.select_mode ? (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Selecting") : (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Select"); primary: root.select_mode; width: 120px; height: 30px; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
                 }
             }
@@ -2170,8 +2172,15 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
+                    // P0: list header strip (real match count, no fake index badge).
+                    Rectangle { height: 30px; background: PhantomTheme.surface-low; HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 6px;
+                        Text { text: root.ui_lang == "bn" ? "ভল্ট আইটেম" : "VAULT ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                        Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.ui_lang == "bn" ? "লোকাল ইনডেক্স" : "LOCAL INDEX"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                    } }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
-                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-high : (touch.has-hover ? PhantomTheme.surface : transparent); border-radius: 8px; border-width: root.d_id == cred.id ? 1px : 1px; border-color: root.d_id == cred.id ? PhantomTheme.primary : (touch.has-hover ? PhantomTheme.border : transparent); height: 76px;
+                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (touch.has-hover ? PhantomTheme.surface : transparent); border-radius: 6px; height: 76px;
                             touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); }
                                 pointer-event(event) => {
                                     if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right && cred.kind == 1) {
@@ -2179,19 +2188,35 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                            if root.d_id == cred.id : Rectangle { width: 3px; height: 46px; x: 0; y: 15px; border-radius: 2px; background: PhantomTheme.primary; drop-shadow-blur: 8px; drop-shadow-color: #d0bcff88; }
-                            HorizontalLayout { padding-left: 14px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 8px; alignment: space-between;
-                                if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 36px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
-                                if cred.has_icon : Image { source: cred.icon; width: 26px; height: 26px; image-fit: contain; vertical-alignment: center; }
-                                if !cred.has_icon : Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🖥️"))))); font-size: 18px; vertical-alignment: center; }
-                                VerticalLayout { horizontal-stretch: 1; spacing: 2px; Text { text: cred.title; color: PhantomTheme.text; font-size: 13px; font-weight: 700; overflow: elide; } HorizontalLayout { spacing: 4px; Text { text: cred.username == "" ? cred.folder : (cred.folder == "" ? cred.username : cred.username + " • " + cred.folder); color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; } if cred.verified : Text { text: "✅"; font-size: 11px; vertical-alignment: center; } } HorizontalLayout { spacing: 6px; alignment: start; if cred.strength > 0.0 : Rectangle { width: 64px; height: 4px; border-radius: 2px; background: PhantomTheme.surface-high; clip: true; Rectangle { width: parent.width * cred.strength; height: 4px; border-radius: 2px; background: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); } } if cred.strength > 0.0 : Text { text: Math.round(cred.strength * 100) + "%"; color: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 10px; font-weight: 700; vertical-alignment: center; } Text { text: cred.badge; color: cred.health == "breached" ? PhantomTheme.error : (cred.health == "weak" || cred.health == "reused" || cred.health == "stale" ? PhantomTheme.warning : PhantomTheme.text-dim); font-size: 9px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; horizontal-alignment: right; } } }
-                                if touch.has-hover || root.d_id == cred.id : HorizontalLayout { spacing: 8px; alignment: center;
-                                if cred.kind == 1 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "📋"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
-                                if cred.kind == 4 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "💳"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
-                                if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 36px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
-                                if cred.kind == 1 : AuraButton { label: "📤"; width: 36px; height: 30px; clicked => { root.share_item(cred.kind, cred.id); } }
+                            if root.d_id == cred.id : Rectangle { width: 3px; height: 52px; x: 0; y: 12px; border-radius: 2px; background: PhantomTheme.primary; drop-shadow-blur: 8px; drop-shadow-color: #d0bcff88; }
+                            HorizontalLayout { padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 10px;
+                                if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 34px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
+                                Rectangle { width: 36px; height: 36px; border-radius: 6px; background: PhantomTheme.surface;
+                                    if cred.has_icon : Image { source: cred.icon; width: 26px; height: 26px; image-fit: contain; }
+                                    if !cred.has_icon : Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🖥️"))))); font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                AuraButton { label: cred.fav ? "⭐" : "☆"; width: 36px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 2px;
+                                    HorizontalLayout { spacing: 6px;
+                                        Text { text: cred.title; color: PhantomTheme.text; font-size: 13px; font-weight: 700; overflow: elide; horizontal-stretch: 1; }
+                                        if cred.badge != "" : Rectangle { height: 16px; border-radius: 3px; background: cred.health == "breached" ? #ffb4ab26 : (cred.health == "weak" || cred.health == "reused" || cred.health == "stale" ? #f59e0b26 : PhantomTheme.surface); HorizontalLayout { padding-left: 5px; padding-right: 5px; Text { text: cred.badge; color: cred.health == "breached" ? PhantomTheme.error : (cred.health == "weak" || cred.health == "reused" || cred.health == "stale" ? PhantomTheme.warning : PhantomTheme.text-dim); font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                                    }
+                                    HorizontalLayout { spacing: 4px;
+                                        Text { text: cred.username == "" ? cred.folder : (cred.folder == "" ? cred.username : cred.username + " • " + cred.folder); color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; horizontal-stretch: 1; }
+                                        if cred.verified : Text { text: "✅"; font-size: 11px; vertical-alignment: center; }
+                                    }
+                                    HorizontalLayout { spacing: 6px;
+                                        if cred.strength > 0.0 : Rectangle { width: 64px; height: 4px; border-radius: 2px; background: PhantomTheme.surface; clip: true; Rectangle { width: parent.width * cred.strength; height: 4px; border-radius: 2px; background: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); } }
+                                        if cred.strength > 0.0 : Text { text: Math.round(cred.strength * 100) + "%"; color: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 10px; font-weight: 700; vertical-alignment: center; }
+                                        Rectangle { horizontal-stretch: 1; }
+                                    }
+                                }
+                                if touch.has-hover || root.d_id == cred.id : HorizontalLayout { spacing: 6px;
+                                    if cred.kind == 1 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "📋"; primary: root.last_copied_id == cred.id; width: 32px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                    if cred.kind == 4 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "💳"; primary: root.last_copied_id == cred.id; width: 32px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                    if cred.kind == 8 : AuraButton { label: root.last_copied_id == cred.id ? "✓" : "⏱️"; primary: root.last_copied_id == cred.id; width: 32px; height: 30px; clicked => { root.quick_copy(cred.kind, cred.id); } }
+                                    if cred.kind == 1 : AuraButton { label: "📤"; width: 32px; height: 30px; clicked => { root.share_item(cred.kind, cred.id); } }
+                                }
+                                AuraButton { label: cred.fav ? "★" : "☆"; primary: cred.fav; width: 32px; height: 30px; clicked => { root.toggle_favorite(cred.kind, cred.id); } }
                                 if cred.health != "" : TouchArea { mouse-cursor: pointer; clicked => { col2_scroll.content-y = 0; root.filter_health(cred.health); } Text { text: cred.health == "breached" ? "🔴" : cred.health == "weak" ? "🟡" : cred.health == "reused" ? "♻️" : cred.health == "stale" ? "🕰️" : ""; font-size: 12px; vertical-alignment: center; } }
                             }
                         }

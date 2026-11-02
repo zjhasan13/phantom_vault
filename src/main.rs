@@ -15060,7 +15060,63 @@ fn launch_url(ui: &MainWindow, url: &str) {
         panic_wipe(&watch_vault, &watch_master);
     });
 
+    fit_window_to_work_area(&main_window);
     main_window.run()
+}
+
+/// Clamp the initial window to the monitor work area (physical px).
+///
+/// The design preference is 1280x800 logical (= 1600x1000 physical at 125%).
+/// On a panel whose work area is smaller than that (e.g. a 1536x864 physical
+/// panel at 125%), Windows places the window partly off-screen and the right
+/// pane / top-bar chips get clipped. Shrink the initial size once so the whole
+/// cockpit is visible; Slint's own 960x620 logical minimum still applies. The
+/// user can resize or maximize afterwards.
+fn fit_window_to_work_area(ui: &MainWindow) {
+    use windows_sys::Win32::Foundation::RECT;
+    use windows_sys::Win32::Graphics::Gdi::{
+        GetDC, GetDeviceCaps, ReleaseDC, LOGPIXELSX,
+    };
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SystemParametersInfoW, SPI_GETWORKAREA,
+    };
+    let mut work = RECT {
+        left: 0,
+        top: 0,
+        right: 0,
+        bottom: 0,
+    };
+    // SAFETY: plain out-parameter struct owned by this stack frame.
+    let ok = unsafe {
+        SystemParametersInfoW(
+            SPI_GETWORKAREA,
+            0,
+            &mut work as *mut RECT as *mut std::ffi::c_void,
+            0,
+        )
+    };
+    if ok == 0 {
+        return;
+    }
+    // SAFETY: screen DC is released immediately; a null HDC means "no answer".
+    let dpi = unsafe {
+        let hdc = GetDC(std::ptr::null_mut());
+        if hdc.is_null() {
+            96
+        } else {
+            let dpi = GetDeviceCaps(hdc, LOGPIXELSX as i32);
+            ReleaseDC(std::ptr::null_mut(), hdc);
+            dpi
+        }
+    };
+    let scale = if dpi > 0 { dpi as f32 / 96.0 } else { 1.0 };
+    let work_w = (work.right - work.left).max(480) as f32;
+    let work_h = (work.bottom - work.top).max(360) as f32;
+    // 24px slack so the frame/shadow never touches the taskbar edge.
+    let w = (1280.0 * scale).min(work_w - 24.0);
+    let h = (800.0 * scale).min(work_h - 24.0);
+    ui.window()
+        .set_size(slint::PhysicalSize::new(w.max(1.0) as u32, h.max(1.0) as u32));
 }
 
 /// Bitwarden-parity: construct + push any of the 6 item kinds.

@@ -1360,4 +1360,85 @@ mod tests {
         std::env::remove_var("PV_PQ_DEVICE_KEY_FILE");
         let _ = std::fs::remove_dir_all(&dir);
     }
+
+    #[test]
+    #[ignore = "manual UI demo seed: writes a known-password vault to %TEMP%\\pv-ui-demo"]
+    fn seed_ui_demo_vault_manual() {
+        let dir = std::env::temp_dir().join("pv-ui-demo");
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("my_secure_vault.enc");
+        let mut v = demo_vault();
+        let base = v.credentials[0].clone();
+        let rows = [
+            (
+                "d1",
+                "GitHub Enterprise & Personal",
+                "octocat-core@internal.dev",
+                "Tr0ub4dor&3x!",
+                "https://github.com/enterprises/phantom-vault-corp",
+                "JBSWY3DPEHPK3PXP",
+            ),
+            (
+                "d2",
+                "AWS Production Root",
+                "ops-infra-sec@corp-cloud.internal",
+                "s3cret!",
+                "https://console.aws.amazon.com",
+                "",
+            ),
+            (
+                "d3",
+                "Stripe Secret Key (Live)",
+                "rk_live_994k20a",
+                "s3cret!",
+                "https://dashboard.stripe.com",
+                "",
+            ),
+            (
+                "d4",
+                "Google Workspace Admin",
+                "superuser@company.security",
+                "correct horse battery staple 42",
+                "https://admin.google.com",
+                "",
+            ),
+            (
+                "d5",
+                "ProtonMail Sovereign",
+                "cipher.master@pm.me",
+                "A-very-long-unique-passphrase-2026!",
+                "https://mail.proton.me",
+                "",
+            ),
+            (
+                "d6",
+                "Supabase DB Connection",
+                "postgres://svc_app@db.cloud.supabase.co",
+                "s3cret!",
+                "https://supabase.com/dashboard",
+                "",
+            ),
+        ];
+        for (id, title, user, pw, url, totp) in rows {
+            let mut c = base.clone();
+            c.id = id.into();
+            c.title = title.into();
+            c.username = user.into();
+            c.password = pw.into();
+            c.urls = vec![crate::models::LoginUrl::Plain(url.into())];
+            c.totp_secret = totp.into();
+            c.notes = "Demo row for UI parity QA. Not real credentials.".into();
+            v.credentials.push(c);
+        }
+        save_vault_secret(
+            &v,
+            &SecretString::new("Demo-Pass-123!".to_string()),
+            &path,
+        )
+        .unwrap();
+        println!(
+            "demo vault: {} (password Demo-Pass-123!)",
+            path.display()
+        );
+    }
 }
