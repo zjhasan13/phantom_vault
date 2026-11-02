@@ -209,6 +209,72 @@ component AuraButton inherits Rectangle {
     ]
 }
 
+// --- Login / cryptographic gateway atoms (design: login page mockup) ---
+component MonoChip inherits Rectangle {
+    in-out property <string> label;
+    in-out property <color> tone: PhantomTheme.text-dim;
+    in-out property <bool> outlined: true;
+    height: 22px;
+    border-radius: 6px;
+    background: #ffffff08;
+    border-width: root.outlined ? 1px : 0px;
+    border-color: #ffffff14;
+    HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: root.label; color: root.tone; font-size: 9px; font-weight: 700; font-family: "Consolas"; letter-spacing: 0.5px; vertical-alignment: center; } }
+}
+
+component GatewayTab inherits Rectangle {
+    in-out property <string> label;
+    in-out property <bool> active: false;
+    callback clicked();
+    height: 34px;
+    border-radius: 8px;
+    background: root.active ? PhantomTheme.primary-container : transparent;
+    Text { text: root.label; color: root.active ? #ffffff : PhantomTheme.text-dim; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component LinkAction inherits Rectangle {
+    in-out property <string> label;
+    callback clicked();
+    background: transparent;
+    height: 24px;
+    Text { text: root.label; color: link_area.has-hover ? PhantomTheme.primary : PhantomTheme.text-dim; font-size: 12px; vertical-alignment: center; }
+    link_area := TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
+}
+
+component StatusRow inherits Rectangle {
+    in-out property <string> label;
+    in-out property <bool> on: true;
+    in-out property <string> chip: "";
+    background: transparent;
+    height: 26px;
+    HorizontalLayout { spacing: 8px;
+        Rectangle { width: 16px; height: 16px; border-radius: 4px; background: root.on ? PhantomTheme.primary-container : transparent; border-width: 1px; border-color: root.on ? PhantomTheme.primary : PhantomTheme.border; Text { text: "✓"; color: #ffffff; font-size: 10px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+        Text { text: root.label; color: PhantomTheme.text-muted; font-size: 12px; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
+        if root.chip != "" : MonoChip { label: root.chip; tone: root.on ? PhantomTheme.success : PhantomTheme.text-dim; }
+    }
+}
+
+component PrimaryGradientAction inherits Rectangle {
+    in-out property <string> label;
+    in-out property <bool> enabled: true;
+    in-out property <string> shortcut: "";
+    callback clicked();
+    height: 54px;
+    border-radius: 10px;
+    opacity: root.enabled ? 1.0 : 0.45;
+    background: @linear-gradient(90deg, #a078ff 0%, #7c3aed 50%, #a078ff 100%);
+    border-width: 1px;
+    border-color: #d0bcff4d;
+    drop-shadow-blur: 26px;
+    drop-shadow-color: #7c3aed55;
+    HorizontalLayout { alignment: center; spacing: 10px;
+        Text { text: root.label; color: #ffffff; font-size: 15px; font-weight: 700; vertical-alignment: center; }
+        if root.shortcut != "" : Rectangle { height: 20px; border-radius: 4px; background: #00000055; border-width: 1px; border-color: #ffffff1f; HorizontalLayout { padding-left: 6px; padding-right: 6px; Text { text: root.shortcut; color: #e5e1e4; font-size: 10px; font-family: "Consolas"; vertical-alignment: center; } } }
+    }
+    TouchArea { mouse-cursor: pointer; clicked => { if root.enabled { root.clicked(); } } }
+}
+
 component NavItem inherits Rectangle {
     in-out property <string> icon;
     in-out property <string> label;
@@ -687,6 +753,13 @@ export component MainWindow inherits Window {
     in-out property <string> import_2fa_status: "";
     // Phase 11: Windows Hello
     in-out property <bool> hello_available: false;
+    // Login page (design parity): real local identity + live entropy readout.
+    in-out property <string> vault_label: "Local vault";
+    in-out property <bool> device_bound: false;
+    in-out property <float> lock_bits: 0.0;
+    in-out property <bool> show_master: false;
+    in-out property <bool> show_login_hints: false;
+    callback lock_entropy(string);
     // App PIN quick-unlock (DPAPI-bound, device-local). pin_available mirrors
     // pin.dpapi existence; show_pin_pad toggles the inline pad.
     in-out property <bool> pin_available: false;
@@ -1168,173 +1241,223 @@ export component MainWindow inherits Window {
     callback use_password(string);
     callback close_panel();
 
-    // ================= LOCK SCREEN =================
+    // ================= LOCK SCREEN (cryptographic gateway) =================
     if !root.is_unlocked : Rectangle {
-        // Invisible focus grabber: conditional ids aren't visible to root init,
-        // so focus is requested from inside the lock-screen scope itself.
-        FocusScope {
-            width: 0;
-            height: 0;
-            init => { password_input.focus(); }
-        }
-        background: PhantomTheme.canvas;
-        // aura glows
-        Rectangle { x: parent.width * 0.12; y: parent.height * 0.08; width: 340px; height: 340px; border-radius: 170px; background: #d0bcff22; }
-        Rectangle { x: parent.width * 0.72; y: parent.height * 0.55; width: 300px; height: 300px; border-radius: 150px; background: #cebdff18; }
-        VerticalLayout {
-            alignment: center;
-            // brand
-            HorizontalLayout {
-                alignment: center;
-                spacing: 12px;
-                Rectangle {
-                    width: 52px;
-                    height: 52px;
-                    border-radius: 14px;
-                    background: PhantomTheme.primary;
-                    drop-shadow-blur: 30px;
-                    drop-shadow-color: #d0bcff88;
-                    Text { text: "P"; color: PhantomTheme.on-primary; font-size: 26px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
-                }
-                VerticalLayout {
-                    spacing: 0px;
-                    alignment: center;
-                    Text { text: "PHANTOM VAULT"; font-size: 24px; font-weight: 900; color: PhantomTheme.text; }
-                    Text { text: "ZERO-KNOWLEDGE  •  NATIVE  •  QUANTUM-READY"; font-size: 11px; font-weight: 700; color: PhantomTheme.text-dim; }
-                    if root.portable_badge != "" : Text { text: root.portable_badge + " — running from USB/RAM-disk, zero SSD footprint"; font-size: 11px; font-weight: 800; color: PhantomTheme.success; }
+        background: #08080c;
+
+        // 38px technical grid (design .cyber-grid)
+        for gx in 54 : Rectangle { x: gx * 38px; y: 0; width: 1px; height: parent.height; background: #ffffff07; }
+        for gy in 28 : Rectangle { x: 0; y: gy * 38px; width: parent.width; height: 1px; background: #ffffff07; }
+
+        // Ambient light: layered translucent circles stand in for radial gradients.
+        Rectangle { x: parent.width / 2 - 360px; y: -280px; width: 720px; height: 720px; border-radius: 360px; background: #a078ff0b; }
+        Rectangle { x: parent.width / 2 - 250px; y: -180px; width: 500px; height: 500px; border-radius: 250px; background: #a078ff0c; }
+        Rectangle { x: -190px; y: parent.height - 420px; width: 420px; height: 420px; border-radius: 210px; background: #4edea308; }
+        Rectangle { x: parent.width - 300px; y: parent.height - 380px; width: 380px; height: 380px; border-radius: 190px; background: #4edea308; }
+
+        VerticalLayout { spacing: 0px;
+            // ---- live telemetry strip
+            Rectangle { height: 28px; background: #09090ee8;
+                HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 16px;
+                    Text { text: "● VAULT SEALED"; color: PhantomTheme.success; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 0.7px; vertical-alignment: center; }
+                    Text { text: "Argon2id 64 MiB · t=3 · p=4 · memory zeroize"; color: PhantomTheme.text-muted; font-size: 10px; font-family: "Consolas"; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "DEVICE BINDING: " + (root.device_bound ? "BOUND" : "FIRST UNLOCK"); color: root.device_bound ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 10px; font-family: "Consolas"; letter-spacing: 0.5px; vertical-alignment: center; }
                 }
             }
-            Rectangle { height: 26px; }
-            // unlock card (wrapped to force perfect horizontal centering)
-            HorizontalLayout {
-                alignment: center;
-                Rectangle {
-                width: 440px;
-                background: PhantomTheme.surface;
-                border-radius: 18px;
-                border-width: 1px;
-                border-color: PhantomTheme.border;
-                drop-shadow-blur: 36px;
-                drop-shadow-color: #00000088;
-                VerticalLayout {
-                    padding: 28px;
-                    spacing: 14px;
-                    HorizontalLayout { alignment: end;
-                        AuraButton { label: root.ui_lang == "bn" ? "BN ✓" : "EN"; width: 76px; height: 28px; clicked => { root.ui_lang = root.ui_lang == "bn" ? "en" : "bn"; root.set_language(root.ui_lang); } }
-                    }
-                    Text { text: root.status_text; font-size: 13px; color: PhantomTheme.text-muted; horizontal-alignment: center; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 6px; alignment: center;
-                        AuraButton { label: root.ui_lang == "bn" ? "🔑 পাসওয়ার্ড" : "🔑 Password"; primary: root.unlock_tab == 0; width: 120px; height: 34px; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; } }
-                        if root.pin_available : AuraButton { label: root.ui_lang == "bn" ? "🔢 পিন" : "🔢 PIN"; primary: root.unlock_tab == 1; width: 90px; height: 34px; clicked => { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } }
-                        AuraButton { label: root.ui_lang == "bn" ? "🆘 শার্ড" : "🆘 Shards"; primary: root.unlock_tab == 2; width: 100px; height: 34px; clicked => { root.unlock_tab = 2; root.show_pin_pad = false; root.show_recover = true; } }
-                    }
-                    if root.integrity_warning != "" : Rectangle {
-                        background: #ffb4ab1a;
-                        border-radius: 10px;
-                        border-width: 1px;
-                        border-color: PhantomTheme.error;
-                        clip: true;
-                        VerticalLayout { padding: 10px; spacing: 0px;
-                        Text { text: root.integrity_warning; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
-                        }
-                    }
-                    password_input := LineEdit {
-                        placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড…" : "Master password…";
-                        input-type: password;
-                        height: 46px;
-                        font-size: 15px;
-                        enabled: root.unlock_tab == 0;
-                        edited(text) => { root.unlock_busy = false; }
-                        accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } }
-                    }
-                    AuraButton {
-                        label: root.unlock_busy ? "⏳ Unlocking…" : (root.ui_lang == "bn" ? "🔓  ভল্ট খুলুন" : "🔓  Unlock Vault");
-                        primary: true;
-                        height: 46px;
-                        enabled: root.unlock_tab == 0 && !root.unlock_busy;
-                        clicked => { root.unlock_busy = true; root.unlock_requested(password_input.text); }
-                    }
-                    if root.hello_available : AuraButton {
-                        label: root.ui_lang == "bn" ? "🖐  Hello দিয়ে খুলুন" : "🖐  Quick Unlock with Windows Hello";
-                        height: 42px;
-                        enabled: root.unlock_tab == 0;
-                        clicked => { root.request_biometric_unlock(); }
-                    }
-                    if root.pin_available && root.unlock_tab == 1 && root.show_pin_pad : VerticalLayout {
-                        spacing: 8px;
-                        pin_input := LineEdit {
-                            placeholder-text: root.ui_lang == "bn" ? "৪–৮ সংখ্যার পিন…" : "4–8 digit PIN…";
-                            input-type: password;
-                            height: 46px;
-                            font-size: 18px;
-                            horizontal-alignment: center;
-                            accepted(text) => { root.request_pin_unlock(text); }
-                        }
-                        if root.pin_error != "" : Text { text: root.pin_error; font-size: 12px; font-weight: 600; color: PhantomTheme.error; horizontal-alignment: center; wrap: word-wrap; }
-                        AuraButton {
-                            label: root.ui_lang == "bn" ? "🔓  পিন দিয়ে খুলুন" : "🔓  Unlock with PIN";
-                            primary: true;
-                            height: 42px;
-                            clicked => { root.request_pin_unlock(pin_input.text); }
-                        }
-                    }
-                    if root.unlock_error_message != "" : HorizontalLayout {
-                        alignment: center;
-                        spacing: 8px;
-                        Text { text: root.unlock_error_message; font-size: 12px; font-weight: 600; color: PhantomTheme.error; horizontal-alignment: center; wrap: word-wrap; }
-                        AuraButton { label: "✕"; width: 36px; height: 32px; danger: true; clicked => { root.unlock_error_message = ""; } }
-                    }
-                    // Phase 27: second factor — only when the vault armed it.
-                    if root.show_totp_step : VerticalLayout {
-                        spacing: 8px;
-                        Text { text: root.ui_lang == "bn" ? "🔐 দ্বিতীয় ধাপ প্রয়োজন" : "🔐 Second factor required"; font-size: 14px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
-                        totp_step_input := LineEdit {
-                            placeholder-text: "6-digit code";
-                            height: 46px;
-                            font-size: 18px;
-                            horizontal-alignment: center;
-                            accepted(text) => { root.verify_totp_unlock(text); }
-                        }
-                        if root.totp_step_error != "" : Text { text: root.totp_step_error; font-size: 12px; font-weight: 600; color: PhantomTheme.error; horizontal-alignment: center; wrap: word-wrap; }
-                        HorizontalLayout {
-                            spacing: 8px;
-                            alignment: center;
-                                AuraButton { label: root.ui_lang == "bn" ? "✅ যাচাই ও খুলুন" : "✅ Verify & Unlock"; primary: true; height: 42px; horizontal-stretch: 1; clicked => { root.verify_totp_unlock(totp_step_input.text); } }
-                                AuraButton { label: root.ui_lang == "bn" ? "পেছনে" : "Back"; height: 42px; width: 90px; clicked => { root.cancel_totp_step(); } }
-                        }
-                    }
-                    // Phase 17: shard recovery (lost master password) — tab 2 only.
-                    if root.unlock_tab == 2 && root.show_recover : VerticalLayout {
-                        spacing: 8px;
-                        FieldLabel { text: root.ui_lang == "bn" ? "যেকোনো ৩টি শার্ড বসান" : "PASTE ANY 3 SHARDS"; horizontal-alignment: center; }
-                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; horizontal-stretch: 1; }
-                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; horizontal-stretch: 1; }
-                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; horizontal-stretch: 1; }
-                        HorizontalLayout { spacing: 8px; alignment: center;
-                            AuraButton { label: root.show_recover_shards ? "🙈 Hide" : "👁 Show"; width: 110px; height: 34px; clicked => { root.show_recover_shards = !root.show_recover_shards; } }
-                            AuraButton { label: "✕ Clear"; width: 110px; height: 34px; clicked => { root.recover_1 = ""; root.recover_2 = ""; root.recover_3 = ""; } }
-                        }
-                        if root.recover_1 == "" || root.recover_2 == "" || root.recover_3 == "" : Text { text: root.ui_lang == "bn" ? "৩টি শার্ড বসান — ৫টির যেকোনো ৩টি।" : "Paste all 3 shards — any 3 of your 5."; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
-                        AuraButton {
-                            label: root.ui_lang == "bn" ? "🔓  পুনর্গঠন ও খুলুন" : "🔓  Rebuild & Unlock";
-                            primary: true;
-                            height: 42px;
-                            enabled: root.recover_1 != "" && root.recover_2 != "" && root.recover_3 != "";
-                            clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); }
-                        }
-                    }
-                    Text { text: "First run creates a new encrypted vault  •  Alt+Space for Quick Bar"; font-size: 11px; color: PhantomTheme.text-dim; horizontal-alignment: center; wrap: word-wrap; }
-                    if root.has_vault_file : HorizontalLayout { alignment: center;
-                        AuraButton { label: "Forgot password? Shred & start over…"; width: 280px; height: 28px; danger: true; clicked => { root.factory_reset_start(); } }
-                    }
-                    if root.has_vault_file : Text { text: "Reset shreds everything and cannot be undone."; font-size: 11px; color: PhantomTheme.text-dim; horizontal-alignment: center; wrap: word-wrap; }
+            Rectangle { height: 1px; background: #ffffff0f; }
+            // ---- engine flags
+            Rectangle { height: 34px; background: #09090ecc;
+                HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 8px;
+                    MonoChip { label: "ENGINE v" + root.app_version + "-rs"; tone: PhantomTheme.text-muted; }
+                    if root.hello_available : MonoChip { label: "WINDOWS HELLO ACTIVE"; tone: PhantomTheme.secondary; }
+                    if root.portable_badge != "" : MonoChip { label: "PORTABLE · USB/RAM"; tone: PhantomTheme.success; }
+                    AuraButton { label: root.ui_lang == "bn" ? "BN" : "EN"; width: 48px; height: 24px; clicked => { root.ui_lang = root.ui_lang == "bn" ? "en" : "bn"; root.set_language(root.ui_lang); } }
+                    AuraButton { label: "?"; width: 24px; height: 24px; clicked => { root.show_login_hints = !root.show_login_hints; } }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "LOCAL-FIRST"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; letter-spacing: 0.8px; vertical-alignment: center; }
                 }
+            }
+            if root.show_login_hints : Rectangle { height: 24px; background: #0e0e10;
+                HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 14px;
+                    Text { text: "ENTER unlock · TAB cycle fields · ESC dismiss hints"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "Consolas"; vertical-alignment: center; }
+                }
+            }
+            Rectangle { height: 1px; background: #ffffff0f; }
+
+            // ---- scrollable gateway
+            ScrollView { vertical-stretch: 1;
+                VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 16px; padding-bottom: 14px; spacing: 0px;
+                    // hero pill
+                    HorizontalLayout { alignment: center;
+                        Rectangle { height: 24px; border-radius: 12px; background: #14121c; border-width: 1px; border-color: #a078ff40;
+                            HorizontalLayout { padding-left: 10px; padding-right: 5px; spacing: 7px;
+                                Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; }
+                                Text { text: root.pq_paranoid_on ? "POST-QUANTUM ENCLAVE ACTIVE" : "LOCAL ENCLAVE ACTIVE"; color: PhantomTheme.text; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; vertical-alignment: center; }
+                                MonoChip { label: root.pq_paranoid_on ? "ML-KEM-768" : "XChaCha20"; tone: PhantomTheme.secondary; outlined: false; }
+                            }
+                        }
+                    }
+                    Rectangle { height: 10px; }
+                    // wordmark + shield crest
+                    HorizontalLayout { alignment: center; spacing: 12px;
+                        Rectangle { width: 46px; height: 50px;
+                            Rectangle { x: 3px; y: 4px; width: 40px; height: 44px; border-radius: 20px; background: #a078ff14; }
+                            Path { x: 0; y: 0; width: 46px; height: 50px; viewbox-width: 46; viewbox-height: 50; commands: "M 23 2 L 44 9 L 44 26 C 44 37 35 45 23 48 C 11 45 2 37 2 26 L 2 9 Z"; fill: #131315; stroke: @linear-gradient(135deg, #d0bcff 0%, #7c3aed 55%, #4edea3 100%); stroke-width: 2px; }
+                            Path { x: 10px; y: 11px; width: 26px; height: 28px; viewbox-width: 26; viewbox-height: 28; commands: "M 13 1 L 24 6 L 24 14 C 24 20 19 24 13 26 C 7 24 2 20 2 14 L 2 6 Z"; fill: #1c1b1d; stroke: #8b5cf666; stroke-width: 1px; }
+                            Path { x: 17px; y: 17px; width: 12px; height: 16px; viewbox-width: 12; viewbox-height: 16; commands: "M 6 1 C 8 1 9.5 2.5 9.5 4.5 C 9.5 6 8.5 7 7.5 7.5 L 8.5 12 L 3.5 12 L 4.5 7.5 C 3.5 7 2.5 6 2.5 4.5 C 2.5 2.5 4 1 6 1 Z"; fill: #d0bcff; }
+                        }
+                        Text { text: "PHANTOM"; color: #ffffff; font-size: 32px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
+                        Text { text: "VAULT"; color: @linear-gradient(90deg, #d0bcff 0%, #cebdff 55%, #4edea3 100%); font-size: 32px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
+                    }
+                    Rectangle { height: 4px; }
+                    Text { text: "ZERO-KNOWLEDGE · NATIVE · LOCAL-FIRST"; color: PhantomTheme.text-dim; font-size: 10px; font-weight: 600; font-family: "Consolas"; letter-spacing: 2px; horizontal-alignment: center; }
+                    Rectangle { height: 14px; }
+                    // cryptographic gateway card
+                    HorizontalLayout { alignment: center;
+                        Rectangle { width: 560px; background: #131319e8; border-radius: 16px; border-width: 1px; border-color: #a078ff24; drop-shadow-blur: 70px; drop-shadow-color: #000000cc;
+                            Rectangle { x: 26px; y: 0; width: parent.width - 52px; height: 2px; background: @linear-gradient(90deg, transparent 0%, #d0bcff 50%, transparent 100%); }
+                            VerticalLayout { padding: 20px; spacing: 0px;
+                                HorizontalLayout { spacing: 8px;
+                                    Rectangle { width: 9px; height: 9px; border-radius: 5px; background: PhantomTheme.primary; }
+                                    Text { text: "CRYPTOGRAPHIC GATEWAY"; color: #ffffff; font-size: 11px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    Text { text: root.pq_paranoid_on ? "CIPHER: ML-KEM-768 + XChaCha20" : "CIPHER: XChaCha20-Poly1305"; color: PhantomTheme.success; font-size: 10px; font-weight: 700; font-family: "Consolas"; vertical-alignment: center; }
+                                }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 1px; background: #ffffff10; }
+                                Rectangle { height: 12px; }
+                                // auth mode tabs
+                                Rectangle { height: 40px; border-radius: 12px; background: #0e0e10; border-width: 1px; border-color: #ffffff08;
+                                    HorizontalLayout { padding: 4px; spacing: 4px;
+                                        GatewayTab { label: root.ui_lang == "bn" ? "মাস্টার পাস" : "Master Pass"; active: root.unlock_tab == 0; horizontal-stretch: 1; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; root.unlock_error_message = ""; } }
+                                        if root.pin_available : GatewayTab { label: root.ui_lang == "bn" ? "পিন" : "PIN"; active: root.unlock_tab == 1; horizontal-stretch: 1; clicked => { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } }
+                                        GatewayTab { label: root.ui_lang == "bn" ? "রিকভারি শার্ড" : "Recovery Shards"; active: root.unlock_tab == 2; horizontal-stretch: 1; clicked => { root.unlock_tab = 2; root.show_pin_pad = false; root.show_recover = true; } }
+                                    }
+                                }
+                                Rectangle { height: 12px; }
+                                if root.show_totp_step : VerticalLayout { spacing: 8px;
+                                    Text { text: root.ui_lang == "bn" ? "দ্বিতীয় ধাপ প্রয়োজন" : "SECOND FACTOR REQUIRED"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; horizontal-alignment: center; }
+                                    totp_step_input := LineEdit { placeholder-text: "6-digit code"; height: 42px; font-size: 16px; font-family: "Consolas"; horizontal-alignment: center; accepted(text) => { root.verify_totp_unlock(text); } }
+                                    if root.totp_step_error != "" : Text { text: root.totp_step_error; font-size: 11px; font-weight: 600; color: PhantomTheme.error; horizontal-alignment: center; wrap: word-wrap; }
+                                    HorizontalLayout { spacing: 8px; alignment: center;
+                                        AuraButton { label: root.ui_lang == "bn" ? "যাচাই ও খুলুন" : "Verify & Unlock"; primary: true; height: 38px; width: 180px; clicked => { root.verify_totp_unlock(totp_step_input.text); } }
+                                        AuraButton { label: root.ui_lang == "bn" ? "পেছনে" : "Back"; height: 38px; width: 90px; clicked => { root.cancel_totp_step(); } }
+                                    }
+                                }
+                                if !root.show_totp_step : VerticalLayout { spacing: 0px;
+                                    FocusScope { width: 0; height: 0; init => { password_input.focus(); } }
+                                    // account identifier (real local vault file, never a fake account)
+                                    Text { text: "VAULT ACCOUNT IDENTIFIER"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; }
+                                    Rectangle { height: 5px; }
+                                    Rectangle { height: 42px; border-radius: 10px; background: #111116; border-width: 1px; border-color: #ffffff14;
+                                        HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 10px;
+                                            Text { text: "▣"; color: PhantomTheme.text-dim; font-size: 14px; vertical-alignment: center; }
+                                            Text { text: root.vault_label; color: PhantomTheme.text; font-size: 13px; font-family: "Consolas"; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
+                                            MonoChip { label: "LOCAL"; tone: PhantomTheme.text-muted; }
+                                        }
+                                    }
+                                    Rectangle { height: 10px; }
+                                    // master passphrase
+                                    VerticalLayout { spacing: 0px; visible: root.unlock_tab == 0;
+                                        HorizontalLayout {
+                                            Text { text: "MASTER PASSPHRASE"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; vertical-alignment: center; }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Text { text: "Argon2id 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; vertical-alignment: center; }
+                                        }
+                                        Rectangle { height: 5px; }
+                                        Rectangle { height: 44px;
+                                            password_input := LineEdit { x: 0; y: 0; width: parent.width - 42px; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "Consolas"; edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
+                                            TouchArea { x: parent.width - 40px; y: 6px; width: 32px; height: 32px; mouse-cursor: pointer; clicked => { root.show_master = !root.show_master; } Text { text: root.show_master ? "🙈" : "👁"; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; } }
+                                        }
+                                        Rectangle { height: 8px; }
+                                        // live entropy panel (real estimate, real KDF params)
+                                        Rectangle { height: 56px; border-radius: 10px; background: #0e0e10cc; border-width: 1px; border-color: #ffffff10;
+                                            VerticalLayout { padding: 7px; spacing: 5px;
+                                                HorizontalLayout { Text { text: "Entropy: " + Math.round(root.lock_bits) + " bits (Argon2id bound)"; color: PhantomTheme.text-muted; font-size: 10px; font-family: "Consolas"; horizontal-stretch: 1; overflow: elide; } Text { text: "64 MiB · t=3 · p=4"; color: root.lock_bits >= 55 ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; } }
+                                                HorizontalLayout { spacing: 5px;
+                                                    Rectangle { height: 4px; border-radius: 2px; horizontal-stretch: 1; background: root.lock_bits >= 28 ? PhantomTheme.success : PhantomTheme.surface-highest; }
+                                                    Rectangle { height: 4px; border-radius: 2px; horizontal-stretch: 1; background: root.lock_bits >= 55 ? PhantomTheme.success : PhantomTheme.surface-highest; }
+                                                    Rectangle { height: 4px; border-radius: 2px; horizontal-stretch: 1; background: root.lock_bits >= 80 ? PhantomTheme.success : PhantomTheme.surface-highest; }
+                                                    Rectangle { height: 4px; border-radius: 2px; horizontal-stretch: 1; background: root.lock_bits >= 100 ? PhantomTheme.success : PhantomTheme.surface-highest; }
+                                                }
+                                                HorizontalLayout { Text { text: "Resistance: " + (root.pq_paranoid_on ? "ML-KEM-768 + XChaCha20" : "XChaCha20-Poly1305"); color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; horizontal-stretch: 1; } Text { text: "Zeroized on lock"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; } }
+                                            }
+                                        }
+                                        Rectangle { height: 8px; }
+                                        StatusRow { label: root.ui_lang == "bn" ? "এই ডিভাইসে বাঁধা (DPAPI)" : "Bind to this device (DPAPI machine ID)"; on: root.device_bound; chip: root.device_bound ? "BOUND" : "FIRST UNLOCK"; }
+                                        StatusRow { label: root.ui_lang == "bn" ? "লক করলে সিক্রেট জিরো হয়" : "Zeroize secrets on lock"; on: true; chip: "ALWAYS"; }
+                                        Rectangle { height: 10px; }
+                                        PrimaryGradientAction { label: root.unlock_busy ? (root.ui_lang == "bn" ? "ডিক্রিপ্ট হচ্ছে…" : "Decrypting vault…") : (root.ui_lang == "bn" ? "ভল্ট খুলুন ও সাইন ইন" : "Unlock Enclave & Sign In"); enabled: !root.unlock_busy; shortcut: "↵ Enter"; clicked => { root.unlock_busy = true; root.unlock_requested(password_input.text); } }
+                                        if root.hello_available : VerticalLayout { spacing: 0px;
+                                            Rectangle { height: 6px; }
+                                            Rectangle { height: 38px; border-radius: 10px; background: PhantomTheme.surface; border-width: 1px; border-color: #ffffff10;
+                                                HorizontalLayout { alignment: center; spacing: 8px;
+                                                    Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; }
+                                                    Text { text: root.ui_lang == "bn" ? "Windows Hello দিয়ে খুলুন" : "Unlock with Windows Hello"; color: PhantomTheme.text-muted; font-size: 12px; font-family: "Consolas"; vertical-alignment: center; }
+                                                }
+                                                TouchArea { mouse-cursor: pointer; clicked => { root.request_biometric_unlock(); } }
+                                            }
+                                        }
+                                        if root.unlock_error_message != "" : Text { text: root.unlock_error_message; color: PhantomTheme.error; font-size: 11px; font-weight: 600; horizontal-alignment: center; wrap: word-wrap; }
+                                    }
+                                    // app PIN
+                                    if root.pin_available && root.unlock_tab == 1 : VerticalLayout { spacing: 7px;
+                                        Text { text: "APP PIN"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; }
+                                        pin_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "৪–৮ সংখ্যার পিন…" : "4–8 digit PIN…"; input-type: password; height: 44px; font-size: 16px; font-family: "Consolas"; horizontal-alignment: center; accepted(text) => { root.request_pin_unlock(text); } }
+                                        if root.pin_error != "" : Text { text: root.pin_error; font-size: 11px; font-weight: 600; color: PhantomTheme.error; horizontal-alignment: center; wrap: word-wrap; }
+                                        PrimaryGradientAction { label: root.ui_lang == "bn" ? "পিন দিয়ে খুলুন" : "Unlock with PIN"; shortcut: "↵"; clicked => { root.request_pin_unlock(pin_input.text); } }
+                                    }
+                                    // recovery shards
+                                    if root.unlock_tab == 2 && root.show_recover : VerticalLayout { spacing: 7px;
+                                        Text { text: "RECOVERY SHARDS"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; }
+                                        LineEdit { placeholder-text: "Shard A (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_1; height: 38px; font-family: "Consolas"; }
+                                        LineEdit { placeholder-text: "Shard B (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_2; height: 38px; font-family: "Consolas"; }
+                                        LineEdit { placeholder-text: "Shard C (PHANTOM-n …)"; input-type: root.show_recover_shards ? text : password; text <=> root.recover_3; height: 38px; font-family: "Consolas"; }
+                                        HorizontalLayout { spacing: 8px;
+                                            AuraButton { label: root.show_recover_shards ? "Hide" : "Show"; width: 84px; height: 28px; clicked => { root.show_recover_shards = !root.show_recover_shards; } }
+                                            AuraButton { label: "Clear"; width: 84px; height: 28px; clicked => { root.recover_1 = ""; root.recover_2 = ""; root.recover_3 = ""; } }
+                                            Rectangle { horizontal-stretch: 1; }
+                                            Text { text: "3 of 5"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "Consolas"; vertical-alignment: center; }
+                                        }
+                                        PrimaryGradientAction { label: root.ui_lang == "bn" ? "পুনর্গঠন ও খুলুন" : "Rebuild & Unlock"; enabled: root.recover_1 != "" && root.recover_2 != "" && root.recover_3 != ""; clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); } }
+                                    }
+                                    if root.integrity_warning != "" : Rectangle { height: 38px; border-radius: 8px; background: #ffb4ab12; border-width: 1px; border-color: #ffb4ab55;
+                                        HorizontalLayout { padding: 7px; spacing: 8px;
+                                            Text { text: "⚠"; color: PhantomTheme.error; font-size: 13px; vertical-alignment: center; }
+                                            Text { text: root.integrity_warning; color: PhantomTheme.error; font-size: 11px; font-weight: 600; horizontal-stretch: 1; wrap: word-wrap; vertical-alignment: center; }
+                                        }
+                                    }
+                                }
+                                Rectangle { height: 10px; }
+                                Rectangle { height: 1px; background: #ffffff10; }
+                                Rectangle { height: 8px; }
+                                HorizontalLayout { spacing: 14px;
+                                    LinkAction { label: root.ui_lang == "bn" ? "পাসফ্রেজ হারিয়েছেন? শার্ড দিয়ে উদ্ধার" : "Lost passphrase? Recover with shards"; clicked => { root.unlock_tab = 2; root.show_recover = true; root.show_pin_pad = false; } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.has_vault_file : LinkAction { label: root.ui_lang == "bn" ? "ভল্ট মুছে নতুন শুরু…" : "Shred & start over…"; clicked => { root.factory_reset_start(); } }
+                                }
+                                Rectangle { height: 6px; }
+                                Text { text: "Optional local unlock shortcuts only. Nothing leaves this device unless you enable sync."; color: PhantomTheme.text-dim; font-size: 9px; horizontal-alignment: center; wrap: word-wrap; }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- cryptographic footer
+            Rectangle { height: 1px; background: #ffffff0f; }
+            Rectangle { height: 30px; background: #08080ce8;
+                HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 14px;
+                    Text { text: "● LOCAL-FIRST · SYNC OFF BY DEFAULT"; color: PhantomTheme.success; font-size: 9px; font-family: "Consolas"; vertical-alignment: center; }
+                    Text { text: "Argon2id 64 MiB · t=3 · p=4"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; vertical-alignment: center; }
+                    Text { text: "XChaCha20-Poly1305"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "v" + root.app_version + " · OPEN SOURCE"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "Consolas"; vertical-alignment: center; }
                 }
             }
         }
     }
-
-
     // ==== First-run onboarding carousel (no vault on disk yet) ====
     if !root.is_unlocked && root.show_onboarding : Rectangle {
         x: 0;

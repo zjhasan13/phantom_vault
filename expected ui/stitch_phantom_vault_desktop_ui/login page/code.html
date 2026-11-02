@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+
+<html class="dark h-full" lang="en" style=""><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Phantom Vault — Zero-Knowledge Native Enclave Access</title>
+<!-- Tailwind CSS v3 with Plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Material Symbols & Typography -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&amp;family=JetBrains+Mono:wght@400;500;600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind Configuration matching design system -->
+<script id="tailwind-config">
+    tailwind.config = {
+      darkMode: "class",
+      theme: {
+        extend: {
+          colors: {
+            "surface-container-highest": "#353437",
+            "surface-tint": "#d0bcff",
+            "primary-container": "#a078ff",
+            "surface-bright": "#39393b",
+            "background": "#0b0c10",
+            "inverse-primary": "#6d3bd7",
+            "surface-container-lowest": "#070709",
+            "secondary-container": "#4f319c",
+            "surface-dim": "#131315",
+            "on-primary-fixed": "#23005c",
+            "on-surface-variant": "#cbc3d7",
+            "inverse-on-surface": "#313032",
+            "on-surface": "#e5e1e4",
+            "secondary": "#cebdff",
+            "tertiary": "#4edea3",
+            "tertiary-container": "#00a572",
+            "surface": "#111116",
+            "surface-container-low": "#16161c",
+            "surface-container": "#1d1d24",
+            "surface-container-high": "#26262f",
+            "outline-variant": "#3f3b4c",
+            "outline": "#7a7486",
+            "primary": "#d0bcff",
+            "on-background": "#e5e1e4",
+            "on-primary": "#2a0068",
+            "error": "#ffb4ab",
+            "error-container": "#93000a"
+          },
+          fontFamily: {
+            sans: ["Inter", "system-ui", "sans-serif"],
+            mono: ["JetBrains Mono", "monospace"]
+          },
+          keyframes: {
+            glowPulse: {
+              '0%, 100%': { opacity: '0.45', transform: 'scale(1)' },
+              '50%': { opacity: '0.8', transform: 'scale(1.04)' }
+            },
+            scanline: {
+              '0%': { transform: 'translateY(-100%)' },
+              '100%': { transform: 'translateY(1000%)' }
+            }
+          },
+          animation: {
+            'glow-slow': 'glowPulse 6s ease-in-out infinite',
+            'scan': 'scanline 8s linear infinite'
+          }
+        }
+      }
+    }
+  </script>
+<style>
+    /* Technical Cybersecurity Grid & Ambient Lighting */
+    body {
+      background-color: #08080c;
+      background-image: 
+        radial-gradient(circle at 10% 20%, rgba(139, 92, 246, 0.14) 0%, transparent 45%),
+        radial-gradient(circle at 88% 70%, rgba(78, 222, 163, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 50% 50%, rgba(17, 17, 24, 0.8) 0%, #08080c 100%);
+    }
+
+    .cyber-grid {
+      background-size: 38px 38px;
+      background-image: 
+        linear-gradient(to right, rgba(255, 255, 255, 0.025) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(255, 255, 255, 0.025) 1px, transparent 1px);
+    }
+
+    .enclave-glass {
+      background: rgba(19, 19, 25, 0.72);
+      backdrop-filter: blur(28px);
+      -webkit-backdrop-filter: blur(28px);
+      border: 1px solid rgba(160, 120, 255, 0.16);
+      box-shadow: 
+        0 25px 60px -15px rgba(0, 0, 0, 0.85),
+        0 0 50px -10px rgba(124, 58, 237, 0.15),
+        inset 0 1px 1px 0 rgba(255, 255, 255, 0.08);
+    }
+
+    .telemetry-card {
+      background: rgba(22, 22, 30, 0.6);
+      backdrop-filter: blur(16px);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+    }
+
+    .glow-ring {
+      box-shadow: 0 0 25px -4px rgba(160, 120, 255, 0.35);
+    }
+
+    ::selection {
+      background: #7c3aed;
+      color: #ffffff;
+    }
+  </style>
+</head>
+<body class="min-h-full flex flex-col justify-between text-on-surface antialiased font-sans select-none overflow-x-hidden cyber-grid">
+<!-- ================= TOP ULTRA-PRECISION TELEMETRY STRIP ================= -->
+<header class="w-full border-b border-white/[0.06] bg-[#09090e]/85 backdrop-blur-xl px-5 lg:px-8 py-2.5 z-30 transition-all">
+<div class="max-w-7xl mx-auto flex flex-wrap items-center justify-between gap-4 text-xs font-mono">
+<!-- Live Crypto Engine Heartbeat -->
+<div class="flex items-center space-x-3 sm:space-x-5 divide-x divide-white/10" data-purpose="security-telemetry-strip">
+<div class="flex items-center space-x-2 text-tertiary">
+<span class="relative flex h-2 w-2">
+<span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span>
+<span class="relative inline-flex rounded-full h-2 w-2 bg-tertiary"></span>
+</span>
+<span class="font-semibold tracking-wider text-[11px] uppercase">Enclave Sealed: Secure Enclave v4.2</span>
+</div>
+<div class="hidden sm:flex items-center pl-4 space-x-2 text-slate-300">
+<span class="material-symbols-outlined text-[15px] text-primary">memory</span>
+<span class="text-[11px]">Argon2id 64MB • 4 Lanes • Memory Zeroize</span>
+</div>
+<div class="hidden md:flex items-center pl-4 space-x-2 text-slate-400">
+<span class="h-1.5 w-1.5 rounded-full bg-cyan-400"></span>
+<span class="text-[11px]">Local Shard Bus: PCR[7] Validated</span>
+</div>
+</div>
+<!-- Right Engine Flags & Controls -->
+<div class="flex items-center space-x-2.5">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-surface-container-high/70 border border-white/10 text-slate-300 text-[11px] font-mono">
+<span class="w-1.5 h-1.5 rounded-full bg-tertiary"></span>
+          Engine v0.9.4-rs
+        </span>
+<div class="hidden sm:flex items-center gap-1 px-2.5 py-1 rounded bg-secondary-container/30 border border-primary/30 text-secondary text-[11px] font-mono">
+<span class="material-symbols-outlined text-[13px] animate-pulse text-primary">security_key</span>
+<span class="">FIDO2 / YubiKey Active</span>
+</div>
+<button class="px-2.5 py-1 rounded bg-surface-container hover:bg-surface-container-high border border-white/10 text-slate-300 text-[11px] font-mono flex items-center gap-1 transition-colors" title="Hardware Settings" type="button">
+<span class="text-slate-400">LOC:</span>
+<span class="font-semibold text-primary">EN_US</span>
+</button>
+<button class="w-7 h-7 flex items-center justify-center rounded bg-surface-container hover:bg-surface-container-high border border-white/10 text-slate-400 hover:text-white transition-colors font-mono font-bold text-xs" onclick="toggleShortcutsModal()" title="Keybindings reference">
+          ?
+        </button>
+</div>
+</div>
+</header>
+<!-- ================= MAIN SPLIT-VIEW ENCLAVE INTERFACE ================= -->
+<main class="flex-grow flex items-center justify-center px-4 sm:px-6 lg:px-10 py-8 lg:py-12 relative z-10" role="main">
+<!-- Ambient Backdrop Dynamic Orbs -->
+<div class="absolute top-1/4 left-1/12 w-[34rem] h-[34rem] rounded-full bg-primary-container/10 blur-[130px] pointer-events-none -z-10 animate-glow-slow"></div>
+<div class="absolute bottom-1/6 right-1/12 w-[30rem] h-[30rem] rounded-full bg-tertiary-container/10 blur-[120px] pointer-events-none -z-10"></div>
+<div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[48rem] h-[36rem] rounded-full bg-secondary-container/5 blur-[160px] pointer-events-none -z-10"></div>
+<div class="w-full max-w-lg flex flex-col items-center justify-center my-auto relative z-10"><div class="flex flex-col items-center text-center mb-6 space-y-3"><div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-surface-container-low border border-primary/25 shadow-lg"><span class="w-2 h-2 rounded-full bg-tertiary animate-pulse"></span><span class="font-mono text-[11px] uppercase tracking-wider text-slate-300 font-semibold">Post-Quantum Enclave Active</span><span class="px-1.5 py-0.5 rounded bg-surface-container-high text-secondary text-[10px] font-mono font-medium">TPM 2.0</span></div><div class="flex items-center justify-center gap-3.5 pt-1"><svg class="w-12 h-12 flex-shrink-0 drop-shadow-[0_0_12px_rgba(139,92,246,0.6)]" fill="none" viewbox="0 0 128 128" xmlns="http://www.w3.org/2000/svg">
+<defs>
+<lineargradient gradientunits="userSpaceOnUse" id="pvShieldGrad" x1="16" x2="112" y1="16" y2="112">
+<stop offset="0%" stop-color="#8b5cf6"></stop>
+<stop offset="50%" stop-color="#6366f1"></stop>
+<stop offset="100%" stop-color="#06b6d4"></stop>
+</lineargradient>
+<lineargradient gradientunits="userSpaceOnUse" id="pvCoreGlow" x1="64" x2="64" y1="36" y2="92">
+<stop offset="0%" stop-color="#ffffff" stop-opacity="0.95"></stop>
+<stop offset="100%" stop-color="#a78bfa" stop-opacity="0.6"></stop>
+</lineargradient>
+<filter height="140%" id="pvNeonGlow" width="140%" x="-20%" y="-20%">
+<fegaussianblur result="blur" stddeviation="6"></fegaussianblur>
+<fecomposite in="SourceGraphic" in2="blur" operator="over"></fecomposite>
+</filter>
+</defs>
+<path d="M64 12L108 32V68C108 94 89.2 112 64 120C38.8 112 20 94 20 68V32L64 12Z" fill="#131315" stroke="url(#pvShieldGrad)" stroke-linejoin="round" stroke-width="4"></path>
+<path d="M64 26L94 40V66C94 84 81 98 64 105C47 98 34 84 34 66V40L64 26Z" fill="#1c1b1d" stroke="#8b5cf6" stroke-opacity="0.4" stroke-width="2"></path>
+<path d="M64 38L78 52V70L64 84L50 70V52L64 38Z" fill="url(#pvCoreGlow)" filter="url(#pvNeonGlow)"></path>
+<circle cx="64" cy="56" fill="#131315" r="6"></circle>
+<path d="M61 58H67L69 72H59L61 58Z" fill="#131315"></path>
+<circle cx="64" cy="20" fill="#06b6d4" r="2.5"></circle>
+<circle cx="30" cy="36" fill="#8b5cf6" r="2.5"></circle>
+<circle cx="98" cy="36" fill="#8b5cf6" r="2.5"></circle>
+</svg><h1 class="text-3xl sm:text-4xl font-extrabold tracking-tight text-white uppercase font-sans flex items-center gap-2.5">PHANTOM <span class="bg-gradient-to-r from-primary via-secondary to-tertiary bg-clip-text text-transparent">VAULT</span></h1></div><p class="text-xs sm:text-sm font-mono text-outline uppercase tracking-wider">ZERO-KNOWLEDGE • POST-QUANTUM HARDWARE VAULT</p></div><div class="w-full flex justify-center"><div class="w-full enclave-glass rounded-2xl p-6 sm:p-8 relative"><div class="absolute top-0 left-6 right-6 h-[2px] bg-gradient-to-r from-transparent via-primary to-transparent"></div><div class="flex items-center justify-between pb-5 border-b border-white/[0.08] mb-5"><div class="flex items-center space-x-2"><span class="relative flex h-2.5 w-2.5"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span><span class="relative inline-flex rounded-full h-2.5 w-2.5 bg-primary"></span></span><span class="text-xs font-mono font-semibold tracking-wide text-white uppercase">Cryptographic Gateway</span></div><div class="flex items-center gap-1.5 text-[11px] font-mono text-outline"><span class="">Security Level:</span><span class="text-tertiary font-bold">FIPS 140-3 L3</span></div></div><div class="flex items-center p-1 rounded-xl bg-surface-container-lowest/90 border border-white/5 mb-6 gap-1" role="tablist"><button class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-white bg-primary-container font-sans text-xs font-semibold shadow-md transition-all" id="tab-master" onclick="switchAuthTab('master')" type="button"><span class="material-symbols-outlined text-[16px]">key</span><span class="">Master Pass</span></button><button class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-slate-400 hover:text-white hover:bg-surface-container font-sans text-xs font-medium transition-all" id="tab-fido" onclick="switchAuthTab('fido')" type="button"><span class="material-symbols-outlined text-[16px]">fingerprint</span><span class="">Passkey / FIDO2</span></button><button class="flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-slate-400 hover:text-white hover:bg-surface-container font-sans text-xs font-medium transition-all" id="tab-offline" onclick="switchAuthTab('offline')" type="button"><span class="material-symbols-outlined text-[16px]">share</span><span class="">SLIP-39 Shards</span></button></div><div class="space-y-4" id="view-master"><div class="space-y-1.5"><div class="flex items-center justify-between text-xs font-mono"><label class="text-slate-300 uppercase tracking-wider font-semibold" for="vault-account">Vault Account Identifier</label><button class="text-primary hover:text-white hover:underline transition-colors text-[11px]" onclick="selectDemoAccount('satoshi@phantom.enclave')" type="button">Use Default Partition</button></div><div class="relative flex items-center"><span class="material-symbols-outlined absolute left-3.5 text-slate-400 pointer-events-none text-[20px]">badge</span><input autocomplete="username" class="w-full bg-[#111116] border border-white/10 text-white font-mono text-xs sm:text-sm pl-11 pr-24 py-3 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-all placeholder:text-neutral-600 shadow-inner" id="vault-account" placeholder="enclave_uid or user@vault.local" type="text" value="arch.enclave@phantom.local"/><span class="absolute right-3 px-2 py-0.5 rounded-md bg-surface-container text-slate-300 font-mono text-[10px] uppercase border border-white/5">Local UUID</span></div></div><div class="space-y-1.5"><div class="flex items-center justify-between text-xs font-mono"><label class="text-slate-300 uppercase tracking-wider font-semibold" for="master-password">Master Passphrase</label><div class="hidden flex items-center gap-1 text-amber-300 bg-amber-950/50 border border-amber-500/30 px-2 py-0.5 rounded text-[10px]" id="caps-indicator"><span class="material-symbols-outlined text-[13px]">keyboard_capslock</span><span class="">CAPS LOCK ENGAGED</span></div></div><div class="relative flex items-center"><span class="material-symbols-outlined absolute left-3.5 text-slate-400 pointer-events-none text-[20px]">password</span><input autocomplete="current-password" class="w-full bg-[#111116] border border-white/10 text-white font-mono text-xs sm:text-sm pl-11 pr-11 py-3 rounded-xl focus:border-primary focus:ring-1 focus:ring-primary focus:outline-none transition-all placeholder:text-neutral-600 tracking-wider shadow-inner" id="master-password" oninput="evaluateEntropy(this.value)" placeholder="Enter strong passphrase..." type="password" value="v0lt!Prism#Quantum994x"/><button class="absolute right-3 text-slate-400 hover:text-white p-1 rounded transition-colors" onclick="togglePasswordVisibility()" title="Toggle visibility" type="button"><span class="material-symbols-outlined text-[20px]" id="eye-icon">visibility</span></button></div><div class="pt-1.5 space-y-1.5 bg-surface-container-lowest/60 p-2.5 rounded-xl border border-white/5"><div class="flex justify-between items-center font-mono text-[11px]"><span class="text-slate-300 font-medium" id="entropy-label">Entropy: 104.2 Bits (Argon2id Hash Bound)</span><span class="text-tertiary font-bold tracking-tight" id="crack-time">4.2 × 10¹⁴ CPU Years</span></div><div class="w-full h-1.5 bg-surface-container-highest rounded-full overflow-hidden flex gap-1"><div class="h-full w-1/4 bg-tertiary transition-all duration-300" id="entropy-segment-1"></div><div class="h-full w-1/4 bg-tertiary transition-all duration-300" id="entropy-segment-2"></div><div class="h-full w-1/4 bg-tertiary transition-all duration-300" id="entropy-segment-3"></div><div class="h-full w-1/4 bg-tertiary transition-all duration-300" id="entropy-segment-4"></div></div><div class="flex items-center justify-between text-[10px] font-mono text-outline pt-0.5"><span class="">Resistance: Quantum/Shor Immune</span><span class="">Iterations: 65,536</span></div></div></div><div class="space-y-2 pt-1 text-xs"><div class="flex items-center justify-between"><label class="flex items-center gap-2 cursor-pointer select-none text-slate-300"><input checked="" class="w-4 h-4 rounded bg-surface-container border-white/20 text-primary-container focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox"/><span class="">Hardware Bind to TPM 2.0 Security Chip (PCR[7])</span></label><span class="font-mono text-[10px] text-tertiary bg-tertiary/10 px-1.5 py-0.5 rounded border border-tertiary/20">Enforced</span></div><div class="flex items-center justify-between"><label class="flex items-center gap-2 cursor-pointer select-none text-slate-300"><input class="w-4 h-4 rounded bg-surface-container border-white/20 text-primary-container focus:ring-0 focus:ring-offset-0 cursor-pointer" type="checkbox"/><span class="">Retain Ephemeral RAM Cache for 8 Hours</span></label><span class="font-mono text-[10px] text-outline">Auto-Zeroize</span></div></div><div class="pt-2"><button class="w-full py-3.5 px-5 rounded-xl bg-gradient-to-r from-primary-container via-purple-600 to-primary-container hover:opacity-95 text-white font-sans text-sm font-bold flex items-center justify-center gap-2.5 shadow-xl shadow-primary-container/25 transition-all active:scale-[0.99] border border-primary/30 group" id="btn-unlock" onclick="triggerUnlockAnimation()" type="button"><span class="material-symbols-outlined text-[20px] transition-transform group-hover:rotate-12">lock_open</span><span class="tracking-wide">Unlock Enclave &amp; Sign In</span><kbd class="font-mono text-[11px] px-2 py-0.5 rounded bg-black/30 border border-white/10 text-slate-200">↵ Enter</kbd></button></div><button class="w-full py-2.5 px-4 rounded-xl bg-surface-container hover:bg-surface-container-high border border-white/10 text-slate-300 hover:text-white font-sans text-xs font-medium flex items-center justify-center gap-2.5 transition-all" onclick="triggerHardwareSensor()" type="button"><span class="relative flex h-2 w-2"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span><span class="relative inline-flex rounded-full h-2 w-2 bg-tertiary"></span></span><span class="font-mono text-xs">Tap YubiKey 5 NFC / Windows Hello / Touch ID</span></button></div><div class="hidden space-y-5 text-center py-4" id="view-fido"><div class="relative w-20 h-20 mx-auto rounded-2xl bg-surface-container-high border border-primary/30 flex items-center justify-center text-primary shadow-lg shadow-primary/10"><span class="material-symbols-outlined text-[42px] animate-pulse">security_key</span><span class="absolute -top-1 -right-1 flex h-3 w-3"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-tertiary opacity-75"></span><span class="relative inline-flex rounded-full h-3 w-3 bg-tertiary"></span></span></div><div><h3 class="font-sans font-bold text-base text-white">Hardware Security Key / WebAuthn</h3><p class="font-sans text-xs text-slate-400 mt-1 max-w-sm mx-auto">Insert your hardware key (USB-C) or tap near your device NFC antenna. Cryptographic assertion will be validated natively via ed25519-sk.</p></div><div class="p-3.5 bg-surface-container-lowest/80 border border-white/10 rounded-xl flex items-center justify-between text-left"><div class="flex items-center gap-3"><span class="material-symbols-outlined text-tertiary text-[24px]">verified</span><div><div class="font-mono text-xs text-white font-semibold">YubiKey 5C NFC Detected</div><div class="font-mono text-[10px] text-outline">PIN Cached • User Presence Flag Verified</div></div></div><button class="px-3 py-1.5 rounded-lg bg-primary-container hover:bg-primary-container/90 text-white font-sans text-xs font-semibold shadow-md transition-all" onclick="triggerUnlockAnimation()" type="button">Assert Touch</button></div><button class="text-xs font-mono text-slate-400 hover:text-white underline" onclick="switchAuthTab('master')" type="button">Return to Passphrase Mode</button></div><div class="hidden space-y-4 py-2" id="view-offline"><div><h3 class="font-sans font-bold text-base text-white">Shamir Secret Sharing (SLIP-39)</h3><p class="font-sans text-xs text-slate-400 mt-1">Input any 2 of 3 decentralized threshold shards to reconstruct master entropy offline.</p></div><div class="space-y-2.5"><div><label class="block font-mono text-[11px] text-outline mb-1">Cryptographic Shard #1</label><input class="w-full bg-[#111116] border border-white/10 text-white font-mono text-xs px-3.5 py-2.5 rounded-xl focus:border-primary focus:outline-none" placeholder="shadow hawk velvet orbit 8892 galaxy spark..." type="text"/></div><div><label class="block font-mono text-[11px] text-outline mb-1">Cryptographic Shard #2</label><input class="w-full bg-[#111116] border border-white/10 text-white font-mono text-xs px-3.5 py-2.5 rounded-xl focus:border-primary focus:outline-none" placeholder="cobalt prism radar zeroize 4120 quantum ember..." type="text"/></div></div><button class="w-full py-3 rounded-xl bg-surface-container-high hover:bg-surface-container-highest border border-white/10 text-white font-sans text-xs font-semibold transition-all" onclick="triggerUnlockAnimation()" type="button">Reconstruct Master Seed &amp; Unlock</button></div><div class="mt-6 pt-4 border-t border-white/[0.08] space-y-3"><div class="flex flex-wrap items-center justify-between text-xs font-sans text-slate-400"><a class="hover:text-primary transition-colors flex items-center gap-1" href="#emergency-shards" onclick="switchAuthTab('offline')"><span class="material-symbols-outlined text-[15px]">build_circle</span><span class="">Lost Passphrase? Reconstruct Shards</span></a><a class="hover:text-white transition-colors flex items-center gap-1" href="#initialize-enclave"><span class="material-symbols-outlined text-[15px]">add_moderator</span><span class="">Initialize New Local Vault</span></a></div><div class="pt-1 flex justify-center"><button class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-950/30 hover:bg-red-950/50 border border-red-500/20 text-red-300 font-mono text-[11px] transition-colors" onclick="triggerDuressNotice()" title="Opens realistic decoy vault partition without triggering alarms" type="button"><span class="material-symbols-outlined text-[14px] text-red-400">warning</span><span class="">Plausible Deniability / Duress Trigger</span></button></div></div></div></div></div>
+<!-- ================= DURESS MODAL OVERLAY ================= -->
+<div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" id="duress-dialog">
+<div class="bg-[#15151c] border border-red-500/30 max-w-md w-full p-6 rounded-2xl shadow-2xl space-y-4">
+<div class="flex items-center gap-3 text-red-400">
+<div class="w-10 h-10 rounded-xl bg-red-950/60 border border-red-500/40 flex items-center justify-center">
+<span class="material-symbols-outlined text-[24px]">crisis_alert</span>
+</div>
+<div>
+<h4 class="font-sans font-bold text-base text-red-400">Duress Enclave Active</h4>
+<p class="font-mono text-[11px] text-red-300/80">Decoy Partition Ready</p>
+</div>
+</div>
+<p class="text-xs font-sans text-slate-300 leading-relaxed">
+          Entering your predetermined duress PIN opens an authentic decoy partition filled with non-critical mock items. Master enclave cryptographic seeds are instantly purged from volatile memory without raising UI alerts.
+        </p>
+<div class="flex justify-end gap-2.5 pt-2">
+<button class="px-3.5 py-2 rounded-xl bg-surface-container text-slate-300 hover:text-white font-sans text-xs" onclick="closeDuressDialog()" type="button">
+            Cancel
+          </button>
+<button class="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white font-sans text-xs font-semibold shadow-lg shadow-red-600/30" onclick="closeDuressDialog()" type="button">
+            Acknowledge Protocol
+          </button>
+</div>
+</div>
+</div>
+<!-- ================= SHORTCUTS MODAL ================= -->
+<div class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4" id="shortcuts-dialog">
+<div class="bg-[#15151c] border border-white/10 max-w-sm w-full p-5 rounded-2xl shadow-2xl space-y-3 font-sans">
+<div class="flex items-center justify-between pb-2 border-b border-white/10">
+<h4 class="text-sm font-bold text-white flex items-center gap-1.5">
+<span class="material-symbols-outlined text-[18px] text-primary">keyboard</span>
+            Terminal Keybindings
+          </h4>
+<button class="text-slate-400 hover:text-white text-xs font-mono" onclick="toggleShortcutsModal()">ESC</button>
+</div>
+<ul class="text-xs space-y-2 font-mono text-slate-300">
+<li class="flex justify-between"><span class="">Enter</span> <span class="text-primary font-bold">Unlock Enclave</span></li>
+<li class="flex justify-between"><span class="">Alt + 1 / 2 / 3</span> <span class="text-slate-400">Switch Auth Modes</span></li>
+<li class="flex justify-between"><span class="">Ctrl + Shift + D</span> <span class="text-red-400">Duress Trigger</span></li>
+<li class="flex justify-between"><span class="">Esc</span> <span class="text-slate-400">Zeroize Scratch RAM</span></li>
+</ul>
+</div>
+</div>
+</main>
+<!-- ================= BOTTOM CRYPTOGRAPHIC HARDWARE BAR ================= -->
+<footer class="w-full border-t border-white/[0.06] bg-[#08080c]/90 backdrop-blur-xl px-5 lg:px-8 py-3 z-30" data-purpose="security-guarantee-footer">
+<div class="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3 text-xs font-mono text-slate-400">
+<!-- Telemetry Specs List -->
+<div class="flex flex-wrap items-center justify-center md:justify-start gap-4 text-[11px]">
+<div class="flex items-center gap-1.5 text-slate-300">
+<span class="w-2 h-2 rounded-full bg-tertiary"></span>
+<span class="">Zero Outbound Egress (100% Client-Side)</span>
+</div>
+<span class="text-white/20 hidden sm:inline">•</span>
+<span class="">Argon2id: 64MB / 4 passes</span>
+<span class="text-white/20 hidden sm:inline">•</span>
+<span class="text-secondary font-medium">FIPS 140-3 L3 Compliant</span>
+</div>
+<!-- Audit and Version Details -->
+<div class="flex items-center gap-4 text-[11px]">
+<span class="text-slate-400 hover:text-slate-200 cursor-pointer transition-colors" title="Audit signature SHA-256">
+          Audit: TrailOfBits / SecConsult 2024
+        </span>
+<span class="text-white/20">•</span>
+<span class="text-slate-400 hover:text-slate-200 cursor-pointer transition-colors">
+          Open Source (FSL-1.1-MIT)
+        </span>
+</div>
+</div>
+</footer>
+<!-- ================= CLIENT CONTROLLER JAVASCRIPT ================= -->
+<script>
+    function switchAuthTab(mode) {
+      const tabs = ['master', 'fido', 'offline'];
+      tabs.forEach(tab => {
+        const btn = document.getElementById(`tab-${tab}`);
+        const view = document.getElementById(`view-${tab}`);
+        if (!btn || !view) return;
+
+        if (tab === mode) {
+          btn.className = "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-white bg-primary-container font-sans text-xs font-semibold shadow-md transition-all";
+          view.classList.remove('hidden');
+        } else {
+          btn.className = "flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-lg text-slate-400 hover:text-white hover:bg-surface-container font-sans text-xs font-medium transition-all";
+          view.classList.add('hidden');
+        }
+      });
+    }
+
+    function togglePasswordVisibility() {
+      const pwd = document.getElementById('master-password');
+      const icon = document.getElementById('eye-icon');
+      if (pwd.type === 'password') {
+        pwd.type = 'text';
+        icon.innerText = 'visibility_off';
+      } else {
+        pwd.type = 'password';
+        icon.innerText = 'visibility';
+      }
+    }
+
+    function evaluateEntropy(val) {
+      const crackEl = document.getElementById('crack-time');
+      const seg1 = document.getElementById('entropy-segment-1');
+      const seg2 = document.getElementById('entropy-segment-2');
+      const seg3 = document.getElementById('entropy-segment-3');
+      const seg4 = document.getElementById('entropy-segment-4');
+      const label = document.getElementById('entropy-label');
+
+      const len = val.length;
+      if (len === 0) {
+        crackEl.innerText = "0 Seconds";
+        crackEl.className = "text-red-400 font-bold tracking-tight";
+        label.innerText = "Entropy: 0 Bits";
+        seg1.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg2.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg3.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg4.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+      } else if (len < 8) {
+        crackEl.innerText = "~12.4 Milliseconds";
+        crackEl.className = "text-red-400 font-bold tracking-tight";
+        label.innerText = "Entropy: 24.1 Bits (Weak)";
+        seg1.className = "h-full w-1/4 bg-red-500 transition-all duration-300";
+        seg2.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg3.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg4.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+      } else if (len < 14) {
+        crackEl.innerText = "~4.8 Months (GPU Cluster)";
+        crackEl.className = "text-secondary font-bold tracking-tight";
+        label.innerText = "Entropy: 58.2 Bits (Moderate)";
+        seg1.className = "h-full w-1/4 bg-secondary transition-all duration-300";
+        seg2.className = "h-full w-1/4 bg-secondary transition-all duration-300";
+        seg3.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+        seg4.className = "h-full w-1/4 bg-surface-container-highest transition-all duration-300";
+      } else {
+        crackEl.innerText = "4.2 × 10¹⁴ CPU Years";
+        crackEl.className = "text-tertiary font-bold tracking-tight";
+        label.innerText = "Entropy: 104.2 Bits (Argon2id Hash Bound)";
+        seg1.className = "h-full w-1/4 bg-tertiary transition-all duration-300";
+        seg2.className = "h-full w-1/4 bg-tertiary transition-all duration-300";
+        seg3.className = "h-full w-1/4 bg-tertiary transition-all duration-300";
+        seg4.className = "h-full w-1/4 bg-tertiary transition-all duration-300";
+      }
+    }
+
+    function selectDemoAccount(acc) {
+      document.getElementById('vault-account').value = acc;
+    }
+
+    function triggerUnlockAnimation() {
+      const btn = document.getElementById('btn-unlock');
+      const originalText = btn.innerHTML;
+      btn.innerHTML = `
+        <span class="material-symbols-outlined text-[20px] animate-spin text-tertiary">sync</span>
+        <span class="tracking-wide">Deriving Enclave Cryptographic Key...</span>
+      `;
+      btn.disabled = true;
+      setTimeout(() => {
+        btn.innerHTML = `
+          <span class="material-symbols-outlined text-[20px] text-tertiary">check_circle</span>
+          <span class="tracking-wide text-tertiary">Enclave Unlocked</span>
+        `;
+        setTimeout(() => {
+          btn.innerHTML = originalText;
+          btn.disabled = false;
+        }, 1200);
+      }, 1400);
+    }
+
+    function triggerHardwareSensor() {
+      switchAuthTab('fido');
+    }
+
+    function triggerDuressNotice() {
+      document.getElementById('duress-dialog').classList.remove('hidden');
+    }
+
+    function closeDuressDialog() {
+      document.getElementById('duress-dialog').classList.add('hidden');
+    }
+
+    function toggleShortcutsModal() {
+      const dialog = document.getElementById('shortcuts-dialog');
+      dialog.classList.toggle('hidden');
+    }
+
+    // Caps Lock Live Detection
+    const passwordInput = document.getElementById('master-password');
+    const capsIndicator = document.getElementById('caps-indicator');
+
+    if (passwordInput && capsIndicator) {
+      ['keyup', 'keydown'].forEach(evtType => {
+        passwordInput.addEventListener(evtType, function(event) {
+          if (event.getModifierState && event.getModifierState('CapsLock')) {
+            capsIndicator.classList.remove('hidden');
+          } else {
+            capsIndicator.classList.add('hidden');
+          }
+        });
+      });
+    }
+
+    // Keybindings listener
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeDuressDialog();
+        document.getElementById('shortcuts-dialog').classList.add('hidden');
+      }
+      if (e.key === 'Enter' && !e.shiftKey && document.activeElement.tagName === 'INPUT') {
+        triggerUnlockAnimation();
+      }
+    });
+  </script>
+</body></html>

@@ -11,7 +11,7 @@ use crate::core::memory::DpapiGuard;
 use crate::error::{Result, VaultError};
 use std::path::Path;
 
-const DEVICE_FILE: &str = "device.dpapi";
+pub(crate) const DEVICE_FILE: &str = "device.dpapi";
 const SUBKEY: &str = r"SOFTWARE\Microsoft\Cryptography";
 const VALUE: &str = "MachineGuid";
 

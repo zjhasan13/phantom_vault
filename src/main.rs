@@ -3718,6 +3718,17 @@ fn main() -> Result<(), slint::PlatformError> {
         main_window.set_notification_text(msg.into());
     }
     main_window.set_app_version(env!("CARGO_PKG_VERSION").into());
+    // Login gateway identity: the real local container name, never a fake account.
+    main_window.set_vault_label(VAULT_FILE.into());
+    main_window.set_device_bound(
+        std::path::Path::new(windows_native::device_bind::DEVICE_FILE).exists(),
+    );
+    let lock_entropy_weak = main_window.as_weak();
+    main_window.on_lock_entropy(move |text| {
+        if let Some(ui) = lock_entropy_weak.upgrade() {
+            ui.set_lock_bits(crate::core::password_strength::bits(text.as_str()) as f32);
+        }
+    });
     main_window.set_favicons_enabled(crate::core::favicon::show_favicons());
     // App PIN button shows iff a sealed PIN exists on this machine.
     main_window.set_pin_available(security::app_pin::is_enrolled(std::path::Path::new(".")));

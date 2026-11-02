@@ -39,6 +39,7 @@ screen lists.
 | List header | `VAULT ITEMS` + real match count + `LOCAL INDEX` | `Items` + count + index-sync badge | **Shipped** (no fake sync claim) |
 | Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette; Windows shortcut TBD) |
 | Crash/integrity banner | lock-screen `integrity_warning` (`:1108`) | — | KEEP (design lacks it) |
+| Login / cryptographic gateway | Grid + glows, telemetry strip, shield wordmark, 560px glass card, Master/PIN/Shards tabs, real vault name, live entropy, DPAPI + zeroize rows, gradient unlock, Windows Hello, real recovery links | 1568×924 login mockup | **Shipped** (honest substitutions: no TPM/FIPS/YubiKey/TrailOfBits claims; visual QA pending) |
 
 ---
 

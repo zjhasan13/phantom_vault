@@ -182,6 +182,21 @@
   right pane look clipped when it was not.
   See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
 
+- **Login page parity (this batch):** the lock screen is rebuilt as the
+  `login page/code.html` cryptographic gateway: 38px technical grid + layered
+  ambient glows, live telemetry strip (vault sealed / real Argon2id 64 MiB
+  t=3 p=4 / device binding), engine chips (real `v0.4.1-rs`, Windows Hello when
+  available, portable badge), shield crest + gradient wordmark, and a 560px
+  glass card with Master Pass / PIN / Recovery Shards tabs, real vault filename,
+  eye toggle, **live entropy bits**, Kerckhoffs-honest cipher row, DPAPI binding
+  + zeroize status rows, gradient Unlock + `↵ Enter`, Windows Hello row, and
+  real recovery/shred links. Honest substitutions for the mockup's invented
+  claims: no TPM PCR[7], no FIPS 140-3 certification, no YubiKey assertion, no
+  TrailOfBits audit; those slots show the real Argon2id/XChaCha20 params, DPAPI
+  binding, Windows Hello availability, and "open source". Fonts remain system
+  fallbacks (size decision). Visual QA against the mockup is pending (user
+  screenshot); `cargo check --all-targets` is green.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

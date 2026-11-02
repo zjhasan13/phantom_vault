@@ -25,16 +25,8 @@ pub fn level(password: &str) -> u8 {
     }
     let classes = [lower, upper, digit, symbol].iter().filter(|&&b| b).count() as u8;
 
-    // Entropy estimate: len * log2(pool). Pool from observed classes.
-    let pool: f64 = (if lower { 26.0 } else { 0.0 })
-        + (if upper { 26.0 } else { 0.0 })
-        + (if digit { 10.0 } else { 0.0 })
-        + (if symbol { 33.0 } else { 0.0 });
-    let bits = if pool > 1.0 {
-        len as f64 * pool.log2()
-    } else {
-        0.0
-    };
+    // Entropy estimate: len * log2(pool), shared with the login readout.
+    let bits = bits(password);
     // Pattern penalties: all-one-class, repeated char, sequence.
     // (Single merged arm — the old two-arm form computed the same `1`.)
     let penalty: u8 = if (classes <= 1 && len < 12)
@@ -55,6 +47,38 @@ pub fn level(password: &str) -> u8 {
         0
     };
     score.saturating_sub(penalty)
+}
+
+/// Raw charset-pool entropy estimate in bits (no pattern penalties).
+///
+/// Shared by the per-item strength meter and the login gateway readout so the
+/// two can never disagree about the same passphrase.
+pub fn bits(password: &str) -> f64 {
+    let len = password.chars().count();
+    if len == 0 {
+        return 0.0;
+    }
+    let (mut lower, mut upper, mut digit, mut symbol) = (false, false, false, false);
+    for ch in password.chars() {
+        if ch.is_ascii_lowercase() {
+            lower = true;
+        } else if ch.is_ascii_uppercase() {
+            upper = true;
+        } else if ch.is_ascii_digit() {
+            digit = true;
+        } else {
+            symbol = true;
+        }
+    }
+    let pool: f64 = (if lower { 26.0 } else { 0.0 })
+        + (if upper { 26.0 } else { 0.0 })
+        + (if digit { 10.0 } else { 0.0 })
+        + (if symbol { 33.0 } else { 0.0 });
+    if pool > 1.0 {
+        len as f64 * pool.log2()
+    } else {
+        0.0
+    }
 }
 
 /// Bar fraction for the meter: level mapped to 0.25/0.5/0.75/1.0.
