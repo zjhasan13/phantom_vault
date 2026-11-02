@@ -67,7 +67,7 @@ third-party audit. Those are tracked as concrete work in
 - Peer-to-peer over LAN with **mandatory device pairing** (one-time code, HMAC proof, Ed25519-signed requests)
 - Import/export: Bitwarden JSON, CSV, native `.pvx`, KeePass XML/CSV and **KDBX 3.1/4** (import with password or password + key file; export logins to KDBX4 with a separate password) with previews, merge modes, undo
 - **Local API + `pv` CLI** (opt-in, A23): loopback-only `pv status` / `pv get`; a script reads one field only after an in-app Allow prompt, with a DPAPI-sealed 24h token and audit logging
-- **Expiring shares** (A20): Settings → Expiring shares (or `phantom_vault share …`) creates a login share whose key travels only in the link fragment; LAN one-view/TTL are sender-enforced, file transport is expiry-only, and the receiver gets a preview before **Add to my vault**. (The older Secure Send card still covers async notes via the GitHub relay.)
+- **Expiring shares** (A20): Settings → Expiring shares (or `phantom_vault share …`) creates a login share whose key travels only in the link fragment — or is wrapped by an **optional recipient passphrase** (`PVSH2`; the link carries `#p=1` and no key), with a **QR code** of the link (the ~4 KiB bundle does not fit a QR). LAN one-view/TTL are sender-enforced, file transport is expiry-only, and the receiver gets a preview before **Add to my vault**. (The older Secure Send card still covers async notes via the GitHub relay.)
 - **Bengali UI (pilot, A26)**: lock screen, sidebar, importer/Settings headings and a few section labels have EN/BN; the choice persists in `lang.pref`. The rest of the desktop UI is still English.
 
 ---
@@ -191,7 +191,9 @@ These are real today. They are listed here so nobody discovers them the hard way
   attachment bytes need `.pvx`/CSV. KDBX import is full read support for
   KDBX 3.1/4. No hardware-key unlock (A21). A20 login shares are LAN/file
   (sender must stay online for LAN; file transport cannot enforce one-view);
-  async relay and QR are follow-ups. **Bengali is a pilot (A26)** — many
+  async relay is a follow-up. A recipient passphrase protects the link, but a
+  weak phrase is offline-guessable and sending link+passphrase together adds no
+  protection. **Bengali is a pilot (A26)** — many
   dialogs and Rust-generated messages are still English.
 - **Local API is opt-in and read-only** (A23): only `pv status` / `pv get`;
   `run`/`inject` and scopes are later. Same-user malware can steal the
@@ -253,7 +255,7 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/A22_PHASE_D.md`](docs/A22_PHASE_D.md) | TPM-backed device-key custody: threat model, `PVT1` sidecar, NCrypt design, tests |
 | [`docs/A13_KDBX.md`](docs/A13_KDBX.md) | KeePass KDBX import: supported formats, KDF caps, fixtures, export slice |
 | [`docs/A23_LOCAL_API.md`](docs/A23_LOCAL_API.md) | Loopback API + `pv` CLI: endpoints, approval flow, token, threat model |
-| [`docs/A20_SEND.md`](docs/A20_SEND.md) | Expiring share: bundle crypto, link-fragment key, transport options, honest limits |
+| [`docs/A20_SEND.md`](docs/A20_SEND.md) | Expiring share: bundle crypto (`PVSH1`/`PVSH2`), link-fragment key, optional passphrase, QR, transport options, honest limits |
 | [`docs/A26_BN.md`](docs/A26_BN.md) | Bengali UI pilot: what is translated, persistence, how to extend, honest limits |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |

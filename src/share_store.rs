@@ -17,6 +17,9 @@ pub struct ShareMeta {
     /// `0` = unlimited.
     pub max_views: u32,
     pub views: u32,
+    /// A20a: the bundle needs a recipient passphrase.
+    #[serde(default)]
+    pub passphrase: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -25,6 +28,7 @@ pub struct ShareRecord {
     pub expires_at: u64,
     pub max_views: u32,
     pub views: u32,
+    pub passphrase: bool,
     pub bundle_path: PathBuf,
 }
 
@@ -76,6 +80,7 @@ pub fn save(created: &CreatedShare) -> Result<ShareRecord, String> {
             expires_at: created.expires_at,
             max_views: created.max_views,
             views: 0,
+            passphrase: created.passphrase,
         },
     )?;
     Ok(ShareRecord {
@@ -83,6 +88,7 @@ pub fn save(created: &CreatedShare) -> Result<ShareRecord, String> {
         expires_at: created.expires_at,
         max_views: created.max_views,
         views: 0,
+        passphrase: created.passphrase,
         bundle_path: bundle_path(&created.id),
     })
 }
@@ -99,6 +105,7 @@ pub fn get(id: &str) -> Option<ShareRecord> {
         expires_at: meta.expires_at,
         max_views: meta.max_views,
         views: meta.views,
+        passphrase: meta.passphrase,
         bundle_path,
     })
 }
@@ -126,6 +133,7 @@ pub fn list() -> Vec<ShareRecord> {
             expires_at: meta.expires_at,
             max_views: meta.max_views,
             views: meta.views,
+            passphrase: meta.passphrase,
             bundle_path,
         });
     }
@@ -183,6 +191,7 @@ mod tests {
             key: SecretString::new("k".to_string()),
             expires_at,
             max_views,
+            passphrase: false,
         }
     }
 
@@ -212,6 +221,32 @@ mod tests {
         assert!(take("a3").is_ok());
         assert_eq!(list().len(), 1);
         revoke("a3").unwrap();
+        std::env::remove_var("PV_SHARE_DIR");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn passphrase_flag_persists_and_old_meta_still_loads() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("pv-share-pass-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::env::set_var("PV_SHARE_DIR", &dir);
+        let mut created = dummy("p1", now_secs() + 60, 1);
+        created.passphrase = true;
+        save(&created).unwrap();
+        assert!(get("p1").unwrap().passphrase);
+        assert!(list().iter().any(|r| r.id == "p1" && r.passphrase));
+
+        // Metadata written before A20a has no `passphrase` field; it must still
+        // load and default to "no passphrase" rather than erroring out.
+        let raw = std::fs::read(dir.join("p1.meta.json")).unwrap();
+        let legacy = String::from_utf8(raw)
+            .unwrap()
+            .replace(",\"passphrase\":true", "");
+        std::fs::write(dir.join("p1.meta.json"), legacy).unwrap();
+        assert!(!get("p1").unwrap().passphrase);
+
         std::env::remove_var("PV_SHARE_DIR");
         let _ = std::fs::remove_dir_all(&dir);
     }

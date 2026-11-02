@@ -704,6 +704,11 @@ export component MainWindow inherits Window {
     in-out property <string> ls_open_file: "";
     in-out property <string> ls_preview: "";
     in-out property <bool> ls_ready: false;
+    in-out property <bool> ls_pass_on: false;
+    in-out property <string> ls_pass: "";
+    in-out property <string> ls_pass_confirm: "";
+    in-out property <string> ls_pass_input: "";
+    in-out property <image> ls_qr;
     in-out property <string> hello_status: "Checking…";
     // Extension PIN (managed here, enforced in the browser against the
     // served hash; the extension keeps zero PIN state of its own).
@@ -1017,8 +1022,8 @@ export component MainWindow inherits Window {
     callback api_allow();
     callback api_deny();
     // A20: expiring shares.
-    callback login_share_create(string, string, string, bool);
-    callback login_share_open(string, string);
+    callback login_share_create(string, string, string, bool, bool, string, string);
+    callback login_share_open(string, string, string);
     callback login_share_add();
     callback login_share_revoke(string);
     callback login_share_refresh();
@@ -1697,21 +1702,31 @@ export component MainWindow inherits Window {
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
                     FieldLabel { text: root.ui_lang == "bn" ? "সময়সীমাবদ্ধ শেয়ার (সেন্ড)" : "EXPIRING SHARES (SEND)"; }
                     Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন) বা ফাইলে যায়; key শুধু link fragment-এ। TTL/one-view এই অ্যাপ enforce করে। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share ...."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; }
+                    HorizontalLayout { spacing: 6px;
+                        LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; horizontal-stretch: 1; }
+                    }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
                         LineEdit { placeholder-text: "Views (1, 0=∞)"; text <=> root.ls_views; width: 130px; height: 36px; }
                         AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; } }
-                        AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve); } }
+                        AuraButton { label: root.ls_pass_on ? "Passphrase: ON" : "Passphrase: OFF"; primary: root.ls_pass_on; width: 150px; height: 34px; clicked => { root.ls_pass_on = !root.ls_pass_on; } }
                     }
+                    if root.ls_pass_on : HorizontalLayout { spacing: 6px;
+                        LineEdit { placeholder-text: "Share passphrase (8+)"; input-type: password; text <=> root.ls_pass; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: "Confirm passphrase"; input-type: password; text <=> root.ls_pass_confirm; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
+                    }
+                    if !root.ls_pass_on : AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
                     if root.ls_link != "" : Text { text: root.ls_link; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
+                    if root.ls_link != "" : Image { source: root.ls_qr; width: 150px; height: 150px; image-fit: contain; }
                     if root.ls_link != "" : AuraButton { label: "📋 Copy link"; width: 130px; height: 30px; clicked => { root.login_share_copy(); } }
                     if root.ls_status != "" : Text { text: root.ls_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     Text { text: "Open a share you received:"; color: #8e99c0; font-size: 11px; }
                     LineEdit { placeholder-text: "pvshare://…"; text <=> root.ls_open_link; height: 36px; }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "…or bundle file (.pvsh)"; text <=> root.ls_open_file; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "Open"; width: 100px; height: 34px; clicked => { root.login_share_open(root.ls_open_link, root.ls_open_file); } }
+                        LineEdit { placeholder-text: "Passphrase (if required)"; input-type: password; text <=> root.ls_pass_input; width: 190px; height: 36px; }
+                        AuraButton { label: "Open"; width: 100px; height: 34px; clicked => { root.login_share_open(root.ls_open_link, root.ls_open_file, root.ls_pass_input); } }
                     }
                     if root.ls_preview != "" : Text { text: root.ls_preview; color: #eef1ff; font-size: 11px; wrap: word-wrap; }
                     if root.ls_ready : AuraButton { label: "Add to my vault"; primary: true; width: 180px; height: 34px; clicked => { root.login_share_add(); } }

@@ -8673,10 +8673,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .into_iter()
             .map(|r| {
                 let left = r.expires_at.saturating_sub(now);
+                let lock = if r.passphrase { " • 🔒 pass" } else { "" };
                 SendView {
                     id: r.id.clone().into(),
                     detail: format!(
-                        "{} • {} left • views {}/{}",
+                        "{} • {} left • views {}/{}{}",
                         &r.id[..r.id.len().min(12)],
                         if left >= 3600 {
                             format!("{}h", left / 3600)
@@ -8688,7 +8689,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             "∞".to_string()
                         } else {
                             r.max_views.to_string()
-                        }
+                        },
+                        lock
                     )
                     .into(),
                 }
@@ -8700,7 +8702,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(svg) = sync::p2p_pairing::qr_svg(code) else {
             return slint::Image::default();
         };
-        let path = std::env::temp_dir().join(format!("pv-pair-qr-{}.svg", std::process::id()));
+        // Unique per payload: Slint caches images by path, so reusing one file
+        // for a second share/pairing code would show the stale QR.
+        let mut tag: u64 = 0xcbf2_9ce4_8422_2325;
+        for b in code.as_bytes() {
+            tag ^= u64::from(*b);
+            tag = tag.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        let path =
+            std::env::temp_dir().join(format!("pv-qr-{}-{tag:016x}.svg", std::process::id()));
         if std::fs::write(&path, svg).is_err() {
             return slint::Image::default();
         }
@@ -13302,7 +13312,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let ls_server: Arc<Mutex<Option<share_serve::ServeHandle>>> =
         Arc::new(Mutex::new(None));
     let ls_server_create = Arc::clone(&ls_server);
-    main_window.on_login_share_create(move |title, ttl, views, serve| {
+    main_window.on_login_share_create(move |title, ttl, views, serve, pass_on, pass, pass_confirm| {
         let Some(ui) = send_weak.upgrade() else {
             return;
         };
@@ -13343,7 +13353,26 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
             share::ShareItem::from_credential(matches.pop().unwrap())
         };
-        let created = match share::create(vec![item], ttl_secs, views) {
+        let pass_secret = if pass_on {
+            let p = pass.as_str().trim();
+            if p.len() < 8 {
+                ui.set_ls_status("⚠️ Share passphrase must be at least 8 characters.".into());
+                return;
+            }
+            if p != pass_confirm.as_str().trim() {
+                ui.set_ls_status("⚠️ Share passphrases do not match.".into());
+                return;
+            }
+            Some(SecretString::new(p.to_string()))
+        } else {
+            None
+        };
+        let created = match share::create_with_passphrase(
+            vec![item],
+            ttl_secs,
+            views,
+            pass_secret.as_ref(),
+        ) {
             Ok(c) => c,
             Err(e) => {
                 ui.set_ls_status(format!("⚠️ {e}").into());
@@ -13375,10 +13404,24 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
         }
         ui.set_ls_title("".into());
+        ui.set_ls_qr(p2p_qr_image(&link));
+        ui.set_ls_pass("".into());
+        ui.set_ls_pass_confirm("".into());
+        ui.set_ls_pass_on(false);
         ui.set_ls_link(link.into());
         ui.set_ls_status(
-            tr("✅ Share created — the link fragment is the key; send it over a trusted channel.", "✅ শেয়ার তৈরি — লিংকের fragment-ই key; বিশ্বস্ত চ্যানেলে পাঠান।")
-                .into(),
+            if created.passphrase {
+                tr(
+                    "✅ Passphrase-protected share created — send the link and the passphrase separately.",
+                    "✅ পাসফ্রেজ-সুরক্ষিত শেয়ার তৈরি — লিংক ও পাসফ্রেজ আলাদা চ্যানেলে পাঠান।",
+                )
+            } else {
+                tr(
+                    "✅ Share created — the link fragment is the key; send it over a trusted channel.",
+                    "✅ শেয়ার তৈরি — লিংকের fragment-ই key; বিশ্বস্ত চ্যানেলে পাঠান।",
+                )
+            }
+            .into(),
         );
         refresh_ls_rows(&ui);
         security::access_log::log_event("share", "created from UI");
@@ -13404,7 +13447,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let login_share_open_weak = main_window.as_weak();
     let send_pending: Arc<Mutex<Option<share::SharePayload>>> = Arc::new(Mutex::new(None));
     let login_share_open_pending = Arc::clone(&send_pending);
-    main_window.on_login_share_open(move |link, file| {
+    main_window.on_login_share_open(move |link, file, passphrase| {
         let Some(ui) = login_share_open_weak.upgrade() else {
             return;
         };
@@ -13420,6 +13463,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         std::thread::spawn(move || {
             let link_s = link.as_str().to_string();
             let file_s = file.as_str().trim().to_string();
+            let pass_s = passphrase.as_str().trim().to_string();
             let result = (|| -> Result<share::SharePayload, String> {
                 let parsed =
                     share::parse_link(&link_s).ok_or("bad share link (expected pvshare://…)")?;
@@ -13430,7 +13474,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 } else {
                     return Err("this is a file link — choose the .pvsh bundle too".to_string());
                 };
-                share::open(&bundle, &parsed.key)
+                let pass_opt = if pass_s.is_empty() {
+                    None
+                } else {
+                    Some(pass_s.as_str())
+                };
+                share::open(&bundle, parsed.key.as_deref(), pass_opt)
             })();
             match result {
                 Ok(payload) => {
@@ -13450,6 +13499,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_ls_preview(text.into());
                             ui.set_ls_ready(true);
+                            ui.set_ls_pass_input("".into());
                             ui.set_ls_status(
                                 tr("✅ Decrypted. Review, then Add to my vault.", "✅ ডিক্রিপ্ট হয়েছে। দেখে নিয়ে ভল্টে যোগ করুন।").into(),
                             );

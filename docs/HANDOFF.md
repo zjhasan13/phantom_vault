@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A26 pilot (Bengali UI + persisted language), after T5/A19/E5/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A20a (optional recipient passphrase + QR), after A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -85,6 +85,25 @@
   listener stops when the last share is revoked. Tests +7 → `cargo test`
   **539 passed / 2 ignored + 4 pv_sign**; `npm test` **133/133**. The desktop
   import click-through is manual QA; async relay/QR remain.
+
+- **A20a — optional recipient passphrase + QR (this batch):** `src/share.rs`
+  adds `PVSH2` (`magic | flags=0x01 | salt 16 | wrap_nonce 24 | wrapped_key 48 |
+  payload_nonce 24 | ct+tag`). The random payload key is wrapped with
+  `Argon2id(passphrase, 64 MiB/t=3/p=4)`; the link becomes
+  `pvshare://<id>#p=1` (or `host:port/id#p=1`) with **no key**.
+  `create_with_passphrase` / `open(bundle, key, passphrase)` keep `PVSH1`
+  readable and ignore `#k=` for `PVSH2`; missing/wrong passphrase fails closed,
+  flags are exact, and passphrases are trimmed at every entry point.
+  `ShareMeta`/`ShareRecord` persist a `passphrase` flag with
+  `#[serde(default)]` (old `.meta.json` still loads). CLI gains
+  `share create --passphrase` (double prompt) and a passphrase prompt on
+  `#p=1` links. Settings card gains Passphrase toggle/confirm, a
+  passphrase field on Open, and a QR image of the **link only** (the ~4 KiB
+  padded bundle does not fit a QR); the QR temp file is content-tagged so a
+  second share cannot show a stale image. Tests +2 (`passphrase_share_*`,
+  `passphrase_flag_persists_*`) → `cargo test` **542 passed / 2 ignored**;
+  `npm test` **133/133**. UI click-through is still manual QA;
+  async relay remains.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -607,7 +626,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 540 passed / 2 ignored + 4 pv_sign tests, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 542 passed / 2 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).

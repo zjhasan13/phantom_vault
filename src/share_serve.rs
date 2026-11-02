@@ -189,6 +189,7 @@ mod tests {
             key: SecretString::new("k".to_string()),
             expires_at: now_secs() + 60,
             max_views: 1,
+            passphrase: false,
         };
         share_store::save(&created).unwrap();
         let server = serve("127.0.0.1:0").unwrap();
@@ -206,6 +207,7 @@ mod tests {
             key: SecretString::new("k".to_string()),
             expires_at: now_secs() + 60,
             max_views: 0,
+            passphrase: false,
         };
         share_store::save(&other).unwrap();
         share_store::revoke("cafebabe").unwrap();

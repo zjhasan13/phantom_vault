@@ -3,7 +3,7 @@
 
 use crate::share::{self, ShareItem};
 use crate::share_store;
-use secrecy::SecretString;
+use secrecy::{ExposeSecret, SecretString};
 use std::io::{Read, Write};
 use std::time::Duration;
 use zeroize::Zeroize;
@@ -70,6 +70,7 @@ fn create(args: &[String]) -> i32 {
     let mut views: u32 = 1;
     let mut serve_after = false;
     let mut json = false;
+    let mut with_pass = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -83,6 +84,10 @@ fn create(args: &[String]) -> i32 {
             }
             "--serve" => {
                 serve_after = true;
+                i += 1;
+            }
+            "--passphrase" => {
+                with_pass = true;
                 i += 1;
             }
             "--json" => {
@@ -125,7 +130,24 @@ fn create(args: &[String]) -> i32 {
     }
     let c = matches[0];
     let item = ShareItem::from_credential(c);
-    let created = match share::create(vec![item], ttl_secs, views) {
+    let pass = if with_pass {
+        let Some(p1) = prompt_password("Share passphrase") else {
+            eprintln!("share create: empty passphrase");
+            return 2;
+        };
+        let Some(p2) = prompt_password("Confirm share passphrase") else {
+            eprintln!("share create: empty confirmation");
+            return 2;
+        };
+        if p1.expose_secret() != p2.expose_secret() {
+            eprintln!("share create: passphrases do not match");
+            return 2;
+        }
+        Some(p1)
+    } else {
+        None
+    };
+    let created = match share::create_with_passphrase(vec![item], ttl_secs, views, pass.as_ref()) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("share create: {e}");
@@ -147,6 +169,7 @@ fn create(args: &[String]) -> i32 {
                 "bundle": share_store::get(&created.id).map(|r| r.bundle_path.to_string_lossy().into_owned()).unwrap_or_default(),
                 "expires_at": expires,
                 "max_views": created.max_views,
+                "passphrase": created.passphrase,
             })
         );
     } else {
@@ -159,11 +182,18 @@ fn create(args: &[String]) -> i32 {
                 .unwrap_or_default()
         );
         println!(
-            "expires in {}h; max views: {}",
+            "expires in {}h; max views: {}; passphrase: {}",
             (expires.saturating_sub(share::now_secs())) / 3600,
-            if created.max_views == 0 { "unlimited".to_string() } else { created.max_views.to_string() }
+            if created.max_views == 0 { "unlimited".to_string() } else { created.max_views.to_string() },
+            if created.passphrase { "required" } else { "none" }
         );
-        println!("⚠️ the link fragment IS the key — send it over a channel you trust.");
+        if created.passphrase {
+            println!(
+                "🔒 the link has no key — send it and the passphrase over different channels."
+            );
+        } else {
+            println!("⚠️ the link fragment IS the key — send it over a channel you trust.");
+        }
     }
     if serve_after {
         let ip = crate::share_serve::local_ipv4().unwrap_or_else(|| "127.0.0.1".to_string());
@@ -358,7 +388,22 @@ fn open(args: &[String]) -> i32 {
             }
         }
     };
-    let payload = match share::open(&bundle, &parsed.key) {
+    let pass = if parsed.needs_passphrase {
+        match prompt_password("Share passphrase") {
+            Some(p) => Some(p),
+            None => {
+                eprintln!("share open: this share requires a passphrase");
+                return 2;
+            }
+        }
+    } else {
+        None
+    };
+    let payload = match share::open(
+        &bundle,
+        parsed.key.as_deref(),
+        pass.as_ref().map(|p| p.expose_secret().as_str()),
+    ) {
         Ok(p) => p,
         Err(e) => {
             eprintln!("share open: {e}");
