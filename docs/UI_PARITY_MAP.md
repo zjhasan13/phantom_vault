@@ -14,7 +14,7 @@ promises is either implemented or deliberately rejected.
 - Rule: property/callback names in `appwindow.slint` are a frozen contract with `src/main.rs`.
   A restyle may move visuals; it may **not** rename these.
 
-Measured baseline (after A20/A24 + token foundation + P0 pilot): 3177 lines,
+Measured baseline (after A20/A24 + token foundation + P0 cockpit): 3204 lines,
 **91** hex colour occurrences (34 are `PhantomTheme` declarations, 57 are
 component/alpha literals); 210 callbacks, 8 components, 3 windows; no bundled
 fonts. Tests: `cargo test` **554 passed / 3 ignored**, `npm test` **133/133**.
@@ -34,7 +34,8 @@ screen lists.
 | Title bar / frame | OS native frame | mockups show no OS chrome | NEW (custom titlebar = `no-frame` + drag area; risky, needs window controls) |
 | Brand lockup | `P` tile + "PHANTOM / VAULT" (`:1320-1321`) | `PHANTOM` + `ENTERPRISE/PRO` pill | MAP |
 | Toast | 4s auto-dismiss, 4 kinds (`:481-487`, `:2025-2026`) | bottom status bar | MAP |
-| Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette) |
+| Full-width vault command bar | Top bar spans list+detail: search, ZERO-KNOWLEDGE / RAM-SAFE chips, local session, New Item | command bar + telemetry chips + session pill | **Shipped (P0 pilot)**; no fabricated "0M leak"/`⌘K` |
+| Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette; Windows shortcut TBD) |
 | Crash/integrity banner | lock-screen `integrity_warning` (`:1108`) | — | KEEP (design lacks it) |
 
 ---
@@ -100,7 +101,7 @@ screen lists.
 | Select mode toggle | `:1908` | `Select items` | MAP |
 | Favorites-only banner | `:1910` | `Starred` chip | MAP |
 | Trash banner + empty-trash confirm | `:1911-1921` | `Trash` + `Purge` | MAP |
-| Row height/select bar | 62px, 2px accent + left bar (`:1923-1925`) | 72px card w/ left accent | MAP |
+| Row height/select bar | 76px, 1px accent + left bar; strength bar + right badge | 72px card w/ left accent | MAP (density close) |
 | Favicon / kind icon | `:1928-1929` | brand logo tiles | MAP |
 | Title + username•folder | `:1930` | title + subtitle + tag chips | MAP (+ chips NEW) |
 | Verified ✅ | `:1930` | `verified` icon | MAP |
@@ -111,7 +112,7 @@ screen lists.
 | Empty states (trash/fav/search/empty) | `:1940-1945` | empty hints | MAP |
 | Load 50 more + count | `:1946-1947` | virtual list | MAP (keep paging) |
 | Bulk bar (fav all / move / trash / deselect) | `:1950-1961` | `Batch Tag`, `Purge`, `Export` | MAP + batch-tag/export-selected NEW |
-| Row password strength % | — | `96%`, `35%` | NEW (needs strength in row model) |
+| Row password strength % | computed in `vault_to_items`, bar + % + badge | `96%`, `35%` + right badge | **Shipped** (health/type badge; tags absent) |
 | Copy ✓ feedback (`last_copied` flash) | `:481`, `:1931` area | inline "Copied" tooltip | MAP |
 | Overflow/kebab actions | hover-only `:1931` | `⋮` always | NEW (kebab) |
 | Selected-row indicator 2px bar | `:1924` | 2px `#8B5CF6` bar | MAP (exact match) |
@@ -137,6 +138,8 @@ screen lists.
 | Attachments: empty, attach, preview/download/delete | `:2107-2116` | dropzone + `Max 50MB` | MAP (+ dropzone NEW) |
 | Item history card: health text, age bar, fill info, verified toggle, travel | `:2118-2133` | `Item Audit Trail & Rotation Status`, `Mark Verified Working`, `Last rotated` | MAP (+ audit timeline/rotation NEW) |
 | Bottom actions: restore/shred/edit/delete/close | `:2135-2141` | kebab + Edit | MAP |
+| Diagnostic tiles: pwned / age / encryption vector | Real `d_health`, `d_age_info`, XChaCha20 + Argon2id (+ ML-KEM when paranoid) | 3 security tiles | **Shipped** (no fake leak count) |
+| Decryption audit trail timeline | Recent `access_log` events (vault-wide, metadata only) | event timeline | **Shipped as text list** (not per-item) |
 | Moiré veil overlay | `:2150-2156` | — | KEEP |
 
 ## 6. Add / Edit form (`:1970-2024`; edit reuses it via `edit_item_requested`)
@@ -862,7 +865,7 @@ reference shots, not screens; excluded.
 
 | Phase | Scope | Depends on | Estimate |
 |---|---|---|---|
-| **P0 — tokens/fonts/shell** | **Pilot shipped:** tokens wired, ~554 component literals swept, sidebar/list/detail palette, 420px list, type-filter strip, 66px rows. Remaining: true top bar spanning list+detail, select bar, row strength/tags data, font/icon decision | font/icon decision; model fields for row badges | 1–2 wk remaining |
+| **P0 — tokens/fonts/shell** | **Pilot shipped:** tokens + ~554 literal sweep; full-width command bar, filter/select strip, 5/7-ish split, 76px rows with entropy bar/badge, 3 diagnostic tiles, recent audit trail. Remaining: tags/last-used/expires data, font/icon decision, compact-window QA | font/icon decision; model fields for row tags | 3–5 d remaining |
 | **P1 — core screens** | 2FA hub (#3), Settings IA (#4), Generator (#5) | P0 tokens/atoms | 2–3 wk |
 | **P2 — specialist screens** | Migration (#6), Secure Send (#7), Emergency Kit (#8), Forensic/Duress (#9) | P0/P1; some new features (envelope, decoy generator) | 3–4 wk |
 | **Extension track** | HUD 2.0/3.0, save prompt, in-page dropdown (#10–13) — HTML/CSS, not Slint | popup/content refactor | 2–3 wk |

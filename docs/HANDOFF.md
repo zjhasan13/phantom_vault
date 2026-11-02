@@ -159,11 +159,14 @@
   canonical tokens + aliases, and `browser_extension/design-tokens.css` mirrors
   them (not linked yet). `scripts/check_ui_tokens.ps1` / `npm run test:tokens`
   fail on drift. The common app colors were swept (~554 literals; 57 alpha/
-  one-off remain); sidebar/list/detail now use the zinc/purple palette, the list
-  is 420px, rows 66px, and a type-filter strip was added. This is a **visible
-  P0 pilot**, not full parity: the top bar still does not span both panes, row
-  strength/tags need model fields, and fonts/icons remain system fallbacks
-  (size decision). See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
+  one-off remain); the vault now has a full-width command bar (search,
+  ZERO-KNOWLEDGE / RAM-SAFE chips, local session, New Item), a filter/select
+  strip above a 5/7-ish list/detail split, 76px rows with a real entropy bar and
+  health/type badge, three detail diagnostic tiles (pwned/age/encryption) and a
+  recent audit-trail card. Honest: `0M LEAK`/`⌘K` are not fabricated; row tags/
+  last-used/expires still need model fields; fonts/icons remain system
+  fallbacks (size decision); `PWNED` shows "Not scanned" until an audit runs.
+  See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte

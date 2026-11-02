@@ -1002,6 +1002,7 @@ fn lock_vault_now(
         ui.set_d_secret_visible(false);
         ui.set_d_pw_strength(0.0);
         ui.set_d_pw_strength_label(String::new().into());
+        ui.set_d_audit_text(String::new().into());
         ui.set_show_detail(false);
         ui.set_show_pin_pad(false);
         ui.set_pin_error(String::new().into());
@@ -2850,6 +2851,25 @@ fn push_item(
             return;
         }
     }
+    let strength = if kind == 1 {
+        crate::core::password_strength::fraction(secret)
+    } else {
+        0.0
+    };
+    let badge = match health_kind_for(id).as_str() {
+        "breached" => "EXPOSED",
+        "weak" => "WEAK",
+        "reused" => "REUSED",
+        "stale" => "STALE",
+        _ => match kind {
+            2 => "LICENSE",
+            3 => "NOTE",
+            4 => "CARD",
+            5 => "IDENTITY",
+            6 => "SSH",
+            _ => "",
+        },
+    };
     out.push(CredentialView {
         id: id.into(),
         kind,
@@ -2865,6 +2885,8 @@ fn push_item(
         // "reused"/"stale") — the human-readable badge TEXT lives in the
         // detail pane (d_health), never in this field.
         health: health_kind_for(id).into(),
+        strength,
+        badge: badge.into(),
         fav,
         verified,
         sel: selection_contains(kind, id),
@@ -10515,6 +10537,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_show_detail(false);
             ui.set_confirm_delete_detail(false);
             ui.set_confirm_delete_att_id(String::new().into());
+            ui.set_d_audit_text(String::new().into());
         }
     });
     // Column-2 keyboard nav: ↑↓ cycle the rendered rows with wraparound,
@@ -10568,6 +10591,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_d_verified(false);
         ui.set_d_fill_info(String::new().into());
         ui.set_d_health(health_badge_for(id).into());
+        ui.set_d_audit_text(
+            security::access_log::recent_filtered(3, false)
+                .join("\n")
+                .into(),
+        );
         ui.set_d_pw_strength(0.0);
         ui.set_d_pw_strength_label(String::new().into());
         ui.set_d_history(ModelRc::new(VecModel::from(Vec::<HistoryView>::new())));

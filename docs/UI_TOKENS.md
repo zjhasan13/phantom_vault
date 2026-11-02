@@ -1,10 +1,11 @@
 # PhantomVault UI tokens (single source of truth)
 
-> Status: **foundation + P0 palette pilot shipped.** `design/tokens.json` is the
-> source; the Slint `PhantomTheme` and the extension `design-tokens.css` must
-> match it. The app's common colors are swept onto tokens (~554 literals);
-> 57 alpha/one-off literals remain. Layout parity is still in progress (the
-> filter strip is inside the list column, not the full top bar yet).
+> Status: **P0 shell + cockpit components shipped.** `design/tokens.json` is the
+> source; the Slint `PhantomTheme` and the extension `design-tokens.css` mirror
+> it. The vault has a full-width command bar, filter/select strip, ~5/7 split,
+> entropy bars/badges, three diagnostic tiles and a recent audit trail. Remaining
+> P0 polish: tags/last-used/expires model fields, font/icon decision,
+> compact-window QA.
 
 ## Source
 
@@ -71,10 +72,11 @@ The mockup labels that are not true for PhantomVault are listed in
 ## Next (P0)
 
 1. ~~Sweep the common atoms/shell hex colors~~ (done; 57 alpha/one-off remain).
-2. Add the true top bar spanning list+detail (search, security status, New Item),
-   the select action bar, and the 5/7 split from `all_vault_items`.
-3. Add row strength %/badges (needs the model fields in §30.3).
-4. Then the extension HUD 2.0 links `design-tokens.css` and adopts `--pv-*`.
+2. ~~Add the full-width command bar, select strip and ~5/7 split~~ (done).
+3. ~~Add row entropy bar/badge and the 3 detail tiles + recent audit trail~~ (done).
+4. Remaining: tags/last-used/expires model fields; font/icon decision; compact
+   window QA.
+5. Then the extension HUD 2.0 links `design-tokens.css` and adopts `--pv-*`.
 
 Acceptance for each slice: `npm run test:tokens`, `cargo test`, `npm test`,
 clippy clean; no callback/property renames (see `UI_PARITY_MAP.md` Appendix B).
