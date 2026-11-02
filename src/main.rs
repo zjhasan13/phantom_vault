@@ -10,6 +10,7 @@ mod models;
 mod storage;
 mod api;
 mod i18n;
+mod attachment_store;
 mod share;
 mod share_cli;
 mod share_relay;

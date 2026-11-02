@@ -110,7 +110,7 @@ section 10. "Done when" is the acceptance test, not a vibe.
 | A21 | Hardware security key unlock (FIDO2 hmac-secret) | E12 | 2-3 wk | Vault unlocks with key + PIN; password fallback still works |
 | A22 | PQ-paranoid profile (device-bound decapsulation key) — **DONE (A/B/C/D)** | C4 | 2-3 wk | Correct password alone cannot open the container |
 | A23 | Loopback API + `pv` CLI — **read-only slice shipped (`pv status/get`); run/inject/scopes pending** | X1 | 3-4 wk | A script reads a secret only after explicit approval; tokens expire |
-| A24 | Chunked, separately encrypted attachments | E11 | 2 wk | A 50 MB attachment saves without re-encrypting the vault |
+| A24 | Chunked, separately encrypted attachments - **A24a format/crypto shipped (`PVAB1` + tests); A24b/c pending** | E11 | 2 wk | A 50 MB attachment saves without re-encrypting the vault |
 | A25 | Desktop light/high-contrast theme | E15 | 1 wk | Palette switches without restarting; contrast passes WCAG AA |
 | A26 | Desktop Bengali localization — **pilot shipped (lock/sidebar/Settings headings + persistence); full pass pending** | E16 | 2 wk | Every visible string has a Bengali entry; no clipped layouts |
 | A27 | Safari Web Extension wrapper | E17 | 2 wk | Fill and save work in Safari with the same native host |

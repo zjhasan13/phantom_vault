@@ -1,0 +1,455 @@
+//! A24a: chunked, separately encrypted attachment sidecars (`PVAB1`).
+//!
+//! This slice defines and tests the on-disk format only; it is not wired into
+//! the vault yet (A24b does the migration + UI, A24c the export/sync bundle).
+//! The goal is to stop re-encrypting the whole vault for every attachment byte:
+//! each file gets its own random key (wrapped by the vault attachment root) and
+//! is sealed in 1 MiB chunks with a fresh nonce and an id/index AAD.
+//!
+//! Honest limits: the sidecar is only as strong as the vault attachment root,
+//! which lives inside the encrypted vault JSON. A copied sidecar without the
+//! root is unreadable; a deleted sidecar is unrecoverable unless the vault is
+//! restored with it. There is no compression and no deduplication.
+
+#![allow(dead_code)] // slice A24a: wired into the vault in A24b
+
+use chacha20poly1305::aead::{Aead, AeadCore, KeyInit, Payload};
+use chacha20poly1305::{Key, XChaCha20Poly1305};
+use rand_core::{OsRng, RngCore};
+use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
+use std::path::Path;
+use zeroize::Zeroize;
+
+pub const SIDECAR_MAGIC: &[u8; 5] = b"PVAB1";
+pub const SIDECAR_EXT: &str = "pvab";
+/// 1 MiB keeps peak memory predictable for large files.
+pub const CHUNK_SIZE: u32 = 1024 * 1024;
+/// Ceiling for one attachment sidecar (the vault's existing 5 MB cap is raised
+/// only when the whole A24 path lands).
+pub const MAX_SIDECAR_BYTES: u64 = 50 * 1024 * 1024;
+const FLAGS: u8 = 0;
+const NONCE_LEN: usize = 24;
+const TAG_LEN: usize = 16;
+const KEY_LEN: usize = 32;
+const WRAPPED_KEY_LEN: usize = NONCE_LEN + KEY_LEN + TAG_LEN;
+const HEADER_LEN: usize = 5 + 1 + 4 + 4 + 8 + WRAPPED_KEY_LEN;
+
+/// Vault-side metadata for one sidecar. The sidecar header must match this.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SidecarMeta {
+    pub chunk_size: u32,
+    pub chunk_count: u32,
+    pub size_bytes: u64,
+    #[serde(with = "crate::models::serde_b64")]
+    pub wrapped_key: Vec<u8>,
+}
+
+impl SidecarMeta {
+    pub fn chunk_len(&self, index: u32) -> Result<usize, String> {
+        if index >= self.chunk_count {
+            return Err("attachment chunk index out of range".to_string());
+        }
+        let start = u64::from(index) * u64::from(self.chunk_size);
+        let left = self.size_bytes.saturating_sub(start);
+        Ok(left.min(u64::from(self.chunk_size)) as usize)
+    }
+}
+
+fn key_aad(id: &str) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(9 + id.len());
+    aad.extend_from_slice(b"PVAB1-key");
+    aad.extend_from_slice(id.as_bytes());
+    aad
+}
+
+fn chunk_aad(id: &str, index: u32) -> Vec<u8> {
+    let mut aad = Vec::with_capacity(9 + id.len());
+    aad.extend_from_slice(SIDECAR_MAGIC);
+    aad.extend_from_slice(id.as_bytes());
+    aad.extend_from_slice(&index.to_le_bytes());
+    aad
+}
+
+fn wrap_file_key(root: &[u8; 32], id: &str, file_key: &[u8; 32]) -> Result<Vec<u8>, String> {
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(root));
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ct = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: file_key,
+                aad: &key_aad(id),
+            },
+        )
+        .map_err(|_| "attachment key wrap failed".to_string())?;
+    let mut out = Vec::with_capacity(WRAPPED_KEY_LEN);
+    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+fn unwrap_file_key(root: &[u8; 32], id: &str, wrapped: &[u8]) -> Result<[u8; 32], String> {
+    if wrapped.len() != WRAPPED_KEY_LEN {
+        return Err("attachment wrapped key has the wrong length".to_string());
+    }
+    let (nonce, ct) = wrapped.split_at(NONCE_LEN);
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(root));
+    let plain = cipher
+        .decrypt(
+            chacha20poly1305::XNonce::from_slice(nonce),
+            Payload {
+                msg: ct,
+                aad: &key_aad(id),
+            },
+        )
+        .map_err(|_| "attachment key cannot be unwrapped (wrong vault/root?)".to_string())?;
+    if plain.len() != KEY_LEN {
+        return Err("attachment file key has the wrong length".to_string());
+    }
+    let mut key = [0u8; KEY_LEN];
+    key.copy_from_slice(&plain);
+    let mut plain = plain;
+    plain.zeroize();
+    Ok(key)
+}
+
+fn seal_chunk(file_key: &[u8; 32], id: &str, index: u32, plain: &[u8]) -> Result<Vec<u8>, String> {
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(file_key));
+    let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let ct = cipher
+        .encrypt(
+            &nonce,
+            Payload {
+                msg: plain,
+                aad: &chunk_aad(id, index),
+            },
+        )
+        .map_err(|_| "attachment chunk seal failed".to_string())?;
+    let mut out = Vec::with_capacity(NONCE_LEN + ct.len());
+    out.extend_from_slice(nonce.as_slice());
+    out.extend_from_slice(&ct);
+    Ok(out)
+}
+
+fn open_chunk(
+    file_key: &[u8; 32],
+    id: &str,
+    index: u32,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    if payload.len() < NONCE_LEN + TAG_LEN {
+        return Err("attachment chunk is truncated".to_string());
+    }
+    let (nonce, ct) = payload.split_at(NONCE_LEN);
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(file_key));
+    cipher
+        .decrypt(
+            chacha20poly1305::XNonce::from_slice(nonce),
+            Payload {
+                msg: ct,
+                aad: &chunk_aad(id, index),
+            },
+        )
+        .map_err(|_| "attachment chunk is corrupt or was reordered".to_string())
+}
+
+/// Validate the declared geometry without touching a file.
+fn validate_geometry(size_bytes: u64, chunk_size: u32, chunk_count: u32) -> Result<(), String> {
+    if size_bytes > MAX_SIDECAR_BYTES {
+        return Err(format!(
+            "attachment is too large ({size_bytes} bytes; max {MAX_SIDECAR_BYTES})"
+        ));
+    }
+    if !(1..=8 * 1024 * 1024).contains(&chunk_size) {
+        return Err("attachment chunk size is out of range".to_string());
+    }
+    let want = if size_bytes == 0 {
+        0
+    } else {
+        size_bytes.div_ceil(u64::from(chunk_size))
+    };
+    if u64::from(chunk_count) != want {
+        return Err("attachment chunk count does not match its size".to_string());
+    }
+    Ok(())
+}
+
+/// Write `reader` as a `PVAB1` sidecar. `size_bytes` must be the exact length;
+/// the reader is checked for a short or over-long stream. Returns the metadata
+/// the vault must persist.
+pub fn write_sidecar<R: Read>(
+    path: &Path,
+    mut reader: R,
+    size_bytes: u64,
+    root: &[u8; 32],
+    id: &str,
+) -> Result<SidecarMeta, String> {
+    if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("attachment id must be short hex".to_string());
+    }
+    let chunk_size = CHUNK_SIZE;
+    let chunk_count = if size_bytes == 0 {
+        0
+    } else {
+        size_bytes.div_ceil(u64::from(chunk_size)) as u32
+    };
+    validate_geometry(size_bytes, chunk_size, chunk_count)?;
+
+    let mut file_key = [0u8; KEY_LEN];
+    OsRng.fill_bytes(&mut file_key);
+    let wrapped_key = wrap_file_key(root, id, &file_key)?;
+
+    let tmp = path.with_file_name(format!(
+        "{}.tmp",
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("attachment.pvab")
+    ));
+    let result = (|| -> Result<SidecarMeta, String> {
+        let file = std::fs::File::create(&tmp)
+            .map_err(|e| format!("attachment temp create: {e}"))?;
+        let mut out = std::io::BufWriter::new(file);
+        out.write_all(SIDECAR_MAGIC)
+            .and_then(|_| out.write_all(&[FLAGS]))
+            .and_then(|_| out.write_all(&chunk_size.to_le_bytes()))
+            .and_then(|_| out.write_all(&chunk_count.to_le_bytes()))
+            .and_then(|_| out.write_all(&size_bytes.to_le_bytes()))
+            .and_then(|_| out.write_all(&wrapped_key))
+            .map_err(|e| format!("attachment header write: {e}"))?;
+
+        let mut remaining = size_bytes;
+        for index in 0..chunk_count {
+            let want = remaining.min(u64::from(chunk_size)) as usize;
+            let mut buf = vec![0u8; want];
+            reader
+                .read_exact(&mut buf)
+                .map_err(|e| format!("attachment read (chunk {index}): {e}"))?;
+            let sealed = seal_chunk(&file_key, id, index, &buf);
+            buf.zeroize();
+            out.write_all(&sealed?)
+                .map_err(|e| format!("attachment chunk write: {e}"))?;
+            remaining -= want as u64;
+        }
+        // A reader that hands out more bytes than declared is a bug/hostile.
+        let mut extra = [0u8; 1];
+        match reader.read(&mut extra) {
+            Ok(0) => {}
+            Ok(_) => return Err("attachment stream is longer than declared".to_string()),
+            Err(e) => return Err(format!("attachment read tail: {e}")),
+        }
+        out.flush()
+            .map_err(|e| format!("attachment flush: {e}"))?;
+        out.get_ref()
+            .sync_all()
+            .map_err(|e| format!("attachment sync: {e}"))?;
+        Ok(SidecarMeta {
+            chunk_size,
+            chunk_count,
+            size_bytes,
+            wrapped_key,
+        })
+    })();
+
+    file_key.zeroize();
+    match result {
+        Ok(meta) => {
+            if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+            std::fs::rename(&tmp, path)
+                .map_err(|e| format!("attachment swap: {e}"))?;
+            Ok(meta)
+        }
+        Err(e) => {
+            let _ = std::fs::remove_file(&tmp);
+            Err(e)
+        }
+    }
+}
+
+/// Convenience wrapper for callers that already hold the file in memory.
+pub fn write_sidecar_bytes(
+    path: &Path,
+    plaintext: &[u8],
+    root: &[u8; 32],
+    id: &str,
+) -> Result<SidecarMeta, String> {
+    write_sidecar(
+        path,
+        std::io::Cursor::new(plaintext),
+        plaintext.len() as u64,
+        root,
+        id,
+    )
+}
+
+fn read_header(path: &Path) -> Result<(SidecarMeta, std::fs::File), String> {
+    let mut file =
+        std::fs::File::open(path).map_err(|e| format!("attachment open: {e}"))?;
+    let mut header = [0u8; HEADER_LEN];
+    file.read_exact(&mut header)
+        .map_err(|_| "attachment header is truncated".to_string())?;
+    if &header[..5] != SIDECAR_MAGIC {
+        return Err("not a PhantomVault attachment sidecar".to_string());
+    }
+    if header[5] != FLAGS {
+        return Err("unsupported attachment flags".to_string());
+    }
+    let chunk_size = u32::from_le_bytes(header[6..10].try_into().unwrap());
+    let chunk_count = u32::from_le_bytes(header[10..14].try_into().unwrap());
+    let size_bytes = u64::from_le_bytes(header[14..22].try_into().unwrap());
+    let wrapped_key = header[22..HEADER_LEN].to_vec();
+    validate_geometry(size_bytes, chunk_size, chunk_count)?;
+    Ok((
+        SidecarMeta {
+            chunk_size,
+            chunk_count,
+            size_bytes,
+            wrapped_key,
+        },
+        file,
+    ))
+}
+
+/// Read and decrypt a sidecar. `meta` must be the vault-side metadata; the
+/// header is additionally checked to match it byte-for-byte.
+pub fn read_sidecar(
+    path: &Path,
+    root: &[u8; 32],
+    id: &str,
+    meta: &SidecarMeta,
+) -> Result<Vec<u8>, String> {
+    if id.is_empty() || id.len() > 128 || !id.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err("attachment id must be short hex".to_string());
+    }
+    let (header, mut file) = read_header(path)?;
+    if &header != meta {
+        return Err("attachment metadata does not match its sidecar".to_string());
+    }
+    let mut file_key = unwrap_file_key(root, id, &header.wrapped_key)?;
+    let mut out = Vec::with_capacity(header.size_bytes as usize);
+    for index in 0..header.chunk_count {
+        let want = header.chunk_len(index)?;
+        let record_len = NONCE_LEN + want + TAG_LEN;
+        let mut record = vec![0u8; record_len];
+        file.read_exact(&mut record)
+            .map_err(|_| "attachment chunk is truncated".to_string())?;
+        let plain = open_chunk(&file_key, id, index, &record);
+        record.zeroize();
+        let mut plain = plain?;
+        out.extend_from_slice(&plain);
+        plain.zeroize();
+    }
+    // Reject trailing records/bytes even if the geometry says otherwise.
+    let mut extra = [0u8; 1];
+    match file.read(&mut extra) {
+        Ok(0) => {}
+        Ok(_) => return Err("attachment has trailing data".to_string()),
+        Err(e) => return Err(format!("attachment tail read: {e}")),
+    }
+    file_key.zeroize();
+    if out.len() as u64 != header.size_bytes {
+        return Err("attachment plaintext length mismatch".to_string());
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("pv-a24-{}-{}", std::process::id(), name));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        dir.join(format!("{name}.pvab"))
+    }
+
+    fn pattern(len: usize) -> Vec<u8> {
+        (0..len).map(|i| (i.wrapping_mul(31) & 0xff) as u8).collect()
+    }
+
+    #[test]
+    fn chunks_roundtrip_and_empty_files_work() {
+        let root = [9u8; 32];
+        let data = pattern(CHUNK_SIZE as usize * 2 + 777);
+        let path = tmp("roundtrip");
+        let meta = write_sidecar_bytes(&path, &data, &root, "a1").unwrap();
+        assert_eq!(meta.chunk_size, CHUNK_SIZE);
+        assert_eq!(meta.chunk_count, 3);
+        assert_eq!(meta.size_bytes, data.len() as u64);
+        assert_eq!(read_sidecar(&path, &root, "a1", &meta).unwrap(), data);
+
+        let empty_path = tmp("empty");
+        let empty = write_sidecar_bytes(&empty_path, &[], &root, "a2").unwrap();
+        assert_eq!(empty.chunk_count, 0);
+        assert!(read_sidecar(&empty_path, &root, "a2", &empty).unwrap().is_empty());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let _ = std::fs::remove_dir_all(empty_path.parent().unwrap());
+    }
+
+    #[test]
+    fn wrong_root_id_tamper_and_reorder_fail_closed() {
+        let root = [9u8; 32];
+        let data = pattern(CHUNK_SIZE as usize * 2 + 17);
+        let path = tmp("failclosed");
+        let meta = write_sidecar_bytes(&path, &data, &root, "a1").unwrap();
+
+        assert!(read_sidecar(&path, &[8u8; 32], "a1", &meta).is_err());
+        assert!(read_sidecar(&path, &root, "a2", &meta).is_err());
+        let mut wrong = meta.clone();
+        wrong.size_bytes += 1;
+        assert!(read_sidecar(&path, &root, "a1", &wrong).is_err());
+
+        // Tamper the first chunk's ciphertext.
+        let mut bytes = std::fs::read(&path).unwrap();
+        let first_chunk = HEADER_LEN + NONCE_LEN + 8;
+        bytes[first_chunk] ^= 1;
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(read_sidecar(&path, &root, "a1", &meta).is_err());
+
+        // Restore, then swap chunk 0 and 1 (same length) — the id/index AAD
+        // must reject it even though both chunks authenticate individually.
+        let path2 = tmp("reorder");
+        let meta2 = write_sidecar_bytes(&path2, &data, &root, "a1").unwrap();
+        let mut bytes = std::fs::read(&path2).unwrap();
+        let record = NONCE_LEN + CHUNK_SIZE as usize + TAG_LEN;
+        let a = HEADER_LEN;
+        let b = HEADER_LEN + record;
+        let first: Vec<u8> = bytes[a..a + record].to_vec();
+        let second: Vec<u8> = bytes[b..b + record].to_vec();
+        bytes[a..a + record].copy_from_slice(&second);
+        bytes[b..b + record].copy_from_slice(&first);
+        std::fs::write(&path2, &bytes).unwrap();
+        assert!(read_sidecar(&path2, &root, "a1", &meta2).is_err());
+
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+        let _ = std::fs::remove_dir_all(path2.parent().unwrap());
+    }
+
+    #[test]
+    fn oversized_and_wrong_length_streams_are_refused() {
+        let root = [1u8; 32];
+        let path = tmp("oversize");
+        assert!(write_sidecar(
+            &path,
+            std::io::empty(),
+            MAX_SIDECAR_BYTES + 1,
+            &root,
+            "a1"
+        )
+        .is_err());
+        // Declared 3 bytes but the reader has 4 → refuse and leave no file.
+        assert!(write_sidecar(
+            &path,
+            std::io::Cursor::new(vec![0u8; 4]),
+            3,
+            &root,
+            "a1"
+        )
+        .is_err());
+        assert!(!path.exists());
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+}

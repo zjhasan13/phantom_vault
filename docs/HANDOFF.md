@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A20c (item Share + bulk staging), after A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: A24a (attachment sidecar format), after A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -137,6 +137,18 @@
   items when present, otherwise the title lookup. Tests +1
   (`bulk_share_stages_only_active_logins`) → `cargo test` **546 passed / 2
   ignored**; `npm test` **133/133**. All A20 slices are now shipped.
+
+- **A24a — attachment sidecar format (this batch):** `src/attachment_store.rs`
+  adds the `PVAB1` sidecar format (magic/flags/chunk geometry/size/wrapped key
+  + 1 MiB AEAD chunks). Each file gets a random key wrapped by the future vault
+  attachment root; chunk AAD binds the attachment id + index so reorder/swap
+  fails. Streaming writer uses temp + `sync_all` + rename; reader checks the
+  vault metadata against the header, rejects truncation/trailing data/wrong
+  root/id and supports empty files. **Not wired into the vault yet** (no
+  behaviour change) — `docs/A24_ATTACHMENTS.md` has the full root hierarchy,
+  lazy migration, `PVX2` export, sync-manifest and UI plan. Tests +3
+  (`attachment_store::tests::*`) → `cargo test` **549 passed / 2 ignored**;
+  `npm test` **133/133**. A24b/c need the design sign-off.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -659,7 +671,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 546 passed / 2 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 549 passed / 2 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
