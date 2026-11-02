@@ -20,6 +20,9 @@ pub struct ShareMeta {
     /// A20a: the bundle needs a recipient passphrase.
     #[serde(default)]
     pub passphrase: bool,
+    /// A20b: the published secret-gist id, when this share has an async link.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub relay_gist: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -29,6 +32,7 @@ pub struct ShareRecord {
     pub max_views: u32,
     pub views: u32,
     pub passphrase: bool,
+    pub relay_gist: Option<String>,
     pub bundle_path: PathBuf,
 }
 
@@ -81,6 +85,7 @@ pub fn save(created: &CreatedShare) -> Result<ShareRecord, String> {
             max_views: created.max_views,
             views: 0,
             passphrase: created.passphrase,
+            relay_gist: None,
         },
     )?;
     Ok(ShareRecord {
@@ -89,6 +94,7 @@ pub fn save(created: &CreatedShare) -> Result<ShareRecord, String> {
         max_views: created.max_views,
         views: 0,
         passphrase: created.passphrase,
+        relay_gist: None,
         bundle_path: bundle_path(&created.id),
     })
 }
@@ -97,7 +103,9 @@ pub fn get(id: &str) -> Option<ShareRecord> {
     let _guard = store_lock().lock().unwrap_or_else(|p| p.into_inner());
     let meta = read_meta(id)?;
     let bundle_path = bundle_path(id);
-    if !bundle_path.is_file() {
+    // A20b: keep relay metadata even if the local ciphertext is gone, so the
+    // sender can still delete the remote gist.
+    if !bundle_path.is_file() && meta.relay_gist.is_none() {
         return None;
     }
     Some(ShareRecord {
@@ -106,8 +114,17 @@ pub fn get(id: &str) -> Option<ShareRecord> {
         max_views: meta.max_views,
         views: meta.views,
         passphrase: meta.passphrase,
+        relay_gist: meta.relay_gist,
         bundle_path,
     })
+}
+
+/// Record the secret-gist id after a successful A20b publish.
+pub fn set_relay_gist(id: &str, gist_id: &str) -> Result<(), String> {
+    let _guard = store_lock().lock().unwrap_or_else(|p| p.into_inner());
+    let mut meta = read_meta(id).ok_or_else(|| "share not found".to_string())?;
+    meta.relay_gist = Some(gist_id.to_string());
+    write_meta(id, &meta)
 }
 
 pub fn list() -> Vec<ShareRecord> {
@@ -125,7 +142,7 @@ pub fn list() -> Vec<ShareRecord> {
             continue;
         };
         let bundle_path = bundle_path(id);
-        if !bundle_path.is_file() {
+        if !bundle_path.is_file() && meta.relay_gist.is_none() {
             continue;
         }
         out.push(ShareRecord {
@@ -134,6 +151,7 @@ pub fn list() -> Vec<ShareRecord> {
             max_views: meta.max_views,
             views: meta.views,
             passphrase: meta.passphrase,
+            relay_gist: meta.relay_gist,
             bundle_path,
         });
     }
@@ -172,7 +190,10 @@ pub fn revoke(id: &str) -> Result<(), String> {
 pub fn purge_expired() {
     let now = now_secs();
     for rec in list() {
-        if rec.expires_at <= now {
+        // A20b: keep an expired relay share on disk so the sender can still
+        // delete its gist (the gist itself does not auto-expire). Local-only
+        // shares are safe to purge.
+        if rec.expires_at <= now && rec.relay_gist.is_none() {
             let _ = revoke(&rec.id);
         }
     }
@@ -221,6 +242,24 @@ mod tests {
         assert!(take("a3").is_ok());
         assert_eq!(list().len(), 1);
         revoke("a3").unwrap();
+
+        // An expired relay share is kept so the sender can still delete the
+        // remote gist; local-only expired shares are purged.
+        save(&dummy("a4", now_secs() - 1, 0)).unwrap();
+        set_relay_gist("a4", "0123456789abcdef0123456789abcdef").unwrap();
+        purge_expired();
+        assert!(get("a4").is_some());
+        revoke("a4").unwrap();
+
+        // Even if the local ciphertext is gone, relay metadata stays visible
+        // for remote cleanup (the gist itself is still on GitHub).
+        save(&dummy("a5", future, 0)).unwrap();
+        set_relay_gist("a5", "fedcba9876543210fedcba9876543210").unwrap();
+        std::fs::remove_file(dir.join("a5.pvsh")).unwrap();
+        assert!(get("a5").is_some());
+        assert!(list().iter().any(|r| r.id == "a5"));
+        revoke("a5").unwrap();
+
         std::env::remove_var("PV_SHARE_DIR");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -238,14 +277,24 @@ mod tests {
         assert!(get("p1").unwrap().passphrase);
         assert!(list().iter().any(|r| r.id == "p1" && r.passphrase));
 
-        // Metadata written before A20a has no `passphrase` field; it must still
-        // load and default to "no passphrase" rather than erroring out.
+        // A20b: the published gist id survives a reload.
+        set_relay_gist("p1", "0123456789abcdef0123456789abcdef").unwrap();
+        assert_eq!(
+            get("p1").unwrap().relay_gist.as_deref(),
+            Some("0123456789abcdef0123456789abcdef")
+        );
+
+        // Metadata written before A20a/A20b has neither field; it must still
+        // load and default to "no passphrase" / "local only" rather than error.
         let raw = std::fs::read(dir.join("p1.meta.json")).unwrap();
         let legacy = String::from_utf8(raw)
             .unwrap()
-            .replace(",\"passphrase\":true", "");
+            .replace(",\"passphrase\":true", "")
+            .replace(",\"relay_gist\":\"0123456789abcdef0123456789abcdef\"", "");
         std::fs::write(dir.join("p1.meta.json"), legacy).unwrap();
-        assert!(!get("p1").unwrap().passphrase);
+        let rec = get("p1").unwrap();
+        assert!(!rec.passphrase);
+        assert!(rec.relay_gist.is_none());
 
         std::env::remove_var("PV_SHARE_DIR");
         let _ = std::fs::remove_dir_all(&dir);

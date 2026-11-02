@@ -12,6 +12,7 @@ mod api;
 mod i18n;
 mod share;
 mod share_cli;
+mod share_relay;
 mod share_serve;
 mod share_store;
 mod totp_engine;
@@ -8674,10 +8675,16 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .map(|r| {
                 let left = r.expires_at.saturating_sub(now);
                 let lock = if r.passphrase { " • 🔒 pass" } else { "" };
+                let relay = if r.relay_gist.is_some() {
+                    " • ☁ gist"
+                } else {
+                    ""
+                };
+                let expired = if left == 0 { " • expired" } else { "" };
                 SendView {
                     id: r.id.clone().into(),
                     detail: format!(
-                        "{} • {} left • views {}/{}{}",
+                        "{} • {} left • views {}/{}{}{}{}",
                         &r.id[..r.id.len().min(12)],
                         if left >= 3600 {
                             format!("{}h", left / 3600)
@@ -8690,7 +8697,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         } else {
                             r.max_views.to_string()
                         },
-                        lock
+                        lock,
+                        relay,
+                        expired
                     )
                     .into(),
                 }
@@ -13312,7 +13321,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let ls_server: Arc<Mutex<Option<share_serve::ServeHandle>>> =
         Arc::new(Mutex::new(None));
     let ls_server_create = Arc::clone(&ls_server);
-    main_window.on_login_share_create(move |title, ttl, views, serve, pass_on, pass, pass_confirm| {
+    main_window.on_login_share_create(move |title, ttl, views, serve, relay, pass_on, pass, pass_confirm| {
         let Some(ui) = send_weak.upgrade() else {
             return;
         };
@@ -13331,6 +13340,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
         };
+        // A20b: the gist relay cannot enforce a view budget; recording one
+        // would be a false claim. LAN remains the only one-view transport.
+        let views = if relay { 0 } else { views };
         let item = {
             let vault = lock_vault(&send_vault);
             let mut matches: Vec<_> = vault
@@ -13367,6 +13379,92 @@ fn launch_url(ui: &MainWindow, url: &str) {
         } else {
             None
         };
+        if relay && serve {
+            ui.set_ls_status(
+                tr(
+                    "⚠️ LAN and async gist are different transports — pick one.",
+                    "⚠️ LAN আর async gist আলাদা transport — একটি বাছুন।",
+                )
+                .into(),
+            );
+            return;
+        }
+        if relay {
+            ui.set_ls_status(
+                tr(
+                    "⏳ Publishing to a secret GitHub gist…",
+                    "⏳ GitHub secret gist-এ প্রকাশ করা হচ্ছে…",
+                )
+                .into(),
+            );
+            let weak = send_weak.clone();
+            std::thread::spawn(move || {
+                let result = (|| -> Result<(share::CreatedShare, String), String> {
+                    let created = share::create_with_passphrase(
+                        vec![item],
+                        ttl_secs,
+                        views,
+                        pass_secret.as_ref(),
+                    )?;
+                    let published = crate::share_relay::publish_sync(&created.bundle)?;
+                    if let Err(e) = share_store::save(&created) {
+                        let _ = crate::share_relay::delete_sync(&published.gist_id);
+                        return Err(e);
+                    }
+                    if let Err(e) =
+                        share_store::set_relay_gist(&created.id, &published.gist_id)
+                    {
+                        let _ = crate::share_relay::delete_sync(&published.gist_id);
+                        let _ = share_store::revoke(&created.id);
+                        return Err(e);
+                    }
+                    let link = created.link_via_gist(&published.owner, &published.gist_id);
+                    Ok((created, link))
+                })();
+                match result {
+                    Ok((created, link)) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_ls_title("".into());
+                                ui.set_ls_qr(p2p_qr_image(&link));
+                                ui.set_ls_pass("".into());
+                                ui.set_ls_pass_confirm("".into());
+                                ui.set_ls_pass_on(false);
+                                ui.set_ls_relay(false);
+                                ui.set_ls_link(link.into());
+                                ui.set_ls_status(
+                                    if created.passphrase {
+                                        tr(
+                                            "✅ Passphrase-protected share published to GitHub — send the link and passphrase separately; expiry is best-effort.",
+                                            "✅ পাসফ্রেজ-সুরক্ষিত শেয়ার GitHub-এ প্রকাশিত — লিংক ও পাসফ্রেজ আলাদা চ্যানেলে পাঠান; expiry best-effort।",
+                                        )
+                                    } else {
+                                        tr(
+                                            "✅ Share published to GitHub — anyone with the link can fetch it until you revoke; GitHub does not expire it for you.",
+                                            "✅ শেয়ার GitHub-এ প্রকাশিত — আপনি revoke না করলে লিংকধারী যে কেউ আনতে পারবে; GitHub নিজে expire করে না।",
+                                        )
+                                    }
+                                    .into(),
+                                );
+                                refresh_ls_rows(&ui);
+                                security::access_log::log_event(
+                                    "share",
+                                    "created relay share from UI",
+                                );
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        let _ = slint::invoke_from_event_loop(move || {
+                            if let Some(ui) = weak.upgrade() {
+                                ui.set_ls_status(format!("⚠️ {e}").into());
+                            }
+                        });
+                    }
+                }
+            });
+            return;
+        }
         let created = match share::create_with_passphrase(
             vec![item],
             ttl_secs,
@@ -13408,6 +13506,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_ls_pass("".into());
         ui.set_ls_pass_confirm("".into());
         ui.set_ls_pass_on(false);
+        ui.set_ls_relay(false);
         ui.set_ls_link(link.into());
         ui.set_ls_status(
             if created.passphrase {
@@ -13469,6 +13568,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     share::parse_link(&link_s).ok_or("bad share link (expected pvshare://…)")?;
                 let bundle = if !file_s.is_empty() {
                     std::fs::read(&file_s).map_err(|e| format!("read {file_s}: {e}"))?
+                } else if parsed.is_gist() {
+                    crate::share_relay::fetch_sync(
+                        parsed.gist_owner.as_deref(),
+                        &parsed.id,
+                    )?
                 } else if let Some(host) = parsed.host.as_deref() {
                     share_cli::fetch_bundle(&format!("http://{host}/{}", parsed.id))?
                 } else {
@@ -13581,18 +13685,42 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = login_share_revoke_weak.upgrade() else {
             return;
         };
-        let _ = share_store::revoke(id.as_str());
-        if share_store::list().is_empty() {
-            if let Some(server) = login_share_revoke_server
-                .lock()
-                .unwrap_or_else(|p| p.into_inner())
-                .take()
-            {
-                server.stop();
+        let weak = login_share_revoke_weak.clone();
+        let server_slot = Arc::clone(&login_share_revoke_server);
+        let id_s = id.to_string();
+        ui.set_ls_status(format!("⏳ Revoking {id}…").into());
+        std::thread::spawn(move || {
+            let gist = share_store::get(&id_s).and_then(|r| r.relay_gist);
+            let mut warning = None;
+            if let Some(gist) = gist {
+                if let Err(e) = crate::share_relay::delete_sync(&gist) {
+                    warning = Some(format!("{e} — gist id {gist}"));
+                }
             }
-        }
-        refresh_ls_rows(&ui);
-        ui.set_ls_status(format!("🗑️ Revoked {id}.").into());
+            let local = share_store::revoke(&id_s);
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    if share_store::list().is_empty() {
+                        if let Some(server) = server_slot
+                            .lock()
+                            .unwrap_or_else(|p| p.into_inner())
+                            .take()
+                        {
+                            server.stop();
+                        }
+                    }
+                    refresh_ls_rows(&ui);
+                    let status = match (local, warning) {
+                        (Err(e), _) => format!("⚠️ Revoke failed: {e}"),
+                        (Ok(()), Some(e)) => format!(
+                            "🗑️ Revoked {id_s} locally — relay delete failed: {e}"
+                        ),
+                        (Ok(()), None) => format!("🗑️ Revoked {id_s}."),
+                    };
+                    ui.set_ls_status(status.into());
+                }
+            });
+        });
     });
 
     let login_share_refresh_weak = main_window.as_weak();

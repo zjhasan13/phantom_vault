@@ -1,37 +1,45 @@
 # A20 — serverless expiring share (Send-style)
 
-> Status: **slices 1–4 shipped.** Bundle crypto, on-disk TTL/one-view store,
+> Status: **slices 1–5 shipped.** Bundle crypto, on-disk TTL/one-view store,
 > LAN/file transport, the `share` CLI, a desktop **Settings → Expiring
-> shares** card (create/copy/open/preview/import/revoke), plus A20a's optional
-> **recipient passphrase** (`PVSH2`) and a **QR code** for the link. The
-> pre-existing Phase 9 **Secure Send** card (notes via the GitHub relay) remains
-> a separate surface; A20 is the item/bundle + LAN/file path.
+> shares** card (create/copy/open/preview/import/revoke), A20a's optional
+> **recipient passphrase** (`PVSH2`) and **QR code**, plus A20b's async
+> **GitHub secret-gist relay** (recipient needs no token). The pre-existing
+> Phase 9 **Secure Send** card (notes via the GitHub relay) remains a separate
+> surface; A20 is the item/bundle path.
 
-## GUI (slice 3 + A20a)
+## GUI (slice 3 + A20a + A20b)
 
 Settings → **EXPIRING SHARES (SEND)**:
 
-- type a login title, TTL (`24h`) and views (`0` = unlimited), toggle **LAN**,
-  optionally toggle **Passphrase** and enter/confirm an 8+ character phrase,
-  press **Create share**;
+- type a login title, TTL (`24h`) and views (`0` = unlimited), choose **LAN**
+  or **Async gist** (mutually exclusive), optionally toggle **Passphrase** and
+  enter/confirm an 8+ character phrase, press **Create share**;
 - the link (`pvshare://…`) appears once with a masked **Copy link** button and a
   **QR code** (the QR encodes the link only, never the bundle);
-- **Open** accepts a `pvshare://…` link (LAN) or a `.pvsh` bundle file plus an
-  optional passphrase, shows a title/username preview, then **Add to my vault**
-  (duplicate-safe, saved with the vault master);
-- active shares list with per-share **Revoke** (passphrase-protected rows show
-  `🔒 pass`); revoking the last one stops the LAN listener.
+- **Open** accepts a `pvshare://…` link (LAN, gist, or file) or a `.pvsh` bundle
+  file plus an optional passphrase, shows a title/username preview, then **Add
+  to my vault** (duplicate-safe, saved with the vault master);
+- active shares list with per-share **Revoke** (passphrase rows show `🔒 pass`,
+  relay rows show `☁ gist`); revoking a relay share also deletes its gist
+  (best-effort, needs the stored token). Revoking the last LAN share stops the
+  LAN listener.
 
 With a passphrase the link is `pvshare://<id>#p=1` (or
-`pvshare://host:port/id#p=1`) and contains **no key**; the key is wrapped inside
-the bundle by Argon2id(passphrase). Without one, the link is the original
+`pvshare://gist/<owner>/<gist_id>#p=1`) and contains **no key**; the key is wrapped
+inside the bundle by Argon2id(passphrase). Without one, the link is the original
 `#k=<key>` form.
+
+Async gist uses the token stored by **Settings → GitHub Sync**; a classic PAT
+must include the `gist` scope (fine-grained tokens generally cannot create
+gists). No token is needed on the recipient side: a secret gist is unlisted but
+readable by anyone who knows its id.
 
 The older **Secure Send** card (seal a note → GitHub relay → read + burn) is
 unchanged and still notes-only. Use it for async text; use Expiring shares for
-logins over LAN/file.
+logins over LAN/file/gist.
 
-## CLI (slice 2 + A20a)
+## CLI (slice 2 + A20a + A20b)
 
 ```powershell
 # sender: creates pvshares/<id>.pvsh, prints a file link
@@ -40,21 +48,27 @@ phantom_vault share create "Gmail" --ttl 24h --views 1
 # sender: passphrase-protected share; the link has no key
 phantom_vault share create "Gmail" --ttl 24h --views 1 --passphrase
 
+# sender: async relay — secret gist, recipient needs no token
+phantom_vault share create "Gmail" --ttl 24h --views 1 --relay gist
+phantom_vault share create "Gmail" --ttl 24h --views 1 --relay gist --passphrase
+
 # sender: also serve the ciphertext on the LAN, print pvshare://<ip>:<port>/<id>#k=…
 phantom_vault share create "Gmail" --ttl 24h --views 1 --serve
 
 # recipient: fetch over the link or read a bundle file
 phantom_vault share open "pvshare://192.168.1.5:52123/<id>#k=…"
+phantom_vault share open "pvshare://gist/<owner>/<gist_id>#k=…"
 phantom_vault share open "pvshare://<id>#p=1" --file pvshares/<id>.pvsh
 phantom_vault share open "…" --import          # prompts master, adds the login
 
 phantom_vault share list
-phantom_vault share revoke <id>
+phantom_vault share revoke <id>   # also deletes the gist when present
 ```
 
 `--passphrase` prompts twice (no echo, trimmed) before creating the share. A
 `#p=1` link prompts for the passphrase on open; a missing or wrong passphrase
-fails closed with a generic "wrong passphrase or corrupt bundle".
+fails closed with a generic "wrong passphrase or corrupt bundle". `--relay gist`
+and `--serve` are mutually exclusive.
 
 One-view/TTL are enforced by the **sender's store** (`take()` increments views
 before returning bytes; expiry deletes the bundle). The listener has no pairing
@@ -64,7 +78,8 @@ bundle is already end-to-end encrypted. This is separate from A15 vault sync.
 ## Goal
 
 Share one or more vault items with someone who does not have PhantomVault's
-vault, using an **expiring, one-time** link where the relay never sees the key.
+vault, using an **expiring** link where the relay never sees the key. LAN is
+one-view; file and gist transport are expiry-only/best-effort.
 
 ```
 pvshare://<share-id>#k=<base64url 256-bit key>     <- key lives in the fragment
@@ -149,6 +164,39 @@ passphrase must reach the recipient over a channel different from the link
 (otherwise it adds no protection). QR is a convenience, not a confidentiality
 boundary — anyone who photographs it gets the link.
 
+## Slice 5 / A20b (shipped): async relay via GitHub secret gist
+
+The recipient may be offline/behind NAT, so the LAN transport cannot work. The
+sender can publish the **already-encrypted** bundle to a **secret (unlisted)
+gist**:
+
+- one gist per share; one fixed file `bundle.pvsh.b64` whose content is the
+  base64 of `PVSH1`/`PVSH2` (max 64 KiB of ciphertext);
+- link: `pvshare://gist/<owner>/<gist_id>#k=<key>` or `#p=1`; the gist id is
+  random hex and the key stays in the fragment. The owner login is included
+  because it enables a **tokenless raw fetch**
+  (`gist.githubusercontent.com/<owner>/<id>/raw`), which keeps working even
+  when the GitHub API requires auth to read a secret gist's metadata;
+- publish/delete use the token already stored for **GitHub Sync** and require
+  the classic `gist` scope; fetching needs **no token** (raw gist host, with
+  the API as a no-owner fallback). A secret gist is unlisted, not
+  private-by-ACL;
+- GitHub only ever sees ciphertext, a generic description (`PhantomVault
+  share`), a fixed filename, and the sender's account identity. The link
+  itself includes the owner login so the recipient can use the raw host;
+- `share revoke` and the GUI **Revoke** delete the gist best-effort; the local
+  metadata keeps `relay_gist` so an expired relay share is **not** purged
+  locally (the gist does not auto-expire, so the sender must still revoke);
+- **honest limit:** TTL/one-view are *not* relay-enforced. Recipients can
+  re-fetch until the delete lands, so the view budget is forced to `0`
+  (unlimited) on this transport and the UI disables the Views field; the CLI
+  warns and does the same. This is labelled "expiring (best-effort)", never
+  "one-time".
+
+Testing uses a loopback mock GitHub API (`PV_RELAY_API`) and a test-only token
+override; no network or real credentials are needed. The production endpoint is
+`https://api.github.com` and honours the same proxy variables as sync.
+
 ## Threat model (honest)
 
 | Threat | Mitigation / limit |
@@ -158,6 +206,10 @@ boundary — anyone who photographs it gets the link.
 | Passphrase-protected share (`PVSH2`) | link alone is useless; the key is wrapped with Argon2id(passphrase). Offline guessing is possible — strength depends on the passphrase |
 | Passphrase + link sent together | protection collapses to the original link-only model; send them over different channels |
 | QR code photographed/shared | same as leaking the link; the QR never contains the bundle, and for `PVSH2` it never contains the key |
+| GitHub gist relay | only ciphertext + generic metadata; the key is in the fragment. The gist owner's GitHub identity is visible to GitHub and is included in the link (needed for the tokenless raw fetch); a secret gist is unlisted, not private-by-ACL |
+| Gist TTL / one-view | **not enforced by GitHub**. Deletion happens only when the sender revokes; an expired relay share is kept locally so it can still be deleted. A recipient can re-fetch until then |
+| GitHub token | publish/delete need a classic PAT with `gist`; the token is DPAPI-sealed and never logged. A missing scope fails with a clear error, not a silent fallback |
+| Unauth recipient fetch | raw gist host availability applies; the no-owner API fallback is rate-limited (60/hour per IP). Failures are reported, never replaced with stale data |
 | Link leaked before expiry | anyone with the link can open it until TTL/one-view is enforced |
 | Recipient copies after opening | unavoidable — "one view" is not DRM |
 | Clock manipulation | expiry uses the recipient's local clock; a modified client can ignore it |
@@ -171,25 +223,27 @@ boundary — anyone who photographs it gets the link.
 |---|---|---|---|---|
 | **LAN relay (shipped)** | sender-enforced | **yes** (store deletes/refuses after the view budget) | no (both online) | `share create --serve` + `share serve`; no pairing/auth by design |
 | Local file/manual (shipped) | metadata only | no | yes | `pvshares/<id>.pvsh` + the fragment link; weakest claim |
-| GitHub/other relay (next) | best-effort (blob deletion) | no (client cannot enforce) | yes | Must be labelled "expiring", not "one-time" |
+| **GitHub secret gist (shipped, A20b)** | best-effort (sender deletes the gist on revoke; no relay clock) | no (recipient can re-fetch until deletion) | **yes** | `share create --relay gist`; recipient needs no token; label "expiring", not "one-time" |
 
-No third-party relay is needed for the LAN path, which is the strongest claim we
-can make without running infrastructure.
+LAN is the strongest claim we can make without running infrastructure. Gist is
+the only async option that needs no recipient account, but it cannot enforce
+TTL/one-view.
 
-## UX (shipped in slice 3 + A20a)
+## UX (shipped in slice 3 + A20a/A20b)
 
 1. Settings → Expiring shares card (title input; no context-menu selection yet).
-2. TTL text (`24h`) + views (`1`, `0` = unlimited) + LAN toggle.
+2. TTL text (`24h`) + views (`1`, `0` = unlimited) + LAN **or** Async gist
+   (mutually exclusive).
 3. Show the link **once** with a masked copy button and a QR code; warn that
    without a passphrase the link is the key. With a passphrase, tell the sender
-   to send link and passphrase separately.
+   to send link and passphrase separately. Async gist is labelled best-effort.
 4. Recipient pastes the link / picks the `.pvsh` file (+ passphrase when
-   required) → app fetches, decrypts, shows a title/username preview → **Add to
-   my vault** (never auto-import).
-5. Sender sees active shares and can **Revoke**; the LAN listener stops when the
-   last share is revoked.
+   required) → app fetches (LAN, gist, or file), decrypts, shows a
+   title/username preview → **Add to my vault** (never auto-import).
+5. Sender sees active shares and can **Revoke**; gist deletion is attempted,
+   and the LAN listener stops when the last LAN share is revoked.
 
-Not yet: item context-menu/bulk selection, GitHub async relay.
+Not yet: item context-menu/bulk selection.
 
 ## Exit tests
 
@@ -204,13 +258,17 @@ Not yet: item context-menu/bulk selection, GitHub async relay.
    bundle; `#p=1` links parse with `key: None`.
 8. Store metadata: the passphrase flag survives a reload, and a pre-A20a
    `.meta.json` without the field still loads as "no passphrase".
+9. Gist relay: publish → fetch → delete round-trips over a loopback mock API;
+   the gist link parses with `is_gist()`; fetch rejects missing/oversized/
+   truncated objects; an expired relay share stays local so it can be revoked.
 
 Slices 1–2 cover 2, 5 (bundle half) and 6. Slice 2 covers 3 (store expiry) and 4
 (loopback one-view test). Slice 3 wires the GUI; the exact desktop import
 click-through is manual QA (no UI automation), while the shared backend is
 covered by tests. A20a adds 7–8 (`share::tests::passphrase_*`,
-`share_store::tests::passphrase_flag_*`). 5 is true for the LAN transport
-(the key is only in the fragment; the store never sees it).
+`share_store::tests::passphrase_flag_*`). A20b adds 9
+(`share_relay::tests::*`, `share_store::tests::store_enforces_*`). 5 is true for
+the LAN transport (the key is only in the fragment; the store never sees it).
 
 ## Effort
 
@@ -218,7 +276,8 @@ covered by tests. A20a adds 7–8 (`share::tests::passphrase_*`,
 - Slice 2 (store + LAN/file transport + CLI): 1 day.
 - Slice 3 (Slint card, copy, open/preview/import, revoke): 1 day.
 - Slice 4 / A20a (optional passphrase + QR): 0.5 day.
-- Remaining: context-menu/bulk selection + async relay (1–2 days).
+- Slice 5 / A20b (async gist relay): 0.75 day.
+- Remaining: item context-menu/bulk selection only.
 
 ## Non-goals
 

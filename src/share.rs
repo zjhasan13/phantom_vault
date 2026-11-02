@@ -32,6 +32,8 @@ const WRAP_NONCE_LEN: usize = 24;
 const WRAPPED_KEY_LEN: usize = 32 + 16;
 const V2_MIN: usize = 5 + 1 + SALT_LEN + WRAP_NONCE_LEN + WRAPPED_KEY_LEN + 24 + 16;
 pub const LINK_SCHEME: &str = "pvshare://";
+/// Reserved link host for the A20b async gist transport.
+pub const GIST_HOST: &str = "gist";
 /// Pad the plaintext to a 4 KiB bucket so container size does not reveal how
 /// many/large the shared fields are.
 const PAD_BUCKET: usize = 4096;
@@ -174,12 +176,45 @@ impl CreatedShare {
             self.fragment()
         )
     }
+
+    /// A20b: async link (`pvshare://gist/<owner>/<gist_id>#…`). The owner is
+    /// needed for the tokenless raw fetch; the gist id replaces the local id.
+    pub fn link_via_gist(&self, owner: &str, gist_id: &str) -> String {
+        format!(
+            "{LINK_SCHEME}{GIST_HOST}/{owner}/{gist_id}{}",
+            self.fragment()
+        )
+    }
+}
+
+impl ShareLink {
+    /// True for `pvshare://gist/...` (A20b relay links).
+    pub fn is_gist(&self) -> bool {
+        self.host.as_deref() == Some(GIST_HOST)
+    }
+}
+
+/// GitHub gist ids are hex; accept the observed 32-char form plus slack.
+pub fn is_gist_id(id: &str) -> bool {
+    (20..=64).contains(&id.len()) && id.bytes().all(|b| b.is_ascii_hexdigit())
+}
+
+/// GitHub logins: 1–39 chars, alphanumeric or `-`, no leading/trailing `-`.
+pub fn is_gist_owner(owner: &str) -> bool {
+    let b = owner.as_bytes();
+    (1..=39).contains(&b.len())
+        && !owner.starts_with('-')
+        && !owner.ends_with('-')
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || *c == b'-')
 }
 
 /// Parsed share link. `host` is `None` for a file-transport link.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareLink {
     pub host: Option<String>,
+    /// GitHub login for `pvshare://gist/<owner>/<id>` links.
+    pub gist_owner: Option<String>,
     pub id: String,
     /// `None` when the bundle is passphrase-protected (`#p=1`).
     pub key: Option<String>,
@@ -402,9 +437,10 @@ pub fn open(
     out
 }
 
-/// Parse `pvshare://<id>#k=<key>` / `#p=1` (file transport) or
-/// `pvshare://<host>:<port>/<id>#…` (LAN transport).
-/// The key must never be sent to a server.
+/// Parse `pvshare://<id>#k=<key>` / `#p=1` (file transport),
+/// `pvshare://<host>:<port>/<id>#…` (LAN transport) or
+/// `pvshare://gist/<owner>/<gist_id>#…` (A20b relay; `gist` is a reserved
+/// host). The key must never be sent to a server.
 pub fn parse_link(link: &str) -> Option<ShareLink> {
     let rest = link.strip_prefix(LINK_SCHEME)?;
     let (rest, fragment) = rest.split_once('#')?;
@@ -414,6 +450,25 @@ pub fn parse_link(link: &str) -> Option<ShareLink> {
         "p" if value == "1" => (None, true),
         _ => return None,
     };
+    // A20b: gist links carry the owner (needed for a tokenless raw fetch).
+    if let Some(path) = rest
+        .strip_prefix(GIST_HOST)
+        .and_then(|p| p.strip_prefix('/'))
+    {
+        if let Some((owner, id)) = path.split_once('/') {
+            if !is_gist_owner(owner) || !is_gist_id(id) {
+                return None;
+            }
+            return Some(ShareLink {
+                host: Some(GIST_HOST.to_string()),
+                gist_owner: Some(owner.to_string()),
+                id: id.to_string(),
+                key,
+                needs_passphrase,
+            });
+        }
+        // `pvshare://gist/<id>` (legacy, no owner) falls through below.
+    }
     let (host, id) = match rest.split_once('/') {
         Some((host, id)) if !host.is_empty() && !id.trim_matches('/').is_empty() => (
             Some(host.to_string()),
@@ -425,8 +480,14 @@ pub fn parse_link(link: &str) -> Option<ShareLink> {
     if id.is_empty() || id.contains('/') {
         return None;
     }
+    // A legacy `pvshare://gist/<gist_id>` (no owner) still parses and can be
+    // fetched through the API path.
+    if host.as_deref() == Some(GIST_HOST) && !is_gist_id(&id) {
+        return None;
+    }
     Some(ShareLink {
         host,
+        gist_owner: None,
         id,
         key,
         needs_passphrase,
@@ -490,6 +551,14 @@ mod tests {
         let lan = created.link_via("192.168.1.5:52123");
         assert_eq!(lan, format!("pvshare://192.168.1.5:52123/{}#p=1", created.id));
         assert!(!lan.contains("#k="));
+        let relay = created.link_via_gist("zjhasan13", "0123456789abcdef0123456789abcdef");
+        assert_eq!(
+            relay,
+            "pvshare://gist/zjhasan13/0123456789abcdef0123456789abcdef#p=1"
+        );
+        let parsed_relay = parse_link(&relay).unwrap();
+        assert!(parsed_relay.is_gist());
+        assert_eq!(parsed_relay.gist_owner.as_deref(), Some("zjhasan13"));
         let parsed = parse_link(&link).unwrap();
         assert!(parsed.needs_passphrase);
         assert!(parsed.key.is_none());
@@ -564,6 +633,7 @@ mod tests {
             parse_link("pvshare://id1#k=key1"),
             Some(ShareLink {
                 host: None,
+                gist_owner: None,
                 id: "id1".to_string(),
                 key: Some("key1".to_string()),
                 needs_passphrase: false,
@@ -573,6 +643,7 @@ mod tests {
             parse_link("pvshare://192.168.1.5:52199/id2#k=key2"),
             Some(ShareLink {
                 host: Some("192.168.1.5:52199".to_string()),
+                gist_owner: None,
                 id: "id2".to_string(),
                 key: Some("key2".to_string()),
                 needs_passphrase: false,
@@ -582,11 +653,24 @@ mod tests {
             parse_link("pvshare://id3#p=1"),
             Some(ShareLink {
                 host: None,
+                gist_owner: None,
                 id: "id3".to_string(),
                 key: None,
                 needs_passphrase: true,
             })
         );
+        let gist = parse_link("pvshare://gist/0123456789abcdef0123456789abcdef#k=key4")
+            .unwrap();
+        assert!(gist.is_gist());
+        assert_eq!(gist.id, "0123456789abcdef0123456789abcdef");
+        assert!(gist.gist_owner.is_none());
+        let gist = parse_link(
+            "pvshare://gist/zjhasan13/0123456789abcdef0123456789abcdef#k=key4",
+        )
+        .unwrap();
+        assert_eq!(gist.gist_owner.as_deref(), Some("zjhasan13"));
+        assert_eq!(gist.id, "0123456789abcdef0123456789abcdef");
+        assert!(parse_link("pvshare://gist/zjhasan13/nothex#k=key4").is_none());
         assert!(parse_link("pvshare://host:1/#k=k").is_none());
     }
 

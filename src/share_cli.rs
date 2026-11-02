@@ -19,7 +19,7 @@ pub fn share_cli(args: &[String]) -> i32 {
         Some("revoke") => revoke(&args[1..]),
         _ => {
             eprintln!("usage:");
-            eprintln!("  phantom_vault share create <title> [--ttl 24h] [--views 1] [--serve]");
+            eprintln!("  phantom_vault share create <title> [--ttl 24h] [--views 1] [--serve] [--relay gist] [--passphrase]");
             eprintln!("  phantom_vault share open <pvshare://...> [--file bundle.pvsh] [--json] [--import]");
             eprintln!("  phantom_vault share serve [--port N]");
             eprintln!("  phantom_vault share list");
@@ -71,6 +71,7 @@ fn create(args: &[String]) -> i32 {
     let mut serve_after = false;
     let mut json = false;
     let mut with_pass = false;
+    let mut relay_gist = false;
     let mut i = 0;
     while i < args.len() {
         match args[i].as_str() {
@@ -85,6 +86,20 @@ fn create(args: &[String]) -> i32 {
             "--serve" => {
                 serve_after = true;
                 i += 1;
+            }
+            "--relay" => {
+                match args.get(i + 1).map(String::as_str) {
+                    Some("gist") => relay_gist = true,
+                    Some(other) => {
+                        eprintln!("share create: unknown relay {other:?} (expected gist)");
+                        return 2;
+                    }
+                    None => {
+                        eprintln!("share create: --relay needs a value (gist)");
+                        return 2;
+                    }
+                }
+                i += 2;
             }
             "--passphrase" => {
                 with_pass = true;
@@ -112,6 +127,16 @@ fn create(args: &[String]) -> i32 {
         eprintln!("share create: bad --ttl (use e.g. 30m, 24h, 7d)");
         return 2;
     };
+    if relay_gist && serve_after {
+        eprintln!("share create: --relay gist and --serve are different transports; pick one");
+        return 2;
+    }
+    if relay_gist && views > 0 {
+        println!(
+            "share create: one-view is LAN-only; the gist relay cannot enforce it — using unlimited views."
+        );
+        views = 0;
+    }
     let Some(vault) = load_vault("Master password") else {
         return 1;
     };
@@ -154,11 +179,37 @@ fn create(args: &[String]) -> i32 {
             return 1;
         }
     };
+    let published = if relay_gist {
+        match crate::share_relay::publish_sync(&created.bundle) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                eprintln!("share create: {e}");
+                return 1;
+            }
+        }
+    } else {
+        None
+    };
+    let gist_id = published.as_ref().map(|p| p.gist_id.clone());
     if let Err(e) = share_store::save(&created) {
+        if let Some(gist) = gist_id.as_deref() {
+            let _ = crate::share_relay::delete_sync(gist);
+        }
         eprintln!("share create: {e}");
         return 1;
     }
-    let link = created.link();
+    if let Some(gist) = gist_id.as_deref() {
+        if let Err(e) = share_store::set_relay_gist(&created.id, gist) {
+            let _ = crate::share_relay::delete_sync(gist);
+            let _ = share_store::revoke(&created.id);
+            eprintln!("share create: {e}");
+            return 1;
+        }
+    }
+    let link = match published.as_ref() {
+        Some(p) => created.link_via_gist(&p.owner, &p.gist_id),
+        None => created.link(),
+    };
     let expires = created.expires_at;
     if json {
         println!(
@@ -170,17 +221,29 @@ fn create(args: &[String]) -> i32 {
                 "expires_at": expires,
                 "max_views": created.max_views,
                 "passphrase": created.passphrase,
+                "relay": gist_id.is_some(),
+                "gist": gist_id,
+                "gist_owner": published.as_ref().map(|p| p.owner.clone()),
             })
         );
     } else {
         println!("share id: {}", created.id);
-        println!("file link: {link}");
         println!(
-            "bundle: {}",
-            share_store::get(&created.id)
-                .map(|r| r.bundle_path.to_string_lossy().into_owned())
-                .unwrap_or_default()
+            "{} link: {link}",
+            if gist_id.is_some() {
+                "gist"
+            } else {
+                "file"
+            }
         );
+        if gist_id.is_none() {
+            println!(
+                "bundle: {}",
+                share_store::get(&created.id)
+                    .map(|r| r.bundle_path.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            );
+        }
         println!(
             "expires in {}h; max views: {}; passphrase: {}",
             (expires.saturating_sub(share::now_secs())) / 3600,
@@ -193,6 +256,11 @@ fn create(args: &[String]) -> i32 {
             );
         } else {
             println!("⚠️ the link fragment IS the key — send it over a channel you trust.");
+        }
+        if gist_id.is_some() {
+            println!(
+                "☁️ GitHub sees only ciphertext; it does not expire the gist — revoke when done. Not one-time."
+            );
         }
     }
     if serve_after {
@@ -375,16 +443,25 @@ fn open(args: &[String]) -> i32 {
             }
         },
         None => {
-            let Some(host) = parsed.host.as_deref() else {
+            if parsed.is_gist() {
+                match crate::share_relay::fetch_sync(parsed.gist_owner.as_deref(), &parsed.id) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("share open: {e}");
+                        return 1;
+                    }
+                }
+            } else if let Some(host) = parsed.host.as_deref() {
+                match fetch_bundle(&format!("http://{host}/{}", parsed.id)) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        eprintln!("share open: {e}");
+                        return 1;
+                    }
+                }
+            } else {
                 eprintln!("share open: this is a file link — pass --file <bundle.pvsh>");
                 return 2;
-            };
-            match fetch_bundle(&format!("http://{host}/{}", parsed.id)) {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("share open: {e}");
-                    return 1;
-                }
             }
         }
     };
@@ -464,12 +541,23 @@ fn list() -> i32 {
         return 0;
     }
     for r in items {
+        let expired = if r.expires_at <= share::now_secs() {
+            "  EXPIRED — revoke to delete any remote gist"
+        } else {
+            ""
+        };
         println!(
-            "{}  expires in {}s  views {}/{}",
+            "{}  expires in {}s  views {}/{}{}{}",
             r.id,
             r.expires_at.saturating_sub(share::now_secs()),
             r.views,
-            if r.max_views == 0 { "∞".to_string() } else { r.max_views.to_string() }
+            if r.max_views == 0 { "∞".to_string() } else { r.max_views.to_string() },
+            if r.relay_gist.is_some() {
+                "  relay:gist"
+            } else {
+                ""
+            },
+            expired
         );
     }
     0
@@ -480,6 +568,14 @@ fn revoke(args: &[String]) -> i32 {
         eprintln!("share revoke: missing id");
         return 2;
     };
+    if let Some(gist) = share_store::get(id).and_then(|r| r.relay_gist) {
+        match crate::share_relay::delete_sync(&gist) {
+            Ok(()) => println!("deleted relay gist {gist}"),
+            Err(e) => eprintln!(
+                "warning: relay gist {gist} was not deleted: {e} — delete it on GitHub manually"
+            ),
+        }
+    }
     match share_store::revoke(id) {
         Ok(()) => {
             println!("revoked {id}");

@@ -107,7 +107,7 @@ pub fn store_token(token: &str) -> Result<()> {
 /// Unseal the token into a zeroizing holder (never a plain `String` on
 /// the heap past this point — callers pass `&token` via deref coercion and
 /// the buffer wipes on drop).
-fn load_token() -> Result<Zeroizing<String>> {
+pub(crate) fn load_token() -> Result<Zeroizing<String>> {
     let blob =
         std::fs::read(TOKEN_FILE).map_err(|_| VaultError::Sync("sync not configured".into()))?;
     let secret = DpapiGuard::unprotect(&blob)?;

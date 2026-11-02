@@ -705,6 +705,7 @@ export component MainWindow inherits Window {
     in-out property <string> ls_preview: "";
     in-out property <bool> ls_ready: false;
     in-out property <bool> ls_pass_on: false;
+    in-out property <bool> ls_relay: false;
     in-out property <string> ls_pass: "";
     in-out property <string> ls_pass_confirm: "";
     in-out property <string> ls_pass_input: "";
@@ -1022,7 +1023,7 @@ export component MainWindow inherits Window {
     callback api_allow();
     callback api_deny();
     // A20: expiring shares.
-    callback login_share_create(string, string, string, bool, bool, string, string);
+    callback login_share_create(string, string, string, bool, bool, bool, string, string);
     callback login_share_open(string, string, string);
     callback login_share_add();
     callback login_share_revoke(string);
@@ -1701,22 +1702,25 @@ export component MainWindow inherits Window {
                     if root.api_status != "" : Text { text: root.api_status; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
                     FieldLabel { text: root.ui_lang == "bn" ? "সময়সীমাবদ্ধ শেয়ার (সেন্ড)" : "EXPIRING SHARES (SEND)"; }
-                    Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন) বা ফাইলে যায়; key শুধু link fragment-এ। TTL/one-view এই অ্যাপ enforce করে। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves) or a file; the key is only in the link fragment. TTL/one-view are enforced by this app. CLI equivalent: phantom_vault share ...."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন), ফাইল, বা GitHub secret gist (async) দিয়ে যায়; key শুধু link fragment-এ। LAN-এ TTL/one-view এই অ্যাপ enforce করে; gist-এ expiry best-effort। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves), a file, or a secret GitHub gist (async); the key is only in the link fragment. LAN TTL/one-view are enforced by this app; gist expiry is best-effort. CLI: phantom_vault share ...."; color: #5b6589; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; horizontal-stretch: 1; }
                     }
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
-                        LineEdit { placeholder-text: "Views (1, 0=∞)"; text <=> root.ls_views; width: 130px; height: 36px; }
-                        AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; } }
+                        LineEdit { placeholder-text: "Views (1, 0=∞)"; text <=> root.ls_views; width: 130px; height: 36px; enabled: !root.ls_relay; }
+                        AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; root.ls_relay = root.ls_serve ? false : root.ls_relay; } }
+                        AuraButton { label: root.ls_relay ? "Async gist: ON" : "Async gist: OFF"; primary: root.ls_relay; width: 140px; height: 34px; clicked => { root.ls_relay = !root.ls_relay; root.ls_serve = root.ls_relay ? false : root.ls_serve; } }
+                    }
+                    HorizontalLayout { spacing: 6px;
                         AuraButton { label: root.ls_pass_on ? "Passphrase: ON" : "Passphrase: OFF"; primary: root.ls_pass_on; width: 150px; height: 34px; clicked => { root.ls_pass_on = !root.ls_pass_on; } }
+                        Text { text: root.ls_relay ? "Secret gist — anyone with the link can fetch until you revoke; the link includes your GitHub login. Expiry is best-effort, not one-time." : ""; color: #5b6589; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
                     }
                     if root.ls_pass_on : HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: "Share passphrase (8+)"; input-type: password; text <=> root.ls_pass; height: 36px; horizontal-stretch: 1; }
                         LineEdit { placeholder-text: "Confirm passphrase"; input-type: password; text <=> root.ls_pass_confirm; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
                     }
-                    if !root.ls_pass_on : AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
+                    AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_relay, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
                     if root.ls_link != "" : Text { text: root.ls_link; color: #38e1ff; font-size: 11px; wrap: word-wrap; }
                     if root.ls_link != "" : Image { source: root.ls_qr; width: 150px; height: 150px; image-fit: contain; }
                     if root.ls_link != "" : AuraButton { label: "📋 Copy link"; width: 130px; height: 30px; clicked => { root.login_share_copy(); } }
