@@ -268,9 +268,9 @@ component PrimaryGradientAction inherits Rectangle {
     border-color: #d0bcff4d;
     drop-shadow-blur: 26px;
     drop-shadow-color: #7c3aed55;
-    HorizontalLayout { alignment: center; spacing: 10px;
-        Text { text: root.label; color: #ffffff; font-size: 15px; font-weight: 700; vertical-alignment: center; }
-        if root.shortcut != "" : Rectangle { height: 20px; border-radius: 4px; background: #00000055; border-width: 1px; border-color: #ffffff1f; HorizontalLayout { padding-left: 6px; padding-right: 6px; Text { text: root.shortcut; color: #e5e1e4; font-size: 10px; font-family: "Consolas"; vertical-alignment: center; } } }
+    Text { text: root.label; color: #ffffff; font-size: 15px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
+    if root.shortcut != "" : Rectangle { x: parent.width - 72px; y: (parent.height - 20px) / 2; width: 56px; height: 20px; border-radius: 4px; background: #00000055; border-width: 1px; border-color: #ffffff1f;
+        Text { text: root.shortcut; color: #e5e1e4; font-size: 10px; font-family: "Consolas"; horizontal-alignment: center; vertical-alignment: center; }
     }
     TouchArea { mouse-cursor: pointer; clicked => { if root.enabled { root.clicked(); } } }
 }
@@ -1249,11 +1249,8 @@ export component MainWindow inherits Window {
         for gx in 54 : Rectangle { x: gx * 38px; y: 0; width: 1px; height: parent.height; background: #ffffff07; }
         for gy in 28 : Rectangle { x: 0; y: gy * 38px; width: parent.width; height: 1px; background: #ffffff07; }
 
-        // Ambient light: layered translucent circles stand in for radial gradients.
-        Rectangle { x: parent.width / 2 - 360px; y: -280px; width: 720px; height: 720px; border-radius: 360px; background: #a078ff0b; }
-        Rectangle { x: parent.width / 2 - 250px; y: -180px; width: 500px; height: 500px; border-radius: 250px; background: #a078ff0c; }
-        Rectangle { x: -190px; y: parent.height - 420px; width: 420px; height: 420px; border-radius: 210px; background: #4edea308; }
-        Rectangle { x: parent.width - 300px; y: parent.height - 380px; width: 380px; height: 380px; border-radius: 190px; background: #4edea308; }
+        // Ambient light: one very soft top glow (no hard-edged circles).
+        Rectangle { x: parent.width / 2 - 160px; y: 0px; width: 320px; height: 220px; border-radius: 160px; background: #a078ff08; drop-shadow-blur: 180px; drop-shadow-color: #a078ff22; }
 
         VerticalLayout { spacing: 0px;
             // ---- live telemetry strip
@@ -1346,7 +1343,6 @@ export component MainWindow inherits Window {
                                     }
                                 }
                                 if !root.show_totp_step : VerticalLayout { spacing: 0px;
-                                    FocusScope { width: 0; height: 0; init => { password_input.focus(); } }
                                     // account identifier (real local vault file, never a fake account)
                                     Text { text: "VAULT ACCOUNT IDENTIFIER"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; }
                                     Rectangle { height: 5px; }
@@ -1358,8 +1354,9 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                     Rectangle { height: 10px; }
-                                    // master passphrase
-                                    VerticalLayout { spacing: 0px; visible: root.unlock_tab == 0;
+                                    // master passphrase (conditional: hidden blocks must not reserve space)
+                                    if root.unlock_tab == 0 : VerticalLayout { spacing: 0px;
+                                        FocusScope { width: 0; height: 0; init => { password_input.focus(); } }
                                         HorizontalLayout {
                                             Text { text: "MASTER PASSPHRASE"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "Consolas"; letter-spacing: 1px; vertical-alignment: center; }
                                             Rectangle { horizontal-stretch: 1; }
@@ -1367,8 +1364,9 @@ export component MainWindow inherits Window {
                                         }
                                         Rectangle { height: 5px; }
                                         Rectangle { height: 44px;
-                                            password_input := LineEdit { x: 0; y: 0; width: parent.width - 42px; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "Consolas"; edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
-                                            TouchArea { x: parent.width - 40px; y: 6px; width: 32px; height: 32px; mouse-cursor: pointer; clicked => { root.show_master = !root.show_master; } Text { text: root.show_master ? "🙈" : "👁"; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; } }
+                                            password_input := LineEdit { x: 0; y: 0; width: parent.width; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "Consolas"; edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
+                                            Rectangle { x: parent.width - 38px; y: 6px; width: 32px; height: 32px; border-radius: 8px; background: #111116; }
+                                            TouchArea { x: parent.width - 38px; y: 6px; width: 32px; height: 32px; mouse-cursor: pointer; clicked => { root.show_master = !root.show_master; } Text { text: root.show_master ? "🙈" : "👁"; font-size: 15px; horizontal-alignment: center; vertical-alignment: center; } }
                                         }
                                         Rectangle { height: 8px; }
                                         // live entropy panel (real estimate, real KDF params)
