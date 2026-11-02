@@ -108,7 +108,7 @@ cd phantom_vault
 
 cargo build --release            # target\release\phantom_vault.exe
 cargo clippy --all-targets       # lint gate
-cargo test                       # 540 passed / 2 ignored + 4 pv_sign tests at 0.4.1
+cargo test                       # 546 passed / 2 ignored at 0.4.1
 cargo test --manifest-path tools\pv-sign\Cargo.toml   # 4 signer tests
 
 npm install                      # jsdom harness for the extension
