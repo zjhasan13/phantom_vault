@@ -4,22 +4,24 @@ Purpose: a **one-file ground truth** of every UI element we ship today, so that 
 Slint redesign we can tick each line and prove nothing was lost and everything the mockup
 promises is either implemented or deliberately rejected.
 
-- Source of truth for "now": `ui/appwindow.slint` (2903 lines), Rust handlers in `src/main.rs`,
+- Source of truth for "now": `ui/appwindow.slint` (3142 lines), Rust handlers in `src/main.rs`,
   `rules.md` (shipped baseline), `browser_extension/*`.
 - Source of truth for "design": `expected ui/stitch_phantom_vault_desktop_ui/`
-  (13 screens, `code.html` + `screen.png`; 3 PNGs are 28-byte placeholders → HTML only),
-  `phantom_vault/DESIGN.md` (Inter, M3-ish purple `#d0bcff`, surface `#131315`).
+  (13 screens, `code.html` + `screen.png`; the 3 loose PNG folders are browser reference shots,
+  not screens), `phantom_vault/DESIGN.md` (Inter, M3-ish purple `#d0bcff`, surface `#131315`).
 - Legend: **KEEP** = must survive restyle · **MAP** = design equivalent exists · **NEW** = design
   asks for something we don't have · **REJECT** = mockup label we will not fake (see §15).
 - Rule: property/callback names in `appwindow.slint` are a frozen contract with `src/main.rs`.
   A restyle may move visuals; it may **not** rename these.
 
-Measured baseline: 546 hard-coded hex colours, `PhantomTheme` referenced 0 times (`:110-124`),
-190 callbacks, 8 components, 3 windows.
+Measured baseline (after A20/A24): 3142 lines, **624** hard-coded hex colours,
+`PhantomTheme` defined once (`:123`) but referenced nowhere else; 210 callbacks,
+8 components, 3 windows; no bundled fonts. Tests: `cargo test` **554 passed / 3 ignored**,
+`npm test` **133/133**.
 
-Caveat: `expected ui/` is **untracked** in git — the design source is not in the repo history.
-The 3 loose PNGs (`bpi…`, `chrome_…`, `all_vault_items` placeholder) are not referenced by any
-folder; treat §14 as the authoritative list of the 13 screens.
+Caveat: `expected ui/` is **tracked in git** now. The 3 loose PNGs (`bpi…`, `chrome_…`,
+`all_vault_items` placeholder) are not referenced by any folder; §14/§30 are the authoritative
+screen lists.
 
 ---
 
@@ -329,11 +331,11 @@ Windows Hello (no YubiKey code); `SLIP-39/Reed-Solomon` → **GF(2^8) Shamir + E
 2. Every **MAP** row matches the mockup's region/order; deviations listed in the PR description.
 3. Every **NEW** row is either implemented or explicitly deferred with a ticket.
 4. Every **REJECT** label replaced by our real term (grep the UI strings for the banned list).
-5. No `PhantomTheme.`-dead-code regression: either all colours flow through one token global or
-   the count of raw hex literals drops and stays down (record the number in the PR).
+5. Every colour flows through one token global (`PhantomTheme` already exists at
+   `:123` but is not used by components); raw hex count must drop from 624 and stay down.
 6. Secrets still never enter row models (`import_preview_rows`, `AuthView` rules at `:63-91`).
 7. Two-tap confirms, disabled states, and EN/BN lock strings unchanged.
-8. `cargo test --release` count ≥ baseline (468) and `npm test` 79/79.
+8. `cargo test` count ≥ baseline (554 passed / 3 ignored) and `npm test` 133/133.
 9. Window works at min 960×620 (design was drawn on 1280×1024).
 10. Extension: lock card, PIN overlay, never-suggest, health icons, fill, save still work.
 
@@ -345,7 +347,7 @@ Windows Hello (no YubiKey code); `SLIP-39/Reed-Solomon` → **GF(2^8) Shamir + E
 4. Anything < 4/5 either gets fixed or gets a line in §15 explaining why not.
 
 
-## 18. Design tokens (adopt once, then delete 546 literals)
+## 18. Design tokens (adopt once, then delete 624 literals)
 
 **The design doc contradicts itself** — frontmatter is generated Material-3, the prose describes a
 different zinc/violet palette. Decide once and record it here; screenshots follow the frontmatter.
@@ -406,10 +408,13 @@ before `MainWindow::new()`), with `Path` fallback for the 10 security-critical m
 
 ## 21. 13-screen readiness
 
+> Conversion details, Slint capability matrix and per-screen effort are in **§30** (2026-11).
+> This table is the feature-readiness view; §30 is the implementation plan.
+
 | Screen (folder) | Data/feature today | Missing for design | Effort |
 |---|---|---|---|
-| `all_vault_items` (png placeholder) | list/detail/bulk/trash | counters, strength %, kebab, chips | M |
-| `phantom_vault_vault_browser_2.0` (png placeholder) | same | same | M |
+| `all_vault_items` (HTML + screen) | list/detail/bulk/trash | counters, strength %, kebab, chips | M |
+| `phantom_vault_vault_browser_2.0` (HTML + screen) | same | same | M |
 | `phantom_vault_2fa_hub_2.0` (1280×1024) | TOTP engine, grouping, passkeys, GA export, dup-detect, drift offset | KPI strip, filters/sort, per-account params, footer status | M |
 | `settings_dev_center` (938×1600) | all 18 cards functional | 7-section IA, sub-nav, token sweep, honesty rewrites | L |
 | `migration_wizard_vault_importer` | any-file import, dry-run, merge modes, undo | 4-step stepper, source password (1PUX/KDBX), progress, manifest columns | M |
@@ -420,7 +425,7 @@ before `MainWindow::new()`), with `Path` fallback for the 10 security-critical m
 | `phantom_vault_save_password_prompt` | minimal save in extension | folder/type/TOTP fields, defer, never-domain, edit-first | M |
 | `phantom_vault_browser_extension_hud_2.0` | popup (Vault/Stats/Settings), lock, PIN, generator | tab restructure, KPI, health %, footer | M |
 | `phantom_vault_browser_extension_hud_3.0_ultra` (1600×1280) | same as above | second layout sharing components | M |
-| `phantom_vault_in_page_autofill_multi_2fa_dropdown` (png placeholder) | `showDrop` single list, OTP fill | multi-account/2FA expand, keyboard nav, badges | S–M |
+| `phantom_vault_in_page_autofill_multi_2fa_dropdown` (HTML + screen) | `showDrop` single list, OTP fill | multi-account/2FA expand, keyboard nav, badges | S–M |
 
 3 unreferenced PNGs (`bpi6n3ifbr` 608×749, `chrome_2kq9l2jhdt` 1600×749, `chrome_pesstwstdb`
 1600×749) are browser reference shots, not screens — excluded from scope.
@@ -429,7 +434,7 @@ before `MainWindow::new()`), with `Path` fallback for the 10 security-critical m
 
 | Risk | Impact | Mitigation |
 |---|---|---|
-| 546 literals + dead `PhantomTheme` | every restyle edit touches raw hex | introduce token global first, sweep in one commit, add a grep gate to CI |
+| 624 literals + unused `PhantomTheme` | every restyle edit touches raw hex | wire the existing token global (`:123`), sweep in one commit, add a grep gate to CI |
 | Software renderer + many shadows/rings | frame drops on 1280 wide lists | hairline borders instead of shadows; cap one glow per view |
 | Custom titlebar (`no-frame`) | window drag/snap/a11y regressions on Windows | keep OS frame for v1; revisit with explicit win32 hit-test |
 | `LineEdit`/`ComboBox`/`CheckBox` skinning | focus ring, IME, RTL, a11y names | wrap, don't reimplement; test keyboard-only path |
@@ -760,3 +765,110 @@ UI-only callbacks (handled entirely inside Slint, or currently unused): `clicked
 
 Restyle rule: you may change body/layout/colors freely, but a property/callback rename is a
 breaking API change and must be a separate, test-covered commit.
+
+---
+
+## 30. HTML → Slint conversion plan (2026-11)
+
+This is the actionable table for the `expected ui/` mockups. It answers one question:
+**can this HTML layout be built in Slint, and what does it cost?**
+
+### 30.0 Verdict
+
+**Yes, the layouts are achievable in Slint — but this is a manual re-authoring, not an
+HTML import.** Slint has no HTML/CSS parser, no Tailwind, and no DOM. The mockups are static
+Tailwind markup (many buttons have no behaviour), so the work is to rebuild the same regions
+with real Slint components and re-bind the existing callbacks.
+
+Realistic target: **~85–90% visual parity** (spacing, colour, type, borders, 3-pane structure,
+cards, meters) with deliberate deviations recorded in §15. The remaining 10–15% is web-only
+effects and fabricated labels, not missing layouts.
+
+### 30.1 Slint capability matrix (what maps cleanly vs what needs a substitute)
+
+| HTML/CSS technique | Slint equivalent | Feasible? | Caveat |
+|---|---|---|---|
+| Flexbox / CSS grid | `HorizontalLayout` / `VerticalLayout` / `GridLayout` | ✅ | Manual sizing; no `auto-fill`; responsive columns need width branches |
+| 3-pane shell, 5/7 split | `HorizontalLayout` + fixed/preferred widths + `horizontal-stretch` | ✅ | Current shell already does this |
+| CSS variables | `global PhantomTheme` (`ui/appwindow.slint:123`) | ✅ | Must sweep 624 raw hex literals into it |
+| Media queries | `if root.width < 1024px : ...` branches | ⚠️ | Manual breakpoints; no CSS cascade |
+| `:hover` / `:focus` / `:active` | `TouchArea.has-hover`, `LineEdit` focus, explicit state props | ✅ | More verbose; no pseudo-classes |
+| CSS transitions/keyframes | `animate { duration: ...; easing: ...; }` | ✅ | Animate colour/opacity/position only; avoid per-frame layout |
+| Linear/radial gradients | `@linear-gradient(...)`, `@radial-gradient(...)` | ✅ | Supported by the software renderer |
+| `box-shadow` | `drop-shadow-*` + `inner-shadow-*` | ⚠️ | One shadow set per element; stack extra `Rectangle`s for multi-layer glows |
+| `backdrop-filter: blur` | opaque overlay + 1px gradient ring | ❌ | Not supported by the software renderer |
+| CSS `filter: blur()` | `drop-shadow-blur` only | ❌ | No arbitrary filters |
+| `overflow: hidden/ellipsis` | `clip: true`, `overflow: elide` | ✅ | Already used |
+| `position: fixed/sticky` | root-level overlay declared last; header outside `ScrollView` | ✅ | No `z-index`; declaration order = paint order |
+| CSS tables | `GridLayout` | ✅ | Manual column widths |
+| Material Symbols ligatures | icon TTF codepoints or `Path`/SVG `Image` | ⚠️ | Ligature names do not work; use codepoints or vector paths |
+| Inter / JetBrains Mono | `slint::register_font_from_path` + `font-family` | ✅ | Fonts are not bundled today; no ligatures/tabular-nums control |
+| `<kbd>`, badges, pills | small `Rectangle` + `Text` components | ✅ | Reuse atoms; no HTML semantics |
+| Drag/drop file zone | `DropArea` (verify) or Rust `rfd` picker | ⚠️ | Current app already uses `rfd`; a dropzone is additive |
+| Native file dialog / tray / window frame | Rust (`rfd`, win32) / OS frame | ✅ | Not Slint; keep native |
+| Accessibility roles | `accessible-role` / `accessible-label` | ✅ | 0 attributes today; must be added per control |
+| CSS `content`/pseudo-elements | explicit child `Text`/`Rectangle` | ✅ | More markup |
+
+### 30.2 Screen-by-screen conversion table
+
+The 13 folders are the source of truth. `Surface` matters: **Slint** screens are desktop app;
+**Extension** screens are HTML/CSS inside `browser_extension/` and are *not* Slint work.
+
+| # | Expected folder (`code.html`) | Surface | Current Slint region | Conversion | Data/model gaps | Effort | Priority |
+|---|---|---|---|---|---|---|---|
+| 1 | `all_vault_items` | **Slint** | Vault 3-col `ui/appwindow.slint:2093+` | Restyle list/detail; add top filter tab strip, select action bar, 5/7 split, row badges/strength %, always-visible kebab | row `strength_pct`, `last_used`, `tags`, `created_at`; "API Keys" has no kind | **M** (5–8 d) | **P0** |
+| 2 | `phantom_vault_vault_browser_2.0` | **Slint** | same vault shell/detail | Merge with #1 (same layout, alternate density); detail audit tiles, target URL card, decryption trail | same as #1 + audit-event read API + `expires_at` | **M** (in #1) | **P0** |
+| 3 | `phantom_vault_2fa_hub_2.0` | **Slint** | 2FA hub `:1367-1505` | Restyle cards to ~190px; KPI strip, filter chips/sort, per-account params, footer status | KPI computed; tags/criticality; per-account params already stored | **M** (4–6 d) | **P1** |
+| 4 | `settings_dev_center` | **Slint** | Settings single scroll `:1552-1866` | 7-section IA + sub-nav; token sweep; card restyle | No new data; grouping/scroll anchors only | **L** (6–9 d) | **P1** |
+| 5 | `password_passphrase_generator` | **Slint** | Generator panel `:2169` / `:231` | Studio layout; passphrase/diceware surface; quality meter; history chips | diceware exists; history exists; surface them | **M** (3–4 d) | **P1** |
+| 6 | `migration_wizard_vault_importer` | **Slint** | Import `:1528-1551` | 4-step stepper; manifest columns; progress bar; provider tiles | import progress events; source password for encrypted exports is a **feature gap** (REJECT until supported) | **M** (3–5 d) | **P2** |
+| 7 | `crypto_envelope_secure_send` | **Slint** | Secure Send card `:1673-1688` | Envelope studio; TTL/packet/read-burn panels; Shamir split narrative | envelope studio + Shamir split of packet are new features, not restyle | **L** (5–7 d) | **P2** |
+| 8 | `emergency_kit_shamir_recovery` | **Slint** | Recovery shards `:2620` | Shard grid, kit card, drill status, optional shard QR | QR-for-shards absent; grid is UI-only | **M** (3–5 d) | **P2** |
+| 9 | `forensic_audit_log_duress_mode` | **Slint** | Access log modal `:2548` + duress settings | Page/timeline view, filters, export, duress/decoy panels | access-log read API/timeline; decoy content generator absent (A18 has decoy) | **M** (4–6 d) | **P2** |
+| 10 | `phantom_vault_browser_extension_hud_2.0` | **Extension** | `popup.html` | Restyle popup tabs/KPI/footer | folder/type/TOTP/defer options; not Slint | **M** (3–4 d) | P1 ext |
+| 11 | `phantom_vault_browser_extension_hud_3.0_ultra` | **Extension** | same popup | Second responsive layout sharing components | same | **M** (2–3 d) | P2 ext |
+| 12 | `phantom_vault_save_password_prompt` | **Extension** | `content.js` save toast | Rich prompt: folder/type/TOTP/defer/never/edit-first | new fields/defer state; not Slint | **M** (2–3 d) | P1 ext |
+| 13 | `phantom_vault_in_page_autofill_multi_2fa_dropdown` | **Extension** | `content.js:1528` | Multi-account/2FA expansion, keyboard nav, badges | model supports multiple TOTP; UI only | **S–M** (2–3 d) | P1 ext |
+
+Three loose PNGs (`bpi6n3ifbr`, `chrome_2kq9l2jhdt`, `chrome_pesstwstdb`) are browser
+reference shots, not screens; excluded.
+
+### 30.3 Data/model gaps that block visual parity
+
+| Design element | Model today | Decision |
+|---|---|---|
+| Row strength `96%` / `35%` | only detail strength | derive in `vault_to_items` and add to row model |
+| `Used 12m ago` | no `last_used` | add or label “changed … ago” from `last_changed` |
+| `Expiring in 4d` | no `expires_at` | add or omit the badge |
+| Tags `PROD/INFRA/CRITICAL` | no `tags`/criticality | add `tags: Vec<String>` or drop the chips |
+| `Added …` | no `created_at` on credentials | add or omit |
+| Batch Tag / Export selected | no tag model / selection export | add tag action; export-selected is a handler |
+| Pwned verification tile | password HIBP check exists | surface real result; no email lookup (A28) |
+| `TouchID / YubiKey / TPM / Enclave` | Windows Hello + DPAPI; FIDO2 is A21 | **REJECT**; show real backend |
+| `AES-256-GCM / ChaCha20` | XChaCha20-Poly1305 | **REJECT**; show real cipher |
+| `Realtime index synced` | no index metric | show real sync/status, not a fake badge |
+| `0ms local engine` | no latency metric | show version/heartbeat or omit |
+| Decryption audit trail | access log exists | add read API/timeline for the detail panel |
+
+### 30.4 Staged conversion plan
+
+| Phase | Scope | Depends on | Estimate |
+|---|---|---|---|
+| **P0 — tokens/fonts/shell** | Wire `PhantomTheme`, sweep 624 hex, bundle Inter + JetBrains Mono + icon codepoints, restyle sidebar/top bar/filter/select bar, list/detail (#1–2) | font files, icon set, model fields for row badges | 2–3 wk |
+| **P1 — core screens** | 2FA hub (#3), Settings IA (#4), Generator (#5) | P0 tokens/atoms | 2–3 wk |
+| **P2 — specialist screens** | Migration (#6), Secure Send (#7), Emergency Kit (#8), Forensic/Duress (#9) | P0/P1; some new features (envelope, decoy generator) | 3–4 wk |
+| **Extension track** | HUD 2.0/3.0, save prompt, in-page dropdown (#10–13) — HTML/CSS, not Slint | popup/content refactor | 2–3 wk |
+
+Total for the **desktop Slint restyle**: ~7–10 weeks, excluding backend model additions.
+If only the screenshot layout (vault list/detail) is wanted: **~1.5–2 weeks** after tokens/fonts.
+
+### 30.5 Acceptance for each converted screen
+
+1. Region/order matches the mockup at 1280×1024; deviations are listed in the PR.
+2. All **KEEP** callbacks still fire; no property/callback renames (Appendix B).
+3. Real labels replace the **REJECT** list (§15); no fake TPM/YubiKey/AES/0ms claims.
+4. Empty/busy/error states exist; no skeleton-only screen.
+5. Keyboard path (Tab/Enter/Esc, Ctrl+F, list arrows) still works.
+6. Contrast checked after token adoption; `accessibility` labels added.
+7. `cargo test` ≥ 554 passed / 3 ignored and `npm test` 133/133 after every slice.
+8. Window works at 960×620 (design canvas is larger).
