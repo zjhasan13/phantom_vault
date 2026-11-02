@@ -243,9 +243,10 @@ installer.iss          Inno Setup script
 cargo test                                  # Rust unit + integration tests
 cargo clippy --all-targets -- -D warnings   # lint
 npm test                                    # background, content, domain, popup
+npm run test:tokens                         # design/tokens.json -> Slint + extension CSS
 ```
 
-Current baselines: **481 Rust tests passed / 1 ignored**, **124 JS tests passing**.
+Current baselines: **554 Rust tests passed / 3 ignored**, **133 JS tests passing**.
 Tests are the acceptance criteria for every change; a red gate is never committed.
 
 ---
@@ -265,6 +266,8 @@ Tests are the acceptance criteria for every change; a red gate is never committe
 | [`docs/A23_LOCAL_API.md`](docs/A23_LOCAL_API.md) | Loopback API + `pv` CLI: endpoints, approval flow, token, threat model |
 | [`docs/A20_SEND.md`](docs/A20_SEND.md) | Expiring share: bundle crypto (`PVSH1`/`PVSH2`), link-fragment key, optional passphrase, QR, LAN/file/gist transport, honest limits |
 | [`docs/A24_ATTACHMENTS.md`](docs/A24_ATTACHMENTS.md) | Chunked, separately encrypted attachments: `PVAB1` sidecar format, 50 MiB large-file path, key hierarchy, export/sync plan |
+| [`docs/UI_TOKENS.md`](docs/UI_TOKENS.md) | UI token source (`design/tokens.json`), Slint/CSS wiring, font/icon policy, drift gate |
+| [`docs/UI_PARITY_MAP.md`](docs/UI_PARITY_MAP.md) | Expected mockups ⇄ Slint/extension parity map, HTML→Slint conversion plan, data gaps, effort |
 | [`docs/A26_BN.md`](docs/A26_BN.md) | Bengali UI pilot: what is translated, persistence, how to extend, honest limits |
 | [`rules.md`](rules.md) | Architecture invariants and privacy rules |
 | [`SECURITY.md`](SECURITY.md) | How to report a vulnerability |

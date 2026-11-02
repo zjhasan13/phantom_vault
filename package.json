@@ -4,7 +4,8 @@
   "description": "Dev-only harness for the browser-extension JS (jsdom). Not shipped.",
   "type": "module",
   "scripts": {
-    "test": "node --test tests/js/background.test.mjs tests/js/content.test.mjs tests/js/domain.test.mjs tests/js/popup.test.mjs"
+    "test": "node --test tests/js/background.test.mjs tests/js/content.test.mjs tests/js/domain.test.mjs tests/js/popup.test.mjs",
+    "test:tokens": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_ui_tokens.ps1"
   },
   "devDependencies": {
     "jsdom": "^24.0.0"

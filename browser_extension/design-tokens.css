@@ -1,0 +1,57 @@
+/* PhantomVault extension design tokens.
+ * Source of truth: design/tokens.json (do not hand-edit values here).
+ * This file is intentionally NOT linked from popup.html yet: the HUD 2.0
+ * restyle will import it, so existing 0.4.1 popup layout/colors stay stable
+ * until that slice lands. Keep the --pv-* names stable.
+ */
+:root {
+  --pv-canvas: #131315;
+  --pv-surface-lowest: #0e0e10;
+  --pv-surface-low: #1c1b1d;
+  --pv-surface: #201f22;
+  --pv-surface-high: #2a2a2c;
+  --pv-surface-highest: #353437;
+  --pv-border: #494454;
+  --pv-border-strong: #958ea0;
+  --pv-text: #e5e1e4;
+  --pv-text-muted: #cbc3d7;
+  --pv-text-dim: #958ea0;
+  --pv-primary: #d0bcff;
+  --pv-primary-container: #a078ff;
+  --pv-on-primary: #3c0091;
+  --pv-secondary: #cebdff;
+  --pv-on-secondary: #381385;
+  --pv-success: #4edea3;
+  --pv-on-success: #003824;
+  --pv-error: #ffb4ab;
+  --pv-on-error: #690005;
+  --pv-warning: #f59e0b;
+  --pv-sans: Inter, "Segoe UI", sans-serif;
+  --pv-mono: "JetBrains Mono", "Cascadia Mono", Consolas, monospace;
+  --pv-radius-sm: 2px;
+  --pv-radius: 4px;
+  --pv-radius-md: 6px;
+  --pv-radius-lg: 8px;
+  --pv-radius-xl: 12px;
+  --pv-space-xs: 4px;
+  --pv-space-sm: 8px;
+  --pv-space-md: 12px;
+  --pv-space-lg: 20px;
+  --pv-space-xl: 32px;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --pv-canvas: #eef1f8;
+    --pv-surface-lowest: #ffffff;
+    --pv-surface-low: #f5f7fb;
+    --pv-surface: #ffffff;
+    --pv-surface-high: #e2e8f2;
+    --pv-surface-highest: #d8e0ec;
+    --pv-border: #cfd8e6;
+    --pv-border-strong: #8a97ad;
+    --pv-text: #16213a;
+    --pv-text-muted: #51617d;
+    --pv-text-dim: #8a97ad;
+  }
+}

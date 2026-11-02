@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: A24d (attachment migration + P2P sidecar sync + streaming), after A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -152,6 +152,16 @@
   (includes an ignored 50 MiB roundtrip); `npm test` **133/133**. No new
   dependencies; app size impact is code-only. Manual QA still: 50 MiB `.pvx`
   export/import, lock mid-migration, disk-full/antivirus, 100%/125% layout.
+
+- **UI token foundation (this batch):** `design/tokens.json` is now the single
+  source for the frontmatter palette/type/radius/spacing; `ui/appwindow.slint`
+  `PhantomTheme` carries canonical tokens + compatibility aliases, and
+  `browser_extension/design-tokens.css` carries the `--pv-*` mirror (not linked
+  yet). `scripts/check_ui_tokens.ps1` / `npm run test:tokens` fail on drift.
+  No component was restyled yet and `PhantomTheme` is still unused by call
+  sites, so there is **no visual change**; 611 component hex literals remain
+  for the P0 sweep. Font/icon bundling is deferred for app-size reasons
+  (`docs/UI_TOKENS.md`). See `docs/UI_PARITY_MAP.md` §30 for the 13-screen plan.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte

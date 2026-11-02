@@ -119,21 +119,49 @@ struct SendView {
     detail: string,
 }
 
-// --- Phantom palette (single source of truth) ---
+// --- Phantom palette: generated source is design/tokens.json ---
+// Do not add new raw hex values here without updating that file and running
+// scripts/check_ui_tokens.ps1. P0 will sweep components onto these tokens.
 global PhantomTheme {
-    in-out property <color> void: #080c14;
-    in-out property <color> abyss: #0b1226;
-    in-out property <color> panel: #101834;
-    in-out property <color> card: #131d3d;
-    in-out property <color> edge: #26315c;
-    in-out property <color> aura: #8b7cf6;
-    in-out property <color> pulse: #38e1ff;
-    in-out property <color> ink: #eef1ff;
-    in-out property <color> mist: #8e99c0;
-    in-out property <color> dim: #5b6589;
-    in-out property <color> good: #34d399;
-    in-out property <color> warn: #fbbf24;
-    in-out property <color> bad: #fb7185;
+    // Design tokens (frontmatter palette, see docs/UI_PARITY_MAP.md §18).
+    in-out property <color> canvas: #131315;
+    in-out property <color> surface-lowest: #0e0e10;
+    in-out property <color> surface-low: #1c1b1d;
+    in-out property <color> surface: #201f22;
+    in-out property <color> surface-high: #2a2a2c;
+    in-out property <color> surface-highest: #353437;
+    in-out property <color> border: #494454;
+    in-out property <color> border-strong: #958ea0;
+    in-out property <color> text: #e5e1e4;
+    in-out property <color> text-muted: #cbc3d7;
+    in-out property <color> text-dim: #958ea0;
+    in-out property <color> primary: #d0bcff;
+    in-out property <color> primary-container: #a078ff;
+    in-out property <color> on-primary: #3c0091;
+    in-out property <color> secondary: #cebdff;
+    in-out property <color> on-secondary: #381385;
+    in-out property <color> success: #4edea3;
+    in-out property <color> on-success: #003824;
+    in-out property <color> error: #ffb4ab;
+    in-out property <color> on-error: #690005;
+    in-out property <color> warning: #f59e0b;
+
+    // Compatibility aliases used by the current 624 raw-hex call sites.
+    // They intentionally point at the new semantic tokens so a later sweep
+    // can replace names without a second palette decision.
+    in-out property <color> void: #131315;
+    in-out property <color> abyss: #1c1b1d;
+    in-out property <color> panel: #201f22;
+    in-out property <color> card: #2a2a2c;
+    in-out property <color> edge: #494454;
+    in-out property <color> aura: #d0bcff;
+    in-out property <color> pulse: #cebdff;
+    in-out property <color> ink: #e5e1e4;
+    in-out property <color> mist: #cbc3d7;
+    in-out property <color> dim: #958ea0;
+    in-out property <color> good: #4edea3;
+    in-out property <color> warn: #f59e0b;
+    in-out property <color> bad: #ffb4ab;
 }
 
 // --- Small reusable atoms (pure visual, no logic) ---
