@@ -2810,10 +2810,10 @@ fn sync_folders_to_ui(vault: &Vault, ui: &MainWindow) {
 #[allow(clippy::too_many_arguments)]
 /// Real passkey↔login link: a stored resident passkey whose RP id matches one
 /// of the login's URL hosts. Derived, not a fabricated schema field.
-fn passkey_for_urls(
-    passkeys: &[crate::models::PasskeyItem],
+fn matching_passkey<'a>(
+    passkeys: &'a [crate::models::PasskeyItem],
     urls: &[crate::models::LoginUrl],
-) -> bool {
+) -> Option<&'a crate::models::PasskeyItem> {
     fn host(url: &str) -> Option<String> {
         let s = url.trim();
         let s = s
@@ -2834,10 +2834,14 @@ fn passkey_for_urls(
         }
     }
     let hosts: Vec<String> = urls.iter().filter_map(|u| host(u.url())).collect();
-    passkeys.iter().any(|p| {
+    passkeys.iter().find(|p| {
         let rp = p.rp_id.trim().to_lowercase();
         !rp.is_empty() && hosts.iter().any(|h| *h == rp || h.ends_with(&format!(".{rp}")))
     })
+}
+
+fn passkey_for_urls(passkeys: &[crate::models::PasskeyItem], urls: &[crate::models::LoginUrl]) -> bool {
+    matching_passkey(passkeys, urls).is_some()
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -10695,6 +10699,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_d_meta_line(format!("ID: {}", id.chars().take(12).collect::<String>()).into());
         ui.set_d_tags(String::new().into());
         ui.set_d_url_rule(String::new().into());
+        ui.set_d_pk_rp(String::new().into());
+        ui.set_d_pk_user(String::new().into());
+        ui.set_d_pk_id(String::new().into());
         ui.set_d_audit_text(
             security::access_log::recent_filtered(3, false)
                 .join("\n")
@@ -10741,6 +10748,18 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     .unwrap_or("")
                     .into(),
             );
+            if let Some(pk) = matching_passkey(&vault.passkeys, &c.urls) {
+                ui.set_d_pk_rp(pk.rp_id.clone().into());
+                ui.set_d_pk_user(pk.user_name.clone().into());
+                ui.set_d_pk_id(
+                    pk.credential_id
+                        .iter()
+                        .take(8)
+                        .map(|b| format!("{b:02x}"))
+                        .collect::<String>()
+                        .into(),
+                );
+            }
             ui.set_d_user(c.username.clone().into());
             ui.set_d_secret(c.password.clone().into());
             ui.set_d_meta(String::new().into());

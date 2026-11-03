@@ -683,6 +683,9 @@ export component MainWindow inherits Window {
     in-out property <string> d_meta_line: "";
     in-out property <string> d_tags: "";
     in-out property <string> d_url_rule: "";
+    in-out property <string> d_pk_rp: "";
+    in-out property <string> d_pk_user: "";
+    in-out property <string> d_pk_id: "";
     // Per-password strength meter (level 0..3 fraction + one-line label).
     in-out property <float> d_pw_strength: 0.0;
     in-out property <string> d_pw_strength_label: "";
@@ -2557,6 +2560,13 @@ export component MainWindow inherits Window {
                         }
                         // Embedded / standalone 2FA live card
                         if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #4edea355; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
+                        if root.d_pk_rp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 4px;
+                            Text { text: "PASSKEY (WebAuthn)"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                            Text { text: "RP: " + root.d_pk_rp; color: PhantomTheme.primary; font-size: 12px; font-family: "JetBrains Mono"; overflow: elide; }
+                            Text { text: "User: " + root.d_pk_user; color: PhantomTheme.text-muted; font-size: 11px; font-family: "JetBrains Mono"; overflow: elide; }
+                            Text { text: "Credential: " + root.d_pk_id + "…"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
+                            Text { text: "Stored locally · no assertion metadata recorded"; color: PhantomTheme.text-dim; font-size: 9px; }
+                        }}
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: root.ui_lang == "bn" ? "অনুমোদিত অটোফিল টার্গেট" : "AUTHORIZED AUTOFILL TARGETS"; }
@@ -2654,6 +2664,14 @@ export component MainWindow inherits Window {
                 }
             }
         }
+            // Bottom status bar: real counts, no fabricated sync badge.
+            Rectangle { height: 24px; background: PhantomTheme.surface-lowest;
+                HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 8px;
+                    Text { text: "● LOCAL ENCLAVE SYNCHRONIZED"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.credentials.length + " / " + root.total_matches_count + " ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                }
+            }
         }
     }
 
