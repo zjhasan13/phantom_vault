@@ -1854,8 +1854,6 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
-            }
-        }
         if root.show_2fa_import : Rectangle {
             background: #000000b3;
             TouchArea { clicked => { root.show_2fa_import = false; } }
@@ -1899,6 +1897,8 @@ export component MainWindow inherits Window {
                         AuraButton { label: "Import"; primary: true; width: 140px; height: 38px; enabled: root.import_input != ""; clicked => { root.import_url_requested(root.import_input); } }
                     }
                 }
+            }
+        }
             }
         }
         if root.show_dup_confirm : Rectangle {
