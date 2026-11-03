@@ -2404,7 +2404,7 @@ export component MainWindow inherits Window {
             // 3. Column 3: Right Inspection Detail Panel (stretch)
             Rectangle {
                 background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
-                ScrollView { VerticalLayout { padding: 18px; spacing: 12px;
+                detail_scroll := ScrollView { VerticalLayout { padding: 18px; spacing: 12px;
                     // NEW FORM (when +New active)
                     if root.show_add_form : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.primary; VerticalLayout { padding: 14px; spacing: 8px;
                         HorizontalLayout { spacing: 6px; AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.new_kind==1; horizontal-stretch: 1; clicked => { root.new_kind=1; } } AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.new_kind==4; horizontal-stretch: 1; clicked => { root.new_kind=4; } } AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.new_kind==3; horizontal-stretch: 1; clicked => { root.new_kind=3; } } AuraButton { label: "✕ Close"; width: 76px; clicked => { root.cancel_form(); } } }
@@ -2607,7 +2607,7 @@ export component MainWindow inherits Window {
                             if root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "🔄 আইটেম ফিরিয়ে আনুন" : "🔄 Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
                             if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? ধ্বংস" : "Sure? Shred") : (root.ui_lang == "bn" ? "🔥 স্থায়ীভাবে ধ্বংস" : "🔥 Permanently Shred"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
                             if !root.d_trashed && root.d_kind == 1 : AuraButton { label: "📤 Share"; width: 110px; height: 36px; clicked => { root.share_item(root.d_kind, root.d_id); } }
-                            if !root.d_trashed && root.d_kind != 8 : AuraButton { label: "✏️ Edit"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
+    
                             if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? মুছুন" : "Sure? Delete") : (root.ui_lang == "bn" ? "🗑 মুছুন" : "🗑 Delete"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
                             AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.close_detail(); } }
                         }
