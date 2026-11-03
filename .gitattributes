@@ -1,2 +1,3 @@
 tests/fixtures/keepass/*.kdbx binary
 tests/fixtures/keepass/*.keyx binary
+ui/fonts/*.ttf binary

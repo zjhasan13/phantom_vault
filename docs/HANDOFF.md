@@ -207,7 +207,10 @@
   FIPS 140-3 certification, no YubiKey assertion, no SLIP-39, no
   "104.2 bits / CPU years", no TrailOfBits audit; those slots show the real
   Argon2id/XChaCha20 params, DPAPI binding, Windows Hello availability, and
-  "open source". Fonts remain system fallbacks (size decision). Deliberately
+  "open source". Fonts are now **Inter + JetBrains Mono + Noto Sans Bengali**,
+  embedded as Latin/Bengali subsets in `ui/fonts/` (1.02 MB; debug exe +1.09 MB)
+  with OFL licenses; `default-font-family: "Inter"` and mono overrides. The BN
+  fallback was verified on the login screen. Deliberately
   **not** implemented: the mockup's one-click duress-wipe button (unsafe),
   frameless chrome (native titlebar kept), and the Passkey/FIDO2 tab (A21 is
   not shipped, so the tab would be a dead control). Honest parity estimate

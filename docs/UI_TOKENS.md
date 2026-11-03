@@ -36,16 +36,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts/check_ui_tokens.ps1
 `npm test` remains the JS test suite; the token check is separate because it is
 Windows/PowerShell-specific.
 
-## Typography policy (size-conscious)
+## Typography policy (embedded subsets)
 
-- Target families: **Inter** (UI) and **JetBrains Mono** (secrets/OTP/hashes).
-- **Not bundled yet.** Bundling WOFF2/TTF adds runtime size; the P0 slice uses
-  `Inter, "Segoe UI", sans-serif` and `"JetBrains Mono", "Cascadia Mono",
-  Consolas, monospace` fallbacks. The extension loads no remote fonts (MV3 CSP
-  + offline).
-- If exact font parity is approved later, add OFL files under `assets/fonts/`
-  and register them with `slint::register_font_from_path` before
-  `MainWindow::new()`. Do not add a CDN dependency.
+- Families: **Inter** (UI) and **JetBrains Mono** (secrets/OTP/hashes), plus
+  **Noto Sans Bengali** for the Bangla UI. All three are **OFL**; licenses live
+  in `ui/fonts/licenses/`.
+- **Embedded as subsets** (Latin + punctuation/symbols; Bengali block for Noto)
+  via Slint file imports (`import "fonts/Inter-Regular.ttf";` …), so the compiler
+  embeds them in the exe. **No runtime path lookup, no CDN, no extra crate.**
+- Weights shipped: Inter Regular/SemiBold/Bold/Black (400/600/700/900);
+  JetBrains Mono Regular/Bold. 500/800 map to the nearest embedded weight.
+- Measured cost: fonts **1.02 MB** on disk; debug exe **+1.09 MB** (109.34 MB).
+  Subsetting (fonttools, build-time only) is what keeps this near 1 MB.
+- `MainWindow.default-font-family: "Inter"`; mono surfaces set
+  `font-family: "JetBrains Mono"` explicitly. Slint's font fallback resolves
+  Bengali to the embedded Noto and emoji to Segoe UI Emoji (verified in the BN
+  login screenshot).
+- The browser extension still loads no remote fonts (MV3 CSP + offline); its
+  CSS keeps the system mono stack until a subset is shared.
 
 ## Icon policy (deferred)
 
