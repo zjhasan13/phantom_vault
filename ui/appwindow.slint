@@ -1731,13 +1731,6 @@ export component MainWindow inherits Window {
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: "Vault order"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                 }
-                if root.show_2fa_import : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 8px;
-                    Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: PhantomTheme.text-dim; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "📋 Scan QR"; primary: true; horizontal-stretch: 1; clicked => { root.scan_qr_requested(); } } AuraButton { label: "📷 Scan via Webcam"; horizontal-stretch: 1; clicked => { root.scan_webcam_requested(); } } AuraButton { label: "📁 Browse File"; horizontal-stretch: 1; clicked => { root.import_2fa_file(); } } }
-                    TextEdit { placeholder-text: "Paste multi-line otpauth:// links or raw JSON here…"; text <=> root.import_input; height: 72px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "⬇ Import"; primary: true; width: 140px; clicked => { root.import_url_requested(root.import_input); } } }
-                    if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: PhantomTheme.secondary; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
-                } }
                 hub_scroll := ScrollView { vertical-stretch: 1; horizontal-stretch: 1; VerticalLayout { spacing: 14px;
                     // Landscape grid (rows from Rust, AUTH_GRID_COLS each).
                     // Card width is Rust-fed (hub_px_w) — viewport-capped,
@@ -1823,36 +1816,87 @@ export component MainWindow inherits Window {
                 }
                 // Zero-lockin: scan pages into Google Authenticator.
                 if root.ga_show : Rectangle {
-                    background: #060e20cc;
+                    background: #000000b3;
                     TouchArea { clicked => { root.ga_show = false; } }
                     Rectangle {
                         x: (parent.width - self.width) / 2;
-                        y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
-                        width: 420px;
+                        y: Math.max((parent.height - self.height) / 2 - 12px, 12px);
+                        width: 460px;
                         background: PhantomTheme.surface;
                         border-radius: 16px;
                         border-width: 1px;
                         border-color: PhantomTheme.primary;
                         clip: true;
-                        VerticalLayout { padding: 16px; spacing: 8px;
-                            Text { text: "📲 Export to Google Authenticator"; color: PhantomTheme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
-                            Text { text: "Scan with your phone — secrets leave the vault only through your camera."; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        VerticalLayout { padding: 20px; spacing: 12px;
+                            HorizontalLayout { spacing: 8px;
+                                Text { text: "EXPORT TO AUTHENTICATOR"; color: PhantomTheme.text; font-size: 14px; font-weight: 800; letter-spacing: 0.6px; vertical-alignment: center; }
+                                Rectangle { horizontal-stretch: 1; }
+                                AuraButton { label: "✕"; width: 30px; height: 28px; clicked => { root.ga_show = false; } }
+                            }
+                            Text { text: "Scan this page with Google Authenticator or any otpauth-compatible app."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                             HorizontalLayout { alignment: center;
-                                Rectangle { width: 260px; height: 260px; border-radius: 12px; background: #ffffff;
-                                    Image { source: root.ga_image; width: 260px; height: 260px; image-fit: contain; }
+                                Rectangle { width: 250px; height: 250px; border-radius: 12px; background: #ffffff; border-width: 1px; border-color: PhantomTheme.border;
+                                    Image { source: root.ga_image; width: 246px; height: 246px; x: 2px; y: 2px; image-fit: contain; }
                                 }
                             }
-                            Text { text: root.ga_page; color: PhantomTheme.secondary; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
-                            if root.ga_warn != "" : Text { text: root.ga_warn; color: PhantomTheme.warning; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
-                            HorizontalLayout { spacing: 8px; alignment: center;
-                                AuraButton { label: "◀ Prev"; width: 110px; height: 36px; enabled: root.ga_page_at > 0; clicked => { root.ga_export_page(-1); } }
-                                AuraButton { label: "Next ▶"; width: 110px; height: 36px; enabled: root.ga_page_at + 1 < root.ga_page_total; clicked => { root.ga_export_page(1); } }
+                            Text { text: "PAGE " + (root.ga_page_at + 1) + " / " + root.ga_page_total + "  ·  " + root.ga_page; color: PhantomTheme.secondary; font-size: 10px; font-family: "JetBrains Mono"; horizontal-alignment: center; overflow: elide; }
+                            if root.ga_warn != "" : Rectangle { height: 34px; background: #f59e0b1a; border-radius: 6px; border-width: 1px; border-color: PhantomTheme.warning;
+                                HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: root.ga_warn; color: PhantomTheme.warning; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } }
                             }
                             HorizontalLayout { spacing: 8px;
-                                AuraButton { label: "📋 Copy URI"; horizontal-stretch: 1; height: 38px; clicked => { root.ga_copy_uri(); } }
-                                AuraButton { label: "✕ Close"; width: 120px; height: 38px; clicked => { root.ga_show = false; } }
+                                AuraButton { label: "◀ Prev"; width: 100px; height: 34px; enabled: root.ga_page_at > 0; clicked => { root.ga_export_page(-1); } }
+                                AuraButton { label: "Next ▶"; width: 100px; height: 34px; enabled: root.ga_page_at + 1 < root.ga_page_total; clicked => { root.ga_export_page(1); } }
+                                Rectangle { horizontal-stretch: 1; }
+                                AuraButton { label: "📋 Copy URI"; width: 110px; height: 34px; clicked => { root.ga_copy_uri(); } }
+                            }
+                            Text { text: "The QR contains live secrets — don't screen-share while it is visible."; color: PhantomTheme.warning; font-size: 9px; wrap: word-wrap; }
+                            AuraButton { label: "Done"; primary: true; height: 36px; clicked => { root.ga_show = false; } }
+                        }
+                    }
+                }
+            }
+        }
+        if root.show_2fa_import : Rectangle {
+            background: #000000b3;
+            TouchArea { clicked => { root.show_2fa_import = false; } }
+            Rectangle {
+                x: (parent.width - self.width) / 2;
+                y: Math.max((parent.height - self.height) / 2 - 12px, 12px);
+                width: 620px;
+                background: PhantomTheme.surface;
+                border-radius: 16px;
+                border-width: 1px;
+                border-color: PhantomTheme.primary;
+                clip: true;
+                VerticalLayout { padding: 20px; spacing: 12px;
+                    HorizontalLayout { spacing: 8px;
+                        Text { text: "ADD 2FA ACCOUNT"; color: PhantomTheme.text; font-size: 16px; font-weight: 800; letter-spacing: 0.5px; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        AuraButton { label: "✕"; width: 32px; height: 30px; clicked => { root.show_2fa_import = false; } }
+                    }
+                    Text { text: "Scan a QR code, paste an otpauth:// link, or import an authenticator export. Secrets never leave this device."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 6px; MonoChip { label: "GOOGLE AUTH"; } MonoChip { label: "2FAS"; } MonoChip { label: "AEGIS"; } MonoChip { label: "STEAM"; } MonoChip { label: "FREEOTP"; } MonoChip { label: "MULTI-QR"; } }
+                    Rectangle { height: 110px; background: PhantomTheme.surface-lowest; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
+                        HorizontalLayout { padding: 16px; spacing: 14px;
+                            Text { text: "▣"; color: PhantomTheme.primary; font-size: 38px; vertical-alignment: center; }
+                            VerticalLayout { spacing: 3px; alignment: center;
+                                Text { text: "SCAN QR CODE"; color: PhantomTheme.text; font-size: 12px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 0.6px; }
+                                Text { text: "Screen capture, webcam, or an image file. Nothing is uploaded."; color: PhantomTheme.text-dim; font-size: 10px; }
                             }
                         }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Scan screen QR"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.scan_qr_requested(); } }
+                        AuraButton { label: "Webcam"; width: 110px; height: 36px; clicked => { root.scan_webcam_requested(); } }
+                        AuraButton { label: "Image file"; width: 110px; height: 36px; clicked => { root.import_2fa_file(); } }
+                    }
+                    Text { text: "OR PASTE otpauth:// / JSON"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; letter-spacing: 0.6px; }
+                    TextEdit { placeholder-text: "otpauth://totp/Issuer:account?secret=... (one per line)"; text <=> root.import_input; height: 86px; wrap: word-wrap; }
+                    if root.import_2fa_status != "" : Text { text: root.import_2fa_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px;
+                        Rectangle { horizontal-stretch: 1; }
+                        AuraButton { label: "Cancel"; width: 100px; height: 38px; clicked => { root.show_2fa_import = false; } }
+                        AuraButton { label: "Import"; primary: true; width: 140px; height: 38px; enabled: root.import_input != ""; clicked => { root.import_url_requested(root.import_input); } }
                     }
                 }
             }
