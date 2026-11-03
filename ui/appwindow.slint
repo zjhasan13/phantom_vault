@@ -1328,6 +1328,7 @@ export component MainWindow inherits Window {
                         VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 0px; padding-bottom: 14px; spacing: 0px;
                     // cryptographic gateway card
                     HorizontalLayout { alignment: center;
+                        VerticalLayout { alignment: start;
                         Rectangle { width: 520px; background: #0f1a30e8; border-radius: 16px; border-width: 1px; border-color: #10b98138; drop-shadow-blur: 110px; drop-shadow-color: #10b98133;
                             Rectangle { x: 26px; y: 0; width: parent.width - 52px; height: 2px; background: @linear-gradient(90deg, transparent 0%, #4edea3 50%, transparent 100%); }
                             VerticalLayout { padding: 14px; spacing: 0px;
@@ -1360,7 +1361,7 @@ export component MainWindow inherits Window {
                                 }
                                 if !root.show_totp_step : VerticalLayout { spacing: 0px;
                                     // account identifier (real local vault file, never a fake account)
-                                    HorizontalLayout {
+                                    HorizontalLayout { height: 14px;
                                         Text { text: "VAULT ACCOUNT IDENTIFIER"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 1px; vertical-alignment: center; }
                                         Rectangle { horizontal-stretch: 1; }
                                         Text { text: root.ui_lang == "bn" ? "লোকাল-ওনলি · কোনো অ্যাকাউন্ট নেই" : "LOCAL-ONLY · NO ACCOUNT"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; }
@@ -1373,18 +1374,17 @@ export component MainWindow inherits Window {
                                             MonoChip { label: "LOCAL"; tone: PhantomTheme.text-muted; }
                                         }
                                     }
-                                    Rectangle { height: 10px; }
+                                    Rectangle { height: 8px; }
                                     // master passphrase (conditional: hidden blocks must not reserve space)
                                     if root.unlock_tab == 0 : VerticalLayout { spacing: 0px;
-                                        FocusScope { width: 0; height: 0; init => { password_input.focus(); } }
-                                        HorizontalLayout {
+                                        HorizontalLayout { height: 14px;
                                             Text { text: "MASTER PASSPHRASE"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 1px; vertical-alignment: center; }
                                             Rectangle { horizontal-stretch: 1; }
                                             Text { text: "Argon2id 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                         }
                                         Rectangle { height: 4px; }
                                         Rectangle { height: 40px;
-                                            password_input := LineEdit { x: 0; y: 0; width: parent.width; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "JetBrains Mono"; edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
+                                            password_input := LineEdit { x: 0; y: 0; width: parent.width; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "JetBrains Mono"; init => { self.focus(); } edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
                                             Rectangle { x: parent.width - 38px; y: 5px; width: 32px; height: 32px; border-radius: 8px; background: #0b1326; }
                                             TouchArea { x: parent.width - 38px; y: 6px; width: 32px; height: 32px; mouse-cursor: pointer; clicked => { root.show_master = !root.show_master; } Text { text: root.show_master ? "◉" : "○"; color: PhantomTheme.text-dim; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; } }
                                         }
@@ -1466,6 +1466,7 @@ export component MainWindow inherits Window {
                                 Rectangle { height: 6px; }
                                 Text { text: "Optional local unlock shortcuts only. Nothing leaves this device unless you enable sync."; color: PhantomTheme.text-dim; font-size: 9px; horizontal-alignment: center; wrap: word-wrap; }
                             }
+                        }
                         }
                     }
                 }

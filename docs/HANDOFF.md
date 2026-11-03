@@ -232,7 +232,7 @@
   structure (brand+version, local-vault selector, VAULT ENTRIES count, Logins/
   Cards/Notes/SSH/Favorites/Trash, UTILITIES, local-engine + local-session +
   lock); rows carry the real last-updated age and the detail header shows
-  `ID … · Updated …`. Remaining for full parity: the detail two-column
+  `ID … · Updated …`. Login polish: explicit 14px heights on the section-label rows + a start-aligned wrapper stop the card from stretching to the ScrollView viewport, so the account/passphrase gaps match the mockup; the password field autofocuses through LineEdit `init` instead of a 0x0 FocusScope. Remaining for full parity: the detail two-column
   transformation (Launch & Autofill, username/password cards, TOTP/passkey
   cards, Authorized Autofill Targets, storage/revision/tags), the toolbar's
   filter chips, and honest substitutions for AES-256-GCM/Passkey/TPM/IPC claims.
