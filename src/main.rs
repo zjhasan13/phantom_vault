@@ -3723,6 +3723,7 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.set_device_bound(
         std::path::Path::new(windows_native::device_bind::DEVICE_FILE).exists(),
     );
+    main_window.set_duress_armed(security::decoy::decoy_exists());
     let lock_entropy_weak = main_window.as_weak();
     main_window.on_lock_entropy(move |text| {
         if let Some(ui) = lock_entropy_weak.upgrade() {
@@ -4024,7 +4025,12 @@ fn main() -> Result<(), slint::PlatformError> {
     {
         let weak = main_window.as_weak();
         std::thread::spawn(move || {
-            if security::integrity::check() == security::integrity::Integrity::Tampered {
+            // Dev builds are rebuilt constantly; an exe-hash mismatch there is
+            // expected and would paint the login page red on every iteration.
+            // The tamper banner stays active for release/installed binaries.
+            if !cfg!(debug_assertions)
+                && security::integrity::check() == security::integrity::Integrity::Tampered
+            {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_integrity_warning("🚨 Binary Integrity Warning: Executable hash has changed since installation! Check for tampering.".into());

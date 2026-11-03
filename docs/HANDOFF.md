@@ -210,7 +210,11 @@
   "open source". Fonts are now **Inter + JetBrains Mono + Noto Sans Bengali**,
   embedded as Latin/Bengali subsets in `ui/fonts/` (1.02 MB; debug exe +1.09 MB)
   with OFL licenses; `default-font-family: "Inter"` and mono overrides. The BN
-  fallback was verified on the login screen. Deliberately
+  fallback was verified on the login screen. Login polish: 520px card, `LOC: EN`
+  language chip, duress/decoy row only when `decoy_exists()` (real), and the
+  tamper banner is suppressed on debug builds only (release still shows it).
+  Compact 960×620 QA: the Unlock button stays above the fold; the Hello row and
+  links scroll. Deliberately
   **not** implemented: the mockup's one-click duress-wipe button (unsafe),
   frameless chrome (native titlebar kept), and the Passkey/FIDO2 tab (A21 is
   not shipped, so the tab would be a dead control). Honest parity estimate

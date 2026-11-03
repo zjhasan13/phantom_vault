@@ -39,7 +39,7 @@ screen lists.
 | List header | `VAULT ITEMS` + real match count + `LOCAL INDEX` | `Items` + count + index-sync badge | **Shipped** (no fake sync claim) |
 | Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette; Windows shortcut TBD) |
 | Crash/integrity banner | lock-screen `integrity_warning` (`:1108`) | — | KEEP (design lacks it) |
-| Login / cryptographic gateway | Grid + 2 glows, telemetry strip, shield wordmark, 560px glass card, Master/PIN/Shards tabs, real vault name, live entropy (5 segments), DPAPI/TPM + zeroize rows, gradient unlock, Windows Hello row, real recovery links; pill + wordmark pinned above the scroll area | 1568×924 login mockup | **Shipped, ~90% honest parity** (no TPM PCR[7]/FIPS/YubiKey/SLIP-39/CPU-years/TrailOfBits claims; no duress-wipe button, frameless chrome, or Passkey tab); fonts now embedded (Inter/JetBrains Mono/Noto Bengali subsets, +1.09 MB) |
+| Login / cryptographic gateway | Grid + 2 glows, telemetry strip, shield wordmark, 560px glass card, Master/PIN/Shards tabs, real vault name, live entropy (5 segments), DPAPI/TPM + zeroize rows, gradient unlock, Windows Hello row, real recovery links; pill + wordmark pinned above the scroll area | 1568×924 login mockup | **Shipped, ~92% honest parity** (no TPM PCR[7]/FIPS/YubiKey/SLIP-39/CPU-years/TrailOfBits claims; no duress-wipe button, frameless chrome, or Passkey tab); fonts now embedded (Inter/JetBrains Mono/Noto Bengali subsets, +1.09 MB); 520px card, LOC chip, duress row when armed, compact 960×620 checked |
 
 ---
 
