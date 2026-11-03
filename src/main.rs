@@ -2537,6 +2537,7 @@ fn set_trash_label(ui: &MainWindow, vault: &Vault) {
     } else {
         format!("Trash ({n})").into()
     });
+    push_sidebar_counts(ui);
 }
 
 /// Resident passkey rows for the hub (`meta` preformatted — no Slint typing risk).
@@ -2579,6 +2580,9 @@ fn rebuild_trashed_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
 /// 4 card, 5 identity, 6 ssh, 7 passkey.
 /// Recent view: sort the rendered list by last_changed (logins) without a
 /// schema field; toggled by the toolbar chip.
+/// Sidebar counts: [all, logins, passkeys, notes, cards+ids, ssh].
+static SIDEBAR_COUNTS: std::sync::Mutex<[usize; 6]> = std::sync::Mutex::new([0; 6]);
+
 static RECENT_MODE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
@@ -3402,6 +3406,24 @@ fn health_kind_for(id: &str) -> String {
 const LIST_CAP: usize = 50;
 const LIST_PAGE: usize = 50;
 fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
+    {
+        let logins = vault.credentials.iter().filter(|c| c.deleted_at.is_none()).count();
+        let notes = vault.notes.iter().filter(|n| n.deleted_at.is_none()).count();
+        let cards = vault.cards.iter().filter(|k| k.deleted_at.is_none()).count();
+        let ids = vault.identities.iter().filter(|i| i.deleted_at.is_none()).count();
+        let ssh = vault.ssh_keys.iter().filter(|s| s.deleted_at.is_none()).count();
+        let passkeys = vault.passkeys.iter().filter(|p| p.deleted_at.is_none()).count();
+        let licenses = vault.licenses.iter().filter(|l| l.deleted_at.is_none()).count();
+        let totp = vault.totp_accounts.len();
+        *SIDEBAR_COUNTS.lock().unwrap() = [
+            logins + notes + cards + ids + ssh + licenses + totp,
+            logins,
+            passkeys,
+            notes,
+            cards + ids,
+            ssh,
+        ];
+    }
     let q = f.query.trim().to_lowercase();
     let mut items = Vec::new();
     // Janitor fast path: ONE sidecar read per build (not per row), then
@@ -3521,6 +3543,17 @@ fn restore_total(n: usize) {
 fn set_paged_credentials(ui: &MainWindow, model: ModelRc<CredentialView>) {
     ui.set_credentials(model);
     ui.set_total_matches_count(total_matches() as i32);
+    push_sidebar_counts(ui);
+}
+
+fn push_sidebar_counts(ui: &MainWindow) {
+    let c = *SIDEBAR_COUNTS.lock().unwrap();
+    ui.set_count_all(c[0] as i32);
+    ui.set_count_logins(c[1] as i32);
+    ui.set_count_passkeys(c[2] as i32);
+    ui.set_count_notes(c[3] as i32);
+    ui.set_count_cards(c[4] as i32);
+    ui.set_count_ssh(c[5] as i32);
 }
 
 /// QuickBar feed: logins only, optional query.
