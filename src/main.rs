@@ -6859,6 +6859,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 .unwrap_or_else(|p| p.into_inner())
                 .clear();
         }
+        ui.set_all_selected(on);
         let v = lock_vault(&all_vault);
         refresh_selection_ui(&ui, &v, &f);
     });
