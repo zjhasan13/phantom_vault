@@ -4,7 +4,7 @@ Purpose: a **one-file ground truth** of every UI element we ship today, so that 
 Slint redesign we can tick each line and prove nothing was lost and everything the mockup
 promises is either implemented or deliberately rejected.
 
-- Source of truth for "now": `ui/appwindow.slint` (3142 lines), Rust handlers in `src/main.rs`,
+- Source of truth for "now": `ui/appwindow.slint` (3658 lines), Rust handlers in `src/main.rs`,
   `rules.md` (shipped baseline), `browser_extension/*`.
 - Source of truth for "design": `expected ui/stitch_phantom_vault_desktop_ui/`
   (13 screens, `code.html` + `screen.png`; the 3 loose PNG folders are browser reference shots,
@@ -17,10 +17,11 @@ promises is either implemented or deliberately rejected.
 - Rule: property/callback names in `appwindow.slint` are a frozen contract with `src/main.rs`.
   A restyle may move visuals; it may **not** rename these.
 
-Measured baseline (after A20/A24 + token foundation + P0 cockpit visual QA): 3229 lines,
-**93** hex colour occurrences (34 are `PhantomTheme` declarations, 59 are
-component/alpha literals); 210 callbacks, 8 components, 3 windows; no bundled
-fonts. Tests: `cargo test` **554 passed / 4 ignored**, `npm test` **133/133**.
+Measured baseline (after A20/A24 + token foundation + Aegis hub slices 1-2): 3658 lines,
+**160** hex colour occurrences (incl. `PhantomTheme` declarations and component/alpha
+literals); 220 callbacks, 10 components, 3 windows; Inter / JetBrains Mono /
+Noto Sans Bengali / Material Symbols subsets are embedded. Tests: `cargo test`
+**556 passed / 4 ignored**, `npm test` **133/133**.
 Token source: `design/tokens.json` (gate: `npm run test:tokens`).
 
 Caveat: `expected ui/` is **tracked in git** now. The 3 loose PNGs (`bpi…`, `chrome_…`,
@@ -350,7 +351,7 @@ Windows Hello (no YubiKey code); `SLIP-39/Reed-Solomon` → **GF(2^8) Shamir + E
    token exists.
 6. Secrets still never enter row models (`import_preview_rows`, `AuthView` rules at `:63-91`).
 7. Two-tap confirms, disabled states, and EN/BN lock strings unchanged.
-8. `cargo test` count ≥ baseline (554 passed / 4 ignored) and `npm test` 133/133.
+8. `cargo test` count ≥ baseline (556 passed / 4 ignored) and `npm test` 133/133.
 9. Window works at min 960×620 (design was drawn on 1280×1024).
 10. Extension: lock card, PIN overlay, never-suggest, health icons, fill, save still work.
 
@@ -837,9 +838,9 @@ The 13 folders are the source of truth. `Surface` matters: **Slint** screens are
 
 | # | Expected folder (`code.html`) | Surface | Current Slint region | Conversion | Data/model gaps | Effort | Priority |
 |---|---|---|---|---|---|---|---|
-| 1 | `all_vault_items` | **Slint** | Vault 3-col `ui/appwindow.slint:2093+` | Restyle list/detail; add top filter tab strip, select action bar, 5/7 split, row badges/strength %, always-visible kebab | row `strength_pct`, `last_used`, `tags`, `created_at`; "API Keys" has no kind | **M** (5–8 d) | **P0** |
+| 1 | `all_vault_items` | **Slint** | Vault 3-col `ui/appwindow.slint:2482+` | Aegis shipped: search-first command bar, type strip (All/Favorites/Recent/Login/Card/Note/SSH), list header with select-all + sort, 76px rows (age / 2FA tag / strength), hover checkboxes + floating bulk bar, detail header + proof strip + two-column username/password + TOTP/passkey + storage/revision/tags + audit | user tags live in `Vault.item_tags`; strength bits shared with the generator | **M** (5-8 d) | **P0 (shipped)** |
 | 2 | `phantom_vault_vault_browser_2.0` | **Slint** | same vault shell/detail | Merge with #1 (same layout, alternate density); detail audit tiles, target URL card, decryption trail | same as #1 + audit-event read API + `expires_at` | **M** (in #1) | **P0** |
-| 3 | `phantom_vault_2fa_hub_2.0` | **Slint** | 2FA hub `:1709+` | Aegis slice 2: search toolbar (Show NEXT/Export/Add), 4 real KPI cards (keys/RFC 6238/local clock/ephemeral), filter chips (All/Starred/TOTP/HOTP/Steam), Vault order / A-Z / Z-A sort, 192px cards with issuer/kind/star, honest `30s · SHA-1 · 6 digits` params, 26px code + ring + Copy, real status footer. Add/Export are centered 660px / 480px sheets; Export opens instantly with a busy/empty/error state and Page X/Y | Environment tags / criticality, drag reorder | **M** (4-6 d) | **P1 (slice 2 shipped)** |
+| 3 | `phantom_vault_2fa_hub_2.0` | **Slint** | 2FA hub `:1729+` | Aegis slice 2: search toolbar (Show NEXT/Export/Add), 4 real KPI cards (keys/RFC 6238/local clock/ephemeral), filter chips (All/Starred/TOTP/HOTP/Steam), Vault order / A-Z / Z-A sort, 192px cards with issuer/kind/star, honest `30s · SHA-1 · 6 digits` params, 26px code + ring + Copy, real status footer. Add/Export are centered 660px / 480px sheets; Export opens instantly with a busy/empty/error state and Page X/Y | Environment tags / criticality, drag reorder | **M** (4-6 d) | **P1 (slice 2 shipped)** |
 | 4 | `settings_dev_center` | **Slint** | Settings single scroll `:1552-1866` | 7-section IA + sub-nav; token sweep; card restyle | No new data; grouping/scroll anchors only | **L** (6–9 d) | **P1** |
 | 5 | `password_passphrase_generator` | **Slint** | Generator panel `:2169` / `:231` | Studio layout; passphrase/diceware surface; quality meter; history chips | diceware exists; history exists; surface them | **M** (3–4 d) | **P1** |
 | 6 | `migration_wizard_vault_importer` | **Slint** | Import `:1528-1551` | 4-step stepper; manifest columns; progress bar; provider tiles | import progress events; source password for encrypted exports is a **feature gap** (REJECT until supported) | **M** (3–5 d) | **P2** |
@@ -891,5 +892,5 @@ If only the screenshot layout (vault list/detail) is wanted: **~1.5–2 weeks** 
 4. Empty/busy/error states exist; no skeleton-only screen.
 5. Keyboard path (Tab/Enter/Esc, Ctrl+F, list arrows) still works.
 6. Contrast checked after token adoption; `accessibility` labels added.
-7. `cargo test` ≥ 554 passed / 4 ignored and `npm test` 133/133 after every slice.
+7. `cargo test` ≥ 556 passed / 4 ignored and `npm test` 133/133 after every slice.
 8. Window works at 960×620 (design canvas is larger).

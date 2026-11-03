@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy) + Windows Hello state-split follow-up queued; before that, UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -222,20 +222,40 @@
   the false claims. `cargo build` green; visual QA via DPI-aware `PrintWindow`
   capture.
 
-- **AegisVault Cyber-Cockpit re-theme (Option B, in progress):** the user
+- **AegisVault Cyber-Cockpit re-theme (Option B):** the user
   replaced `all_vault_items/code.html`/`screen.png` with a new design
   (`AegisVault`: deep navy `#0b1326`, mint `#4edea3`, electric cyan `#4cd7f6`)
   and chose a full pivot. Done in this slice: `design/tokens.json`, the Slint
   `PhantomTheme` + aliases, the extension `--pv-*` mirror and the token gate are
   on the Aegis palette; brand strings/window title stay **PhantomVault** (only the Aegis design system/palette is adopted); the login
   gateway and vault shell now render navy/mint; the sidebar is the design
-  structure (brand+version, local-vault selector, VAULT ENTRIES count, Logins/
+  structure (brand+version, local-vault selector, VAULT STORAGE with real
+  per-type counts, Logins/
   Cards/Notes/SSH/Favorites/Trash, UTILITIES, local-engine + local-session +
   lock); rows carry the real last-updated age and the detail header shows
-  `ID … · Updated …`. Login polish: explicit 14px heights on the section-label rows + a start-aligned wrapper stop the card from stretching to the ScrollView viewport, so the account/passphrase gaps match the mockup; the password field autofocuses through LineEdit `init` instead of a 0x0 FocusScope. Remaining for full parity: the detail two-column
-  transformation (Launch & Autofill, username/password cards, TOTP/passkey
-  cards, Authorized Autofill Targets, storage/revision/tags), the toolbar's
-  filter chips, and honest substitutions for AES-256-GCM/Passkey/TPM/IPC claims.
+  `ID … · Updated …`. Login polish: explicit 14px heights on the section-label rows + a start-aligned wrapper stop the card from stretching to the ScrollView viewport, so the account/passphrase gaps match the mockup; the password field autofocuses through LineEdit `init` instead of a 0x0 FocusScope. The item detail two-column transformation (Launch & Autofill, username/password cards, TOTP/passkey cards, Authorized Autofill Targets, storage/revision/tags) and the toolbar filter chips have since landed as well.
+
+  **2FA hub slices 1-2 + sheet/rail fixes (this batch):** the hub is now the
+  Aegis grid - search toolbar (Show NEXT / Export / Add 2FA), four real KPI
+  cards (active keys / RFC 6238 / local clock with no fake NTP claim /
+  ephemeral on-demand codes), `All / Starred / TOTP / HOTP / STEAM` chips,
+  `Vault / A-Z / Z-A` sort, honest `30s · SHA-1 · 6 digits` params on every
+  card, 192px cards and a TOTP-engine footer. Add-2FA (660px) and Export
+  (480px) are centered sheets anchored inside the hub pane with a full-pane
+  backdrop; both were previously laid out *inside* the hub's VerticalLayout,
+  which pushed the Add sheet half off-screen. Export now opens immediately and
+  drives a real busy / empty / decoy / error state, so the button can never look
+  dead (the global toast is not rendered on the hub). The collapsed 64px rail
+  stacks the P mark above a 40x20 `»` expand button (the old 92px header row
+  clipped the chevron out of view); expanded mode keeps `«`. `push_hub_width`
+  now subtracts the real 256px sidebar instead of 220. Verified by running the
+  app: hub chips/sort/params, Add sheet centered, Export renders a scannable
+  migration QR with Page 1/1, and `»`/`«` both toggle. Tests **556 / 4
+  ignored**.
+
+  Remaining for full parity: Settings/Dev Center 7-section IA, Generator
+  studio, extension HUD/prompt restyle, and honest substitutions for the
+  AES-256-GCM/Passkey/TPM/IPC claims (never fake them).
   Verified: `cargo check` green, token gate 21 values.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
@@ -759,7 +779,7 @@
     password on a change form.
   - Tests: +12 content, +3 background, +1 Rust -> `npm test` **71/71**,
     `cargo test` **460 passed / 1 ignored**.
-- Baselines: `cargo test` 554 passed / 4 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
+- Baselines: `cargo test` 556 passed / 4 ignored, `npm test` 133/133 (four JS harnesses), `cargo check --all-targets` zero
   warnings, `cargo clippy --all-targets -- -D warnings` clean.
 - v0.2.1 bumped (Cargo + installer + both extension manifests); v0.2.0 stays
   the rollback anchor until v0.2.1 is tagged (needs QA physical pass first).
