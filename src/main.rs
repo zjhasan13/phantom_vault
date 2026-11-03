@@ -2577,6 +2577,11 @@ fn rebuild_trashed_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
 
 /// Item-kind codes shared with Slint: 0 All, 1 login, 2 license, 3 note,
 /// 4 card, 5 identity, 6 ssh, 7 passkey.
+/// Recent view: sort the rendered list by last_changed (logins) without a
+/// schema field; toggled by the toolbar chip.
+static RECENT_MODE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Clone)]
 struct FilterState {
     query: String,
@@ -2856,6 +2861,7 @@ fn push_item(
     verified: bool,
     age: &str,
     tags: &str,
+    ts: f32,
 ) {
     if f.kind != 0 && f.kind != kind {
         return;
@@ -2924,6 +2930,7 @@ fn push_item(
         badge: badge.into(),
         age: age.into(),
         tags: tags.into(),
+        ts,
         fav,
         verified,
         sel: selection_contains(kind, id),
@@ -3424,7 +3431,7 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
             tag_vec.push(hk.to_uppercase());
         }
         let tag_str = tag_vec.join(" · ");
-        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id), &crate::models::ago(c.last_changed, crate::models::current_timestamp()), &tag_str);
+        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id), &crate::models::ago(c.last_changed, crate::models::current_timestamp()), &tag_str, c.last_changed as f32);
     }
     if f.janitor {
         // Janitor reviews logins only — other vectors skip the walk.
@@ -3438,22 +3445,22 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
     }
     for l in &vault.licenses {
         push_item(&mut items, f, &q, &l.id, 2, &l.app_name, "Software license",
-            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some(), false, "", "");
+            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some(), false, "", "", 0.0);
     }
     for n in &vault.notes {
         let preview: String = n.content.lines().next().unwrap_or("").chars().take(48).collect();
-        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some(), false, "", "");
+        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some(), false, "", "", 0.0);
     }
     for k in &vault.cards {
         let exp = format!("{:0>2}/{:0>2}", k.exp_month, k.exp_year);
         let meta = format!("exp {exp}  CVV {}", k.cvv);
-        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some(), false, "", "");
+        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some(), false, "", "", 0.0);
     }
     for i in &vault.identities {
-        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some(), false, "", "");
+        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some(), false, "", "", 0.0);
     }
     for s in &vault.ssh_keys {
-        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some(), false, "", "");
+        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some(), false, "", "", 0.0);
     }
     // Standalone 2FA (kind 8): hub accounts also live in All items +
     // Favorites so the counts never desync. No secrets ride the list model
@@ -3467,7 +3474,10 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
             "steam" => "STEAM".to_string(),
             _ => "TOTP".to_string(),
         };
-        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false, "", "");
+        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false, "", "", 0.0);
+    }
+    if RECENT_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        items.sort_by(|a, b| b.ts.partial_cmp(&a.ts).unwrap_or(std::cmp::Ordering::Equal));
     }
     let total = items.len();
     items.truncate(f.limit);
@@ -6513,6 +6523,19 @@ fn main() -> Result<(), slint::PlatformError> {
             set_paged_credentials(&ui, vault_to_items(&vault, &f));
             // Hub parity: the passkey list honors the same ⭐ filter.
             ui.set_passkeys(rebuild_passkeys(&vault, f.fav_only));
+        }
+    });
+
+    let window_weak_recent = main_window.as_weak();
+    let vault_arc_recent = Arc::clone(&active_vault);
+    let search_state_recent = Arc::clone(&search_state);
+    main_window.on_recent_changed(move |on| {
+        RECENT_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+        let f = search_state_recent.lock().unwrap().clone();
+        let vault = lock_vault(&vault_arc_recent);
+        if let Some(ui) = window_weak_recent.upgrade() {
+            ui.set_recent_mode(on);
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
 

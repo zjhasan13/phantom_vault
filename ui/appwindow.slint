@@ -33,6 +33,7 @@ struct CredentialView {
     badge: string,
     age: string,
     tags: string,
+    ts: float,
     fav: bool,
     sel: bool,
     has_icon: bool,
@@ -1096,6 +1097,8 @@ export component MainWindow inherits Window {
     callback type_filter_changed(int);
     callback folder_filter_changed(string);
     callback fav_filter_changed(bool);
+    in-out property <bool> recent_mode: false;
+    callback recent_changed(bool);
     callback toggle_favorite(int, string);
     callback toggle_verified(int, string);
     callback open_janitor();
@@ -2268,11 +2271,13 @@ export component MainWindow inherits Window {
             Rectangle { height: 42px; background: PhantomTheme.surface-low;
                 HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px;
                     HorizontalLayout { spacing: 4px;
-                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.recent_mode; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.recent_mode = true; root.recent_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     AuraButton { label: root.select_mode ? (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Selecting") : (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Select"); primary: root.select_mode; width: 120px; height: 30px; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
@@ -2555,6 +2560,24 @@ export component MainWindow inherits Window {
                             HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: PhantomTheme.text-muted; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if root.d_url_rule != "" : MonoChip { label: root.d_url_rule; tone: PhantomTheme.text-dim; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: root.last_copied == root.d_url && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_url && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
                             if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: PhantomTheme.text-dim; font-size: 11px; overflow: elide; }
                         }}
+                        // Storage / revision / classification (real data only).
+                        HorizontalLayout { spacing: 8px;
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
+                                Text { text: "STORAGE RECORD"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: root.pq_paranoid_on ? "ML-KEM-768 + XChaCha20" : "XChaCha20-Poly1305"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; }
+                                Text { text: "Local envelope"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
+                            }}
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
+                                Text { text: "REVISION HISTORY"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: root.d_history.length + " saved"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; }
+                                Text { text: "Password history"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
+                            }}
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
+                                Text { text: "CLASSIFICATION TAGS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: root.d_folder == "" ? "General" : root.d_folder; color: PhantomTheme.primary; font-size: 11px; font-weight: 700; }
+                                Text { text: root.d_tags == "" ? "Derived only" : root.d_tags; color: PhantomTheme.secondary; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
+                            }}
+                        }
                         // CARD 4: additional options (only when populated)
                         if root.d_backup != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: root.ui_lang == "bn" ? "ব্যাকআপ / রিকভারি কোড" : "BACKUP / RECOVERY CODES"; }
