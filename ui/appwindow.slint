@@ -1797,7 +1797,7 @@ export component MainWindow inherits Window {
                     if root.auth_rows.length == 0 : VerticalLayout { spacing: 8px; alignment: center; padding-top: 30px;
                         Text { text: "🔑"; font-size: 44px; horizontal-alignment: center; }
                         Text { text: root.auth_accounts.length == 0 ? "No 2FA accounts yet — scan a QR or paste a key." : "No accounts match this filter or search."; color: PhantomTheme.text-dim; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
-                        AuraButton { label: "+ Add 2FA"; primary: true; width: 150px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
+                        HorizontalLayout { alignment: center; AuraButton { label: "+ Add 2FA"; primary: true; width: 150px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } } }
                     }
                     Text { text: "🔑  Resident Passkeys (WebAuthn)"; color: PhantomTheme.text; font-size: 15px; font-weight: 900; }
                     HorizontalLayout { spacing: 8px; LineEdit { placeholder-text: "Relying party (github.com)"; text <=> root.pk_rp; height: 36px; horizontal-stretch: 1; accepted(text) => { if root.pk_rp != "" && root.pk_user != "" { root.register_passkey(root.pk_rp, root.pk_user); } } } LineEdit { placeholder-text: "Username"; text <=> root.pk_user; height: 36px; horizontal-stretch: 1; accepted(text) => { if root.pk_rp != "" && root.pk_user != "" { root.register_passkey(root.pk_rp, root.pk_user); } } } AuraButton { label: "+ Register"; primary: true; width: 130px; enabled: root.pk_rp != "" && root.pk_user != ""; clicked => { root.register_passkey(root.pk_rp, root.pk_user); } } }
