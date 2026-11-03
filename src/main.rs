@@ -2803,6 +2803,39 @@ fn sync_folders_to_ui(vault: &Vault, ui: &MainWindow) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Real passkey↔login link: a stored resident passkey whose RP id matches one
+/// of the login's URL hosts. Derived, not a fabricated schema field.
+fn passkey_for_urls(
+    passkeys: &[crate::models::PasskeyItem],
+    urls: &[crate::models::LoginUrl],
+) -> bool {
+    fn host(url: &str) -> Option<String> {
+        let s = url.trim();
+        let s = s
+            .strip_prefix("https://")
+            .or_else(|| s.strip_prefix("http://"))
+            .unwrap_or(s);
+        let host = s
+            .split('/')
+            .next()
+            .unwrap_or("")
+            .split(':')
+            .next()
+            .unwrap_or("");
+        if host.is_empty() {
+            None
+        } else {
+            Some(host.to_lowercase())
+        }
+    }
+    let hosts: Vec<String> = urls.iter().filter_map(|u| host(u.url())).collect();
+    passkeys.iter().any(|p| {
+        let rp = p.rp_id.trim().to_lowercase();
+        !rp.is_empty() && hosts.iter().any(|h| *h == rp || h.ends_with(&format!(".{rp}")))
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn push_item(
     out: &mut Vec<CredentialView>,
     f: &FilterState,
@@ -2822,6 +2855,7 @@ fn push_item(
     trashed: bool,
     verified: bool,
     age: &str,
+    tags: &str,
 ) {
     if f.kind != 0 && f.kind != kind {
         return;
@@ -2889,6 +2923,7 @@ fn push_item(
         strength,
         badge: badge.into(),
         age: age.into(),
+        tags: tags.into(),
         fav,
         verified,
         sel: selection_contains(kind, id),
@@ -3371,7 +3406,25 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
         {
             continue;
         }
-        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id), &crate::models::ago(c.last_changed, crate::models::current_timestamp()));
+        let mut tag_vec: Vec<String> = Vec::new();
+        if !c.totp_secret.is_empty() {
+            tag_vec.push("2FA".into());
+        }
+        if passkey_for_urls(&vault.passkeys, &c.urls) {
+            tag_vec.push("PASSKEY".into());
+        }
+        if vault.is_verified(&c.id) {
+            tag_vec.push("VERIFIED".into());
+        }
+        if c.travel_safe {
+            tag_vec.push("TRAVEL".into());
+        }
+        let hk = health_kind_for(&c.id);
+        if !hk.is_empty() {
+            tag_vec.push(hk.to_uppercase());
+        }
+        let tag_str = tag_vec.join(" · ");
+        push_item(&mut items, f, &q, &c.id, 1, &c.title, &c.username, &c.password, "", &primary_url(&c.urls), &c.notes, &c.folder, &c.totp_secret, c.travel_safe, c.favorite, c.deleted_at.is_some(), vault.is_verified(&c.id), &crate::models::ago(c.last_changed, crate::models::current_timestamp()), &tag_str);
     }
     if f.janitor {
         // Janitor reviews logins only — other vectors skip the walk.
@@ -3385,22 +3438,22 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
     }
     for l in &vault.licenses {
         push_item(&mut items, f, &q, &l.id, 2, &l.app_name, "Software license",
-            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some(), false, "");
+            &l.license_key, &l.expiry_date.clone().unwrap_or_default(), "", "", &l.folder, "", l.travel_safe, l.favorite, l.deleted_at.is_some(), false, "", "");
     }
     for n in &vault.notes {
         let preview: String = n.content.lines().next().unwrap_or("").chars().take(48).collect();
-        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some(), false, "");
+        push_item(&mut items, f, &q, &n.id, 3, &n.title, &preview, &n.content, "", "", &n.content, &n.folder, "", n.travel_safe, n.favorite, n.deleted_at.is_some(), false, "", "");
     }
     for k in &vault.cards {
         let exp = format!("{:0>2}/{:0>2}", k.exp_month, k.exp_year);
         let meta = format!("exp {exp}  CVV {}", k.cvv);
-        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some(), false, "");
+        push_item(&mut items, f, &q, &k.id, 4, &k.title, &k.cardholder_name, &k.card_number, &meta, "", "", &k.folder, "", k.travel_safe, k.favorite, k.deleted_at.is_some(), false, "", "");
     }
     for i in &vault.identities {
-        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some(), false, "");
+        push_item(&mut items, f, &q, &i.id, 5, &i.title, &i.full_name, &i.nid_or_passport, &i.phone, &i.email, &i.address, &i.folder, "", i.travel_safe, i.favorite, i.deleted_at.is_some(), false, "", "");
     }
     for s in &vault.ssh_keys {
-        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some(), false, "");
+        push_item(&mut items, f, &q, &s.id, 6, &s.title, "SSH key", &s.private_key, &s.fingerprint, "", &s.public_key, &s.folder, "", s.travel_safe, s.favorite, s.deleted_at.is_some(), false, "", "");
     }
     // Standalone 2FA (kind 8): hub accounts also live in All items +
     // Favorites so the counts never desync. No secrets ride the list model
@@ -3414,7 +3467,7 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
             "steam" => "STEAM".to_string(),
             _ => "TOTP".to_string(),
         };
-        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false, "");
+        push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false, "", "");
     }
     let total = items.len();
     items.truncate(f.limit);
@@ -10611,6 +10664,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_d_fill_info(String::new().into());
         ui.set_d_health(health_badge_for(id).into());
         ui.set_d_meta_line(format!("ID: {}", id.chars().take(12).collect::<String>()).into());
+        ui.set_d_tags(String::new().into());
+        ui.set_d_url_rule(String::new().into());
         ui.set_d_audit_text(
             security::access_log::recent_filtered(3, false)
                 .join("\n")
@@ -10631,6 +10686,27 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     crate::models::ago(c.last_changed, crate::models::current_timestamp())
                 )
                 .into(),
+            );
+            let mut tag_vec: Vec<&str> = Vec::new();
+            if !c.totp_secret.is_empty() {
+                tag_vec.push("2FA");
+            }
+            if passkey_for_urls(&vault.passkeys, &c.urls) {
+                tag_vec.push("PASSKEY");
+            }
+            if vault.is_verified(&c.id) {
+                tag_vec.push("VERIFIED");
+            }
+            if c.travel_safe {
+                tag_vec.push("TRAVEL");
+            }
+            ui.set_d_tags(tag_vec.join(" · ").into());
+            ui.set_d_url_rule(
+                c.urls
+                    .first()
+                    .map(|u| crate::models::url_rule::label(u.rule()))
+                    .unwrap_or("")
+                    .into(),
             );
             ui.set_d_user(c.username.clone().into());
             ui.set_d_secret(c.password.clone().into());
