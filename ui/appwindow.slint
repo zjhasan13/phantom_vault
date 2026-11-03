@@ -1711,14 +1711,25 @@ export component MainWindow inherits Window {
             background: PhantomTheme.canvas; horizontal-stretch: 1; vertical-stretch: 1;
             VerticalLayout { padding: 22px; spacing: 14px; horizontal-stretch: 1; vertical-stretch: 1;
                 HorizontalLayout { spacing: 8px;
-                    AuraButton { label: "+ Add 2FA"; primary: true; width: 120px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
-                    LineEdit { placeholder-text: "🔍 Search 2FA accounts..."; text <=> root.totp_search_query; height: 38px; horizontal-stretch: 1; edited(text) => { root.totp_search_changed(text); } }
-                    if root.totp_search_query != "" : AuraButton { label: "✕"; width: 44px; height: 38px; clicked => { root.totp_search_query = ""; root.totp_search_changed(""); } }
+                    LineEdit { placeholder-text: "Search 2FA accounts, issuers…"; text <=> root.totp_search_query; height: 36px; horizontal-stretch: 1; edited(text) => { root.totp_search_changed(text); } }
+                    if root.totp_search_query != "" : AuraButton { label: "✕"; width: 40px; height: 36px; clicked => { root.totp_search_query = ""; root.totp_search_changed(""); } }
+                    MonoChip { label: "LOCAL CLOCK"; tone: PhantomTheme.success; }
+                    AuraButton { label: root.show_totp_next ? "Hide NEXT" : "Show NEXT"; primary: root.show_totp_next; width: 110px; height: 36px; clicked => { root.toggle_totp_next(); } }
+                    AuraButton { label: "Export"; width: 90px; height: 36px; clicked => { root.ga_export_start(); } }
+                    AuraButton { label: "+ Add 2FA"; primary: true; width: 110px; height: 36px; clicked => { root.show_2fa_import = !root.show_2fa_import; } }
+                }
+                // KPI strip: real values only (no fake NTP/zero-leak claims).
+                HorizontalLayout { spacing: 10px;
+                    Rectangle { horizontal-stretch: 1; height: 74px; background: PhantomTheme.surface; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 1px; Text { text: "ACTIVE 2FA KEYS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; } Text { text: root.auth_accounts.length; color: PhantomTheme.text; font-size: 20px; font-weight: 800; } Text { text: "Tokens"; color: PhantomTheme.primary; font-size: 9px; font-family: "JetBrains Mono"; } } }
+                    Rectangle { horizontal-stretch: 1; height: 74px; background: PhantomTheme.surface; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 1px; Text { text: "ALGORITHM STANDARD"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; } Text { text: "RFC 6238"; color: PhantomTheme.text; font-size: 18px; font-weight: 800; } Text { text: "TOTP · 30s / SHA-1"; color: PhantomTheme.secondary; font-size: 9px; font-family: "JetBrains Mono"; } } }
+                    Rectangle { horizontal-stretch: 1; height: 74px; background: PhantomTheme.surface; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 1px; Text { text: "TIME DRIFT"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; } Text { text: "LOCAL CLOCK"; color: PhantomTheme.text; font-size: 18px; font-weight: 800; } Text { text: "Offline · no NTP"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; } } }
+                    Rectangle { horizontal-stretch: 1; height: 74px; background: PhantomTheme.surface; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 1px; Text { text: "PROTECTION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; } Text { text: "EPHEMERAL"; color: PhantomTheme.primary; font-size: 18px; font-weight: 800; } Text { text: "Codes derived on demand"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; } } }
                 }
                 HorizontalLayout { spacing: 8px;
-                    AuraButton { label: "📲 Export"; width: 110px; height: 32px; clicked => { root.ga_export_start(); } }
-                    AuraButton { label: root.show_totp_next ? "🙈 Hide NEXT" : "👁 Show NEXT"; primary: root.show_totp_next; width: 130px; height: 32px; clicked => { root.toggle_totp_next(); } }
-                    AuraButton { label: "⚙ Settings"; width: 110px; height: 32px; clicked => { root.active_nav = 3; } }
+                    MonoChip { label: "ALL " + root.auth_accounts.length; tone: PhantomTheme.primary; }
+                    if root.show_totp_next : MonoChip { label: "NEXT ON"; tone: PhantomTheme.success; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "Vault order"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                 }
                 if root.show_2fa_import : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 8px;
                     Text { text: "Google  •  2FAS  •  Aegis  •  Steam .maFile  •  FreeOTP  •  Multi-QR  •  otpauth://"; color: PhantomTheme.text-dim; font-size: 11px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
@@ -1733,51 +1744,43 @@ export component MainWindow inherits Window {
                     // short rows left-align, no binding loop.
                     for row in root.auth_rows : HorizontalLayout { spacing: 14px; horizontal-stretch: 1; alignment: space-between;
                         for acc in row : Rectangle {
-                            // Guaranteed-fit: the SMALLER of Rust-fed window
-                            // width and live viewport wins — overflow/clipping
-                            // is impossible under any theory, full-bleed stays.
                             width: (Math.min(root.hub_px_w, hub_scroll.width / 1px) - 72) / 3 * 1px;
                             background: PhantomTheme.surface;
-                            border-radius: 10px;
+                            border-radius: 12px;
                             border-width: 1px;
                             border-color: PhantomTheme.border;
-                            height: 112px;
+                            height: 168px;
                             clip: true;
-                            // Click-anywhere copies the live code (buttons stay
-                            // on top, so ⭐/Copy/🗑️ keep their own clicks).
                             TouchArea { mouse-cursor: pointer; clicked => { if acc.code != "" && acc.code != "------" { root.copy_totp_requested(acc.id); } } }
-                            HorizontalLayout { padding: 10px; spacing: 8px; alignment: space-between;
-                                HorizontalLayout { spacing: 8px; horizontal-stretch: 1;
-                                    Rectangle { width: 36px; height: 36px; border-radius: 18px; background: acc.tint;
-                                            if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; x: 6px; y: 6px; image-fit: contain; }
-                                            if !acc.has_icon : Text { text: acc.icon; color: PhantomTheme.canvas; font-size: 16px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                                        VerticalLayout { spacing: 0px; alignment: center; horizontal-stretch: 1;
-                                            HorizontalLayout { spacing: 6px; alignment: start;
-                                                Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: PhantomTheme.text; font-size: 13px; font-weight: 800; overflow: elide; vertical-alignment: center; }
-                                                if acc.is_dup : Rectangle { border-radius: 6px; background: #f59e0b1a; border-width: 1px; border-color: PhantomTheme.warning;
-                                                    HorizontalLayout { padding-left: 5px; padding-right: 5px; padding-top: 1px; padding-bottom: 1px;
-                                                        Text { text: "⚠ DUP"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; } } } }
-                                            Text { text: acc.name; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; }
-                                            Text { text: acc.display; color: !acc.is_hotp && acc.secs <= 5 ? PhantomTheme.error : PhantomTheme.text; font-size: 20px; font-weight: 900; }
-                                            // Hidden by default. A visible "next" code is a
-                                            // second plausible-looking number on the card and
-                                            // users copy whichever one they read second.
-                                            if root.show_totp_next : Text { text: acc.next_label; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; }
-                                            if !acc.is_hotp : Rectangle { background: PhantomTheme.surface-high; border-radius: 2px; height: 4px; clip: true;
-                                                Rectangle { background: acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error); border-radius: 2px; height: 4px; width: parent.width * acc.secs / 30; } } }
+                            VerticalLayout { padding: 14px; spacing: 8px;
+                                HorizontalLayout { spacing: 8px;
+                                    Rectangle { width: 34px; height: 34px; border-radius: 8px; background: acc.tint;
+                                        if acc.has_icon : Image { source: acc.icon_img; width: 24px; height: 24px; image-fit: contain; }
+                                        if !acc.has_icon : Text { text: acc.icon; color: PhantomTheme.canvas; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
                                     }
-                                VerticalLayout { spacing: 4px; alignment: center;
-                                    HorizontalLayout { spacing: 6px; alignment: center;
-                                        Rectangle { width: 40px; height: 40px; border-radius: 20px; border-width: 2px;
-                                            border-color: acc.is_hotp ? PhantomTheme.primary : (acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error));
-                                            Text { text: acc.countdown; color: acc.is_hotp ? PhantomTheme.primary : (acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-                                        AuraButton { label: acc.fav ? "⭐" : "☆"; primary: acc.fav; width: 36px; height: 32px; clicked => { root.toggle_totp_favorite(acc.id); } }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 1px;
+                                        Text { text: acc.issuer == "" ? acc.name : acc.issuer; color: PhantomTheme.text; font-size: 13px; font-weight: 800; overflow: elide; }
+                                        Text { text: acc.name; color: PhantomTheme.text-muted; font-size: 10px; overflow: elide; }
                                     }
-                                    if acc.is_hotp : Text { text: "🔢 HOTP"; color: PhantomTheme.primary; font-size: 11px; font-weight: 700; horizontal-alignment: center; }
-                                    if acc.is_hotp : AuraButton { label: "🔄 Next"; width: 64px; height: 32px; clicked => { root.hotp_next(acc.id); } }
-                                    HorizontalLayout { spacing: 4px; alignment: center;
-                                        AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; width: 56px; height: 32px; clicked => { root.copy_totp_requested(acc.id); } }
-                                        AuraButton { label: root.confirm_delete_auth_id == acc.id ? "Sure?" : "🗑️"; width: root.confirm_delete_auth_id == acc.id ? 64px : 36px; height: 32px; danger: true; clicked => { if root.confirm_delete_auth_id == acc.id { root.confirm_delete_auth_id = ""; root.delete_auth_account(acc.id); } else { root.confirm_delete_auth_id = acc.id; } } } }
+                                    if acc.is_dup : MonoChip { label: "DUP"; tone: PhantomTheme.warning; }
+                                    MonoChip { label: acc.kind; tone: PhantomTheme.text-dim; }
+                                    AuraButton { label: acc.fav ? "★" : "☆"; primary: acc.fav; width: 28px; height: 28px; clicked => { root.toggle_totp_favorite(acc.id); } }
+                                }
+                                HorizontalLayout { spacing: 8px;
+                                    Text { text: acc.display; color: !acc.is_hotp && acc.secs <= 5 ? PhantomTheme.error : PhantomTheme.text; font-size: 26px; font-weight: 900; font-family: "JetBrains Mono"; letter-spacing: 2px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                    Rectangle { width: 38px; height: 38px; border-radius: 19px; border-width: 2px; border-color: acc.is_hotp ? PhantomTheme.primary : (acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error));
+                                        Text { text: acc.countdown; color: acc.is_hotp ? PhantomTheme.primary : (acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error)); font-size: acc.is_hotp ? 9px : 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                }
+                                if root.show_totp_next : Text { text: acc.next_label; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; overflow: elide; }
+                                if !acc.is_hotp : Rectangle { background: PhantomTheme.surface-high; border-radius: 2px; height: 4px; clip: true;
+                                    Rectangle { background: acc.secs > 15 ? PhantomTheme.primary : (acc.secs > 5 ? PhantomTheme.warning : PhantomTheme.error); border-radius: 2px; height: 4px; width: parent.width * acc.secs / 30; }
+                                }
+                                Rectangle { horizontal-stretch: 1; }
+                                HorizontalLayout { spacing: 6px;
+                                    AuraButton { label: root.last_copied == acc.code && root.last_copied != "" ? "✓ Copied" : "📋 Copy Code"; primary: root.last_copied == acc.code && root.last_copied != ""; enabled: acc.is_hotp || acc.secs > 3; height: 30px; horizontal-stretch: 1; clicked => { root.copy_totp_requested(acc.id); } }
+                                    if acc.is_hotp : AuraButton { label: "🔄"; width: 34px; height: 30px; clicked => { root.hotp_next(acc.id); } }
+                                    AuraButton { label: root.confirm_delete_auth_id == acc.id ? "Sure?" : "🗑"; width: root.confirm_delete_auth_id == acc.id ? 60px : 34px; height: 30px; danger: true; clicked => { if root.confirm_delete_auth_id == acc.id { root.confirm_delete_auth_id = ""; root.delete_auth_account(acc.id); } else { root.confirm_delete_auth_id = acc.id; } } }
                                 }
                             }
                         }
@@ -1809,6 +1812,15 @@ export component MainWindow inherits Window {
                     }
 
                 }}
+                Rectangle { height: 26px; background: PhantomTheme.surface-lowest;
+                    HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 14px;
+                        Text { text: "● TOTP ENGINE LOCAL"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Text { text: "RFC 6238 · 30s"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Text { text: "CLIPBOARD AUTO-CLEAR"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "OFFLINE"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                    }
+                }
                 // Zero-lockin: scan pages into Google Authenticator.
                 if root.ga_show : Rectangle {
                     background: #060e20cc;
