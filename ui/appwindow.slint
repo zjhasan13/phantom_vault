@@ -714,6 +714,7 @@ export component MainWindow inherits Window {
     callback load_more_items();
     // Bulk-select mode (Column 2): checkbox per card + bottom action bar.
     in-out property <bool> select_mode: false;
+    in-out property <bool> all_selected: false;
     // Bulk destructive two-tap (parity with hub/passkey/item deletes).
     in-out property <bool> confirm_bulk_trash: false;
     // PIN-removal two-tap (downgrades unlock — confirm like deletes).
@@ -1125,6 +1126,7 @@ export component MainWindow inherits Window {
     callback open_janitor();
     callback toggle_select(int, string);
     callback clear_selection();
+    callback select_all_visible(bool);
     callback bulk_favorite();
     callback bulk_move(string);
     callback bulk_trash();
@@ -2326,23 +2328,8 @@ export component MainWindow inherits Window {
                         AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
                     }
                     Rectangle { horizontal-stretch: 1; }
-                    AuraButton { label: root.select_mode ? (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Selecting") : (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Select"); primary: root.select_mode; width: 120px; height: 30px; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
                 }
             }
-            // P0: bulk action bar sits below the filter strip (spans both panes).
-            if root.select_mode && root.selected_count > 0 : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.primary;  VerticalLayout { padding: 8px; spacing: 6px;
-                Text { text: root.selected_label; color: PhantomTheme.text; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
-                HorizontalLayout { spacing: 6px;
-                    AuraButton { label: root.ui_lang == "bn" ? "📤 নির্বাচিত শেয়ার" : "📤 Share Selected"; primary: true; horizontal-stretch: 1; height: 32px; clicked => { root.bulk_share(); } }
-                    AuraButton { label: root.ui_lang == "bn" ? "⭐ সব প্রিয়" : "⭐ Favorite All"; horizontal-stretch: 1; height: 32px; clicked => { root.bulk_favorite(); } }
-                    AuraButton { label: root.confirm_bulk_trash ? "Sure? Trash" : "🗑 Trash"; danger: true; horizontal-stretch: 1; height: 32px; clicked => { if root.confirm_bulk_trash { root.confirm_bulk_trash = false; root.bulk_trash(); } else { root.confirm_bulk_trash = true; } } }
-                }
-                HorizontalLayout { spacing: 6px;
-                    ComboBox { model: root.filter_folders; current-value <=> root.bulk_folder; horizontal-stretch: 1; height: 32px; }
-                    AuraButton { label: "📁 Move"; width: 90px; height: 32px; clicked => { root.bulk_move(root.bulk_folder); } }
-                    AuraButton { label: "✕"; width: 40px; height: 32px; clicked => { root.clear_selection(); } }
-                }
-            }}
             HorizontalLayout {
                 spacing: 0px; horizontal-stretch: 1; vertical-stretch: 1;
             // 2. Column 2: Middle Items List (340px)
@@ -2355,7 +2342,7 @@ export component MainWindow inherits Window {
                     key-pressed(event) => {
                             if event.text == Key.UpArrow { root.cycle_select(-1); return accept; }
                             if event.text == Key.DownArrow { root.cycle_select(1); return accept; }
-                            if event.text == Key.Escape { root.close_detail(); return accept; }
+                            if event.text == Key.Escape { if root.selected_count > 0 { root.clear_selection(); } else { root.close_detail(); } return accept; }
                         return reject;
                     }
                 VerticalLayout { padding: 14px; spacing: 10px;
@@ -2393,6 +2380,7 @@ export component MainWindow inherits Window {
                     }
                     // P0: list header strip (real match count, no fake index badge).
                     Rectangle { height: 30px; background: PhantomTheme.surface-low; HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 6px;
+                        Rectangle { width: 16px; height: 16px; border-radius: 3px; background: root.all_selected ? PhantomTheme.primary-container : transparent; border-width: 1px; border-color: root.all_selected ? PhantomTheme.primary : PhantomTheme.border; if root.all_selected : Text { text: "✓"; color: PhantomTheme.on-primary; font-size: 10px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } if !root.all_selected && root.selected_count > 0 : Text { text: "–"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; } TouchArea { mouse-cursor: pointer; clicked => { root.select_all_visible(!root.all_selected); } } }
                         Text { text: root.ui_lang == "bn" ? "ভল্ট আইটেম" : "VAULT ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; vertical-alignment: center; }
                         Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
@@ -2400,7 +2388,7 @@ export component MainWindow inherits Window {
                         Text { text: root.ui_lang == "bn" ? "লোকাল ইনডেক্স" : "LOCAL INDEX"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; vertical-alignment: center; }
                     } }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;
-                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (touch.has-hover ? PhantomTheme.surface : transparent); border-radius: 6px; height: 76px;
+                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (cred.sel ? #4edea31a : (touch.has-hover ? PhantomTheme.surface : transparent)); border-radius: 6px; height: 76px;
                             touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); }
                                 pointer-event(event) => {
                                     if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right && cred.kind == 1) {
@@ -2410,7 +2398,7 @@ export component MainWindow inherits Window {
                             }
                             if root.d_id == cred.id : Rectangle { width: 3px; height: 52px; x: 0; y: 12px; border-radius: 2px; background: PhantomTheme.primary; drop-shadow-blur: 8px; drop-shadow-color: #4edea388; }
                             HorizontalLayout { padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 10px;
-                                if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 34px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
+                                if touch.has-hover || root.selected_count > 0 || cred.sel : Rectangle { width: 18px; height: 18px; border-radius: 4px; background: cred.sel ? PhantomTheme.primary-container : transparent; border-width: 1px; border-color: cred.sel ? PhantomTheme.primary : PhantomTheme.border; if cred.sel : Text { text: "✓"; color: PhantomTheme.on-primary; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } TouchArea { mouse-cursor: pointer; clicked => { root.toggle_select(cred.kind, cred.id); } } }
                                 Rectangle { width: 36px; height: 36px; border-radius: 6px; background: PhantomTheme.surface;
                                     if cred.has_icon : Image { source: cred.icon; width: 26px; height: 26px; image-fit: contain; }
                                     if !cred.has_icon : Text { text: cred.kind == 1 ? "🔑" : (cred.kind == 2 ? "📜" : (cred.kind == 3 ? "📝" : (cred.kind == 4 ? "💳" : (cred.kind == 5 ? "🪪" : (cred.kind == 8 ? "⏱️" : "🖥️"))))); font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
@@ -2451,6 +2439,21 @@ export component MainWindow inherits Window {
                         if root.total_matches_count > 0 : Text { text: "Showing " + Math.min(root.credentials.length, root.total_matches_count) + " of " + root.total_matches_count; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; }
                     }}
                 }
+                }
+                if root.selected_count > 0 : Rectangle { x: 8px; y: parent.height - 96px; width: parent.width - 16px; height: 88px; background: PhantomTheme.surface-highest; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.primary; drop-shadow-blur: 24px; drop-shadow-color: #000000aa;
+                    VerticalLayout { padding: 8px; spacing: 6px;
+                        HorizontalLayout { spacing: 6px;
+                            Text { text: root.selected_label; color: PhantomTheme.text; font-size: 11px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                            AuraButton { label: "📤"; width: 32px; height: 30px; primary: true; clicked => { root.bulk_share(); } }
+                            AuraButton { label: "⭐"; width: 32px; height: 30px; clicked => { root.bulk_favorite(); } }
+                            AuraButton { label: root.confirm_bulk_trash ? "✓?" : "🗑"; width: 40px; height: 30px; danger: true; clicked => { if root.confirm_bulk_trash { root.confirm_bulk_trash = false; root.bulk_trash(); } else { root.confirm_bulk_trash = true; } } }
+                            AuraButton { label: "✕"; width: 30px; height: 30px; clicked => { root.clear_selection(); } }
+                        }
+                        HorizontalLayout { spacing: 6px;
+                            ComboBox { model: root.filter_folders; current-value <=> root.bulk_folder; height: 28px; horizontal-stretch: 1; }
+                            AuraButton { label: root.ui_lang == "bn" ? "সরান" : "Move"; width: 64px; height: 28px; clicked => { root.bulk_move(root.bulk_folder); } }
+                        }
+                    }
                 }
             }
             // 3. Column 3: Right Inspection Detail Panel (stretch)

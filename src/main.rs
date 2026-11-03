@@ -6836,6 +6836,32 @@ fn main() -> Result<(), slint::PlatformError> {
         let v = lock_vault(&clr_vault);
         refresh_selection_ui(&ui, &v, &f);
     });
+    let all_weak = main_window.as_weak();
+    let all_vault = Arc::clone(&active_vault);
+    let all_search = Arc::clone(&search_state);
+    main_window.on_select_all_visible(move |on| {
+        let Some(ui) = all_weak.upgrade() else {
+            return;
+        };
+        let f = all_search.lock().unwrap().clone();
+        if on {
+            let mut f_all = f.clone();
+            f_all.limit = 100_000;
+            let v = lock_vault(&all_vault);
+            let model = vault_to_items(&v, &f_all);
+            let mut reg = selection_registry().lock().unwrap_or_else(|p| p.into_inner());
+            for row in model.iter() {
+                reg.insert(selection_key(row.kind, row.id.as_str()));
+            }
+        } else {
+            selection_registry()
+                .lock()
+                .unwrap_or_else(|p| p.into_inner())
+                .clear();
+        }
+        let v = lock_vault(&all_vault);
+        refresh_selection_ui(&ui, &v, &f);
+    });
     // Shared batch runner: snapshot-rollback re-seal, list + hub + QuickBar
     // refresh, selection cleared, single sync push. Returns affected count.
     #[allow(clippy::too_many_arguments)]
