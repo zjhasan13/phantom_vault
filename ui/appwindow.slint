@@ -2479,57 +2479,75 @@ export component MainWindow inherits Window {
                         Text { text: peep_hold_col.pressed ? "👁 REVEALING — release to mask" : "👁 HOLD TO PEEK (ephemeral)"; color: peep_hold_col.pressed ? PhantomTheme.on-primary : PhantomTheme.text; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     if root.d_id != "" : VerticalLayout { spacing: 12px;
-                        // CARD 1: header + primary action (Bitwarden style)
-                        Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 10px;
+                        // Aegis detail header: identity + proof strip + primary action
+                        Rectangle { background: PhantomTheme.surface; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 10px;
                             HorizontalLayout { spacing: 10px;
-                                if root.d_has_icon : Image { source: root.d_icon; width: 30px; height: 30px; image-fit: contain; vertical-alignment: center; }
-                                if !root.d_has_icon : Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 26px; vertical-alignment: center; }
-                                VerticalLayout { horizontal-stretch: 1; spacing: 2px;
-                                    HorizontalLayout { spacing: 6px; Text { text: root.d_title; color: PhantomTheme.text; font-size: 16px; font-weight: 800; overflow: elide; } if root.d_verified : Text { text: "✅"; font-size: 14px; vertical-alignment: center; } }
-                                    HorizontalLayout { spacing: 6px; Text { text: "📁 " + root.d_folder; color: PhantomTheme.primary; font-size: 11px; font-weight: 700; vertical-alignment: center; } if root.d_reprompt : Text { text: "🔒"; font-size: 12px; vertical-alignment: center; } }
-                                    if root.d_meta_line != "" : Text { text: root.d_meta_line; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
+                                Rectangle { width: 44px; height: 44px; border-radius: 9px; background: PhantomTheme.surface-high;
+                                    if root.d_has_icon : Image { source: root.d_icon; width: 32px; height: 32px; image-fit: contain; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.d_has_icon : Text { text: root.d_kind == 1 ? "🔑" : (root.d_kind == 2 ? "📜" : (root.d_kind == 3 ? "📝" : (root.d_kind == 4 ? "💳" : (root.d_kind == 5 ? "🪪" : (root.d_kind == 8 ? "⏱️" : "🔑"))))); font-size: 22px; horizontal-alignment: center; vertical-alignment: center; }
                                 }
-                                AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 34px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
-                                if root.d_kind == 1 : AuraButton { label: "🖼️"; width: 44px; height: 34px; clicked => { root.override_favicon(root.d_id); } }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 3px;
+                                    HorizontalLayout { spacing: 6px;
+                                        Text { text: root.d_title; color: PhantomTheme.text; font-size: 22px; font-weight: 800; letter-spacing: -0.3px; overflow: elide; horizontal-stretch: 1; }
+                                        if root.d_verified : Text { text: "✅"; font-size: 14px; vertical-alignment: center; }
+                                    }
+                                    if root.d_meta_line != "" : Text { text: root.d_meta_line; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
+                                    HorizontalLayout { spacing: 6px;
+                                        MonoChip { label: root.d_folder == "" ? "GENERAL" : root.d_folder; tone: PhantomTheme.primary; }
+                                        if root.d_health != "" : MonoChip { label: root.d_health; tone: PhantomTheme.warning; }
+                                        MonoChip { label: "LOCAL"; tone: PhantomTheme.text-dim; }
+                                    }
+                                }
+                                AuraButton { label: root.d_fav ? "★" : "☆"; width: 34px; height: 32px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
+                                if root.d_kind != 8 : AuraButton { label: "✏️"; width: 34px; height: 32px; clicked => { root.edit_item_requested(root.d_kind, root.d_id); } }
                             }
-                            if !root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "⚡ অটোফিল / টাইপ" : "⚡ Autofill / Type"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
+                            // Proof strip: real crypto, no FIPS/TPM claims.
+                            Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface-low;
+                                HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
+                                    Text { text: root.pq_paranoid_on ? "● ML-KEM-768 + XChaCha20" : "● XChaCha20-Poly1305 VERIFIED"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.4px; vertical-alignment: center; }
+                                    Text { text: "ARGON2ID 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    if root.d_kind == 1 && root.d_secret != "" : Text { text: "STRENGTH " + Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                                }
+                            }
+                            HorizontalLayout { spacing: 8px;
+                                if !root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "⚡ অটোফিল / টাইপ" : "⚡ Launch & Autofill"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
+                                if root.d_url != "" : AuraButton { label: "↗ Open URL"; width: 104px; height: 38px; clicked => { root.open_url(root.d_url); } }
+                            }
                         }}
-                        // P0 diagnostic tiles: real values only (no fake leak counters).
+                        // Real-only diagnostic tiles (pwned / age / cipher).
                         HorizontalLayout { spacing: 8px;
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "PWNED VERIFICATION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; } Text { text: root.d_health == "" ? "Not scanned" : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "CREDENTIAL AGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "ENCRYPTION VECTOR"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; } Text { text: "XChaCha20-Poly1305"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; } Text { text: root.pq_paranoid_on ? "Argon2id + ML-KEM-768" : "Argon2id"; color: PhantomTheme.text-muted; font-size: 10px; } } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "PWNED VERIFICATION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_health == "" ? "Not scanned" : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "CREDENTIAL AGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "ENCRYPTION VECTOR"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: "XChaCha20-Poly1305"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; } Text { text: root.pq_paranoid_on ? "Argon2id + ML-KEM-768" : "Argon2id"; color: PhantomTheme.text-muted; font-size: 10px; } } }
                         }
                         if root.d_trashed : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; wrap: word-wrap; }
-                        // CARD 2: login credentials
-                        if root.d_kind != 8 : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: root.ui_lang == "bn" ? "লগইন তথ্য" : "LOGIN CREDENTIALS"; }
-                            FieldLabel { text: root.ui_lang == "bn" ? "ইউজারনেম" : "USERNAME"; }
-                            if root.d_user != "" : HorizontalLayout { spacing: 8px; Text { text: root.d_user; color: PhantomTheme.text; font-size: 13px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.last_copied == root.d_user && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == root.d_user && root.last_copied != ""; width: 76px; height: 30px; clicked => { root.copy_password_requested(root.d_user); } } }
-                            Rectangle { height: 1px; background: PhantomTheme.border; }
-                            FieldLabel { text: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "PASSWORD"; }
-                            HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••"); color: PhantomTheme.secondary; font-size: 14px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: root.d_secret_visible ? "🙈" : "👁️"; width: 44px; height: 30px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } } AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_secret); } } AuraButton { label: "🎲"; width: 44px; height: 30px; clicked => { root.show_generator = true; root.regenerate(); } } }
-                            if root.d_kind == 1 && root.d_secret != "" && root.d_pw_strength_label != "" : VerticalLayout { spacing: 4px;
-                                HorizontalLayout { spacing: 8px; alignment: center;
-                                    Rectangle { background: PhantomTheme.border; border-radius: 4px; height: 8px; horizontal-stretch: 1;
-                                        Rectangle { background: root.d_pw_strength >= 1.0 ? PhantomTheme.success : (root.d_pw_strength >= 0.75 ? PhantomTheme.warning : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error)); border-radius: 4px; width: parent.width * root.d_pw_strength; height: 8px; }
-                                    }
+                        // Two-column credential grid (Aegis inspector).
+                        if root.d_kind != 8 : HorizontalLayout { spacing: 10px;
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 5px;
+                                HorizontalLayout { Text { text: "USERNAME / IDENTITY"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } if root.d_verified : Text { text: "VERIFIED"; color: PhantomTheme.success; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; } }
+                                Text { text: root.d_user == "" ? "—" : root.d_user; color: PhantomTheme.text; font-size: 14px; font-family: "JetBrains Mono"; overflow: elide; }
+                                AuraButton { label: root.last_copied == root.d_user && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == root.d_user && root.last_copied != ""; height: 28px; horizontal-stretch: 1; clicked => { root.copy_password_requested(root.d_user); } }
+                            }}
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 5px;
+                                HorizontalLayout { Text { text: "MASTER PASSWORD"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } Text { text: Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; } }
+                                HorizontalLayout { spacing: 4px;
+                                    Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••••••"); color: PhantomTheme.secondary; font-size: 14px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                                    AuraButton { label: root.d_secret_visible ? "🙈" : "👁"; width: 32px; height: 28px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } }
+                                    AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 32px; height: 28px; clicked => { root.copy_password_requested(root.d_secret); } }
                                 }
-                                Text { text: "🛡️ " + root.d_pw_strength_label; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                            }
-                            if root.d_kind == 1 && root.d_history.length > 0 : VerticalLayout { spacing: 6px;
-                                AuraButton { label: root.show_history ? "📜 Hide Password History (" + root.d_history.length + ")" : "📜 Password History (" + root.d_history.length + ")"; width: 250px; height: 30px; clicked => { root.show_history = !root.show_history; } }
-                                if root.show_history : VerticalLayout { spacing: 4px;
-                                    for h in root.d_history : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: h.when; color: PhantomTheme.text-dim; font-size: 11px; width: 90px; vertical-alignment: center; } Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••" : h.password; color: PhantomTheme.text-muted; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "📋"; width: 40px; height: 24px; y: 6px; clicked => { root.copy_password_requested(h.password); } } } }
+                                Rectangle { background: PhantomTheme.border; border-radius: 4px; height: 6px; horizontal-stretch: 1;
+                                    Rectangle { background: root.d_pw_strength >= 1.0 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); border-radius: 4px; width: parent.width * root.d_pw_strength; height: 6px; }
                                 }
-                            }
-                        }}
+                                Text { text: root.d_pw_strength_label; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
+                            }}
+                        }
                         // Embedded / standalone 2FA live card
                         if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #4edea355; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
-                            FieldLabel { text: root.ui_lang == "bn" ? "অটোফিল অপশন" : "AUTO-FILL OPTIONS"; }
+                            FieldLabel { text: root.ui_lang == "bn" ? "অনুমোদিত অটোফিল টার্গেট" : "AUTHORIZED AUTOFILL TARGETS"; }
                             HorizontalLayout { spacing: 8px; Text { text: root.d_url; color: PhantomTheme.text-muted; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "↗️"; width: 44px; height: 30px; clicked => { root.open_url(root.d_url); } } AuraButton { label: root.last_copied == root.d_url && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_url && root.last_copied != ""; width: 44px; height: 30px; clicked => { root.copy_password_requested(root.d_url); } } }
                             if root.d_urls_extra != "" : Text { text: root.d_urls_extra; color: PhantomTheme.text-dim; font-size: 11px; overflow: elide; }
                         }}
