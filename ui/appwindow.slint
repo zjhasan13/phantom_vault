@@ -771,6 +771,11 @@ export component MainWindow inherits Window {
     in-out property <bool> show_2fa_import: false;
     // GA reverse-export modal state (image set from Rust PNG bytes).
     in-out property <bool> ga_show: false;
+    // The sheet opens IMMEDIATELY on click and shows this state while the
+    // worker builds the QR (or when there is nothing to export), so the
+    // button never looks dead.
+    in-out property <bool> ga_busy: false;
+    in-out property <string> ga_status: "";
     in-out property <image> ga_image;
     in-out property <string> ga_page: "";
     in-out property <int> ga_page_at: 0;
@@ -1832,7 +1837,6 @@ export component MainWindow inherits Window {
                 }
             }
                 // ---- Export sheet (overlays the hub pane) ----
-            // ---- Export sheet (overlays the hub pane) ----
             if root.ga_show : Rectangle {
                 x: 0; y: 0;
                 width: parent.width;
@@ -1865,12 +1869,16 @@ export component MainWindow inherits Window {
                         VerticalLayout { padding: 18px; spacing: 12px; vertical-stretch: 1;
                             Rectangle { height: 286px; background: PhantomTheme.surface-lowest; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border;
                                 HorizontalLayout { alignment: center; vertical-stretch: 1;
-                                    Rectangle { width: 258px; height: 258px; border-radius: 14px; background: #ffffff; border-width: 1px; border-color: PhantomTheme.border;
+                                    if root.ga_busy || root.ga_page_total == 0 : VerticalLayout { width: 340px; spacing: 8px; alignment: center;
+                                        Text { text: root.ga_busy ? "BUILDING MIGRATION QR" : "NOTHING TO EXPORT"; color: root.ga_busy ? PhantomTheme.secondary : PhantomTheme.text-muted; font-size: 12px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 1px; horizontal-alignment: center; }
+                                        Text { text: root.ga_status; color: PhantomTheme.text-dim; font-size: 10px; horizontal-alignment: center; wrap: word-wrap; }
+                                    }
+                                    if !root.ga_busy && root.ga_page_total > 0 : Rectangle { width: 258px; height: 258px; border-radius: 14px; background: #ffffff; border-width: 1px; border-color: PhantomTheme.border;
                                         Image { source: root.ga_image; width: 250px; height: 250px; x: 4px; y: 4px; image-fit: contain; }
                                     }
                                 }
                             }
-                            HorizontalLayout { spacing: 8px; alignment: center;
+                            if root.ga_page_total > 0 : HorizontalLayout { spacing: 8px; alignment: center;
                                 AuraButton { label: "PREV"; width: 84px; height: 34px; enabled: root.ga_page_at > 0; clicked => { root.ga_export_page(-1); } }
                                 VerticalLayout { horizontal-stretch: 1; spacing: 1px;
                                     Text { text: "PAGE " + (root.ga_page_at + 1) + " / " + root.ga_page_total; color: PhantomTheme.text; font-size: 11px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; }
@@ -1886,7 +1894,7 @@ export component MainWindow inherits Window {
                         }
                         Rectangle { height: 66px; background: PhantomTheme.surface-low;
                             HorizontalLayout { padding-left: 18px; padding-right: 16px; spacing: 10px; alignment: center;
-                                AuraButton { label: "Copy URI"; width: 120px; height: 40px; clicked => { root.ga_copy_uri(); } }
+                                AuraButton { label: "Copy URI"; width: 120px; height: 40px; enabled: root.ga_page_total > 0; clicked => { root.ga_copy_uri(); } }
                                 Rectangle { horizontal-stretch: 1; }
                                 AuraButton { label: "Done"; primary: true; width: 120px; height: 40px; clicked => { root.ga_show = false; } }
                             }

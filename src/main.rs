@@ -3666,7 +3666,7 @@ fn push_hub_width(ui: &MainWindow) {
     let scale = ui.window().scale_factor();
     let scale = if scale > 0.0 { scale } else { 1.0 };
     let logical = sz.width as f32 / scale;
-    let side: f32 = if ui.get_sidebar_collapsed() { 64.0 } else { 220.0 };
+    let side: f32 = if ui.get_sidebar_collapsed() { 64.0 } else { 256.0 };
     ui.set_hub_px_w(((logical - side - 44.0).max(320.0)).min(4000.0));
     ui.set_hub_w(((logical - side).max(340.0)).min(4000.0));
 }
@@ -7219,6 +7219,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     ui.set_ga_page(format!("Page {} of {}", idx + 1, pages.len()).into());
     ui.set_ga_page_at(idx as i32);
     ui.set_ga_page_total(pages.len() as i32);
+    ui.set_ga_busy(false);
+    ui.set_ga_status("".into());
     ui.set_ga_show(true);
 }
 
@@ -9880,14 +9882,41 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if ui.get_is_decoy() {
+            ui.set_ga_image(slint::Image::default());
+            ui.set_ga_page("".into());
+            ui.set_ga_page_at(0);
+            ui.set_ga_page_total(0);
+            ui.set_ga_warn("".into());
+            ui.set_ga_busy(false);
+            ui.set_ga_status("Decoy mode is read-only - export is disabled.".into());
+            ui.set_ga_show(true);
             ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
         let accounts = lock_vault(&ga_vault).totp_accounts.clone();
         if accounts.is_empty() {
-            ui.set_notification_text("⚠️ No 2FA accounts to export.".into());
+            // Open the sheet anyway: on the hub the global toast is not
+            // visible, so a silent return made Export look broken.
+            ui.set_ga_image(slint::Image::default());
+            ui.set_ga_page("".into());
+            ui.set_ga_page_at(0);
+            ui.set_ga_page_total(0);
+            ui.set_ga_warn("".into());
+            ui.set_ga_busy(false);
+            ui.set_ga_status("No 2FA accounts to export yet. Add one above, then try again.".into());
+            ui.set_ga_show(true);
             return;
         }
+        // Open at once with a real loading state; the QR worker can take a
+        // moment, and a dead-looking button is indistinguishable from a bug.
+        ui.set_ga_image(slint::Image::default());
+        ui.set_ga_page("".into());
+        ui.set_ga_page_at(0);
+        ui.set_ga_page_total(0);
+        ui.set_ga_warn("".into());
+        ui.set_ga_busy(true);
+        ui.set_ga_status("Building migration QR from the local vault…".into());
+        ui.set_ga_show(true);
         ui.set_notification_text("⏳ Building migration QR…".into());
         let weak = ga_weak.clone();
         let pages_arc = Arc::clone(&ga_pages0);
@@ -9901,7 +9930,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 };
                 match built {
-                    Err(e) => ui.set_notification_text(format!("⚠️ GA export: {e}").into()),
+                    Err(e) => {
+                        ui.set_ga_busy(false);
+                        ui.set_ga_status(format!("Export failed: {e}").into());
+                        ui.set_notification_text(format!("⚠️ GA export: {e}").into());
+                    }
                     Ok((uris, skipped, lossy)) => {
                         let mut pages = Vec::new();
                         let mut failed = 0usize;
@@ -9912,6 +9945,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             }
                         }
                         if pages.is_empty() {
+                            ui.set_ga_busy(false);
+                            ui.set_ga_status("Export failed: the QR renderer produced no pages.".into());
                             ui.set_notification_text("⚠️ GA export: QR render failed.".into());
                             return;
                         }
@@ -9931,8 +9966,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                         security::access_log::log_event("export", "ga-qr");
                         ui.set_notification_text("📲 Scan the QR with Google Authenticator.".into());
+                        return;
                     }
                 }
+                // Error path: keep the sheet open with the message; the global
+                // toast is not rendered on the hub.
+                ui.set_ga_page_total(0);
             });
         });
     });
