@@ -40,6 +40,7 @@ screen lists.
 | Full-width vault command bar | Search-first bar (no redundant brand): search, ZERO-KNOWLEDGE / RAM-SAFE / LOCAL pill chips, `+ New` | command bar + telemetry chips + session pill | **Shipped + visually QA'd**; no fabricated "0M leak"/`⌘K` |
 | Filter strip | 42px, 76px All/Login/Card/Note/SSH, Select pinned right | type chips left, New Item right | **Shipped (P0)** |
 | Sidebar rail (Aegis) | ENCLAVE MODE/Local mode + version, real vault selector, VAULT STORAGE (All Items/Logins/Passkeys/Secure Notes/Cards & IDs/SSH & API Keys) with real counts, SECURITY & TOOLS (Security Audit/Password Generator/2FA Hub), INTEGRATION & SYSTEM (Extension Bridge/Local Sync/Import/Settings), cipher + local-engine + session + lock | 256px rail with sections/counts | **Shipped** (counts from the live vault; bg #060e20, active row solid #10b981 with on-primary text, 38px rows, mint version chip) |
+| List sorting | `SORT_MODE` + list-header dropdown: Default / Recent (last_changed) / Name A-Z / Name Z-A / Weakest / Type | toolbar `swap_vert` icon | **Shipped** (dropdown in the list header; Recent chip syncs) |
 | List header | `VAULT ITEMS` + real match count + `LOCAL INDEX` | `Items` + count + index-sync badge | **Shipped** (no fake sync claim) |
 | Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette; Windows shortcut TBD) |
 | Crash/integrity banner | lock-screen `integrity_warning` (`:1108`) | — | KEEP (design lacks it) |

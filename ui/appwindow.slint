@@ -1117,6 +1117,8 @@ export component MainWindow inherits Window {
     callback folder_filter_changed(string);
     callback fav_filter_changed(bool);
     in-out property <bool> recent_mode: false;
+    in-out property <int> sort_mode: 0;
+    callback sort_changed(string);
     callback recent_changed(bool);
     callback toggle_favorite(int, string);
     callback toggle_verified(int, string);
@@ -2315,13 +2317,13 @@ export component MainWindow inherits Window {
             Rectangle { height: 42px; background: PhantomTheme.surface-low;
                 HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px;
                     HorizontalLayout { spacing: 4px;
-                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.recent_mode; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.recent_mode = true; root.recent_changed(true); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.recent_mode = false; root.recent_changed(false); root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.sort_mode == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.sort_mode = 1; root.recent_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
                     }
                     Rectangle { horizontal-stretch: 1; }
                     AuraButton { label: root.select_mode ? (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Selecting") : (root.ui_lang == "bn" ? "☑️ নির্বাচন" : "☑️ Select"); primary: root.select_mode; width: 120px; height: 30px; clicked => { if root.select_mode { root.select_mode = false; root.clear_selection(); } else { root.select_mode = true; } } }
@@ -2394,6 +2396,7 @@ export component MainWindow inherits Window {
                         Text { text: root.ui_lang == "bn" ? "ভল্ট আইটেম" : "VAULT ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; vertical-alignment: center; }
                         Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; vertical-alignment: center; }
                         Rectangle { horizontal-stretch: 1; }
+                        ComboBox { model: ["Default", "Recent", "Name A-Z", "Name Z-A", "Weakest", "Type"]; current-index <=> root.sort_mode; width: 112px; height: 24px; selected(value) => { root.sort_changed(value); } }
                         Text { text: root.ui_lang == "bn" ? "লোকাল ইনডেক্স" : "LOCAL INDEX"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; vertical-alignment: center; }
                     } }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px;

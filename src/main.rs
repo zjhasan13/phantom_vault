@@ -2583,8 +2583,7 @@ fn rebuild_trashed_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
 /// Sidebar counts: [all, logins, passkeys, notes, cards+ids, ssh].
 static SIDEBAR_COUNTS: std::sync::Mutex<[usize; 8]> = std::sync::Mutex::new([0; 8]);
 
-static RECENT_MODE: std::sync::atomic::AtomicBool =
-    std::sync::atomic::AtomicBool::new(false);
+static SORT_MODE: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
 
 #[derive(Clone)]
 struct FilterState {
@@ -3508,8 +3507,13 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
         };
         push_item(&mut items, f, &q, &a.id, 8, &title, &a.account_name, "", &meta, "", "", "General", "", true, a.favorite, false, false, "", "", 0.0);
     }
-    if RECENT_MODE.load(std::sync::atomic::Ordering::Relaxed) {
-        items.sort_by(|a, b| b.ts.partial_cmp(&a.ts).unwrap_or(std::cmp::Ordering::Equal));
+    match SORT_MODE.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => items.sort_by(|a, b| b.ts.partial_cmp(&a.ts).unwrap_or(std::cmp::Ordering::Equal)),
+        2 => items.sort_by_key(|a| a.title.to_lowercase()),
+        3 => items.sort_by_key(|a| std::cmp::Reverse(a.title.to_lowercase())),
+        4 => items.sort_by(|a, b| a.strength.partial_cmp(&b.strength).unwrap_or(std::cmp::Ordering::Equal)),
+        5 => items.sort_by_key(|a| a.kind),
+        _ => {}
     }
     let total = items.len();
     items.truncate(f.limit);
@@ -6576,11 +6580,37 @@ fn main() -> Result<(), slint::PlatformError> {
     let vault_arc_recent = Arc::clone(&active_vault);
     let search_state_recent = Arc::clone(&search_state);
     main_window.on_recent_changed(move |on| {
-        RECENT_MODE.store(on, std::sync::atomic::Ordering::Relaxed);
+        if on {
+            SORT_MODE.store(1, std::sync::atomic::Ordering::Relaxed);
+        }
         let f = search_state_recent.lock().unwrap().clone();
         let vault = lock_vault(&vault_arc_recent);
         if let Some(ui) = window_weak_recent.upgrade() {
             ui.set_recent_mode(on);
+            if on {
+                ui.set_sort_mode(1);
+            }
+            set_paged_credentials(&ui, vault_to_items(&vault, &f));
+        }
+    });
+
+    let window_weak_sort = main_window.as_weak();
+    let vault_arc_sort = Arc::clone(&active_vault);
+    let search_state_sort = Arc::clone(&search_state);
+    main_window.on_sort_changed(move |value| {
+        let mode = match value.as_str() {
+            "Recent" => 1,
+            "Name A-Z" => 2,
+            "Name Z-A" => 3,
+            "Weakest" => 4,
+            "Type" => 5,
+            _ => 0,
+        };
+        SORT_MODE.store(mode, std::sync::atomic::Ordering::Relaxed);
+        let f = search_state_sort.lock().unwrap().clone();
+        let vault = lock_vault(&vault_arc_sort);
+        if let Some(ui) = window_weak_sort.upgrade() {
+            ui.set_sort_mode(mode);
             set_paged_credentials(&ui, vault_to_items(&vault, &f));
         }
     });
