@@ -1628,11 +1628,18 @@ export component MainWindow inherits Window {
             VerticalLayout { spacing: 0px;
                 // brand header (56px)
                 Rectangle { height: 56px; background: PhantomTheme.surface-lowest;
-                    HorizontalLayout { padding-left: 14px; padding-right: 8px; spacing: 10px;
+                    // Collapsed rail: stack the mark and the expand chevron.
+                    // Side by side they need 92px, so the 64px rail clipped
+                    // the only control that could reopen the sidebar.
+                    if root.sidebar_collapsed : VerticalLayout { spacing: 0px; alignment: center; padding-top: 3px;
+                        Rectangle { width: 28px; height: 28px; border-radius: 8px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                        AuraButton { label: "»"; width: 40px; height: 20px; clicked => { root.sidebar_collapsed = false; } }
+                    }
+                    if !root.sidebar_collapsed : HorizontalLayout { padding-left: 14px; padding-right: 8px; spacing: 10px;
                         Rectangle { width: 34px; height: 34px; border-radius: 9px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 17px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                        if !root.sidebar_collapsed : VerticalLayout { spacing: 0px; Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; letter-spacing: -0.2px; } Text { text: "v" + root.app_version + " · " + (root.pq_paranoid_on ? "PQ ENCLAVE" : "NATIVE VAULT"); color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; } }
+                        VerticalLayout { spacing: 0px; Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; letter-spacing: -0.2px; } Text { text: "v" + root.app_version + " · " + (root.pq_paranoid_on ? "PQ ENCLAVE" : "NATIVE VAULT"); color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; } }
                         Rectangle { horizontal-stretch: 1; }
-                        AuraButton { label: root.sidebar_collapsed ? "»" : "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = !root.sidebar_collapsed; } }
+                        AuraButton { label: "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = true; } }
                     }
                 }
                 // enclave mode (honest: local mode, not "airgapped")
