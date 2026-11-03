@@ -2581,7 +2581,7 @@ fn rebuild_trashed_passkeys(vault: &Vault) -> ModelRc<PasskeyView> {
 /// Recent view: sort the rendered list by last_changed (logins) without a
 /// schema field; toggled by the toolbar chip.
 /// Sidebar counts: [all, logins, passkeys, notes, cards+ids, ssh].
-static SIDEBAR_COUNTS: std::sync::Mutex<[usize; 6]> = std::sync::Mutex::new([0; 6]);
+static SIDEBAR_COUNTS: std::sync::Mutex<[usize; 8]> = std::sync::Mutex::new([0; 8]);
 
 static RECENT_MODE: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
@@ -3420,7 +3420,9 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
             logins,
             passkeys,
             notes,
-            cards + ids,
+            cards,
+            ids,
+            licenses,
             ssh,
         ];
     }
@@ -3553,7 +3555,9 @@ fn push_sidebar_counts(ui: &MainWindow) {
     ui.set_count_passkeys(c[2] as i32);
     ui.set_count_notes(c[3] as i32);
     ui.set_count_cards(c[4] as i32);
-    ui.set_count_ssh(c[5] as i32);
+    ui.set_count_identities(c[5] as i32);
+    ui.set_count_licenses(c[6] as i32);
+    ui.set_count_ssh(c[7] as i32);
 }
 
 /// QuickBar feed: logins only, optional query.

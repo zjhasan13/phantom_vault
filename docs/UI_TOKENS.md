@@ -58,7 +58,7 @@ Windows/PowerShell-specific.
 - The browser extension still loads no remote fonts (MV3 CSP + offline); its
   CSS keeps the system mono stack until a subset is shared.
 
-## Icon policy (deferred)
+## Icon policy (Material Symbols subset)
 
 - Material Symbols **ligatures do not work in Slint**. The current app uses
   emoji; the mockups use outline icons.

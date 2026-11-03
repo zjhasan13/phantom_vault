@@ -6,6 +6,7 @@ import "fonts/Inter-Black.ttf";
 import "fonts/JetBrainsMono-Regular.ttf";
 import "fonts/JetBrainsMono-Bold.ttf";
 import "fonts/NotoSansBengali-Regular.ttf";
+import "fonts/MaterialSymbolsOutlined.ttf";
 
 // =============================================================================
 // PHANTOM VAULT — "Phantom Aura" design system
@@ -309,7 +310,8 @@ component NavItem inherits Rectangle {
         Text {
             text: root.icon;
             color: root.active ? PhantomTheme.on-primary : PhantomTheme.text-muted;
-            font-size: 16px;
+            font-family: "Material Symbols Outlined";
+            font-size: 18px;
             vertical-alignment: center;
         }
         if !root.collapsed : Text {
@@ -706,6 +708,8 @@ export component MainWindow inherits Window {
     in-out property <int> count_passkeys: 0;
     in-out property <int> count_notes: 0;
     in-out property <int> count_cards: 0;
+    in-out property <int> count_identities: 0;
+    in-out property <int> count_licenses: 0;
     in-out property <int> count_ssh: 0;
     callback load_more_items();
     // Bulk-select mode (Column 2): checkbox per card + bottom action bar.
@@ -1619,7 +1623,7 @@ export component MainWindow inherits Window {
                     VerticalLayout { padding-left: 12px; padding-right: 12px; padding-top: 6px; spacing: 1px;
                         Text { text: "ENCLAVE MODE"; color: PhantomTheme.text-dim; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                         HorizontalLayout { spacing: 6px;
-                            Text { text: "🛡"; color: PhantomTheme.success; font-size: 12px; vertical-alignment: center; }
+                            Text { text: "\u{e9e0}"; color: PhantomTheme.success; font-family: "Material Symbols Outlined"; font-size: 16px; vertical-alignment: center; }
                             Text { text: root.ui_lang == "bn" ? "লোকাল মোড" : "Local mode"; color: PhantomTheme.text; font-size: 12px; font-weight: 700; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
                             Rectangle { height: 18px; border-radius: 4px; background: PhantomTheme.primary-container; HorizontalLayout { padding-left: 6px; padding-right: 6px; Text { text: "v" + root.app_version; color: PhantomTheme.on-primary; font-size: 8px; font-weight: 800; font-family: "JetBrains Mono"; vertical-alignment: center; } } }
@@ -1644,27 +1648,29 @@ export component MainWindow inherits Window {
                 ScrollView { vertical-stretch: 1;
                     VerticalLayout { padding-left: 10px; padding-right: 10px; padding-top: 6px; padding-bottom: 8px; spacing: 3px;
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ভল্ট স্টোরেজ" : "VAULT STORAGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🗂"; count: root.count_all; label: root.ui_lang == "bn" ? "সব আইটেম" : "All Items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; count: root.count_logins; label: root.ui_lang == "bn" ? "লগইন" : "Logins"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🔐"; count: root.count_passkeys; label: root.ui_lang == "bn" ? "পাসকি" : "Passkeys"; tapped => { root.active_nav = 1; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; count: root.count_notes; label: root.ui_lang == "bn" ? "সিকিউর নোট" : "Secure Notes"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; count: root.count_cards; label: root.ui_lang == "bn" ? "কার্ড ও আইডি" : "Cards & IDs"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🖥"; count: root.count_ssh; label: root.ui_lang == "bn" ? "SSH ও API কী" : "SSH & API Keys"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🗑"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e1a1}"; count: root.count_all; label: root.ui_lang == "bn" ? "সব আইটেম" : "All Items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e73c}"; count: root.count_logins; label: root.ui_lang == "bn" ? "লগইন" : "Logins"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f87f}"; count: root.count_passkeys; label: root.ui_lang == "bn" ? "পাসকি" : "Passkeys"; tapped => { root.active_nav = 1; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f562}"; count: root.count_notes; label: root.ui_lang == "bn" ? "সিকিউর নোট" : "Secure Notes"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e8a1}"; count: root.count_cards; label: "Cards"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{ea67}"; count: root.count_identities; label: "Identities"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e873}"; count: root.count_licenses; label: "Licenses"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{eb8e}"; count: root.count_ssh; label: root.ui_lang == "bn" ? "SSH ও API কী" : "SSH & API Keys"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f09a}"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e92e}"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "নিরাপত্তা ও টুলস" : "SECURITY & TOOLS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🛡"; label: root.ui_lang == "bn" ? "সিকিউরিটি অডিট" : "Security Audit"; tapped => { root.show_health = true; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "✨"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "⏱"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: root.ui_lang == "bn" ? "সিকিউরিটি অডিট" : "Security Audit"; tapped => { root.show_health = true; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e65f}"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ইন্টিগ্রেশন ও সিস্টেম" : "INTEGRATION & SYSTEM"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🔗"; label: root.ui_lang == "bn" ? "এক্সটেনশন ব্রিজ" : "Extension Bridge"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "🔄"; label: root.ui_lang == "bn" ? "লোকাল সিঙ্ক ও স্টোরেজ" : "Local Sync & Storage"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: root.ui_lang == "bn" ? "ইমপোর্ট" : "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: root.ui_lang == "bn" ? "এক্সটেনশন ব্রিজ" : "Extension Bridge"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e627}"; label: root.ui_lang == "bn" ? "লোকাল সিঙ্ক ও স্টোরেজ" : "Local Sync & Storage"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f090}"; label: root.ui_lang == "bn" ? "ইমপোর্ট" : "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "⚙"; label: root.ui_lang == "bn" ? "সেটিংস" : "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
                         if !root.sidebar_collapsed && root.filter_folders.length > 1 : Text { text: root.ui_lang == "bn" ? "ফোল্ডার" : "FOLDERS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
-                        for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
+                        for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e2c7}"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
                         if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder…"; text <=> root.new_folder_name; height: 28px; accepted(text) => { root.add_folder_requested(text); } }
                         if root.is_travel_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ ট্রাভেল মোড চালু" : "⚠ TRAVEL MODE ON"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.offline_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ অফলাইন" : "⚠ OFFLINE · NO NETWORK"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
@@ -1672,7 +1678,7 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { height: 1px; background: PhantomTheme.border; }
                 if !root.sidebar_collapsed : HorizontalLayout { padding-left: 12px; padding-right: 12px; height: 24px; spacing: 6px;
-                    Text { text: "🛡"; font-size: 10px; vertical-alignment: center; }
+                    Text { text: "\u{e9e0}"; font-size: 10px; vertical-alignment: center; }
                     Text { text: root.pq_paranoid_on ? "Argon2id + ML-KEM-768" : "Argon2id + XChaCha20"; color: PhantomTheme.text-dim; font-size: 8px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: "READY"; color: PhantomTheme.success; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
@@ -1688,7 +1694,7 @@ export component MainWindow inherits Window {
                         Text { text: root.ui_lang == "bn" ? "লোকাল সেশন" : "LOCAL SESSION"; color: PhantomTheme.text; font-size: 10px; font-weight: 700; }
                         Text { text: root.ui_lang == "bn" ? "আনলকড · এই ডিভাইস" : "UNLOCKED · THIS DEVICE"; color: PhantomTheme.success; font-size: 8px; font-family: "JetBrains Mono"; }
                     }
-                    AuraButton { label: "🛡"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
+                    AuraButton { label: "\u{e9e0}"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
                 }
                 AuraButton { label: root.sidebar_collapsed ? "✈" : (root.is_travel_mode ? "✈ TRAVEL ON" : "✈ Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 28px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
                 if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: PhantomTheme.success; font-size: 9px; font-family: "JetBrains Mono"; horizontal-alignment: center; }
