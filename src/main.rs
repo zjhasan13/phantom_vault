@@ -1471,7 +1471,7 @@ fn publish_unlocked_vault(
     {
         let v = lock_vault(vault_arc);
         ui.set_auth_accounts(rebuild_auth_list(&v));
-        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
         // Fresh unlock resets the filter (see above), so the
         // hub starts unfiltered; trashed keys get their own
         // hub section instead of the sidebar Trash view.
@@ -1567,7 +1567,7 @@ fn publish_unlocked_vault(
                 if let Some(ui) = window_clone.upgrade() {
                     let v = lock_vault(&vault_for_row);
                     ui.set_auth_accounts(rebuild_auth_list(&v));
-                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                     push_hub_width(&ui);
                 }
             });
@@ -2159,6 +2159,14 @@ fn dup_conflicts_against(vault: &Vault, accounts: &[TotpAccount]) -> Vec<DupConf
 }
 
 fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
+    build_auth_rows_opts(vault, 0, 0)
+}
+
+/// `filter`: 0 all, 1 starred, 2 TOTP, 3 HOTP, 4 Steam.
+/// `sort`: 0 vault order (favourites, then issuer/name), 1 name A-Z, 2 name Z-A.
+/// Filtering happens after duplicate marking so a DUP badge never disappears
+/// just because its twin is filtered out.
+fn build_auth_rows_opts(vault: &Vault, filter: i32, sort: i32) -> Vec<AuthView> {
     let mut accs: Vec<&TotpAccount> = vault.totp_accounts.iter().collect();
     let dup_flags = dup_marks(&accs);
     // Resolved to concrete strings up front: `accs` is consumed by the sort
@@ -2188,7 +2196,8 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
             })
             .then_with(|| a.id.cmp(&b.id))
     });
-    accs.into_iter()
+    let mut views: Vec<AuthView> = accs
+        .into_iter()
         .zip(dup_flags)
         .map(|(a, is_dup)| {
             let gen = totp_engine::generate_code_for_account(a);
@@ -2227,6 +2236,19 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 format!("NEXT in {countdown} · {}", group_code(&next))
             };
             let (icon, tint) = brand_of(&a.issuer, &a.account_name);
+            let algo = match a.algorithm.trim().to_uppercase().as_str() {
+                "SHA256" => "SHA-256",
+                "SHA512" => "SHA-512",
+                "MD5" => "MD5",
+                _ => "SHA-1",
+            };
+            let params = if is_hotp {
+                format!("counter {} · {} · {} digits", a.counter, algo, a.digits)
+            } else if kind == "STEAM" {
+                format!("{}s · SHA-1 · 5 digits", a.period.max(1))
+            } else {
+                format!("{}s · {} · {} digits", a.period.max(1), algo, a.digits)
+            };
             // 2FA card icon: same favicon cache as the login list (letter
             // circle stays as the fallback when uncached/toggled off).
             let (has_icon, icon_img) = totp_icon_domain(vault, &a.issuer, &a.account_name)
@@ -2253,6 +2275,7 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 icon_img,
                 tint,
                 kind: kind.into(),
+                params: params.into(),
                 is_hotp,
                 secs,
                 countdown: countdown.into(),
@@ -2265,7 +2288,37 @@ fn build_auth_rows(vault: &Vault) -> Vec<AuthView> {
                 },
             }
         })
-        .collect()
+        .collect();
+    if filter != 0 {
+        views_retain(&mut views, filter);
+    }
+    match sort {
+        1 => views.sort_by(|a, b| {
+            a.name
+                .to_lowercase()
+                .cmp(&b.name.to_lowercase())
+                .then_with(|| a.issuer.to_lowercase().cmp(&b.issuer.to_lowercase()))
+        }),
+        2 => views.sort_by(|a, b| {
+            b.name
+                .to_lowercase()
+                .cmp(&a.name.to_lowercase())
+                .then_with(|| b.issuer.to_lowercase().cmp(&a.issuer.to_lowercase()))
+        }),
+        _ => {}
+    }
+    views
+}
+
+/// Hub filter predicate shared by the UI and the empty state.
+fn views_retain(views: &mut Vec<AuthView>, filter: i32) {
+    views.retain(|v| match filter {
+        1 => v.fav,
+        2 => !v.is_hotp && v.kind.as_str() == "TOTP",
+        3 => v.is_hotp,
+        4 => v.kind.as_str() == "STEAM",
+        _ => true,
+    });
 }
 
 /// Remove one authenticator account by id. Returns true when something was
@@ -2338,12 +2391,17 @@ fn park_twofa_for_dup(ui: &MainWindow, accounts: Vec<TotpAccount>, conflicts: Ve
     true
 }
 
-fn rebuild_auth_rows(vault: &Vault, query: &str) -> ModelRc<ModelRc<AuthView>> {
+fn rebuild_auth_rows(
+    vault: &Vault,
+    query: &str,
+    filter: i32,
+    sort: i32,
+) -> ModelRc<ModelRc<AuthView>> {
     let q = query.trim().to_lowercase();
     let flat: Vec<AuthView> = if q.is_empty() {
-        build_auth_rows(vault)
+        build_auth_rows_opts(vault, filter, sort)
     } else {
-        build_auth_rows(vault)
+        build_auth_rows_opts(vault, filter, sort)
             .into_iter()
             .filter(|r| totp_matches(r.name.as_str(), r.issuer.as_str(), &q))
             .collect()
@@ -3344,7 +3402,7 @@ fn trigger_favicon_prefetch(
             set_paged_credentials(&ui, vault_to_items(&v, &f));
             // 2FA hub cards follow (icons may have arrived on this pass).
             ui.set_auth_accounts(rebuild_auth_list(&v));
-            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
             // Detail header follows if it shows a login.
             if ui.get_d_kind() == 1 {
                 if let Some(c) = v.credentials.iter().find(|c| c.id == ui.get_d_id().as_str()) {
@@ -6065,7 +6123,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         if kind == 8 {
                             // Keep the 2FA Hub in sync with list-side deletes.
                             ui.set_auth_accounts(rebuild_auth_list(&vault_snapshot));
-                            ui.set_auth_rows(rebuild_auth_rows(&vault_snapshot, ui.get_totp_search_query().as_str()));
+                            ui.set_auth_rows(rebuild_auth_rows(&vault_snapshot, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                         }
                         if let Some(qb) = qb_weak.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
@@ -6501,7 +6559,29 @@ fn main() -> Result<(), slint::PlatformError> {
     main_window.on_totp_search_changed(move |query| {
         let vault = lock_vault(&vault_arc_totp);
         if let Some(ui) = window_weak_totp.upgrade() {
-            ui.set_auth_rows(rebuild_auth_rows(&vault, query.as_str()));
+            ui.set_auth_rows(rebuild_auth_rows(&vault, query.as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
+        }
+    });
+
+    // Hub filter chips (All / Starred / TOTP / HOTP / Steam).
+    let window_weak_filter = main_window.as_weak();
+    let vault_arc_filter = Arc::clone(&active_vault);
+    main_window.on_totp_filter_changed(move |filter| {
+        let vault = lock_vault(&vault_arc_filter);
+        if let Some(ui) = window_weak_filter.upgrade() {
+            ui.set_totp_filter(filter);
+            ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str(), filter, ui.get_totp_sort()));
+        }
+    });
+
+    // Hub sort (Vault order / A-Z / Z-A).
+    let window_weak_sort = main_window.as_weak();
+    let vault_arc_sort = Arc::clone(&active_vault);
+    main_window.on_totp_sort_changed(move |sort| {
+        let vault = lock_vault(&vault_arc_sort);
+        if let Some(ui) = window_weak_sort.upgrade() {
+            ui.set_totp_sort(sort);
+            ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), sort));
         }
     });
 
@@ -6915,7 +6995,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         sync_folders_to_ui(&v, &ui);
                         set_trash_label(&ui, &v);
                         ui.set_auth_accounts(rebuild_auth_list(&v));
-                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                         if let Some(qb) = qb_clone.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", search_clone.lock().unwrap().travel_only));
                         }
@@ -7219,7 +7299,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             {
                                 let v = lock_vault(&vault_for_list);
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                                 // Standalone 2FA also lives in All items / Favorites.
                                 let f = search_arc.lock().unwrap().clone();
                                 set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -7448,7 +7528,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             {
                                 let v = lock_vault(&vault_for_list_qr);
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                                 // Standalone 2FA also lives in All items / Favorites.
                                 let f = search_clone.lock().unwrap().clone();
                                 set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -7621,7 +7701,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                     {
                                         let v = lock_vault(&vault_for_list);
                                         ui.set_auth_accounts(rebuild_auth_list(&v));
-                                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                                    ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                                         // Standalone 2FA also lives in All items / Favorites.
                                         let f = search_clone_cam.lock().unwrap().clone();
                                         set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -8358,7 +8438,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         sync_folders_to_ui(&v, &ui);
                         ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
                         ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
-                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                         if let Some(qb) = apply_qb.upgrade() {
                             qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
                         }
@@ -9767,7 +9847,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 match saved {
                     Ok(v) => {
                         ui.set_auth_accounts(rebuild_auth_list(&v));
-                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                         // Standalone 2FA also lives in All items / Favorites.
                         let f = search_clone.lock().unwrap().clone();
                         set_paged_credentials(&ui, vault_to_items(&v, &f));
@@ -10166,7 +10246,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             None => "✅ 2FA clock offset cleared — using system time.".into(),
         });
         let v = lock_vault(&off_vault);
-        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
     });
 
     let off_reset_weak = main_window.as_weak();
@@ -10183,7 +10263,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         });
         let v = lock_vault(&off_reset_vault);
         ui.set_auth_accounts(rebuild_auth_list(&v));
-        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+        ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
     });
 
     // Duplicate resolution. The ingest paths PARK a colliding batch and ask;
@@ -10231,7 +10311,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             Ok(imported) => {
                 let vault = lock_vault(&dup_vault);
                 ui.set_auth_accounts(rebuild_auth_list(&vault));
-                ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str()));
+                ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                 drop(vault);
                 ui.set_notification_text(format!("✅ Imported {imported} 2FA account(s).").into());
                 trigger_sync_push(ui.as_weak());
@@ -10301,7 +10381,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let f = search_clone.lock().unwrap().clone();
                 let v = lock_vault(&vault_clone);
                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                 set_paged_credentials(&ui, vault_to_items(&v, &f));
                 // Keep the open inspector star honest when it shows this account.
                 if ui.get_d_id() == target.as_str() {
@@ -13229,7 +13309,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     match saved {
                         Ok(v) => {
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
-                            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str()));
+                            ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                             ui.set_notification_text("🔢 HOTP advanced to next code.".into());
                             trigger_sync_push(ui.as_weak());
                         }
@@ -15945,6 +16025,44 @@ mod grid_tests {
         assert!(rows[0].name.as_str().ends_with(DUP_SUFFIX), "got {rows:?}");
         assert_eq!(rows[0].code.as_str(), rows[0].display.as_str().replace(' ', ""));
         assert!(rows[0].is_dup && rows[1].is_dup);
+    }
+
+    #[test]
+    fn hub_filter_and_sort_are_real() {
+        let mut v = Vault::new();
+        let a = totp_acct("1", "Zeta", "zoe");
+        let mut b = totp_acct("2", "Alpha", "amy");
+        b.favorite = true;
+        v.totp_accounts.push(a);
+        v.totp_accounts.push(b);
+
+        // Starred only.
+        let starred = build_auth_rows_opts(&v, 1, 0);
+        assert_eq!(starred.len(), 1);
+        assert_eq!(starred[0].name.as_str(), "amy");
+
+        // A-Z is independent of the vault order.
+        let az = build_auth_rows_opts(&v, 0, 1);
+        assert_eq!(az.len(), 2);
+        assert_eq!(az[0].name.as_str(), "amy");
+        assert_eq!(az[1].name.as_str(), "zoe");
+
+        // Z-A is the exact reverse.
+        let za = build_auth_rows_opts(&v, 0, 2);
+        assert_eq!(za[0].name.as_str(), "zoe");
+        assert_eq!(za[1].name.as_str(), "amy");
+    }
+
+    #[test]
+    fn hub_params_report_the_stored_values() {
+        let mut v = Vault::new();
+        let mut a = totp_acct("1", "Bank", "main");
+        a.digits = 8;
+        a.period = 60;
+        a.algorithm = "SHA256".into();
+        v.totp_accounts.push(a);
+        let rows = build_auth_rows(&v);
+        assert_eq!(rows[0].params.as_str(), "60s · SHA-256 · 8 digits");
     }
 
     /// The duplicate cards must stay adjacent and alphabetical, not be split by
