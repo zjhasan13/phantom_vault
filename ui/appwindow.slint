@@ -9,7 +9,7 @@ import "fonts/NotoSansBengali-Regular.ttf";
 
 // =============================================================================
 // PHANTOM VAULT — "Phantom Aura" design system
-// Deep void-navy + phantom violet aura. All property/callback names are a
+// Deep navy + mint + electric cyan. All property/callback names are a
 // frozen contract with src/main.rs — NEVER rename them (UI-only redesign).
 // =============================================================================
 
@@ -31,6 +31,7 @@ struct CredentialView {
     health: string,
     strength: float,
     badge: string,
+    age: string,
     fav: bool,
     sel: bool,
     has_icon: bool,
@@ -128,27 +129,27 @@ struct SendView {
     detail: string,
 }
 
-// --- Phantom palette: generated source is design/tokens.json ---
+// --- Aegis palette: generated source is design/tokens.json ---
 // Do not add new raw hex values here without updating that file and running
 // scripts/check_ui_tokens.ps1. P0 will sweep components onto these tokens.
 global PhantomTheme {
     // Design tokens (frontmatter palette, see docs/UI_PARITY_MAP.md §18).
-    in-out property <color> canvas: #131315;
-    in-out property <color> surface-lowest: #0e0e10;
-    in-out property <color> surface-low: #1c1b1d;
-    in-out property <color> surface: #201f22;
-    in-out property <color> surface-high: #2a2a2c;
-    in-out property <color> surface-highest: #353437;
-    in-out property <color> border: #494454;
-    in-out property <color> border-strong: #958ea0;
-    in-out property <color> text: #e5e1e4;
-    in-out property <color> text-muted: #cbc3d7;
-    in-out property <color> text-dim: #958ea0;
-    in-out property <color> primary: #d0bcff;
-    in-out property <color> primary-container: #a078ff;
-    in-out property <color> on-primary: #3c0091;
-    in-out property <color> secondary: #cebdff;
-    in-out property <color> on-secondary: #381385;
+    in-out property <color> canvas: #0b1326;
+    in-out property <color> surface-lowest: #060e20;
+    in-out property <color> surface-low: #131b2e;
+    in-out property <color> surface: #171f33;
+    in-out property <color> surface-high: #222a3d;
+    in-out property <color> surface-highest: #2d3449;
+    in-out property <color> border: #3c4a42;
+    in-out property <color> border-strong: #86948a;
+    in-out property <color> text: #dae2fd;
+    in-out property <color> text-muted: #bbcabf;
+    in-out property <color> text-dim: #86948a;
+    in-out property <color> primary: #4edea3;
+    in-out property <color> primary-container: #10b981;
+    in-out property <color> on-primary: #003824;
+    in-out property <color> secondary: #4cd7f6;
+    in-out property <color> on-secondary: #003640;
     in-out property <color> success: #4edea3;
     in-out property <color> on-success: #003824;
     in-out property <color> error: #ffb4ab;
@@ -158,16 +159,16 @@ global PhantomTheme {
     // Compatibility aliases used by the current 624 raw-hex call sites.
     // They intentionally point at the new semantic tokens so a later sweep
     // can replace names without a second palette decision.
-    in-out property <color> void: #131315;
-    in-out property <color> abyss: #1c1b1d;
-    in-out property <color> panel: #201f22;
-    in-out property <color> card: #2a2a2c;
-    in-out property <color> edge: #494454;
-    in-out property <color> aura: #d0bcff;
-    in-out property <color> pulse: #cebdff;
-    in-out property <color> ink: #e5e1e4;
-    in-out property <color> mist: #cbc3d7;
-    in-out property <color> dim: #958ea0;
+    in-out property <color> void: #0b1326;
+    in-out property <color> abyss: #131b2e;
+    in-out property <color> panel: #171f33;
+    in-out property <color> card: #222a3d;
+    in-out property <color> edge: #3c4a42;
+    in-out property <color> aura: #4edea3;
+    in-out property <color> pulse: #4cd7f6;
+    in-out property <color> ink: #dae2fd;
+    in-out property <color> mist: #bbcabf;
+    in-out property <color> dim: #86948a;
     in-out property <color> good: #4edea3;
     in-out property <color> warn: #f59e0b;
     in-out property <color> bad: #ffb4ab;
@@ -190,7 +191,7 @@ component AuraButton inherits Rectangle {
     border-width: 1px;
     border-color: root.primary ? PhantomTheme.primary-container : (root.danger ? #ffb4ab55 : PhantomTheme.border);
     drop-shadow-blur: root.primary ? 18px : 0px;
-    drop-shadow-color: #d0bcff33;
+    drop-shadow-color: #4edea333;
     area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
@@ -271,14 +272,14 @@ component PrimaryGradientAction inherits Rectangle {
     height: 46px;
     border-radius: 10px;
     opacity: root.enabled ? 1.0 : 0.45;
-    background: @linear-gradient(90deg, #a078ff 0%, #7c3aed 50%, #a078ff 100%);
+    background: @linear-gradient(90deg, #4edea3 0%, #10b981 50%, #4edea3 100%);
     border-width: 1px;
-    border-color: #d0bcff4d;
+    border-color: #4edea34d;
     drop-shadow-blur: 26px;
-    drop-shadow-color: #7c3aed55;
+    drop-shadow-color: #10b98155;
     Text { text: root.glyph == "" ? root.label : root.glyph + "  " + root.label; color: #ffffff; font-size: 15px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; }
     if root.shortcut != "" : Rectangle { x: parent.width - 72px; y: (parent.height - 20px) / 2; width: 56px; height: 20px; border-radius: 4px; background: #00000055; border-width: 1px; border-color: #ffffff1f;
-        Text { text: root.shortcut; color: #e5e1e4; font-size: 10px; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; }
+        Text { text: root.shortcut; color: #dae2fd; font-size: 10px; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; }
     }
     TouchArea { mouse-cursor: pointer; clicked => { if root.enabled { root.clicked(); } } }
 }
@@ -289,9 +290,9 @@ component NavItem inherits Rectangle {
     in-out property <bool> active: false;
     in-out property <bool> collapsed: false;
     callback tapped();
-    height: 44px;
-    border-radius: 10px;
-    background: root.active ? PhantomTheme.surface-high : transparent;
+    height: 36px;
+    border-radius: 6px;
+    background: root.active ? PhantomTheme.surface-highest : transparent;
     border-width: 1px;
     border-color: root.active ? PhantomTheme.primary : transparent;
     area := TouchArea {
@@ -299,19 +300,19 @@ component NavItem inherits Rectangle {
         clicked => { root.tapped(); }
     }
     HorizontalLayout {
-        padding-left: root.collapsed ? 0px : 14px;
-        padding-right: root.collapsed ? 0px : 14px;
-        spacing: 10px;
+        padding-left: root.collapsed ? 0px : 10px;
+        padding-right: root.collapsed ? 0px : 10px;
+        spacing: 8px;
         alignment: root.collapsed ? center : start;
         Text {
             text: root.icon;
-            font-size: 15px;
+            font-size: 14px;
             vertical-alignment: center;
         }
         if !root.collapsed : Text {
             text: root.label;
-            color: root.active ? PhantomTheme.text : PhantomTheme.text-muted;
-            font-size: 13px;
+            color: root.active ? PhantomTheme.primary : PhantomTheme.text-muted;
+            font-size: 12px;
             font-weight: root.active ? 700 : 400;
             vertical-alignment: center;
         }
@@ -353,7 +354,7 @@ component GeneratorPanel inherits Rectangle {
     border-width: 1.5px;
     border-color: PhantomTheme.primary;
     drop-shadow-blur: 40px;
-    drop-shadow-color: #d0bcff44;
+    drop-shadow-color: #4edea344;
 
     in-out property <int> gen_length;
     in-out property <bool> gen_uppercase;
@@ -676,6 +677,7 @@ export component MainWindow inherits Window {
     in-out property <string> d_fill_info: "";
     in-out property <string> d_health: "";
     in-out property <string> d_audit_text: "";
+    in-out property <string> d_meta_line: "";
     // Per-password strength meter (level 0..3 fraction + one-line label).
     in-out property <float> d_pw_strength: 0.0;
     in-out property <string> d_pw_strength_label: "";
@@ -1253,19 +1255,19 @@ export component MainWindow inherits Window {
 
     // ================= LOCK SCREEN (cryptographic gateway) =================
     if !root.is_unlocked : Rectangle {
-        background: #08080c;
+        background: #0b1326;
 
         // 38px technical grid (design .cyber-grid)
         for gx in 54 : Rectangle { x: gx * 38px; y: 0; width: 1px; height: parent.height; background: #ffffff0d; }
         for gy in 28 : Rectangle { x: 0; y: gy * 38px; width: parent.width; height: 1px; background: #ffffff0d; }
 
         // Ambient light: one very soft top glow (no hard-edged circles).
-        Rectangle { x: parent.width / 2 - 160px; y: 0px; width: 320px; height: 220px; border-radius: 160px; background: #a078ff08; drop-shadow-blur: 180px; drop-shadow-color: #a078ff22; }
+        Rectangle { x: parent.width / 2 - 160px; y: 0px; width: 320px; height: 220px; border-radius: 160px; background: #10b98108; drop-shadow-blur: 180px; drop-shadow-color: #10b98122; }
         Rectangle { x: parent.width - 280px; y: parent.height - 220px; width: 240px; height: 180px; border-radius: 120px; background: #4edea308; drop-shadow-blur: 160px; drop-shadow-color: #4edea31f; }
 
         VerticalLayout { spacing: 0px;
             // ---- live telemetry strip
-            Rectangle { height: 26px; background: #09090ee8;
+            Rectangle { height: 26px; background: #060e20e8;
                 HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 16px;
                     Text { text: "● VAULT SEALED"; color: PhantomTheme.success; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.7px; vertical-alignment: center; }
                     Text { text: "Argon2id 64 MiB · t=3 · p=4 · memory zeroize"; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; }
@@ -1275,7 +1277,7 @@ export component MainWindow inherits Window {
             }
             Rectangle { height: 1px; background: #ffffff0f; }
             // ---- engine flags
-            Rectangle { height: 32px; background: #09090ecc;
+            Rectangle { height: 32px; background: #060e20cc;
                 HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 8px;
                     MonoChip { label: "ENGINE v" + root.app_version + "-rs"; tone: PhantomTheme.text-muted; }
                     if root.hello_available : MonoChip { label: "WINDOWS HELLO ACTIVE"; tone: PhantomTheme.secondary; }
@@ -1286,7 +1288,7 @@ export component MainWindow inherits Window {
                     Text { text: "LOCAL-FIRST"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; letter-spacing: 0.8px; vertical-alignment: center; }
                 }
             }
-            if root.show_login_hints : Rectangle { height: 24px; background: #0e0e10;
+            if root.show_login_hints : Rectangle { height: 24px; background: #060e20;
                 HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 14px;
                     Text { text: "ENTER unlock · TAB cycle fields · ESC dismiss hints"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                 }
@@ -1296,7 +1298,7 @@ export component MainWindow inherits Window {
             // hero pill: pinned above the scroll area so focus-scrolling can never hide it
             Rectangle { height: 8px; }
             HorizontalLayout { alignment: center;
-                Rectangle { height: 24px; width: root.pq_paranoid_on ? (root.pq_backend == "tpm" ? 292px : 272px) : 226px; border-radius: 12px; background: #14121c; border-width: 1px; border-color: #a078ff40;
+                Rectangle { height: 24px; width: root.pq_paranoid_on ? (root.pq_backend == "tpm" ? 292px : 272px) : 226px; border-radius: 12px; background: #131b2e; border-width: 1px; border-color: #10b98140;
                     HorizontalLayout { alignment: center; padding-left: 10px; padding-right: 5px; spacing: 7px;
                         Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; }
                         Text { text: root.pq_paranoid_on ? (root.pq_backend == "tpm" ? "POST-QUANTUM ENCLAVE · TPM 2.0" : "POST-QUANTUM ENCLAVE ACTIVE") : "LOCAL ENCLAVE ACTIVE"; color: PhantomTheme.text; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 1px; vertical-alignment: center; }
@@ -1310,13 +1312,13 @@ export component MainWindow inherits Window {
             // can never push the brand header out of view
             HorizontalLayout { alignment: center; spacing: 12px;
                         Rectangle { width: 46px; height: 50px;
-                            Rectangle { x: 3px; y: 4px; width: 40px; height: 44px; border-radius: 20px; background: #a078ff14; }
-                            Path { x: 0; y: 0; width: 46px; height: 50px; viewbox-width: 46; viewbox-height: 50; commands: "M 23 2 L 44 9 L 44 26 C 44 37 35 45 23 48 C 11 45 2 37 2 26 L 2 9 Z"; fill: #131315; stroke: @linear-gradient(135deg, #d0bcff 0%, #7c3aed 55%, #4edea3 100%); stroke-width: 2px; }
-                            Path { x: 10px; y: 11px; width: 26px; height: 28px; viewbox-width: 26; viewbox-height: 28; commands: "M 13 1 L 24 6 L 24 14 C 24 20 19 24 13 26 C 7 24 2 20 2 14 L 2 6 Z"; fill: #1c1b1d; stroke: #8b5cf666; stroke-width: 1px; }
-                            Path { x: 17px; y: 17px; width: 12px; height: 16px; viewbox-width: 12; viewbox-height: 16; commands: "M 6 1 C 8 1 9.5 2.5 9.5 4.5 C 9.5 6 8.5 7 7.5 7.5 L 8.5 12 L 3.5 12 L 4.5 7.5 C 3.5 7 2.5 6 2.5 4.5 C 2.5 2.5 4 1 6 1 Z"; fill: #d0bcff; }
+                            Rectangle { x: 3px; y: 4px; width: 40px; height: 44px; border-radius: 20px; background: #10b98114; }
+                            Path { x: 0; y: 0; width: 46px; height: 50px; viewbox-width: 46; viewbox-height: 50; commands: "M 23 2 L 44 9 L 44 26 C 44 37 35 45 23 48 C 11 45 2 37 2 26 L 2 9 Z"; fill: #0b1326; stroke: @linear-gradient(135deg, #4edea3 0%, #4cd7f6 55%, #c0c1ff 100%); stroke-width: 2px; }
+                            Path { x: 10px; y: 11px; width: 26px; height: 28px; viewbox-width: 26; viewbox-height: 28; commands: "M 13 1 L 24 6 L 24 14 C 24 20 19 24 13 26 C 7 24 2 20 2 14 L 2 6 Z"; fill: #131b2e; stroke: #4edea366; stroke-width: 1px; }
+                            Path { x: 17px; y: 17px; width: 12px; height: 16px; viewbox-width: 12; viewbox-height: 16; commands: "M 6 1 C 8 1 9.5 2.5 9.5 4.5 C 9.5 6 8.5 7 7.5 7.5 L 8.5 12 L 3.5 12 L 4.5 7.5 C 3.5 7 2.5 6 2.5 4.5 C 2.5 2.5 4 1 6 1 Z"; fill: #4edea3; }
                         }
                         Text { text: "PHANTOM"; color: #ffffff; font-size: 36px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
-                        Text { text: "VAULT"; color: @linear-gradient(90deg, #d0bcff 0%, #cebdff 55%, #4edea3 100%); font-size: 36px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
+                        Text { text: "VAULT"; color: @linear-gradient(90deg, #dae2fd 0%, #4edea3 55%, #4cd7f6 100%); font-size: 36px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
                     }
                     Rectangle { height: 4px; }
                     Text { text: "ZERO-KNOWLEDGE · NATIVE · LOCAL-FIRST"; color: PhantomTheme.text-dim; font-size: 10px; font-weight: 600; font-family: "JetBrains Mono"; letter-spacing: 2px; horizontal-alignment: center; }
@@ -1326,8 +1328,8 @@ export component MainWindow inherits Window {
                         VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 0px; padding-bottom: 14px; spacing: 0px;
                     // cryptographic gateway card
                     HorizontalLayout { alignment: center;
-                        Rectangle { width: 520px; background: #131319e8; border-radius: 16px; border-width: 1px; border-color: #a078ff38; drop-shadow-blur: 110px; drop-shadow-color: #7c3aed33;
-                            Rectangle { x: 26px; y: 0; width: parent.width - 52px; height: 2px; background: @linear-gradient(90deg, transparent 0%, #d0bcff 50%, transparent 100%); }
+                        Rectangle { width: 520px; background: #0f1a30e8; border-radius: 16px; border-width: 1px; border-color: #10b98138; drop-shadow-blur: 110px; drop-shadow-color: #10b98133;
+                            Rectangle { x: 26px; y: 0; width: parent.width - 52px; height: 2px; background: @linear-gradient(90deg, transparent 0%, #4edea3 50%, transparent 100%); }
                             VerticalLayout { padding: 14px; spacing: 0px;
                                 HorizontalLayout { spacing: 8px;
                                     Rectangle { width: 9px; height: 9px; border-radius: 5px; background: PhantomTheme.primary; }
@@ -1339,7 +1341,7 @@ export component MainWindow inherits Window {
                                 Rectangle { height: 1px; background: #ffffff10; }
                                 Rectangle { height: 8px; }
                                 // auth mode tabs
-                                Rectangle { height: 36px; border-radius: 12px; background: #0e0e10; border-width: 1px; border-color: #ffffff08;
+                                Rectangle { height: 36px; border-radius: 12px; background: #060e20; border-width: 1px; border-color: #ffffff08;
                                     HorizontalLayout { padding: 4px; spacing: 4px;
                                         GatewayTab { label: root.ui_lang == "bn" ? "🔑  মাস্টার পাস" : "🔑  Master Pass"; active: root.unlock_tab == 0; horizontal-stretch: 1; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; root.unlock_error_message = ""; } }
                                         GatewayTab { label: root.pin_available ? (root.ui_lang == "bn" ? "🔒  পিন" : "🔒  PIN") : (root.ui_lang == "bn" ? "🔒  পিন · অফ" : "🔒  PIN · OFF"); active: root.unlock_tab == 1; horizontal-stretch: 1; clicked => { if root.pin_available { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } else { root.unlock_tab = 0; root.unlock_error_message = root.ui_lang == "bn" ? "আগে সেটিংসে অ্যাপ পিন চালু করুন।" : "Enable an App PIN in Settings first."; } } }
@@ -1364,7 +1366,7 @@ export component MainWindow inherits Window {
                                         Text { text: root.ui_lang == "bn" ? "লোকাল-ওনলি · কোনো অ্যাকাউন্ট নেই" : "LOCAL-ONLY · NO ACCOUNT"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; }
                                     }
                                     Rectangle { height: 4px; }
-                                    Rectangle { height: 36px; border-radius: 10px; background: #111116; border-width: 1px; border-color: #ffffff14;
+                                    Rectangle { height: 36px; border-radius: 10px; background: #0b1326; border-width: 1px; border-color: #ffffff14;
                                         HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 10px;
                                             Text { text: "▣"; color: PhantomTheme.text-dim; font-size: 14px; vertical-alignment: center; }
                                             Text { text: root.vault_label; color: PhantomTheme.text; font-size: 13px; font-family: "JetBrains Mono"; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
@@ -1383,12 +1385,12 @@ export component MainWindow inherits Window {
                                         Rectangle { height: 4px; }
                                         Rectangle { height: 40px;
                                             password_input := LineEdit { x: 0; y: 0; width: parent.width; height: parent.height; placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসফ্রেজ…" : "Enter master passphrase…"; input-type: root.show_master ? text : password; font-size: 14px; font-family: "JetBrains Mono"; edited(text) => { root.unlock_busy = false; root.lock_entropy(text); } accepted(text) => { if !root.unlock_busy { root.unlock_busy = true; root.unlock_requested(text); } } }
-                                            Rectangle { x: parent.width - 38px; y: 5px; width: 32px; height: 32px; border-radius: 8px; background: #111116; }
+                                            Rectangle { x: parent.width - 38px; y: 5px; width: 32px; height: 32px; border-radius: 8px; background: #0b1326; }
                                             TouchArea { x: parent.width - 38px; y: 6px; width: 32px; height: 32px; mouse-cursor: pointer; clicked => { root.show_master = !root.show_master; } Text { text: root.show_master ? "◉" : "○"; color: PhantomTheme.text-dim; font-size: 16px; horizontal-alignment: center; vertical-alignment: center; } }
                                         }
                                         Rectangle { height: 8px; }
                                         // live entropy panel (real estimate, real KDF params)
-                                        Rectangle { height: 46px; border-radius: 10px; background: #0e0e10cc; border-width: 1px; border-color: #ffffff10;
+                                        Rectangle { height: 46px; border-radius: 10px; background: #060e20cc; border-width: 1px; border-color: #ffffff10;
                                             VerticalLayout { padding: 6px; spacing: 4px;
                                                 HorizontalLayout { Text { text: "Entropy: " + Math.round(root.lock_bits) + " bits (Argon2id bound)"; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; overflow: elide; } Text { text: "64 MiB · t=3 · p=4"; color: root.lock_bits >= 55 ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; } }
                                                 HorizontalLayout { spacing: 5px;
@@ -1471,7 +1473,7 @@ export component MainWindow inherits Window {
 
             // ---- cryptographic footer
             Rectangle { height: 1px; background: #ffffff0f; }
-            Rectangle { height: 30px; background: #08080ce8;
+            Rectangle { height: 30px; background: #0b1326e8;
                 HorizontalLayout { padding-left: 22px; padding-right: 22px; spacing: 14px;
                     Text { text: "● LOCAL-FIRST · SYNC OFF BY DEFAULT"; color: PhantomTheme.success; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                     Text { text: "Argon2id 64 MiB · t=3 · p=4"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
@@ -1576,60 +1578,75 @@ export component MainWindow inherits Window {
         height: root.height;
         spacing: 0px;
 
-        // 1. Column 1: Sidebar (220px, 64px collapsed)
+        // 1. Column 1: Sidebar (256px, 64px collapsed) — design parity
         Rectangle {
-            width: root.sidebar_collapsed ? 64px : 240px;
+            width: root.sidebar_collapsed ? 64px : 256px;
             background: PhantomTheme.surface-low;
-            VerticalLayout {
-            padding: root.sidebar_collapsed ? 8px : 16px;
-            spacing: 6px;
-            HorizontalLayout {
-                spacing: 10px;
-                padding-bottom: 12px;
-                alignment: root.sidebar_collapsed ? center : start;
-                Rectangle { width: 38px; height: 38px; border-radius: 11px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 19px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                if !root.sidebar_collapsed : VerticalLayout { alignment: center; spacing: 0px; Text { text: "PHANTOM"; font-size: 14px; font-weight: 900; color: PhantomTheme.text; } Text { text: "VAULT"; font-size: 11px; font-weight: 700; color: PhantomTheme.primary; } }
-            }
-            AuraButton { label: root.sidebar_collapsed ? "»" : "« Collapse"; height: 28px; clicked => { root.sidebar_collapsed = !root.sidebar_collapsed; } }
-            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ভল্ট" : "VAULT"; }
-            ScrollView { vertical-stretch: 1;
-            VerticalLayout { spacing: 6px;
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🔍"; label: root.ui_lang == "bn" ? "সব আইটেম" : "All items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🗑️"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
-            Rectangle { height: 10px; }
-            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ধরন" : "TYPES"; }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; label: root.ui_lang == "bn" ? "লগইন" : "Login"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: root.ui_lang == "bn" ? "নোট" : "Note"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "ফোল্ডার" : "FOLDERS"; }
-            for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
-            if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder..."; text <=> root.new_folder_name; height: 32px; accepted(text) => { root.add_folder_requested(text); } }
-            if !root.sidebar_collapsed : FieldLabel { text: root.ui_lang == "bn" ? "অ্যাপ" : "APP"; }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "➕"; label: "+ New"; active: root.show_add_form; tapped => { root.active_nav = 0; root.show_new_menu = !root.show_new_menu; } }
-            if root.show_new_menu : VerticalLayout { spacing: 2px;
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🌐"; label: root.ui_lang == "bn" ? "লগইন" : "Login"; tapped => { root.open_new_form(1); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; tapped => { root.open_new_form(4); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🪪"; label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; tapped => { root.open_new_form(5); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: root.ui_lang == "bn" ? "নোট" : "Note"; tapped => { root.open_new_form(3); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "📜"; label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; tapped => { root.open_new_form(2); } }
-                NavItem { collapsed: root.sidebar_collapsed; icon: "🖥️"; label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Key"; tapped => { root.open_new_form(6); } }
-            }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🎲"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🛡️"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "⚙️"; label: root.ui_lang == "bn" ? "সেটিংস" : "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🔒"; label: "Lock"; tapped => { root.lock_now(); } }
-            NavItem { collapsed: root.sidebar_collapsed; icon: "🚪"; label: "Exit"; tapped => { root.exit_app(); } }
-            if root.is_travel_mode : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL ON"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-            if root.offline_mode : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 28px; Text { text: "📴 OFFLINE — no network"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
-            }
-            }
-            AuraButton { label: root.sidebar_collapsed ? "✈️" : (root.is_travel_mode ? "✈️ TRAVEL ON" : "🧳 Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 32px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
-            if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: PhantomTheme.success; font-size: 11px; font-weight: 800; horizontal-alignment: center; }
+            VerticalLayout { spacing: 0px;
+                // brand header (56px) with version, like the mockup
+                Rectangle { height: 56px; background: PhantomTheme.surface-lowest;
+                    HorizontalLayout { padding-left: 14px; padding-right: 8px; spacing: 10px;
+                        Rectangle { width: 34px; height: 34px; border-radius: 9px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 17px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                        if !root.sidebar_collapsed : VerticalLayout { spacing: 0px; Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; letter-spacing: -0.2px; } Text { text: "v" + root.app_version + " · " + (root.pq_paranoid_on ? "PQ ENCLAVE" : "NATIVE VAULT"); color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; } }
+                        Rectangle { horizontal-stretch: 1; }
+                        AuraButton { label: root.sidebar_collapsed ? "»" : "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = !root.sidebar_collapsed; } }
+                    }
+                }
+                // vault selector card (real local container, no fake account)
+                if !root.sidebar_collapsed : Rectangle { height: 62px;
+                    VerticalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 4px;
+                        Rectangle { height: 44px; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border;
+                            HorizontalLayout { padding-left: 10px; padding-right: 8px; spacing: 8px;
+                                Text { text: "◈"; color: PhantomTheme.primary; font-size: 14px; vertical-alignment: center; }
+                                VerticalLayout { horizontal-stretch: 1; spacing: 0px;
+                                    Text { text: root.ui_lang == "bn" ? "লোকাল ভল্ট" : "Local vault"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; }
+                                    Text { text: root.vault_label; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
+                                }
+                                MonoChip { label: "LOCAL"; tone: PhantomTheme.text-dim; }
+                            }
+                        }
+                    }
+                }
+                ScrollView { vertical-stretch: 1;
+                    VerticalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 8px; spacing: 3px;
+                        if !root.sidebar_collapsed : HorizontalLayout { padding-left: 6px; padding-right: 6px; spacing: 6px; Text { text: root.ui_lang == "bn" ? "ভল্ট এন্ট্রি" : "VAULT ENTRIES"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; vertical-alignment: center; } Rectangle { horizontal-stretch: 1; } Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "🗂"; label: root.ui_lang == "bn" ? "সব আইটেম" : "All Items"; active: root.active_nav == 0 && root.type_filter == 0 && !root.show_fav_only && root.folder_filter == "All"; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "🔑"; label: root.ui_lang == "bn" ? "লগইন" : "Logins"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "💳"; label: root.ui_lang == "bn" ? "কার্ড" : "Cards"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "📝"; label: root.ui_lang == "bn" ? "সিকিউর নোট" : "Secure Notes"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "🖥"; label: root.ui_lang == "bn" ? "এসএসএইচ কী" : "SSH Keys"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "⭐"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "🗑"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
+                        Rectangle { height: 8px; }
+                        if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ইউটিলিটি" : "UTILITIES"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "✨"; label: "Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "🛡"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "📥"; label: root.ui_lang == "bn" ? "ইমপোর্ট" : "Import"; active: root.active_nav == 2; tapped => { root.active_nav = 2; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "⚙"; label: root.ui_lang == "bn" ? "সেটিংস" : "Settings"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
+                        if !root.sidebar_collapsed && root.filter_folders.length > 1 : Text { text: root.ui_lang == "bn" ? "ফোল্ডার" : "FOLDERS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
+                        for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "📁"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
+                        if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder…"; text <=> root.new_folder_name; height: 28px; accepted(text) => { root.add_folder_requested(text); } }
+                        if root.is_travel_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ ট্রাভেল মোড চালু" : "⚠ TRAVEL MODE ON"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
+                        if root.offline_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ অফলাইন" : "⚠ OFFLINE · NO NETWORK"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
+                    }
+                }
+                // bottom: real local session + lock (no fake 0ms / dev@local)
+                Rectangle { height: 1px; background: PhantomTheme.border; }
+                if !root.sidebar_collapsed : HorizontalLayout { padding-left: 12px; padding-right: 12px; height: 34px; spacing: 6px;
+                    Text { text: "●"; color: PhantomTheme.success; font-size: 8px; vertical-alignment: center; }
+                    Text { text: root.ui_lang == "bn" ? "লোকাল ইঞ্জিন" : "LOCAL ENGINE"; color: PhantomTheme.text-muted; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: root.pq_paranoid_on ? "PQ" : "READY"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                }
+                HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-bottom: 8px; spacing: 8px;
+                    if !root.sidebar_collapsed : VerticalLayout { horizontal-stretch: 1; spacing: 0px;
+                        Text { text: root.ui_lang == "bn" ? "লোকাল সেশন" : "LOCAL SESSION"; color: PhantomTheme.text; font-size: 10px; font-weight: 700; }
+                        Text { text: root.ui_lang == "bn" ? "আনলকড · এই ডিভাইস" : "UNLOCKED · THIS DEVICE"; color: PhantomTheme.success; font-size: 8px; font-family: "JetBrains Mono"; }
+                    }
+                    AuraButton { label: "🔒"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
+                }
+                AuraButton { label: root.sidebar_collapsed ? "✈" : (root.is_travel_mode ? "✈ TRAVEL ON" : "✈ Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 28px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
+                if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: PhantomTheme.success; font-size: 9px; font-family: "JetBrains Mono"; horizontal-alignment: center; }
             }
         }
 
@@ -1739,7 +1756,7 @@ export component MainWindow inherits Window {
                 }}
                 // Zero-lockin: scan pages into Google Authenticator.
                 if root.ga_show : Rectangle {
-                    background: #0e0e10cc;
+                    background: #060e20cc;
                     TouchArea { clicked => { root.ga_show = false; } }
                     Rectangle {
                         x: (parent.width - self.width) / 2;
@@ -2335,7 +2352,7 @@ export component MainWindow inherits Window {
                                     }
                                 }
                             }
-                            if root.d_id == cred.id : Rectangle { width: 3px; height: 52px; x: 0; y: 12px; border-radius: 2px; background: PhantomTheme.primary; drop-shadow-blur: 8px; drop-shadow-color: #d0bcff88; }
+                            if root.d_id == cred.id : Rectangle { width: 3px; height: 52px; x: 0; y: 12px; border-radius: 2px; background: PhantomTheme.primary; drop-shadow-blur: 8px; drop-shadow-color: #4edea388; }
                             HorizontalLayout { padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 10px; spacing: 10px;
                                 if root.select_mode : AuraButton { label: cred.sel ? "☑️" : "☐"; width: 34px; height: 30px; clicked => { root.toggle_select(cred.kind, cred.id); } }
                                 Rectangle { width: 36px; height: 36px; border-radius: 6px; background: PhantomTheme.surface;
@@ -2355,6 +2372,7 @@ export component MainWindow inherits Window {
                                         if cred.strength > 0.0 : Rectangle { width: 64px; height: 4px; border-radius: 2px; background: PhantomTheme.surface; clip: true; Rectangle { width: parent.width * cred.strength; height: 4px; border-radius: 2px; background: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); } }
                                         if cred.strength > 0.0 : Text { text: Math.round(cred.strength * 100) + "%"; color: cred.strength >= 0.75 ? PhantomTheme.success : (cred.strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 10px; font-weight: 700; vertical-alignment: center; }
                                         Rectangle { horizontal-stretch: 1; }
+                                        if cred.age != "" : Text { text: cred.age; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                     }
                                 }
                                 if touch.has-hover || root.d_id == cred.id : HorizontalLayout { spacing: 6px;
@@ -2468,6 +2486,7 @@ export component MainWindow inherits Window {
                                 VerticalLayout { horizontal-stretch: 1; spacing: 2px;
                                     HorizontalLayout { spacing: 6px; Text { text: root.d_title; color: PhantomTheme.text; font-size: 16px; font-weight: 800; overflow: elide; } if root.d_verified : Text { text: "✅"; font-size: 14px; vertical-alignment: center; } }
                                     HorizontalLayout { spacing: 6px; Text { text: "📁 " + root.d_folder; color: PhantomTheme.primary; font-size: 11px; font-weight: 700; vertical-alignment: center; } if root.d_reprompt : Text { text: "🔒"; font-size: 12px; vertical-alignment: center; } }
+                                    if root.d_meta_line != "" : Text { text: root.d_meta_line; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
                                 }
                                 AuraButton { label: root.d_fav ? "⭐" : "☆"; width: 44px; height: 34px; clicked => { root.toggle_favorite(root.d_kind, root.d_id); } }
                                 if root.d_kind == 1 : AuraButton { label: "🖼️"; width: 44px; height: 34px; clicked => { root.override_favicon(root.d_id); } }
@@ -2506,7 +2525,7 @@ export component MainWindow inherits Window {
                             }
                         }}
                         // Embedded / standalone 2FA live card
-                        if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #d0bcff55; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
+                        if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #4edea355; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
                             FieldLabel { text: root.ui_lang == "bn" ? "অটোফিল অপশন" : "AUTO-FILL OPTIONS"; }
@@ -2602,7 +2621,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea {
             clicked => { root.close_panel(); }
         }
@@ -2633,7 +2652,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea {
             clicked => { root.show_cf_dialog = false; }
         }
@@ -2646,7 +2665,7 @@ export component MainWindow inherits Window {
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
-            drop-shadow-color: #d0bcff44;
+            drop-shadow-color: #4edea344;
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
@@ -2694,7 +2713,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea { clicked => { root.rp_show = false; root.rp_error = ""; } }
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -2752,7 +2771,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             width: 470px;
             height: 210px;
@@ -2784,7 +2803,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -2815,7 +2834,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -2850,7 +2869,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -2883,7 +2902,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -2909,7 +2928,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -2919,7 +2938,7 @@ export component MainWindow inherits Window {
             border-width: 1.5px;
             border-color: PhantomTheme.secondary;
             drop-shadow-blur: 40px;
-            drop-shadow-color: #cebdff44;
+            drop-shadow-color: #4cd7f644;
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
@@ -2948,7 +2967,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea {
             clicked => { root.show_health = false; }
         }
@@ -2961,7 +2980,7 @@ export component MainWindow inherits Window {
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
-            drop-shadow-color: #d0bcff44;
+            drop-shadow-color: #4edea344;
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
@@ -3019,7 +3038,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea {
             clicked => { root.show_access_log = false; }
         }
@@ -3032,7 +3051,7 @@ export component MainWindow inherits Window {
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
-            drop-shadow-color: #d0bcff44;
+            drop-shadow-color: #4edea344;
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
@@ -3057,7 +3076,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         Rectangle {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
@@ -3091,7 +3110,7 @@ export component MainWindow inherits Window {
         y: 0;
         width: parent.width;
         height: parent.height;
-        background: #0e0e10cc;
+        background: #060e20cc;
         TouchArea { clicked => { root.show_shards = false; } }
         Rectangle {
             x: (parent.width - self.width) / 2;
@@ -3162,12 +3181,12 @@ export component QuickBarWindow inherits Window {
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #0e0e10f2;
+        background: #060e20f2;
         border-radius: 18px;
         border-color: PhantomTheme.primary;
         border-width: 1.5px;
         drop-shadow-blur: 48px;
-        drop-shadow-color: #d0bcff66;
+        drop-shadow-color: #4edea366;
         clip: true;
 
         FocusScope {
@@ -3308,12 +3327,12 @@ export component QuickCaptureWindow inherits Window {
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #0e0e10f2;
+        background: #060e20f2;
         border-radius: 18px;
         border-color: PhantomTheme.primary;
         border-width: 1.5px;
         drop-shadow-blur: 48px;
-        drop-shadow-color: #d0bcff66;
+        drop-shadow-color: #4edea366;
         clip: true;
 
         FocusScope {

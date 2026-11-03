@@ -5,22 +5,22 @@
  * until that slice lands. Keep the --pv-* names stable.
  */
 :root {
-  --pv-canvas: #131315;
-  --pv-surface-lowest: #0e0e10;
-  --pv-surface-low: #1c1b1d;
-  --pv-surface: #201f22;
-  --pv-surface-high: #2a2a2c;
-  --pv-surface-highest: #353437;
-  --pv-border: #494454;
-  --pv-border-strong: #958ea0;
-  --pv-text: #e5e1e4;
-  --pv-text-muted: #cbc3d7;
-  --pv-text-dim: #958ea0;
-  --pv-primary: #d0bcff;
-  --pv-primary-container: #a078ff;
-  --pv-on-primary: #3c0091;
-  --pv-secondary: #cebdff;
-  --pv-on-secondary: #381385;
+  --pv-canvas: #0b1326;
+  --pv-surface-lowest: #060e20;
+  --pv-surface-low: #131b2e;
+  --pv-surface: #171f33;
+  --pv-surface-high: #222a3d;
+  --pv-surface-highest: #2d3449;
+  --pv-border: #3c4a42;
+  --pv-border-strong: #86948a;
+  --pv-text: #dae2fd;
+  --pv-text-muted: #bbcabf;
+  --pv-text-dim: #86948a;
+  --pv-primary: #4edea3;
+  --pv-primary-container: #10b981;
+  --pv-on-primary: #003824;
+  --pv-secondary: #4cd7f6;
+  --pv-on-secondary: #003640;
   --pv-success: #4edea3;
   --pv-on-success: #003824;
   --pv-error: #ffb4ab;

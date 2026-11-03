@@ -222,6 +222,22 @@
   the false claims. `cargo build` green; visual QA via DPI-aware `PrintWindow`
   capture.
 
+- **AegisVault Cyber-Cockpit re-theme (Option B, in progress):** the user
+  replaced `all_vault_items/code.html`/`screen.png` with a new design
+  (`AegisVault`: deep navy `#0b1326`, mint `#4edea3`, electric cyan `#4cd7f6`)
+  and chose a full pivot. Done in this slice: `design/tokens.json`, the Slint
+  `PhantomTheme` + aliases, the extension `--pv-*` mirror and the token gate are
+  on the Aegis palette; brand strings/window title stay **PhantomVault** (only the Aegis design system/palette is adopted); the login
+  gateway and vault shell now render navy/mint; the sidebar is the design
+  structure (brand+version, local-vault selector, VAULT ENTRIES count, Logins/
+  Cards/Notes/SSH/Favorites/Trash, UTILITIES, local-engine + local-session +
+  lock); rows carry the real last-updated age and the detail header shows
+  `ID … · Updated …`. Remaining for full parity: the detail two-column
+  transformation (Launch & Autofill, username/password cards, TOTP/passkey
+  cards, Authorized Autofill Targets, storage/revision/tags), the toolbar's
+  filter chips, and honest substitutions for AES-256-GCM/Passkey/TPM/IPC claims.
+  Verified: `cargo check` green, token gate 21 values.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

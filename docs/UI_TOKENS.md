@@ -1,16 +1,19 @@
-# PhantomVault UI tokens (single source of truth)
+# PhantomVault UI tokens (Aegis Cyber-Cockpit palette)
 
-> Status: **P0 shell + cockpit components shipped.** `design/tokens.json` is the
-> source; the Slint `PhantomTheme` and the extension `design-tokens.css` mirror
-> it. The vault has a full-width command bar, filter/select strip, ~5/7 split,
-> entropy bars/badges, three diagnostic tiles and a recent audit trail. Remaining
-> P0 polish: tags/last-used/expires model fields, font/icon decision,
-> compact-window QA.
+> Status: **AegisVault Cyber-Cockpit re-theme (Option B).** `design/tokens.json`
+> is the source; the Slint `PhantomTheme` and the extension
+> `design-tokens.css` mirror it. Palette: deep navy `#0b1326` + mint `#4edea3`
+> + electric cyan `#4cd7f6`. The vault has a full-width command bar,
+> filter/select strip, a design-parity sidebar (vault selector, entry counts,
+> utilities, local session), entropy rows with real last-updated age, three
+> diagnostic tiles and a recent audit trail. Remaining: detail two-column
+> transformation, tags/expires model fields, icon set, compact-window QA.
 
 ## Source
 
-- Design: `expected ui/stitch_phantom_vault_desktop_ui/phantom_vault/DESIGN.md`.
-- Palette decision: **frontmatter (screenshots) wins** over the prose palette;
+- Design: `expected ui/stitch_phantom_vault_desktop_ui/all_vault_items/code.html`
+  (Tailwind config) + the downloaded `screen.png`.
+- Palette decision: **AegisVault redesign wins** (user decision, Option B);
   see `docs/UI_PARITY_MAP.md` §18.
 - Machine-readable: `design/tokens.json`.
 

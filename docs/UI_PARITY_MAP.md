@@ -8,7 +8,10 @@ promises is either implemented or deliberately rejected.
   `rules.md` (shipped baseline), `browser_extension/*`.
 - Source of truth for "design": `expected ui/stitch_phantom_vault_desktop_ui/`
   (13 screens, `code.html` + `screen.png`; the 3 loose PNG folders are browser reference shots,
-  not screens), `phantom_vault/DESIGN.md` (Inter, M3-ish purple `#d0bcff`, surface `#131315`).
+  not screens). **Current target (Option B):** `all_vault_items/code.html` — AegisVault
+  Cyber-Cockpit, Inter + JetBrains Mono, deep navy `#0b1326`, mint `#4edea3`,
+  electric cyan `#4cd7f6`. The older purple `#d0bcff`/`#131315` Phantom palette is
+  superseded by `design/tokens.json`.
 - Legend: **KEEP** = must survive restyle · **MAP** = design equivalent exists · **NEW** = design
   asks for something we don't have · **REJECT** = mockup label we will not fake (see §15).
 - Rule: property/callback names in `appwindow.slint` are a frozen contract with `src/main.rs`.
