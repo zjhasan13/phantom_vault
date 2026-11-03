@@ -2,7 +2,7 @@
 //!
 //! Threat model: the token is a bearer secret sealed with DPAPI for this user;
 //! a same-user process can steal it. That is why every read also creates a
-//! **pending request** that the app must Allow (30s window), and every decision
+//! **pending request** that the app must Allow (60s window), and every decision
 //! is audit-logged. The listener never binds anything but loopback.
 //!
 //! Threading: the HTTP worker never touches Slint. `GET /v1/get` returns
