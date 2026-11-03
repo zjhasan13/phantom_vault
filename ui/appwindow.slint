@@ -293,11 +293,10 @@ component NavItem inherits Rectangle {
     in-out property <bool> collapsed: false;
     in-out property <int> count: 0;
     callback tapped();
-    height: 36px;
-    border-radius: 6px;
-    background: root.active ? PhantomTheme.surface-highest : transparent;
-    border-width: 1px;
-    border-color: root.active ? PhantomTheme.primary : transparent;
+    height: 38px;
+    border-radius: 4px;
+    background: root.active ? PhantomTheme.primary-container : transparent;
+    border-width: 0px;
     area := TouchArea {
         mouse-cursor: pointer;
         clicked => { root.tapped(); }
@@ -309,23 +308,24 @@ component NavItem inherits Rectangle {
         alignment: root.collapsed ? center : start;
         Text {
             text: root.icon;
-            font-size: 14px;
+            color: root.active ? PhantomTheme.on-primary : PhantomTheme.text-muted;
+            font-size: 16px;
             vertical-alignment: center;
         }
         if !root.collapsed : Text {
             text: root.label;
-            color: root.active ? PhantomTheme.primary : PhantomTheme.text-muted;
-            font-size: 12px;
-            font-weight: root.active ? 700 : 400;
+            color: root.active ? PhantomTheme.on-primary : PhantomTheme.text-muted;
+            font-size: 13px;
+            font-weight: root.active ? 600 : 400;
             vertical-alignment: center;
             horizontal-stretch: 1;
             overflow: elide;
         }
-        if !root.collapsed && root.count > 0 : Text { text: root.count; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+        if !root.collapsed && root.count > 0 : Text { text: root.count; color: root.active ? PhantomTheme.on-primary : PhantomTheme.text-dim; font-size: 11px; font-family: "JetBrains Mono"; vertical-alignment: center; }
     }
     states [
         hover when area.has-hover : {
-            background: PhantomTheme.surface-low;
+            background: PhantomTheme.surface;
         }
     ]
 }
@@ -1603,7 +1603,7 @@ export component MainWindow inherits Window {
         // 1. Column 1: Sidebar (256px, 64px collapsed) — Aegis vault rail
         Rectangle {
             width: root.sidebar_collapsed ? 64px : 256px;
-            background: PhantomTheme.surface-low;
+            background: PhantomTheme.surface-lowest;
             VerticalLayout { spacing: 0px;
                 // brand header (56px)
                 Rectangle { height: 56px; background: PhantomTheme.surface-lowest;
@@ -1622,7 +1622,7 @@ export component MainWindow inherits Window {
                             Text { text: "🛡"; color: PhantomTheme.success; font-size: 12px; vertical-alignment: center; }
                             Text { text: root.ui_lang == "bn" ? "লোকাল মোড" : "Local mode"; color: PhantomTheme.text; font-size: 12px; font-weight: 700; vertical-alignment: center; }
                             Rectangle { horizontal-stretch: 1; }
-                            MonoChip { label: "v" + root.app_version; tone: PhantomTheme.text-dim; }
+                            Rectangle { height: 18px; border-radius: 4px; background: PhantomTheme.primary-container; HorizontalLayout { padding-left: 6px; padding-right: 6px; Text { text: "v" + root.app_version; color: PhantomTheme.on-primary; font-size: 8px; font-weight: 800; font-family: "JetBrains Mono"; vertical-alignment: center; } } }
                         }
                     }
                 }
@@ -1672,7 +1672,7 @@ export component MainWindow inherits Window {
                 }
                 Rectangle { height: 1px; background: PhantomTheme.border; }
                 if !root.sidebar_collapsed : HorizontalLayout { padding-left: 12px; padding-right: 12px; height: 24px; spacing: 6px;
-                    Text { text: "🔒"; font-size: 10px; vertical-alignment: center; }
+                    Text { text: "🛡"; font-size: 10px; vertical-alignment: center; }
                     Text { text: root.pq_paranoid_on ? "Argon2id + ML-KEM-768" : "Argon2id + XChaCha20"; color: PhantomTheme.text-dim; font-size: 8px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
                     Text { text: "READY"; color: PhantomTheme.success; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
@@ -1688,7 +1688,7 @@ export component MainWindow inherits Window {
                         Text { text: root.ui_lang == "bn" ? "লোকাল সেশন" : "LOCAL SESSION"; color: PhantomTheme.text; font-size: 10px; font-weight: 700; }
                         Text { text: root.ui_lang == "bn" ? "আনলকড · এই ডিভাইস" : "UNLOCKED · THIS DEVICE"; color: PhantomTheme.success; font-size: 8px; font-family: "JetBrains Mono"; }
                     }
-                    AuraButton { label: "🔒"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
+                    AuraButton { label: "🛡"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
                 }
                 AuraButton { label: root.sidebar_collapsed ? "✈" : (root.is_travel_mode ? "✈ TRAVEL ON" : "✈ Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 28px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
                 if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: PhantomTheme.success; font-size: 9px; font-family: "JetBrains Mono"; horizontal-alignment: center; }
