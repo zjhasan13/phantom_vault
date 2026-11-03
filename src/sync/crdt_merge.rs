@@ -242,6 +242,7 @@ pub fn merge_vaults(local: &Vault, remote: &Vault) -> Result<MergeReport, String
         totp_unlock_enabled: local.totp_unlock_enabled,
         totp_unlock_secret: local.totp_unlock_secret.clone(),
         verified_ids,
+        item_tags: local.item_tags.clone(),
         shared_grants,
         // A24: sidecar roots are not merged until A24c; keep a single root so
         // a vault that only has sidecars on one side does not silently lose it.

@@ -631,6 +631,12 @@ pub struct Vault {
     /// pre-sharing vaults loading — same pattern as verified_ids.
     #[serde(default)]
     pub shared_grants: Vec<SharedGrant>,
+    /// User-defined tags keyed by item id. JSON saves stay compatible via
+    /// serde(default): pre-tag vaults load with an empty map. Tags are not
+    /// secrets, so the Zeroize derive skips them.
+    #[serde(default)]
+    #[zeroize(skip)]
+    pub item_tags: std::collections::HashMap<String, Vec<String>>,
 }
 
 /// Successful fills that auto-mark a login as working. Equality-crossing
@@ -663,6 +669,7 @@ impl Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         }
     }
 
@@ -1070,6 +1077,7 @@ impl From<VaultLegacy> for Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         };
         v.ensure_folders();
         v
@@ -1240,6 +1248,7 @@ impl From<VaultGen1> for Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         };
         v.ensure_folders();
         v
@@ -1463,6 +1472,7 @@ impl From<VaultGen2> for Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         };
         v.ensure_folders();
         v
@@ -1529,6 +1539,7 @@ impl From<VaultGen3> for Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         };
         v.ensure_folders();
         v
@@ -1570,6 +1581,7 @@ impl From<VaultGen4> for Vault {
             verified_ids: Vec::new(),
             attachment_root: Vec::new(),
             shared_grants: Vec::new(),
+            item_tags: std::collections::HashMap::new(),
         };
         v.ensure_folders();
         v

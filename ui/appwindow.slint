@@ -622,6 +622,7 @@ export component MainWindow inherits Window {
     in-out property <int> type_filter: 0;
     in-out property <string> folder_filter: "All";
     in-out property <string> f_title;
+    in-out property <string> f_tags;
     in-out property <string> f_a;
     in-out property <string> f_b;
     in-out property <string> f_c;
@@ -1092,6 +1093,7 @@ export component MainWindow inherits Window {
     callback dup_confirm_replace();
     callback dup_confirm_keep();
     callback dup_confirm_cancel();
+    callback save_tags(string);
     callback add_item_requested(int, string, string, string, string, string, string, string, string, string, string, string, string, string, string, string, bool, bool, bool);
     callback delete_item_requested(int, string);
     callback type_filter_changed(int);
@@ -2417,6 +2419,7 @@ export component MainWindow inherits Window {
                         if root.f_a != "" || root.f_b != "" : Text { text: "⚠️ Typed text stays — check it still means the same fields."; color: PhantomTheme.warning; font-size: 11px; wrap: word-wrap; }
                         FieldLabel { text: root.ui_lang == "bn" ? "আইটেমের বিবরণ" : "ITEM DETAILS"; }
                         LineEdit { placeholder-text: "Item name (required)"; text <=> root.f_title; height: 36px; }
+                        LineEdit { placeholder-text: "Tags (comma separated, e.g. dev, infra)"; text <=> root.f_tags; height: 32px; }
                         ComboBox { model: root.folders_list; current-value <=> root.f_folder; }
                         FieldLabel { text: root.ui_lang == "bn" ? "লগইন তথ্য" : "LOGIN CREDENTIALS"; }
                         HorizontalLayout { spacing: 6px; LineEdit { placeholder-text: root.new_kind == 1 ? root.tr("Username / Email", "ইউজারনেম / ইমেইল") : (root.new_kind == 2 ? root.tr("License Key", "লাইসেন্স কী") : (root.new_kind == 4 ? root.tr("Cardholder name", "কার্ডহোল্ডারের নাম") : (root.new_kind == 5 ? root.tr("Full name", "পূর্ণ নাম") : (root.new_kind == 6 ? root.tr("Public Key", "পাবলিক কী") : root.tr("Note content", "নোটের বিষয়বস্তু"))))); text <=> root.f_a; height: 36px; horizontal-stretch: 1; } if root.new_kind == 1 : AuraButton { label: root.tr("Alias", "উপনাম"); width: 90px; height: 36px; clicked => { root.generate_alias_for_form(); } } }
@@ -2462,7 +2465,7 @@ export component MainWindow inherits Window {
                             CheckBox { text: "✈️ Travel safe"; checked <=> root.f_travel; }
                         }
                         HorizontalLayout { spacing: 8px;
-                            AuraButton { label: "💾 Save"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.add_item_requested(root.new_kind, root.f_title, root.f_a, root.f_b, root.f_c, root.f_d, root.f_e, root.f_notes, root.f_folder, root.f_totp, root.f_backup, root.f_company, root.f_city, root.f_state, root.f_zip, root.f_country, root.f_reprompt, root.f_fav, root.f_travel); } }
+                            AuraButton { label: "💾 Save"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.save_tags(root.f_tags); root.add_item_requested(root.new_kind, root.f_title, root.f_a, root.f_b, root.f_c, root.f_d, root.f_e, root.f_notes, root.f_folder, root.f_totp, root.f_backup, root.f_company, root.f_city, root.f_state, root.f_zip, root.f_country, root.f_reprompt, root.f_fav, root.f_travel); } }
                             AuraButton { label: "Cancel"; width: 120px; height: 38px; clicked => { root.cancel_form(); } }
                         }
                     }}

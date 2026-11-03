@@ -3413,7 +3413,11 @@ fn vault_to_items(vault: &Vault, f: &FilterState) -> ModelRc<CredentialView> {
         {
             continue;
         }
-        let mut tag_vec: Vec<String> = Vec::new();
+        let mut tag_vec: Vec<String> = vault
+            .item_tags
+            .get(&c.id)
+            .cloned()
+            .unwrap_or_default();
         if !c.totp_secret.is_empty() {
             tag_vec.push("2FA".into());
         }
@@ -5904,6 +5908,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             }
                             // Clear form, exit edit mode, drop pending custom fields
                             ui.set_f_title("".into());
+        ui.set_f_tags("".into());
                             ui.set_f_a("".into());
                             ui.set_f_b("".into());
                             ui.set_f_c("".into());
@@ -10327,6 +10332,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_custom_fields(ModelRc::new(VecModel::from(Vec::<CustomFieldView>::new())));
         ui.set_new_kind(kind);
         ui.set_f_title("".into());
+        ui.set_f_tags("".into());
         ui.set_f_a("".into());
         ui.set_f_b("".into());
         ui.set_f_c("".into());
@@ -10710,18 +10716,22 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 )
                 .into(),
             );
-            let mut tag_vec: Vec<&str> = Vec::new();
+            let mut tag_vec: Vec<String> = vault
+                .item_tags
+                .get(&c.id)
+                .cloned()
+                .unwrap_or_default();
             if !c.totp_secret.is_empty() {
-                tag_vec.push("2FA");
+                tag_vec.push("2FA".into());
             }
             if passkey_for_urls(&vault.passkeys, &c.urls) {
-                tag_vec.push("PASSKEY");
+                tag_vec.push("PASSKEY".into());
             }
             if vault.is_verified(&c.id) {
-                tag_vec.push("VERIFIED");
+                tag_vec.push("VERIFIED".into());
             }
             if c.travel_safe {
-                tag_vec.push("TRAVEL");
+                tag_vec.push("TRAVEL".into());
             }
             ui.set_d_tags(tag_vec.join(" · ").into());
             ui.set_d_url_rule(
@@ -10995,6 +11005,14 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let vault = lock_vault(&edit_vault);
         let id = id.as_str().to_string();
         *edit_target.lock().unwrap() = Some((kind, id.clone()));
+        ui.set_f_tags(
+            vault
+                .item_tags
+                .get(&id)
+                .map(|v| v.join(", "))
+                .unwrap_or_default()
+                .into(),
+        );
         ui.set_new_kind(kind);
         ui.set_show_detail(false);
         ui.set_show_add_form(true);
@@ -11110,6 +11128,28 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let rp_travel_vault = Arc::clone(&active_vault);
     let rp_search = Arc::clone(&search_state);
     let rp_ct = Arc::clone(&clipboard_timeout_secs);
+    let tags_target = Arc::clone(&editing_item);
+    let tags_vault = Arc::clone(&active_vault);
+    main_window.on_save_tags(move |text| {
+        let target = tags_target.lock().unwrap().clone();
+        let Some((_kind, id)) = target else {
+            return;
+        };
+        let mut tags: Vec<String> = text
+            .split(',')
+            .map(|s| s.trim().trim_start_matches('#').to_string())
+            .filter(|s| !s.is_empty() && s.chars().count() <= 24)
+            .collect();
+        tags.dedup();
+        tags.truncate(8);
+        let mut vault = lock_vault(&tags_vault);
+        if tags.is_empty() {
+            vault.item_tags.remove(&id);
+        } else {
+            vault.item_tags.insert(id, tags);
+        }
+    });
+
     main_window.on_reprompt_confirm(move |password, backup_pass, backup_confirm| {
         let Some(ui) = rp_weak.upgrade() else {
             return;
