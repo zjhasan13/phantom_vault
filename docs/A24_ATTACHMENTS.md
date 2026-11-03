@@ -23,13 +23,13 @@ zero-knowledge storage and existing vaults openable.
 
 ## Current behaviour (evidence)
 
-- Inline storage: `src/models.rs:70-82` (`EncryptedAttachment.data`, 5 MiB cap).
+- Inline storage: `src/models.rs:101-114` (`EncryptedAttachment.data`, 5 MiB cap).
 - Add path reads the whole file, caps at 5 MiB, pushes into the item and calls
-  `save_vault_secret` — `src/main.rs:12205`, `src/main.rs:12241-12249`.
+  `save_vault_secret` — `src/main.rs:12320-12337`, sidecar write `src/main.rs:12419`.
 - Detail preview/download/delete read `data` directly (`attachments_of`,
-  `src/main.rs:14820+`); the UI never streams.
+  `src/main.rs:15297`); the UI never streams.
 - Native `.pvx` export is lossless and includes attachment bytes; CSV/KDBX
-  deliberately do not (`src/main.rs:11173`).
+  deliberately do not (`src/main.rs:11166`).
 - GitHub sync pushes one encrypted `vault.enc` (`src/sync/github_sync.rs`);
   P2P does the same. There is no multi-file attachment transfer.
 

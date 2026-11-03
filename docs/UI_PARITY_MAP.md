@@ -39,7 +39,7 @@ screen lists.
 | List header | `VAULT ITEMS` + real match count + `LOCAL INDEX` | `Items` + count + index-sync badge | **Shipped** (no fake sync claim) |
 | Global command palette | OS-global QuickBar Alt+Space (`:2669`) | in-app `⌘K` | NEW (in-app palette; Windows shortcut TBD) |
 | Crash/integrity banner | lock-screen `integrity_warning` (`:1108`) | — | KEEP (design lacks it) |
-| Login / cryptographic gateway | Grid + glows, telemetry strip, shield wordmark, 560px glass card, Master/PIN/Shards tabs, real vault name, live entropy, DPAPI + zeroize rows, gradient unlock, Windows Hello, real recovery links | 1568×924 login mockup | **Shipped** (honest substitutions: no TPM/FIPS/YubiKey/TrailOfBits claims; visual QA pending) |
+| Login / cryptographic gateway | Grid + 2 glows, telemetry strip, shield wordmark, 560px glass card, Master/PIN/Shards tabs, real vault name, live entropy (5 segments), DPAPI/TPM + zeroize rows, gradient unlock, Windows Hello row, real recovery links; pill + wordmark pinned above the scroll area | 1568×924 login mockup | **Shipped, ~85% honest parity** (no TPM PCR[7]/FIPS/YubiKey/SLIP-39/CPU-years/TrailOfBits claims; no duress-wipe button, frameless chrome, or Passkey tab) |
 
 ---
 
@@ -804,7 +804,7 @@ effects and fabricated labels, not missing layouts.
 |---|---|---|---|
 | Flexbox / CSS grid | `HorizontalLayout` / `VerticalLayout` / `GridLayout` | ✅ | Manual sizing; no `auto-fill`; responsive columns need width branches |
 | 3-pane shell, 5/7 split | `HorizontalLayout` + fixed/preferred widths + `horizontal-stretch` | ✅ | Current shell already does this |
-| CSS variables | `global PhantomTheme` (`ui/appwindow.slint:123`), source `design/tokens.json` | ✅ | Wired; ~554 literals swept, 57 alpha/one-off remain |
+| CSS variables | `global PhantomTheme` (`ui/appwindow.slint:127`), source `design/tokens.json` | ✅ | Wired; ~554 literals swept, 115 hex literals remain outside the theme block (alpha tints, gradients, one-offs) |
 | Media queries | `if root.width < 1024px : ...` branches | ⚠️ | Manual breakpoints; no CSS cascade |
 | `:hover` / `:focus` / `:active` | `TouchArea.has-hover`, `LineEdit` focus, explicit state props | ✅ | More verbose; no pseudo-classes |
 | CSS transitions/keyframes | `animate { duration: ...; easing: ...; }` | ✅ | Animate colour/opacity/position only; avoid per-frame layout |

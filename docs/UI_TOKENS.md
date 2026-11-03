@@ -18,7 +18,7 @@
 
 | Consumer | File | Status |
 |---|---|---|
-| Slint desktop | `ui/appwindow.slint` → `global PhantomTheme` | canonical tokens + compatibility aliases; common component colors swept, 57 alpha/one-off literals remain |
+| Slint desktop | `ui/appwindow.slint` → `global PhantomTheme` | canonical tokens + compatibility aliases; common component colors swept, 115 hex literals remain outside the theme block (alpha tints, gradients, one-offs) |
 | Extension | `browser_extension/design-tokens.css` (`--pv-*`) | file exists, **not linked** from `popup.html` yet (HUD 2.0 slice) |
 
 The Slint aliases (`void`, `abyss`, `panel`, `card`, `edge`, `aura`, `pulse`,
@@ -71,7 +71,7 @@ The mockup labels that are not true for PhantomVault are listed in
 
 ## Next (P0)
 
-1. ~~Sweep the common atoms/shell hex colors~~ (done; 57 alpha/one-off remain).
+1. ~~Sweep the common atoms/shell hex colors~~ (done; 115 hex literals remain outside the theme block).
 2. ~~Add the full-width command bar, select strip and ~5/7 split~~ (done).
 3. ~~Add row entropy bar/badge and the 3 detail tiles + recent audit trail~~ (done).
 4. Remaining: tags/last-used/expires model fields; font/icon decision; compact

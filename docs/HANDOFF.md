@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy) + Windows Hello state-split follow-up queued; before that, UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -158,8 +158,8 @@
   palette/type/radius/spacing; `ui/appwindow.slint` `PhantomTheme` carries the
   canonical tokens + aliases, and `browser_extension/design-tokens.css` mirrors
   them (not linked yet). `scripts/check_ui_tokens.ps1` / `npm run test:tokens`
-  fail on drift. The common app colors were swept (~554 literals; 57 alpha/
-  one-off remain); the vault now has a full-width command bar (search,
+  fail on drift. The common app colors were swept (~554 literals; 115 hex
+  literals remain outside the theme block); the vault now has a full-width command bar (search,
   ZERO-KNOWLEDGE / RAM-SAFE chips, local session, New Item), a filter/select
   strip above a 5/7-ish list/detail split, 76px rows with a real entropy bar and
   health/type badge, three detail diagnostic tiles (pwned/age/encryption) and a
@@ -182,20 +182,38 @@
   right pane look clipped when it was not.
   See `docs/UI_TOKENS.md` and `docs/UI_PARITY_MAP.md` §30.
 
-- **Login page parity (this batch):** the lock screen is rebuilt as the
-  `login page/code.html` cryptographic gateway: 38px technical grid + layered
-  ambient glows, live telemetry strip (vault sealed / real Argon2id 64 MiB
-  t=3 p=4 / device binding), engine chips (real `v0.4.1-rs`, Windows Hello when
-  available, portable badge), shield crest + gradient wordmark, and a 560px
-  glass card with Master Pass / PIN / Recovery Shards tabs, real vault filename,
-  eye toggle, **live entropy bits**, Kerckhoffs-honest cipher row, DPAPI binding
-  + zeroize status rows, gradient Unlock + `↵ Enter`, Windows Hello row, and
-  real recovery/shred links. Honest substitutions for the mockup's invented
-  claims: no TPM PCR[7], no FIPS 140-3 certification, no YubiKey assertion, no
-  TrailOfBits audit; those slots show the real Argon2id/XChaCha20 params, DPAPI
-  binding, Windows Hello availability, and "open source". Fonts remain system
-  fallbacks (size decision). Visual QA against the mockup is pending (user
-  screenshot); `cargo check --all-targets` is green.
+- **Login page parity, pass 2 (this batch):** the lock screen is rebuilt as the
+  `login page/code.html` cryptographic gateway: 38px technical grid (alpha
+  `#ffffff0d`) + two ambient glows, live telemetry strip (vault sealed / real
+  Argon2id 64 MiB t=3 p=4 / device binding), engine chips (real `v0.4.1-rs`,
+  Windows Hello when available, portable badge), shield crest + gradient
+  wordmark, and a 560px glass card (110px violet glow) with Master Pass / PIN /
+  Recovery Shards tabs, real vault filename, eye toggle, **live entropy bits**,
+  Kerckhoffs-honest cipher row, DPAPI binding + zeroize status rows, gradient
+  Unlock (`🔓`, `↵ Enter`), Windows Hello row, and real recovery/shred links.
+  Pass-2 fixes: hero pill, wordmark and tagline are pinned **above** the
+  `ScrollView`, so password auto-focus can no longer scroll the brand header
+  out of view; the pill hugs its content and switches on real PQ state
+  (`POST-QUANTUM ENCLAVE · TPM 2.0` / `POST-QUANTUM ENCLAVE ACTIVE` /
+  `LOCAL ENCLAVE ACTIVE`, chip `HW KEY` / `ML-KEM-768` / `XChaCha20`); the
+  TPM status row is conditional on `pq_backend == "tpm"`; the tab strip always
+  renders three tabs (PIN reads `PIN · OFF` when no app PIN exists and explains
+  the fix on click); tab glyphs; `LOCAL-ONLY · NO ACCOUNT` right label in the
+  identifier row; 5-segment entropy bar bound to the real `lock_bits`; lock
+  glyph inside the password field; Windows Hello row always visible with an
+  honest fallback ("not enrolled · use the passphrase"); footer
+  `v<ver> · MIT · OPEN SOURCE`.
+  Honest substitutions for the mockup's invented claims: no TPM PCR[7], no
+  FIPS 140-3 certification, no YubiKey assertion, no SLIP-39, no
+  "104.2 bits / CPU years", no TrailOfBits audit; those slots show the real
+  Argon2id/XChaCha20 params, DPAPI binding, Windows Hello availability, and
+  "open source". Fonts remain system fallbacks (size decision). Deliberately
+  **not** implemented: the mockup's one-click duress-wipe button (unsafe),
+  frameless chrome (native titlebar kept), and the Passkey/FIDO2 tab (A21 is
+  not shipped, so the tab would be a dead control). Honest parity estimate
+  **~85%** of the mockup; 100% is unreachable without those three and without
+  the false claims. `cargo build` green; visual QA via DPI-aware `PrintWindow`
+  capture.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
@@ -831,7 +849,33 @@
    `ZeroizeOnDrop` (vault key wipe on session teardown, not just dalek drop).
 7. **Standing item (do NOT blind-chase):** `Mutex::lock().unwrap()` pattern in
    `src/main.rs` (panic=abort design). Only touch attacker-influenced paths.
-8. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
+8. **Windows Hello — finish the enrollment/availability split (next UI batch):**
+   the crypto path already ships (`seal_hello_token` on every successful
+   password unlock, `vault_hello.dpapi` DPAPI-sealed, `request_biometric_unlock`,
+   `[Re-enroll Hello]` on device mismatch, token removed on lock/panic/rotation).
+   What is still wrong is the *state reporting*, and it is what makes the lock
+   row read "not enrolled" on this machine even though a token file exists:
+   - expose `hello_enrolled` (token file exists) separately from
+     `hello_available` (WinRT `UserConsentVerifier::CheckAvailabilityAsync`);
+     today only `hello_available` reaches the UI, so "enrolled but Windows Hello
+     is off for this Windows account" is mislabelled as "not enrolled".
+   - render four honest states on the lock row and the Settings row:
+     available+enrolled (tappable), available+not enrolled ("unlock once with
+     the password to enroll"), unavailable+enrolled ("enrolled, but Windows
+     Hello is unavailable on this PC"), unavailable+not enrolled ("not
+     available on this device").
+   - add a **Remove Hello credential** action in Settings (delete
+     `vault_hello.dpapi`) next to the status row; today the only removal paths
+     are lock, panic wipe, rotation, and factory reset.
+   - re-probe availability when the window is shown / Settings opens, so a user
+     who configures Hello after launch does not need an app restart.
+   - block enabling **Two-factor unlock (password + Hello)** while Hello is not
+     enrolled; the unlock path currently downgrades loudly at unlock time
+     (`main.rs` "Two-factor unlock is ON but Hello isn't enrolled").
+   - keep the honest copy: `UserConsentVerifier` is a Windows Hello *consent*
+     prompt, not a FIDO2/WebAuthn assertion, and the token is DPAPI-bound to
+     this Windows user, not to a TPM PCR.
+9. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
    rewrite (canceled), `rqrr-zeroize` fork (rejected), tokio current-thread
    (rejected), License purchase/vendor/seats, SSH passphrase decrypt,
    name-split/SSN, card billing address.

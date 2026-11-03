@@ -45,8 +45,9 @@ four places:
    passphrase shipped as A6, master-password change as A5).
 3. **Extension hardening** — fixed in this batch (proactive idle lock and
    "Never save for this site"); a few smaller items remain.
-4. **Ecosystem** — no local API or CLI, so editor/CI/Terraform workflows that
-   1Password supports have no equivalent.
+4. **Ecosystem** — A23 slice 1 ships a loopback-only read API + `pv` CLI
+   (`pv status`, `pv get`), so the gap is now write/inject, scopes, and
+   auto-start rather than "no local API or CLI".
 
 Enterprise items (SOC 2, SSO/SCIM, team vaults, admin console) are deliberately
 out of scope. They are a different product, not a missing feature.
@@ -924,7 +925,7 @@ competitors do not ship.
 | Never-save for site | Yes (this batch) | Yes | Yes | Parity |
 | Edit-before-save | Yes (A9, closed shadow fields) | Yes | Yes | Parity |
 | Offline extension cache | Yes (A11/A11b: opt-in read-only, Hello or PIN, 15 min) | Yes | Yes | Parity |
-| Local API / CLI | Missing | CLI (open source) | CLI + Connect | Behind |
+| Local API / CLI | Partial (A23 slice 1: loopback-only read API + `pv status` / `pv get`; no write/inject) | CLI (open source) | CLI + Connect | Behind (narrowed) |
 | Installer signing / provenance | Provenance shipped (A8a); Authenticode still missing (A8b) | Signed | Signed | Behind on Authenticode, parity on provenance |
 | Audit / disclosure docs | Shipped (A7: README, MIT LICENSE, SECURITY.md) | Yes | Yes | Parity |
 | Light theme / Bengali | Missing | Theme yes, Bengali partial | Theme yes, Bengali no | Behind on fit |
@@ -950,7 +951,7 @@ paperwork would repeat the "PQ second factor" mistake at a larger scale.
 ## 9. How to verify this document
 
 ```powershell
-# Extension test suite (124 tests)
+# Extension test suite (133 tests)
 npm test
 
 # Idle-lock and never-save code
@@ -1081,7 +1082,7 @@ pass missed, and corrected three assumptions.
 | E12 | No hardware security key unlock | Only Windows Hello + TOTP gate exist; no FIDO2/HMAC-secret path | Bitwarden supports FIDO2 2FA; KeePassXC supports hardware-key unlock. A local vault with a hardware factor would be a differentiator | FIDO2 hmac-secret or CTAP2 key wrapping the vault key; fallback to password | S2 |
 | E13 | No secure sharing / expiring link - **slices 1-6 shipped (bundle + LAN/file + CLI + desktop card + optional passphrase/QR + async gist relay + bulk staging)** | `src/share.rs`, `share_store.rs`, `share_serve.rs`, `share_relay.rs`, `share_cli.rs`; Settings → Expiring shares (`ui/appwindow.slint`, `main.rs` `login_share_*`/`share_item`/`bulk_share`); preview + duplicate-safe import | Bitwarden Send is a core workflow; users fall back to chat apps | Serverless Send: encrypted blob + key in URL fragment or Argon2id-wrapped by a recipient passphrase, LAN/file/secret-gist relay, TTL and one-view on LAN | S2 |
 | E14 | Desktop is Windows-only | `#![windows_subsystem]` (`src/main.rs:3`), 13 Windows-gated sites, DPAPI/WinRT dependencies | No macOS/Linux, and no mobile at all; Bitwarden ships all of them | Split platform layer behind a trait: DPAPI/Hello on Windows, Keychain/Secure Enclave on macOS, libsecret on Linux | S1 |
-| E15 | Desktop has no light theme | Palette is hard-coded dark (`ui/appwindow.slint:110-124`) | Accessibility and daylight use; extension already supports `prefers-color-scheme` (`popup.html:6-17`) | Theme tokens with light/high-contrast variants | S3 |
+| E15 | Desktop has no light theme | Palette is hard-coded dark (`ui/appwindow.slint:127-168`) | Accessibility and daylight use; extension already supports `prefers-color-scheme` (`popup.html:6-17`) | Theme tokens with light/high-contrast variants | S3 |
 | E16 | Desktop is English-only — **pilot shipped (A26); most dialogs still English** | `ui_lang` ternaries in `appwindow.slint`; `set_language`/`normalize_lang` + `lang.pref` in `main.rs`; lock screen, sidebar, importer/Settings headings translated; `docs/A26_BN.md` | Bengali users get a localized popup and an English desktop | String table + `lang` setting; reuse the extension glossary | S2 |
 | E17 | No Safari extension | Only Chromium and Firefox manifests exist | Safari users cannot use the product | Safari Web Extension wrapper around the same JS | S3 |
 | E18 | Vault health covers passwords only | `security/breach_check.rs` checks password hashes via HIBP ranges; no email-breach lookup | Bitwarden/1Password watchtower also flags breached accounts and weak 2FA coverage | Optional email-breach check with k-anonymity and explicit consent | S3 |
