@@ -875,7 +875,26 @@
    - keep the honest copy: `UserConsentVerifier` is a Windows Hello *consent*
      prompt, not a FIDO2/WebAuthn assertion, and the token is DPAPI-bound to
      this Windows user, not to a TPM PCR.
-9. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
+9. **Dependabot GHSA-h395-gr6q-cpjc — dismiss now, bump octocrab as its own task:**
+   `jsonwebtoken 9.3.1` arrives only through `octocrab 0.41.2`
+   (`cargo tree -i jsonwebtoken`); fixed in `jsonwebtoken 10.3.0`. The advisory
+   is a type confusion in claim **validation** (`decode`): a malformed `nbf`/
+   `exp` is treated as absent, so time checks are skipped. PhantomVault never
+   verifies a JWT — `src/admin.rs:170` documents that there is no JWT/id_token
+   verification dependency, and the GitHub client is built with a PAT
+   (`github_sync.rs:121`), so octocrab only *signs* App JWTs. Not reachable.
+   The alert is therefore dismissed as "vulnerable code not used" with this
+   rationale; `rustsec/audit-check` stays green because the advisory is not in
+   the RustSec DB yet — if it lands as `RUSTSEC-2026-*`, add it to the
+   `security.yml` ignore list next to `RUSTSEC-2023-0071`/`RUSTSEC-2026-0387`.
+   Real fix when scheduled: `octocrab 0.41.2 -> 0.54.9` (uses
+   `jsonwebtoken ^10`), which is a 13-minor-version jump — re-check
+   `Octocrab::builder().personal_token`, `is_not_found` error matching
+   (`github_sync.rs:131`), and the emergency-export client (`emergency.rs:365`),
+   then `cargo test` + one live sync round-trip.
+   Dismiss command (needs `gh auth login` first):
+   `gh api -X PATCH repos/zjhasan13/phantom_vault/dependabot/alerts/1 -f state=dismissed -f dismissed_reason=not_used -f dismissed_comment="jsonwebtoken 9.3.1 is only reachable through octocrab, which signs GitHub App JWTs; PhantomVault never verifies a JWT (no decode path). Fix tracked as the octocrab 0.54.9 bump."`
+10. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
    rewrite (canceled), `rqrr-zeroize` fork (rejected), tokio current-thread
    (rejected), License purchase/vendor/seats, SSH passphrase decrypt,
    name-split/SSN, card billing address.
