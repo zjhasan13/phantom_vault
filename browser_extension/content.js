@@ -842,6 +842,11 @@
     return ac === "new-password" || nameId.includes("new");
   }
 
+  // AutoFillConstants.ExcludedAutofillLoginTypes + the obvious non-text inputs.
+  const EXCLUDED_INPUT_TYPES = new Set([
+    "hidden", "file", "button", "image", "reset", "submit", "search",
+    "checkbox", "radio", "range", "color",
+  ]);
   function findFields() {
     // Strict classifier: search bars NEVER classify (YouTube/Google/Amazon
     // search boxes must not get badges, listeners, or dropdowns). Login =
@@ -852,6 +857,7 @@
     const pass = [], newPass = [], users = [], otp = [];
     for (const el of all) {
       const type = (el.type || "").toLowerCase();
+      if (EXCLUDED_INPUT_TYPES.has(type)) continue;
       // M15: type=password is NEVER a search box (forgot/find-password
       // pages like id="findPassword" were badge-less and unfillable).
       if (type !== "password" && isSearchField(el)) continue;
@@ -1013,13 +1019,7 @@
   // reads like a credential step. Otherwise a matched domain badged every
   // newsletter/contact email field on the site (page-match rule (a)).
   function loginContextFor(el) {
-    if (hasIdentityAutocomplete(el)) return false;
-    const ac = (el.autocomplete || "").toLowerCase();
-    if (ac === "username") return true;
-    if (passwordNear(el)) return true;
-    if (looksLikeMarketingField(el)) return false;
-    if (el.form && /log ?-?in|sign ?-?in|signin|logon|auth/i.test(el.form.getAttribute("action") || "")) return true;
-    return pageLooksLikeAuth();
+    return isUsernameField(el) && !isNonLoginContext(el) && headingSignal(el) !== "non-login";
   }
   function passwordNear(el) {
     const pw = [...deepQuery('input[type="password"]')].filter(isVisible);
@@ -1043,9 +1043,11 @@
     }
     return false;
   }
-  // Identity / marketing boxes share type=email with logins. Bitwarden vetoes
-  // them before any page-level guess (isUsernameFieldForLoginForm ->
-  // isNonLoginUsernameField / isExplicitIdentityEmailField); mirror that.
+  // Identity / marketing boxes share type=email with logins. Bitwarden's
+  // InlineMenuFieldQualificationService vetoes them in this order:
+  // identity autocomplete -> search/ignored keywords -> non-login form context
+  // (newsletter family) -> closest-heading tie-break (classifyHeadings) ->
+  // password proximity. Mirror that instead of the old "any email is a login".
   const IDENTITY_AC = new Set([
     "name", "honorific-prefix", "given-name", "additional-name", "family-name",
     "honorific-suffix", "nickname", "organization", "organization-title",
@@ -1055,21 +1057,82 @@
     "tel-area-code", "tel-local", "tel-extension", "bday", "bday-day",
     "bday-month", "bday-year", "sex", "url", "photo", "impp",
   ]);
-  // Marketing / comment fields: fine to veto only when no password sits beside
-  // them, because enterprise logins do use words like "company" or "contact".
-  const MARKETING_TOKENS = [
-    "newsletter", "subscribe", "subscription", "contact", "comment", "reply",
-    "feedback", "coupon", "promo", "invite", "referral", "subject", "message",
-    "bio", "nickname", "displayname",
+  // AutoFillConstants.StrongNonLoginKeywords / ComprehensiveNonLoginKeywords.
+  const NON_LOGIN_KEYWORDS = [
+    "newsletter", "mailing list", "subscribe", "subscription", "unsubscribe",
   ];
+  // AutoFillConstants.StrongLoginHeadingKeywords + the identity headings the
+  // tie-breaker treats as "not a login".
+  const LOGIN_HEADING_KEYWORDS = ["sign in", "signin", "log in", "login", "log on", "logon"];
+  const ACCOUNT_CREATION_KEYWORDS = [
+    "register", "registration", "sign up", "signup", "join",
+    "create password", "create a password", "create an account", "create account",
+    "confirm password", "confirm account password", "new user", "new email",
+    "new e-mail",
+  ];
+  // AutoFillConstants.FieldIgnoreList.
+  const FIELD_IGNORE_KEYWORDS = ["captcha", "findanything", "forgot"];
   function hasIdentityAutocomplete(el) {
     const ac = (el.autocomplete || "").toLowerCase().trim().split(/\s+/)[0];
     return !!ac && IDENTITY_AC.has(ac);
   }
-  function looksLikeMarketingField(el) {
-    const hay = (fieldText(el) + " " + explicitHintText(el)).toLowerCase();
-    const tokens = hay.split(/[^a-z0-9]+/).filter(Boolean);
-    return tokens.some((tk) => MARKETING_TOKENS.includes(tk));
+  function fieldHaystack(el) {
+    const bits = [
+      el.name, el.id, el.placeholder, el.getAttribute && el.getAttribute("aria-label"),
+      el.getAttribute && el.getAttribute("title"), el.getAttribute && el.getAttribute("class"),
+      el.autocomplete, explicitHintText(el),
+    ];
+    try {
+      if (el.labels) for (const l of el.labels) bits.push(l.textContent || "");
+    } catch (_) {}
+    return bits.filter(Boolean).join(" ").toLowerCase();
+  }
+  // Bitwarden fieldContainsKeyword(): substring by default, hyphen/space-blind
+  // on the compact form so "create password" still matches "createPassword".
+  function hasKeyword(hay, list) {
+    if (!hay) return false;
+    const compact = hay.replace(/[\s_-]+/g, "");
+    return list.some((k) => hay.includes(k) || compact.includes(k.replace(/[\s_-]+/g, "")));
+  }
+  // Closest ancestor that carries any heading decides; headings win over the
+  // URL because "Subscribe to our newsletter" is more specific than "/account".
+  function nearestHeadings(el) {
+    let node = el.closest("form") || el.parentElement;
+    let hops = 0;
+    while (node && node !== document.body && hops < 10) {
+      const hs = [...node.querySelectorAll("h1, h2, h3, h4, legend, [role='heading']")]
+        .map((h) => (h.textContent || "").trim().toLowerCase())
+        .filter(Boolean);
+      if (hs.length) return hs.slice(0, 6);
+      node = node.parentElement;
+      hops++;
+    }
+    return [];
+  }
+  function headingSignal(el) {
+    for (const h of nearestHeadings(el)) {
+      if (LOGIN_HEADING_KEYWORDS.some((k) => h.includes(k))) return "login";
+      if (hasKeyword(h, NON_LOGIN_KEYWORDS)) return "non-login";
+    }
+    return "";
+  }
+  // Bitwarden isNonLoginUsernameField: field, form attributes or any same-form
+  // sibling carrying a newsletter/mailing-list keyword disqualifies the form.
+  function isNonLoginContext(el) {
+    if (hasKeyword(fieldHaystack(el), NON_LOGIN_KEYWORDS)) return true;
+    const form = el.form || el.closest("form");
+    if (!form) return false;
+    const fh = [form.id, form.name, form.getAttribute("action"), form.className]
+      .filter(Boolean).join(" ").toLowerCase();
+    if (hasKeyword(fh, NON_LOGIN_KEYWORDS)) return true;
+    for (const sib of form.querySelectorAll("input, textarea, select")) {
+      if (sib !== el && hasKeyword(fieldHaystack(sib), NON_LOGIN_KEYWORDS)) return true;
+    }
+    return false;
+  }
+  function hasVisibleNewPassword() {
+    return [...deepQuery('input[type="password"]')]
+      .some((el) => isVisible(el) && isNewPasswordField(el));
   }
   // Page-level credential signal, consulted only after the vetoes above.
   function pageLooksLikeAuth() {
@@ -1084,19 +1147,35 @@
         href + " " + title + " " + heads + " " + actions);
     } catch (_) { return false; }
   }
+  function formActionIsLogin(el) {
+    const form = el.form || el.closest("form");
+    if (!form) return false;
+    const action = (form.getAttribute("action") || "").toLowerCase();
+    return /log ?-?in|sign ?-?in|signin|logon|auth|session/i.test(action);
+  }
   function isUsernameField(el) {
     if (isSearchField(el)) return false;
+    const hay = fieldHaystack(el);
+    if (hasKeyword(hay, FIELD_IGNORE_KEYWORDS)) return false;
     if (hasIdentityAutocomplete(el)) return false;
     const ac = (el.autocomplete || "").toLowerCase();
+    // Signup/registration boxes are not login usernames (Bitwarden's
+    // AccountCreationFieldKeywords veto).
+    if (hasKeyword(hay, ACCOUNT_CREATION_KEYWORDS)) return false;
+    if (ac === "username") {
+      // A developer-declared username still loses when the page is clearly
+      // creating a credential (new-password present).
+      return !hasVisibleNewPassword();
+    }
+    if (isNonLoginContext(el)) return false;
     const type = (el.type || "").toLowerCase();
     const near = passwordNear(el);
-    if (ac === "username") return true;
-    if (!near && looksLikeMarketingField(el)) return false;
-    if (type === "email") return near || pageLooksLikeAuth();
-    if (type !== "text") return false;
-    // type=text counts ONLY beside a password field in the SAME form, or in
-    // the same login cluster when the site wraps fields without a <form>.
-    return near;
+    if (near) return true;
+    if (type !== "email" && type !== "text") return false;
+    const signal = headingSignal(el);
+    if (signal === "non-login") return false;
+    if (signal === "login") return true;
+    return formActionIsLogin(el) || pageLooksLikeAuth();
   }
   // Split-input OTP groups (Google/Stripe/banks) give their boxes names like
   // "digit-0" or no name at all, so every keyword path below misses them and

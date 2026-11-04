@@ -332,18 +332,21 @@
   `type=email` / `autocomplete=email` box on a matched site (newsletters,
   contact forms, comment boxes). Bitwarden qualifies with
   `InlineMenuFieldQualificationService`: `isFieldForLoginForm` splits into
-  password and username paths, `isUsernameFieldForLoginForm` vetoes identity
-  emails, requires no new-password fields for `autocomplete=username`, vetoes
-  account-creation keywords and `isNonLoginUsernameField`, and otherwise needs a
-  co-located password; `isExcludedFieldType`/`isSearchField` drop the rest.
-  Ours now does the same shape: identity autocomplete tokens (name/tel/address/
-  bday/...) are never usernames, marketing fields (newsletter/contact/comment/
-  coupon/...) are vetoed unless a password sits in the same form/cluster, and
-  `type=email` needs either a nearby password or a page-level auth signal
-  (path/title/h1-2/form action). `autocomplete=username` stays decisive, so a
-  Google challenge URL is still clickable. Tests: newsletter + identity boxes
-  get no badge, `autocomplete=email` alone is not enough, explicit username
-  survives (npm 144/144).
+  password and username paths; `isUsernameFieldForLoginForm` vetoes identity
+  emails, requires no new-password field for `autocomplete=username`, vetoes
+  `AccountCreationFieldKeywords`, runs `isNonLoginUsernameField`
+  (newsletter/mailing-list in the field, form attrs or any sibling), and for a
+  lone field falls back to `isAmbiguousFieldNonLogin` - closest headings first,
+  login headings win, non-login headings lose; `isExcludedFieldType` /
+  `isSearchField` drop the rest, and `FieldIgnoreList` skips captcha/forgot.
+  Ours now follows that order: identity autocomplete veto, ignore-list veto,
+  account-creation veto (`autocomplete=username` also loses when a visible
+  new-password field exists), newsletter context veto (field/form/siblings),
+  then closest-heading tie-break before the URL signal. `findFields` also skips
+  Bitwarden's excluded input types (hidden/file/button/image/reset/search/
+  checkbox/radio). Tests: newsletter box + newsletter heading + signup form get
+  no badge; an email-only box under a "Sign in" heading still does; Google
+  challenge URL keeps its shield (npm 147/147).
 
 - **Save prompt survives navigation (this batch):** a login POST replaces the
   document, so the old prompt vanished with it. Bitwarden's own answer is a

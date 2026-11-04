@@ -400,6 +400,43 @@ test("explicit autocomplete=username still earns the shield on a challenge URL",
     "developer-declared username fields must stay clickable");
 });
 
+test("a newsletter heading beats the URL signal", async (t) => {
+  const { window } = env(t, `<section>
+    <h2>Subscribe to our newsletter</h2>
+    <form><input type="email" name="email" placeholder="Email address"></form>
+  </section>`,
+    "https://example.com/account",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(120);
+  assert.equal(window.document.querySelector('input[name="email"]').dataset.pvBadged, undefined,
+    "a newsletter heading must veto the login badge");
+});
+
+test("a sign-in heading qualifies a lone email box without an auth URL", async (t) => {
+  const { window } = env(t, `<section>
+    <h1>Sign in to Example</h1>
+    <form><input type="email" name="email" placeholder="Email address"></form>
+  </section>`,
+    "https://example.com/session",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(120);
+  assert.ok(window.document.querySelector('input[name="email"]').dataset.pvBadged,
+    "the closest heading is a login signal");
+});
+
+test("signup fields are not login usernames", async (t) => {
+  const { window } = env(t, `<h1>Create your account</h1>
+  <form action="/register">
+    <input type="email" name="email" autocomplete="username">
+    <input type="password" name="password" autocomplete="new-password">
+  </form>`,
+    "https://example.com/register",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(120);
+  assert.equal(window.document.querySelector('input[name="email"]').dataset.pvBadged, undefined,
+    "autocomplete=username loses when the page is creating a credential");
+});
+
 test("a revealed password replaces the standalone email shield", async (t) => {
   const { window } = env(t, `<form action="/login"><input type="email" name="email"></form>`,
     "https://example.com/start",
