@@ -5146,6 +5146,111 @@ fn main() -> Result<(), slint::PlatformError> {
         );
     });
 
+    // First-run: restore an existing encrypted vault from a private GitHub
+    // repo. Only writes when NO local vault exists; the downloaded bytes are
+    // the same ciphertext sync uses, so the OLD master password still applies.
+    // The PAT is zeroized and DPAPI-sealed only after a successful install.
+    let restore_weak = main_window.as_weak();
+    main_window.on_restore_from_github(move |owner, repo, token| {
+        let Some(ui) = restore_weak.upgrade() else {
+            return;
+        };
+        let owner = owner.as_str().trim().to_string();
+        let repo = repo.as_str().trim().to_string();
+        let token = zeroize::Zeroizing::new(token.as_str().trim().to_string());
+        if owner.is_empty() || repo.is_empty() || token.is_empty() {
+            ui.set_ob_gh_busy(false);
+            ui.set_ob_gh_status("⚠️ Owner, repo and PAT are required.".into());
+            return;
+        }
+        if std::path::Path::new(VAULT_FILE).exists() {
+            ui.set_ob_gh_busy(false);
+            ui.set_ob_gh_status(
+                "⚠️ A vault already exists in this folder — unlock it instead of restoring.".into(),
+            );
+            return;
+        }
+        ui.set_ob_gh_status("⏳ Downloading the encrypted vault…".into());
+        let weak = restore_weak.clone();
+        std::thread::spawn(move || {
+            let fail = |msg: String| {
+                let weak = weak.clone();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_ob_gh_busy(false);
+                        ui.set_ob_gh_status(msg.into());
+                    }
+                });
+            };
+            if !net_allowed() {
+                fail("📴 Offline mode — restore skipped.".into());
+                return;
+            }
+            let Some(rt) = tokio_rt() else {
+                fail("⚠️ Could not start the network runtime.".into());
+                return;
+            };
+            let pulled =
+                rt.block_on(sync::github_sync::pull_remote(&owner, &repo, token.as_str()));
+            let weak = weak.clone();
+            let _ = slint::invoke_from_event_loop(move || {
+                let Some(ui) = weak.upgrade() else {
+                    return;
+                };
+                match pulled {
+                    Ok(Some((blob, _sha))) => {
+                        if blob.len() < 32
+                            || blob.iter().take(2).any(|b| *b == b'<' || *b == b'{')
+                        {
+                            ui.set_ob_gh_busy(false);
+                            ui.set_ob_gh_status(
+                                "⚠️ The remote file does not look like a vault.".into(),
+                            );
+                            return;
+                        }
+                        let tmp = format!("{VAULT_FILE}.restore.tmp");
+                        if let Err(e) = std::fs::write(&tmp, &blob) {
+                            ui.set_ob_gh_busy(false);
+                            ui.set_ob_gh_status(format!("⚠️ Could not write the vault: {e}").into());
+                            return;
+                        }
+                        if let Err(e) = std::fs::rename(&tmp, VAULT_FILE) {
+                            let _ = std::fs::remove_file(&tmp);
+                            ui.set_ob_gh_busy(false);
+                            ui.set_ob_gh_status(
+                                format!("⚠️ Could not install the vault: {e}").into(),
+                            );
+                            return;
+                        }
+                        let _ = sync::github_sync::save_repo(&owner, &repo);
+                        let _ = sync::github_sync::store_token(token.as_str());
+                        ui.set_ob_gh_owner("".into());
+                        ui.set_ob_gh_repo("".into());
+                        ui.set_ob_gh_token("".into());
+                        ui.set_ob_gh_busy(false);
+                        ui.set_ob_gh_status("".into());
+                        ui.set_has_vault_file(true);
+                        ui.set_show_onboarding(false);
+                        ui.set_status_text(
+                            "✅ Vault restored from GitHub — enter your OLD master password."
+                                .into(),
+                        );
+                    }
+                    Ok(None) => {
+                        ui.set_ob_gh_busy(false);
+                        ui.set_ob_gh_status(
+                            "⚠️ No remote vault found at that owner/repo.".into(),
+                        );
+                    }
+                    Err(e) => {
+                        ui.set_ob_gh_busy(false);
+                        ui.set_ob_gh_status(format!("⚠️ Restore failed: {e}").into());
+                    }
+                }
+            });
+        });
+    });
+
     // Phase 11: Windows Hello — availability probe on startup
     let hello_weak = main_window.as_weak();
     std::thread::spawn(move || {

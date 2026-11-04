@@ -305,6 +305,15 @@
   link-code read+burn, offline packet/key, output card. Verified by running the
   app: all three nav entries open their page, the app stays alive. Tests 556/4.
 
+- **GitHub restore on first run (this batch):** Step 3 of the onboarding
+  carousel now has an "OR RESTORE AN EXISTING VAULT FROM GITHUB" block
+  (owner / repo / PAT). The handler reuses `github_sync::pull_remote`, refuses
+  when a local vault already exists, writes the ciphertext atomically, stores
+  the repo + DPAPI-sealed token (PAT zeroized), hides onboarding and asks for
+  the OLD master password. It never decrypts or claims success: a device-bound
+  remote still needs its `pq_decapsulation.dpapi`. Verified: restore downloads
+  the ciphertext into an empty data dir and switches to the unlock screen.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

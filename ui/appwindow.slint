@@ -924,6 +924,15 @@ export component MainWindow inherits Window {
     in-out property <string> ob_error: "";
     in-out property <string> ob_new_text: "";
     in-out property <string> ob_confirm_text: "";
+    // Onboarding: restore an existing vault from a private GitHub repo.
+    // The PAT is only held in this field until the restore succeeds; Rust
+    // zeroizes its copy and DPAPI-seals it for later sync.
+    in-out property <string> ob_gh_owner: "";
+    in-out property <string> ob_gh_repo: "";
+    in-out property <string> ob_gh_token: "";
+    in-out property <string> ob_gh_status: "";
+    in-out property <bool> ob_gh_busy: false;
+    callback restore_from_github(string, string, string);
     callback ob_pw_changed(string);
     // Post-setup shard nudge (one-shot banner; shards need an unlocked vault).
     in-out property <bool> ob_shards_ok: false;
@@ -1598,6 +1607,16 @@ export component MainWindow inherits Window {
                                 Rectangle { width: parent.width * root.ob_strength_frac; height: 10px; border-radius: 5px; background: root.ob_strength_frac < 0.28 ? PhantomTheme.error : (root.ob_strength_frac < 0.5 ? PhantomTheme.warning : (root.ob_strength_frac < 0.8 ? PhantomTheme.success : PhantomTheme.secondary)); }
                             }
                             Text { text: "12+ chars · upper + lower + digit + symbol = strongest"; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                            Rectangle { height: 1px; background: PhantomTheme.border; }
+                            Text { text: "OR RESTORE AN EXISTING VAULT FROM GITHUB"; color: PhantomTheme.secondary; font-size: 10px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-alignment: center; }
+                            HorizontalLayout { spacing: 8px;
+                                LineEdit { placeholder-text: "Owner (github username)"; text <=> root.ob_gh_owner; height: 36px; horizontal-stretch: 1; }
+                                LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.ob_gh_repo; height: 36px; horizontal-stretch: 1; }
+                            }
+                            LineEdit { placeholder-text: "PAT (classic token, repo scope)"; input-type: password; text <=> root.ob_gh_token; height: 36px; }
+                            AuraButton { label: root.ob_gh_busy ? "Pulling…" : "Restore from GitHub"; width: 220px; height: 38px; enabled: !root.ob_gh_busy && root.ob_gh_owner != "" && root.ob_gh_repo != "" && root.ob_gh_token != ""; clicked => { root.ob_gh_busy = true; root.ob_gh_status = ""; root.restore_from_github(root.ob_gh_owner, root.ob_gh_repo, root.ob_gh_token); } }
+                            if root.ob_gh_status != "" : Text { text: root.ob_gh_status; color: PhantomTheme.secondary; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                            Text { text: "Downloads the encrypted vault only. Unlock it with the OLD master password; a device-bound vault also needs its pq_decapsulation.dpapi."; color: PhantomTheme.text-dim; font-size: 9px; horizontal-alignment: center; wrap: word-wrap; }
                             if root.ob_error != "" : Text { text: root.ob_error; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                         }
                         HorizontalLayout { spacing: 8px; alignment: center;
