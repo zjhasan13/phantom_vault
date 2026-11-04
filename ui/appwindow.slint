@@ -691,6 +691,10 @@ export component MainWindow inherits Window {
     in-out property <bool> d_verified: false;
     in-out property <string> d_fill_info: "";
     in-out property <string> d_health: "";
+    // Detail diagnostics: password reuse + per-item breach check state.
+    in-out property <int> d_reuse_count: 0;
+    in-out property <string> d_reuse_label: "";
+    in-out property <bool> d_breach_busy: false;
     in-out property <string> d_audit_text: "";
     in-out property <string> d_meta_line: "";
     in-out property <string> d_tags: "";
@@ -1173,6 +1177,7 @@ export component MainWindow inherits Window {
     callback toggle_saved_field(int, string, int);
     callback edit_item_requested(int, string);
     callback open_detail(string);
+    callback check_detail_breach(string);
     callback close_detail();
     callback cycle_select(int);
     callback reprompt_confirm(string, string, string);
@@ -3075,11 +3080,23 @@ export component MainWindow inherits Window {
                                 if root.d_url != "" : AuraButton { label: "↗ Open URL"; width: 104px; height: 38px; clicked => { root.open_url(root.d_url); } }
                             }
                         }}
-                        // Real-only diagnostic tiles (pwned / age / cipher).
+                        // Real-only diagnostic tiles (pwned / reuse / age).
                         HorizontalLayout { spacing: 8px;
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "PWNED VERIFICATION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_health == "" ? "Not scanned" : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px;
+                                Text { text: "PWNED VERIFICATION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
+                                HorizontalLayout { spacing: 6px;
+                                    Text { text: root.d_health == "" ? "Not scanned" : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+                                    AuraButton { label: root.d_breach_busy ? "…" : "Check"; width: 58px; height: 24px; enabled: !root.d_breach_busy; clicked => { root.check_detail_breach(root.d_id); } }
+                                }
+                            } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px;
+                                Text { text: "PASSWORD REUSE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
+                                HorizontalLayout { spacing: 6px;
+                                    Text { text: root.d_reuse_label == "" ? "Unique password" : root.d_reuse_label; color: root.d_reuse_count > 0 ? PhantomTheme.warning : PhantomTheme.success; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+                                    if root.d_reuse_count > 0 : AuraButton { label: "View"; width: 52px; height: 24px; clicked => { root.filter_health("reused"); } }
+                                }
+                            } }
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "CREDENTIAL AGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "ENCRYPTION VECTOR"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: "XChaCha20-Poly1305"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; } Text { text: root.pq_paranoid_on ? "Argon2id + ML-KEM-768" : "Argon2id"; color: PhantomTheme.text-muted; font-size: 10px; } } }
                         }
                         if root.d_trashed : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; wrap: word-wrap; }

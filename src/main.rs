@@ -11032,6 +11032,9 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_d_verified(false);
         ui.set_d_fill_info(String::new().into());
         ui.set_d_health(health_badge_for(id).into());
+        ui.set_d_reuse_count(0);
+        ui.set_d_reuse_label(String::new().into());
+        ui.set_d_breach_busy(false);
         ui.set_d_meta_line(format!("ID: {}", id.chars().take(12).collect::<String>()).into());
         ui.set_d_tags(String::new().into());
         ui.set_d_url_rule(String::new().into());
@@ -11136,6 +11139,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_d_pw_strength(crate::core::password_strength::fraction(&c.password));
                 ui.set_d_pw_strength_label(
                     crate::core::password_strength::detail(&c.password, reused, stale).into(),
+                );
+                ui.set_d_reuse_count(reused as i32);
+                ui.set_d_reuse_label(
+                    if reused == 0 {
+                        "Unique password".to_string()
+                    } else {
+                        format!("Shared with {reused} other item(s)")
+                    }
+                    .into(),
                 );
             }
             ui.set_d_fav(c.favorite);
@@ -11349,6 +11361,54 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let edit_vault = Arc::clone(&active_vault);
     let edit_pending = Arc::clone(&pending_cf);
     let edit_target = Arc::clone(&editing_item);
+    // Per-item breach check (HIBP k-anonymity) from the detail tile.
+    let breach_weak = main_window.as_weak();
+    let breach_vault = Arc::clone(&active_vault);
+    main_window.on_check_detail_breach(move |id| {
+        let Some(ui) = breach_weak.upgrade() else {
+            return;
+        };
+        if ui.get_is_decoy() {
+            ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
+            return;
+        }
+        let pw = {
+            let v = lock_vault(&breach_vault);
+            v.credentials
+                .iter()
+                .find(|c| c.id == id.as_str() && c.deleted_at.is_none())
+                .map(|c| zeroize::Zeroizing::new(c.password.clone()))
+        };
+        let Some(pw) = pw else { return; };
+        if !net_allowed() {
+            ui.set_notification_text("📴 Offline — breach check skipped.".into());
+            return;
+        }
+        ui.set_d_breach_busy(true);
+        ui.set_d_health("Checking HaveIBeenPwned…".into());
+        let weak = breach_weak.clone();
+        std::thread::spawn(move || {
+            let Some(rt) = tokio_rt() else {
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak.upgrade() {
+                        ui.set_d_breach_busy(false);
+                        ui.set_d_health("Check unavailable".into());
+                    }
+                });
+                return;
+            };
+            let res = rt.block_on(security::breach_check::check_password(pw.as_str()));
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak.upgrade() {
+                    ui.set_d_breach_busy(false);
+                    let text = security::breach_check::result_label(&res);
+                    ui.set_d_health(text.into());
+                    security::access_log::log_event("audit", "item-breach-check");
+                }
+            });
+        });
+    });
+
     main_window.on_edit_item_requested(move |kind, id| {
         let Some(ui) = edit_weak.upgrade() else {
             return;

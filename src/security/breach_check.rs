@@ -66,6 +66,16 @@ pub async fn check_password(password: &str) -> Result<Option<u64>> {
     Ok(None)
 }
 
+/// Human-readable outcome for a per-item check. `Ok(None)` means the range
+/// response did not contain the suffix — a clean password, not "unscanned".
+pub fn result_label(res: &Result<Option<u64>>) -> String {
+    match res {
+        Ok(None) | Ok(Some(0)) => "No breach found".to_string(),
+        Ok(Some(n)) => format!("Leaked in {n} breach(es)"),
+        Err(e) => format!("Check failed: {e}"),
+    }
+}
+
 fn entropy_per_char(s: &str) -> f64 {
     let mut counts = [0usize; 256];
     let b = s.as_bytes();
@@ -349,6 +359,19 @@ mod tests {
         assert!(is_weak("12345678"));
         assert!(is_weak("password"));
         assert!(!is_weak("9f#ZmQ2$vL8x!qW4z"));
+    }
+
+    #[test]
+    fn breach_labels_are_honest() {
+        // Ok(None) is the clean case: the range response had no matching suffix.
+        assert_eq!(result_label(&Ok(None)), "No breach found");
+        assert_eq!(result_label(&Ok(Some(0))), "No breach found");
+        assert_eq!(result_label(&Ok(Some(3))), "Leaked in 3 breach(es)");
+        let err = result_label(&Err(VaultError::Sync("offline".into())));
+        assert!(err.starts_with("Check failed: "), "{err}");
+        // The old UI showed "Not scanned" for a clean password, which read as
+        // "the button did nothing". Guard against regressing to that label.
+        assert!(!result_label(&Ok(None)).contains("Not scanned"));
     }
 
     #[test]
