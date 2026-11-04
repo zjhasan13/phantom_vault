@@ -510,50 +510,56 @@
     const style = document.createElement("style");
     style.textContent = `
       .wrap{position:fixed;z-index:2147483647;min-width:min(94vw,320px);max-width:92vw;background:#0b1326;color:#dae2fd;
-        border:1px solid #3c4a42;border-radius:12px;box-shadow:0 12px 40px #000d;
-        font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
-      .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;font:700 10px ui-monospace,monospace;letter-spacing:.5px;text-transform:uppercase;
-        color:#bbcabf;background:#131b2e;border-bottom:1px solid #3c4a42}
-      .hd .site{margin-left:auto;font:700 9px ui-monospace,monospace;letter-spacing:.3px;text-transform:none;color:#4edea3;background:#4edea31a;border:1px solid #4edea355;border-radius:5px;padding:2px 6px}
-      .pickfoot{padding:8px 12px;font:9px ui-monospace,monospace;color:#86948a;border-top:1px solid #3c4a42}
-        color:#bbcabf;background:#131b2e;border-bottom:1px solid #3c4a42}
-      .row{display:flex;align-items:center;gap:9px;padding:11px 12px;margin:6px 8px;cursor:pointer;border:1px solid #3c4a42;border-radius:9px;background:#171f33}
+        border:1px solid #3c4a42;border-radius:12px;box-shadow:0 18px 48px #000d,inset 0 1px 0 #ffffff08;
+        font:13px/1.45 Inter,"Segoe UI",system-ui,sans-serif;overflow:hidden}
+      .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;font:700 9px/1 "JetBrains Mono",monospace;letter-spacing:.6px;text-transform:uppercase;
+        color:#86948a;background:#131b2e;border-bottom:1px solid #2d3449}
+      .hd .site{margin-left:auto;font:700 9px/1 "JetBrains Mono",monospace;letter-spacing:.2px;text-transform:none;color:#4edea3;background:#4edea31a;border:1px solid #4edea355;border-radius:5px;padding:3px 6px}
+      .pickfoot{display:flex;align-items:center;gap:12px;padding:8px 12px;font:600 9px/1 "JetBrains Mono",monospace;letter-spacing:.4px;
+        color:#86948a;border-top:1px solid #2d3449}
+      .pickfoot .k{display:inline-block;margin-right:4px;padding:2px 5px;border-radius:4px;background:#171f33;border:1px solid #3c4a42;color:#bbcabf}
+      .row{display:flex;align-items:center;gap:10px;padding:9px 10px;margin:6px 8px;cursor:pointer;border:1px solid transparent;border-radius:10px;background:#171f33}
       .row:last-child{margin-bottom:8px}
-      .row:hover{background:#2d3449}
-      .brand{flex:none;width:22px;height:22px;border-radius:6px;object-fit:cover;
-        background:#222a3d;font:700 11px system-ui;color:#dae2fd;display:flex;
+      .row:hover{background:#222a3d;border-color:#3c4a42}
+      .row:focus-visible{outline:1px solid #4edea3;outline-offset:1px}
+      .brand{flex:none;width:30px;height:30px;border-radius:9px;object-fit:cover;
+        background:#222a3d;border:1px solid #3c4a42;font:800 12px/1 "JetBrains Mono",monospace;color:#4edea3;display:flex;
         align-items:center;justify-content:center;overflow:hidden;text-transform:uppercase}
       .meta{flex:1;min-width:0}
-      .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .sub{font-size:11px;color:#86948a;margin-top:2px;white-space:nowrap;overflow:hidden;
+      .name{font-weight:650;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .sub{display:flex;align-items:center;gap:4px;font-size:11px;color:#86948a;margin-top:2px;white-space:nowrap;overflow:hidden;
         text-overflow:ellipsis}
+      .sep{opacity:.5}
+      .sub > *:empty{display:none}
+      .used:not(:empty)::before{content:"·";opacity:.5;margin-right:4px}
       .codebox{flex:none;text-align:right}
-      .code{font:800 15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;
+      .code{font:800 15px/1 "JetBrains Mono",monospace;letter-spacing:1.5px;
         color:#4edea3}
-      .ttl{font:700 9px ui-monospace,monospace;color:#4edea3}
+      .ttl{font:700 9px/1.4 "JetBrains Mono",monospace;color:#4edea3}
       .ttl.warn{color:#f59e0b}
       .ttl.die{color:#ffb4ab}
-      .tag{font:700 9px system-ui;letter-spacing:.3px;padding:2px 5px;border-radius:5px;
-        text-transform:uppercase;white-space:nowrap}
-      .ok{background:#10b98133;color:#4edea3}
-      .pri{background:#4cd7f622;color:#4cd7f6}
-      .dup{background:#f59e0b22;color:#f59e0b}
-      .wait{font-size:11px;color:#86948a;padding:8px 11px;border-top:1px solid #3c4a42}
-      .mark{flex:none;font:700 9px system-ui;letter-spacing:.3px;padding:4px 7px;border-radius:6px;
-        cursor:pointer;white-space:nowrap;text-transform:uppercase;
-        background:#222a3d;color:#86948a;border:1px solid #3c4a42}
-      .mark:hover{background:#3c4a42;color:#dae2fd}
+      .tag{display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border-radius:5px;
+        background:#222a3d;border:1px solid #3c4a42;white-space:nowrap}
+      .ok{color:#4edea3}
+      .pri{color:#4cd7f6}
+      .dup{color:#f59e0b}
+      .wait{font-size:11px;color:#86948a;padding:8px 12px;border-top:1px solid #2d3449}
+      .mark{flex:none;display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:7px;
+        cursor:pointer;background:#222a3d;color:#86948a;border:1px solid #3c4a42}
+      .mark:hover{background:#2d3449;color:#dae2fd}
       .mark[disabled]{opacity:.45;cursor:default}
     `;
     root.appendChild(style);
     const wrap = document.createElement("div");
     wrap.className = "wrap";
-    wrap.innerHTML = '<div class="hd"><span class="hdt">Which 2FA account?</span><span class="site"></span></div>';
+    wrap.innerHTML = '<div class="hd"><span class="hdt">2FA account</span><span class="site"></span></div>';
     const siteEl = wrap.querySelector(".site"); if (siteEl) siteEl.textContent = pageBase();
-    const tagEl = (cls, text) => {
+    const tagEl = (cls, ico, label) => {
       const s = document.createElement("span");
       s.className = "tag " + cls;
-      s.textContent = text;
+      s.innerHTML = PV_ICO[ico] || "";
+      s.title = label;
+      s.setAttribute("aria-label", label);
       return s;
     };
     // Brand mark: the page's own favicon (harvested once per page, and it IS
@@ -605,7 +611,7 @@
       // G7: the same stamp that drives the invisible +10 recency bonus, shown
       // so the ordering the user is looking at is explicable rather than magic.
       const used = row.querySelector(".used");
-      used.textContent = c.last_filled ? ` · last ${ago(c.last_filled)}` : "";
+      used.textContent = c.last_filled ? ago(c.last_filled) : "";
       if (!used.textContent) used.remove();
       const tags = row.querySelector(".tags");
       const mark = row.querySelector(".mark");
@@ -623,11 +629,12 @@
       // actually stored rather than what we optimistically assumed.
       const paint = () => {
         tags.textContent = "";
-        if (c.verified) tags.appendChild(tagEl("ok", "✅ Working"));
-        if (c.is_dup) tags.appendChild(tagEl("dup", "⚠️ DUP"));
-        if (!c.verified && !c.is_dup && c.rank === 1) tags.appendChild(tagEl("pri", "Primary"));
-        if (c.source === "login") tags.appendChild(tagEl("pri", "from login"));
-        mark.textContent = c.verified ? "✓ Working" : "Mark working";
+        if (c.verified) tags.appendChild(tagEl("ok", "shieldCheck", "Working on this site"));
+        if (c.is_dup) tags.appendChild(tagEl("dup", "weak", "Duplicate of a saved password"));
+        if (!c.verified && !c.is_dup && c.rank === 1) tags.appendChild(tagEl("pri", "star", "Top ranked"));
+        if (c.source === "login") tags.appendChild(tagEl("pri", "key", "From a login item"));
+        mark.innerHTML = c.verified ? PV_ICO.shieldCheck : PV_ICO.shield;
+        mark.setAttribute("aria-label", c.verified ? "Remove working mark" : "Mark as working");
         mark.title = c.verified
           ? "Working mark সরান (এটা working নয়)"
           : "এই account-টি কাজ করেছে — চিহ্নিত করুন";
@@ -741,14 +748,13 @@
     }
     const pickFoot = document.createElement("div");
     pickFoot.className = "pickfoot";
-    pickFoot.textContent = "Enter / click to fill - Esc to close";
+    pickFoot.innerHTML = '<span><b class="k">↵</b>Fill</span><span><b class="k">Esc</b>Close</span>';
     wrap.appendChild(pickFoot);
     root.appendChild(wrap);
     wrap.setAttribute("role", "listbox");
     wrap.setAttribute("aria-label", "2FA accounts");
-    // Health icons (♻️/🟡/🕰️) for login-sourced rows — same signal the login
-    // dropdown shows. Joined client-side from PV_QUERY by id: hub cards carry
-    // no password so they stay unmarked; totp_lookup itself is untouched.
+    // Health icons (reuse / weak / stale) for login-sourced rows — the same
+    // signal the login dropdown shows, now as icon chips.
     try {
       queryHost("PV_QUERY", pageBase()).then((logins) => {
         if (!pvPicker || pvPicker.host !== host) return; // closed/replaced
@@ -756,14 +762,18 @@
         for (const e of logins || []) {
           if (e && e.id && e.health) health.set(String(e.id), e.health);
         }
-        const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
+        const hMeta = {
+          reused: ["reuse", "pri", "Password reused"],
+          weak: ["weak", "dup", "Weak password"],
+          stale: ["clock", "dup", "Old password"],
+        };
         for (const c of candidates) {
-          const icon = hIcon(health.get(String(c && c.id)));
-          if (!icon) continue;
+          const h = hMeta[health.get(String(c && c.id))];
+          if (!h) continue;
           const row = [...host.querySelectorAll(".row")].find(
             (r) => r.getAttribute("data-pv-id") === String(c.id));
           const el = row && row.querySelector(".health");
-          if (el) { el.textContent = " " + icon; el.title = health.get(String(c.id)); }
+          if (el) { el.className = "tag " + h[1]; el.innerHTML = PV_ICO[h[0]] || ""; el.title = h[2]; el.setAttribute("aria-label", h[2]); }
         }
       }).catch(() => {});
     } catch (_) {}
@@ -1646,13 +1656,93 @@
     if (Date.now() - dropOpenedAt < 800) return;
     if (dropEl && !dropEl.contains(e.target)) closeDrop("outside-click");
   }
+  // ---------- Aegis dropdown skin (shared by the login + 2FA surfaces) ----
+  // Inline SVG only: static markup, never vault text. Icons replace the old
+  // emoji + prose badges so a row stays scannable at 320px.
+  const PV_ICO = {
+    search: '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.6-3.6"/></svg>',
+    shieldCheck: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+    shield: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V6z"/></svg>',
+    shieldAlert: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V6z"/><path d="M12 8v5M12 16.5v.01"/></svg>',
+    reuse: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M3 11V9a4 4 0 014-4h13"/><path d="M7 22l-3-3 3-3"/><path d="M21 13v2a4 4 0 01-4 4H4"/></svg>',
+    weak: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 9v4M12 16.5v.01"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+    star: '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M12 3l2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-3-5.3 3 1.1-6L3.4 9.4l6-.8z"/></svg>',
+    key: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="8" cy="8" r="4.2"/><path d="M11 11l8 8M16 16l2-2M19 19l2-2"/></svg>',
+    spark: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9z"/></svg>',
+  };
+  // One skin for both surfaces: same surfaces/border/radius/type as the app.
+  const PV_DROP_CSS = `
+    #__pv_drop{position:absolute;z-index:2147483647;box-sizing:border-box;background:#0b1326;
+      border:1px solid #3c4a42;border-radius:12px;padding:8px;color:#dae2fd;
+      box-shadow:0 18px 48px #000d,inset 0 1px 0 #ffffff08;
+      font:13px/1.45 Inter,"Segoe UI",system-ui,sans-serif}
+    #__pv_drop *{box-sizing:border-box;font-family:inherit}
+    #__pv_drop .pvx-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+    #__pv_drop .pvx-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:34px;
+      padding:0 10px;background:#171f33;border:1px solid #3c4a42;border-radius:9px;color:#86948a}
+    #__pv_drop .pvx-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+      color:#dae2fd;font:12.5px/1 Inter,"Segoe UI",system-ui,sans-serif}
+    #__pv_drop .pvx-search input::placeholder{color:#86948a}
+    #__pv_drop .pvx-meta{display:flex;align-items:center;gap:6px;padding:0 3px 7px;
+      font:700 9px/1 "JetBrains Mono",Consolas,monospace;letter-spacing:.6px;
+      text-transform:uppercase;color:#86948a;white-space:nowrap;overflow:hidden}
+    #__pv_drop .pvx-meta .dom{color:#4edea3;text-transform:none;letter-spacing:.2px}
+    #__pv_drop .pvx-meta .cnt{margin-left:auto;color:#86948a}
+    #__pv_drop .pvx-row{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;
+      padding:8px 9px;margin:0;background:transparent;border:1px solid transparent;border-radius:10px;
+      color:#dae2fd;text-align:left;cursor:pointer}
+    #__pv_drop .pvx-row:hover,#__pv_drop .pvx-row:focus-visible{background:#171f33;
+      border-color:#3c4a42;outline:none}
+    #__pv_drop .pvx-row[data-dim="1"]{opacity:.55}
+    #__pv_drop .pvx-av{flex:none;width:30px;height:30px;border-radius:9px;overflow:hidden;
+      background:#222a3d;border:1px solid #3c4a42;color:#4edea3;
+      font:800 12px/1 "JetBrains Mono",Consolas,monospace;display:flex;align-items:center;
+      justify-content:center;text-transform:uppercase}
+    #__pv_drop .pvx-av img{width:100%;height:100%;object-fit:cover}
+    #__pv_drop .pvx-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    #__pv_drop .pvx-t{display:flex;align-items:center;gap:6px;font-weight:650;font-size:12.5px;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #__pv_drop .pvx-t .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    #__pv_drop .pvx-s{display:flex;align-items:center;gap:4px;font-size:11px;color:#86948a;
+      white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #__pv_drop .pvx-s .u{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    #__pv_drop .pvx-sep{opacity:.5}
+    #__pv_drop .pvx-badges{display:inline-flex;align-items:center;gap:4px;flex:none}
+    #__pv_drop .pvx-badge{display:inline-flex;align-items:center;justify-content:center;
+      width:17px;height:17px;border-radius:5px;background:#222a3d;border:1px solid #3c4a42}
+    #__pv_drop .pvx-badge.good{color:#4edea3}
+    #__pv_drop .pvx-badge.info{color:#4cd7f6}
+    #__pv_drop .pvx-badge.warn{color:#f59e0b}
+    #__pv_drop .pvx-badge.bad{color:#ffb4ab}
+    #__pv_drop .pvx-go{flex:none;font:700 9px/1 "JetBrains Mono",Consolas,monospace;
+      letter-spacing:.7px;text-transform:uppercase;color:#4edea3;background:#4edea31a;
+      border:1px solid #4edea355;border-radius:6px;padding:5px 8px;opacity:0;
+      transition:opacity .12s ease}
+    #__pv_drop .pvx-row:hover .pvx-go,#__pv_drop .pvx-row:focus-visible .pvx-go{opacity:1}
+    #__pv_drop .pvx-foot{display:flex;align-items:center;gap:12px;margin-top:7px;padding:7px 3px 1px;
+      border-top:1px solid #2d3449;color:#86948a;
+      font:600 9px/1 "JetBrains Mono",Consolas,monospace;letter-spacing:.4px}
+    #__pv_drop .pvx-foot .k{display:inline-block;margin-right:4px;padding:2px 5px;border-radius:4px;
+      background:#171f33;border:1px solid #3c4a42;color:#bbcabf}
+    #__pv_drop .pvx-foot .cnt{margin-left:auto}
+    #__pv_drop .pvx-empty{padding:10px;color:#86948a;font-size:12px}
+  `;
+
   function showDrop(anchor, rows) {
     closeDrop("replace");
     if (!rows.length || !isVisible(anchor)) return;
     dropEl = document.createElement("div");
-    dropEl.style.cssText = "position:absolute;z-index:2147483647;" +
-      "background:#111827;border:1px solid #1e293b;border-radius:8px;padding:6px;" +
-      "box-shadow:0 12px 40px #000d;font:13px system-ui;color:#eef1ff;box-sizing:border-box;";
+    dropEl.id = "__pv_drop";
+    // The skin rides with the dropdown (removed on close). GitHub/Instagram
+    // allow inline styles and Google ships no style-src, so a <style> tag is
+    // safe here; everything stays scoped under #__pv_drop.
+    const skin = document.createElement("style");
+    skin.textContent = PV_DROP_CSS;
+    dropEl.appendChild(skin);
+    // Position, width and stacking live on the element itself; the skin keeps
+    // only the Aegis look so a page can never inherit our colours.
+    dropEl.style.cssText = "position:absolute;z-index:2147483647;box-sizing:border-box;";
     // Container-level blur guard: mousedown ANYWHERE inside the dropdown must
     // not steal focus from the input (React/SPA pages re-render or dismiss on
     // blur, which otherwise cancels the row click before it fires).
@@ -1673,7 +1763,7 @@
         .slice(0, 8);
       if (!items.length) {
         const none = document.createElement("div");
-        none.style.cssText = "color:#8e99c0;font-size:12px;padding:8px 10px;";
+        none.className = "pvx-empty";
         none.textContent = "No match — refine the filter.";
         list.append(none);
         return;
@@ -1681,28 +1771,57 @@
       items.forEach((r, index) => {
         const b = document.createElement("button");
         b.type = "button";
+        b.className = "pvx-row";
         b.dataset.pvIndex = String(index);
         b.dataset.pvAction = r.action ? "1" : "0";
-        b.style.cssText = "display:flex;width:100%;text-align:left;background:transparent;border:0;" +
-          "color:#eef1ff;padding:8px 10px;border-radius:8px;cursor:pointer;align-items:center;gap:10px;" +
-          (r.dim ? "opacity:.55;" : "");
-        // Service brand-icon circle (Bitwarden row layout).
+        if (r.dim) b.dataset.dim = "1";
+        // Avatar tile: the site's own letter/mark (never a resolved remote
+        // issuer icon - that would leak a lookup to the page).
         const icon = document.createElement("div");
-        icon.style.cssText = "flex:0 0 auto;width:30px;height:30px;border-radius:15px;background:#8b7cf6;" +
-          "color:#080c14;font-weight:900;font-size:15px;display:flex;align-items:center;justify-content:center;";
-        icon.textContent = r.glyph || brandLetter(r.entry || {});
+        icon.className = "pvx-av";
+        if (r.glyphIco && PV_ICO[r.glyphIco]) icon.innerHTML = PV_ICO[r.glyphIco];
+        else icon.textContent = r.glyph || brandLetter(r.entry || {});
         const tx = document.createElement("div");
-        tx.style.cssText = "flex:1;min-width:0;";
+        tx.className = "pvx-tx";
         const t = document.createElement("div");
-        t.style.fontWeight = "700";
-        t.textContent = r.title;
+        t.className = "pvx-t";
+        const nm = document.createElement("span");
+        nm.className = "nm";
+        nm.textContent = r.title;
+        t.appendChild(nm);
+        if (Array.isArray(r.badges) && r.badges.length) {
+          const bd = document.createElement("span");
+          bd.className = "pvx-badges";
+          for (const badge of r.badges) {
+            const chip = document.createElement("span");
+            chip.className = "pvx-badge " + (badge.tone || "info");
+            chip.title = badge.label || "";
+            chip.setAttribute("aria-label", badge.label || "");
+            chip.innerHTML = PV_ICO[badge.ico] || "";
+            bd.appendChild(chip);
+          }
+          t.appendChild(bd);
+        }
         const s = document.createElement("div");
-        s.style.cssText = "color:#8e99c0;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;";
-        s.textContent = r.sub;
+        s.className = "pvx-s";
+        const u = document.createElement("span");
+        u.className = "u";
+        u.textContent = r.sub || "";
+        s.appendChild(u);
+        for (const bit of r.bits || []) {
+          const sep = document.createElement("span");
+          sep.className = "pvx-sep";
+          sep.textContent = "·";
+          const sp = document.createElement("span");
+          sp.textContent = bit;
+          s.append(sep, sp);
+        }
         tx.append(t, s);
-        b.append(icon, tx);
-        b.addEventListener("mouseenter", () => { b.style.background = "#1a2333"; });
-        b.addEventListener("mouseleave", () => { b.style.background = "transparent"; });
+        const go = document.createElement("span");
+        go.className = "pvx-go";
+        go.textContent = r.go || "Fill";
+        go.setAttribute("aria-hidden", "true");
+        b.append(icon, tx, go);
         b.addEventListener("mousedown", (e) => {
           e.preventDefault();
           e.stopPropagation();
@@ -1716,14 +1835,15 @@
     const accounts = rows.filter((r) => !r.action);
     if (accounts.length > 1) {
       const head = document.createElement("div");
-      head.style.cssText = "display:flex;align-items:center;gap:8px;padding:2px 4px 8px;";
+      head.className = "pvx-head";
+      const box = document.createElement("label");
+      box.className = "pvx-search";
+      box.innerHTML = PV_ICO.search;
       const search = document.createElement("input");
       search.type = "text";
-      search.placeholder = `🔍 Filter ${accounts.length} accounts…`;
+      search.placeholder = `Filter ${accounts.length} accounts…`;
       search.setAttribute("autocomplete", "off");
       search.setAttribute("aria-label", `Filter ${accounts.length} accounts`);
-      search.style.cssText = "flex:1;min-width:0;background:#0b1226;color:#eef1ff;" +
-        "border:1px solid #26315c;border-radius:8px;padding:7px 10px;font-size:13px;outline:none;";
       // Don't let page shortcuts swallow filter keystrokes (or vice versa).
       // Enter picks the first visible row (keyboard-first flow).
       search.addEventListener("keydown", (e) => {
@@ -1737,12 +1857,43 @@
       });
       search.addEventListener("keyup", (e) => { e.stopPropagation(); });
       search.addEventListener("input", () => paint(search.value));
-      head.append(search);
+      box.append(search);
+      head.append(box);
       dropEl.append(head);
       setTimeout(() => { try { search.focus({ preventScroll: true }); } catch (_) {} }, 0);
     }
+    // Site context line: which domain these accounts were matched for, and
+    // how many. Same information the app's detail header gives, no secrets.
+    const meta = document.createElement("div");
+    meta.className = "pvx-meta";
+    const domLabel = document.createElement("span");
+    domLabel.textContent = "DOMAIN";
+    const dom = document.createElement("span");
+    dom.className = "dom";
+    dom.textContent = pageBase();
+    const cnt = document.createElement("span");
+    cnt.className = "cnt";
+    cnt.textContent = `${accounts.length} account${accounts.length === 1 ? "" : "s"}`;
+    meta.append(domLabel, dom, cnt);
+    dropEl.append(meta);
     paint("");
     dropEl.append(list);
+    // Keyboard hints only for keys that actually work here: Esc always closes,
+    // Enter fills the first row only while the filter box exists.
+    const foot = document.createElement("div");
+    foot.className = "pvx-foot";
+    const hint = (key, label) => {
+      const wrap = document.createElement("span");
+      const k = document.createElement("span");
+      k.className = "k";
+      k.textContent = key;
+      wrap.appendChild(k);
+      wrap.append(document.createTextNode(label));
+      return wrap;
+    };
+    if (accounts.length > 1) foot.append(hint("↵", "Fill"));
+    foot.append(hint("Esc", "Close"));
+    dropEl.append(foot);
     document.documentElement.appendChild(dropEl);
     const rc = anchor.getBoundingClientRect();
     // Bitwarden parity: dropdown matches the input's EXACT bounding box.
@@ -1846,8 +1997,10 @@
       const cards = await queryCards();
       return cards.map((c) => ({
         entry: { title: c.title, username: c.cardholder },
-        title: "💳 " + (c.title || "Card"),
+        title: c.title || "Card",
+        glyph: "C",
         sub: `${c.cardholder || ""} ${masked(c.number)}`.trim(),
+        go: "Fill",
         onPick: () => fillCard(c),
       }));
     }
@@ -1856,8 +2009,10 @@
       const ids = await getIdentities();
       return ids.map((i) => ({
         entry: { title: i.title, username: i.full_name },
-        title: "🪪 " + (i.title || i.full_name || "Identity"),
-        sub: [i.full_name, i.email].filter(Boolean).join(" • "),
+        title: i.title || i.full_name || "Identity",
+        glyph: "ID",
+        sub: [i.full_name, i.email].filter(Boolean).join(" · "),
+        go: "Fill",
         onPick: () => fillIdentity(i),
       }));
     }
@@ -1871,7 +2026,6 @@
     // page hint wins because it is about THIS step; after that recency is the
     // strongest signal, and the sticky `verified` flag only breaks the tie.
     // Unfilled, unverified rows are dimmed but never hidden.
-    const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
     const agoShort = (ts) => {
       const s = Math.max(0, Math.floor(Date.now() / 1000) - (ts || 0));
       if (s < 60) return "just now";
@@ -1881,18 +2035,27 @@
     };
     const ranked = rankLogins(logins, carried);
     return ranked.map((e) => {
-      const badge = [e.verified ? "✅" : "", hIcon(e.health)].filter(Boolean).join(" ");
-      const sub = [e.username || "", badge, loginCarryHit(e, carried) ? "this step" : "",
-        e.last_filled ? `Last ${agoShort(e.last_filled)}` : ""]
-        .filter(Boolean)
-        .join(" · ");
+      // Icon badges replace the old emoji-prose subtitle: shield-check =
+      // verified on this site, recycle = reused password, warning = weak,
+      // clock = old. Labels live in tooltips/aria only.
+      const badges = [];
+      if (e.verified) badges.push({ ico: "shieldCheck", tone: "good", label: "This password worked here" });
+      if (e.health === "reused") badges.push({ ico: "reuse", tone: "info", label: "Password reused" });
+      if (e.health === "weak") badges.push({ ico: "weak", tone: "warn", label: "Weak password" });
+      if (e.health === "stale") badges.push({ ico: "clock", tone: "warn", label: "Old password" });
+      const bits = [];
+      if (loginCarryHit(e, carried)) bits.push("this step");
+      if (e.last_filled) bits.push(agoShort(e.last_filled));
       // Likely-unused laboratory: dimmed, never hidden (user is the judge).
       const dim = !e.verified && !e.last_filled;
       return {
         entry: e,
-        title: "🔑 " + (e.title || "(untitled)") + (dim ? " (unused?)" : ""),
-        sub,
+        title: e.title || "(untitled)",
+        sub: e.username || "",
+        bits,
+        badges,
         dim,
+        go: "Fill",
         onPick: () => fillLogin(e, f),
       };
     });
@@ -1997,9 +2160,10 @@
       if (gen !== suggestGen) return; // closed meanwhile: stale
       const genRow = {
         action: true,
-        glyph: "🎲",
+        glyphIco: "spark",
         title: "Generate strong password",
         sub: "Fill new password + confirmation",
+        go: "Generate",
         onPick: () => generateInto(target),
       };
       if (!rows || !rows.length) { genRow.onPick(); return; }

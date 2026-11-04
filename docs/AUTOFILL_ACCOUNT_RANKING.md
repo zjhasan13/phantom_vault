@@ -75,26 +75,26 @@ username subtitle plus the cycling shortcut.
 `browser_extension/content.js:1811-1819` ranks:
 
 ```
-page/typed account  →  verified  →  last_filled  →  username A→Z
+page/typed account  →  last_filled  →  verified  →  username A→Z
 ```
 
-`verified` is a sticky "this password worked on this site" flag. It outranks
-recency, so a stale-but-once-working account can beat the account that was
-filled most recently. That is the `wopijov565` / `zjhasan3` report. The page-hint
-key added in `61c785e` fixes the case where the page still displays the account;
-it does nothing on a page that hides it.
+`verified` is a sticky "this password worked on this site" flag. It used to
+outrank recency, so a stale-but-once-working account could beat the account that
+was filled most recently — the `wopijov565` / `zjhasan3` report. The page-hint key
+added in `61c785e` fixes the case where the page still displays the account;
+`c2cc3de` moved recency above `verified` for the case where it does not.
 
 ## Options
 
 | | Order | Effect |
 |---|---|---|
-| A (today) | hint → verified → last_filled → name | Right on pages that display the account; stale verified can still win elsewhere |
-| B (Bitwarden-like) | hint → last_filled → verified → name | Recency beats the sticky flag, matching Bitwarden's key order + our hint |
+| A (previous) | hint → verified → last_filled → name | Right on pages that display the account; stale verified can still win elsewhere |
+| **B (shipped, `c2cc3de`)** | **hint → last_filled → verified → name** | Recency beats the sticky flag, matching Bitwarden's key order + our hint |
 | C | copy the cycling shortcut | Re-press to walk matches; independent of ordering |
 
-Recommendation: **B**, and keep every row (never filter by the hint — a hint may
-be stale or wrong, and Bitwarden never drops rows either). C is a UX add-on, not
-a fix.
+Recommendation: **B** was implemented, and every row is still kept (never filter
+by the hint — a hint may be stale or wrong, and Bitwarden never drops rows
+either). C is a UX add-on, not a fix.
 
 ## Non-goals
 

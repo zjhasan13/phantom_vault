@@ -314,6 +314,32 @@
   remote still needs its `pq_decapsulation.dpapi`. Verified: restore downloads
   the ciphertext into an empty data dir and switches to the unlock screen.
 
+- **Item detail diagnostics (this batch):** the detail now shows three real
+  tiles - PWNED VERIFICATION with a per-item **Check** (HIBP k-anonymity),
+  PASSWORD REUSE (`Shared with N other item(s)` + **View** filters the vault to
+  reused), and CREDENTIAL AGE. The cipher stays in the proof strip. The Check
+  handler refuses in decoy/offline mode, zeroizes the password after the
+  lookup, and never fabricates a clean result. Verified by creating a fresh
+  vault in `%TEMP%\pv-ui-demo` (`Demo-Pass-123!`), opening the seeded login and
+  clicking Check: the handler logged `audit / item-breach-check`. That run also
+  exposed a label bug - `Ok(None)` (clean password) rendered as "Not scanned",
+  so the button looked dead. `breach_check::result_label` now maps
+  `Ok(None)`/`Ok(Some(0))` to "No breach found" and is unit-tested.
+  Note: the window must be foreground for UIA coordinate clicks - the Slint
+  AccessKit tree exposes the Check label at an off-screen rect.
+
+- **In-page dropdown skin (this batch):** the login dropdown and the 2FA picker
+  now share one Aegis skin - 12px panel on `#0b1326`, search row, `DOMAIN` +
+  account-count meta, 30px avatar tiles, icon-only status (shield-check =
+  verified here, recycle = reused, warning = weak, clock = old; labels stay in
+  tooltips/aria), a hover `Fill` pill, and a footer with only the keys that work
+  (`↵` picks the first row when the filter exists, `Esc` closes). Row data and
+  ranking are unchanged; the old emoji prefixes ("🔑", "✅", "(unused?)") and
+  prose badges are gone. The mockup's AES-256 / enclave / AegisCloud / score
+  chips were deliberately not copied - no backend proves them. Verified by
+  serialising the real jsdom render and screenshotting it in headless Chromium
+  (4 seeded accounts, both surfaces); npm tests 135/135.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on
