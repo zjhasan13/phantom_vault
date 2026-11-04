@@ -2,37 +2,37 @@
 <html>
 <head>
   <meta charset="utf-8" />
+  <link rel="stylesheet" href="design-tokens.css" />
   <style>
-    /* OS-theme support: dark default, light via prefers-color-scheme.
-       Accent violet stays identical; only surfaces/text adapt. */
+    /* Aegis HUD 2.0. Tokens live in design-tokens.css; these aliases keep the
+       existing popup.js/CSS call sites stable. */
     :root {
-      --bg: #0b1226; --panel: #0d1430; --panel2: #1a2450;
-      --text: #eef1ff; --muted: #8e99c0; --faint: #5b6589;
-      --border: #26315c; --accent: #8b7cf6; --accent-fg: #fff;
-      --cyan: #38bdf8; --cyan-dim: #38e1ff;
+      --bg: var(--pv-canvas);
+      --panel: var(--pv-surface);
+      --panel2: var(--pv-surface-high);
+      --text: var(--pv-text);
+      --muted: var(--pv-text-muted);
+      --faint: var(--pv-text-dim);
+      --border: var(--pv-border);
+      --accent: var(--pv-primary);
+      --accent-fg: var(--pv-on-primary);
+      --cyan: var(--pv-secondary);
+      --cyan-dim: var(--pv-secondary);
     }
-    @media (prefers-color-scheme: light) {
-      :root {
-        --bg: #eef1f8; --panel: #ffffff; --panel2: #e2e8f2;
-        --text: #16213a; --muted: #51617d; --faint: #8a97ad;
-        --border: #cfd8e6;
-        --cyan: #0284c7; --cyan-dim: #0284c7;
-      }
-    }
-    body { width: 460px; margin: 0; padding: 14px; background: var(--bg); color: var(--text);
-           font: 13px/1.4 system-ui, sans-serif; }
+    body { width: 420px; margin: 0; padding: 14px; background: var(--bg); color: var(--text);
+           font: 13px/1.4 var(--pv-sans); }
     h1 { font-size: 15px; margin: 0 0 10px; color: var(--accent); }
-    .tabs { display: flex; gap: 6px; margin-bottom: 10px; }
-    .tabs button { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 7px;
-                   background: var(--panel); color: var(--muted); cursor: pointer; font-weight: 700; }
-    .tabs button.active { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-    .row { background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+    .tabs { display: flex; gap: 2px; margin-bottom: 10px; border-bottom: 1px solid var(--border); }
+    .tabs button { flex: 1; border: 0; border-bottom: 2px solid transparent; border-radius: 0; padding: 8px 6px;
+                   background: transparent; color: var(--muted); cursor: pointer; font-weight: 700; font-size: 12px; }
+    .tabs button.active { background: transparent; color: var(--accent); border-bottom-color: var(--accent); }
+    .row { background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
            padding: 10px; margin-bottom: 8px; }
     .t { font-weight: 700; } .u { color: var(--muted); font-size: 12px; }
     .btns { margin-top: 8px; display: flex; gap: 8px; }
-    .btns button, .wide { flex: 1; border: 1px solid var(--accent); border-radius: 8px; padding: 7px;
+    .btns button, .wide { flex: 1; border: 1px solid var(--border); border-radius: 8px; padding: 7px;
              background: var(--panel2); color: var(--text); cursor: pointer; font-weight: 700; }
-    button.fill { background: var(--accent); color: var(--accent-fg); }
+    button.fill { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
     /* Working-mark toggle: neutral until the user asserts it, green once the
        bridge confirms it. Deliberately not accent-coloured — it must not read
        as the primary Fill action. */
@@ -71,7 +71,11 @@
       padding: 1px 6px; margin-top: 3px; }
     #langToggle { flex: 0 0 auto; min-width: 64px; min-height: 32px; font-size: 11px; }
     .topbar { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-    .topbar h1 { margin: 0; flex: 1; }
+    .brandmark { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: var(--accent-fg); display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 15px; flex: 0 0 auto; }
+    .brandtx2 { flex: 1; min-width: 0; }
+    .brandname { font-weight: 900; font-size: 13px; letter-spacing: .2px; }
+    .brandsub { font-size: 9px; color: var(--faint); font-family: var(--pv-mono); letter-spacing: .4px; }
+    .vchip { font: 700 9px var(--pv-mono); color: var(--accent); background: #4edea31f; border: 1px solid #4edea355; border-radius: 5px; padding: 2px 5px; }
     .tabs button:focus-visible, .btns button:focus-visible, .eye:focus-visible, .wide:focus-visible {
       outline: 2px solid var(--cyan); outline-offset: 1px; }
     .row.focused { outline: 2px solid var(--cyan); }
@@ -151,7 +155,7 @@
       <div class="hint" id="extLockMsg"></div>
     </div>
   </div>
-  <div class="topbar"><h1>🛡️ PhantomVault</h1><button id="langToggle" title="BN/EN — ভাষা বদলান" aria-label="Switch language / ভাষা বদলান">EN ⇄ BN</button></div>
+  <div class="topbar"><div class="brandmark">P</div><div class="brandtx2"><div class="brandname">PHANTOM VAULT</div><div class="brandsub">LOCAL · ZERO-KNOWLEDGE</div></div><span class="vchip">v0.4.1</span><button id="langToggle" title="BN/EN — ভাষা বদলান" aria-label="Switch language / ভাষা বদলান">EN ⇄ BN</button></div>
   <div class="tabs">
     <button id="tabVault" class="active">🔑 Vault</button>
     <button id="tabStats">📊 Stats</button>

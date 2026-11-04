@@ -1,8 +1,6 @@
 /* PhantomVault extension design tokens.
  * Source of truth: design/tokens.json (do not hand-edit values here).
- * This file is intentionally NOT linked from popup.html yet: the HUD 2.0
- * restyle will import it, so existing 0.4.1 popup layout/colors stay stable
- * until that slice lands. Keep the --pv-* names stable.
+ * Linked from popup.html (HUD 2.0 slice 1). Keep the --pv-* names stable.
  */
 :root {
   --pv-canvas: #0b1326;
