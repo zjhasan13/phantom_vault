@@ -163,6 +163,23 @@
     .btns button.fill { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
     .pwPrev { color: var(--faint); font-family: var(--pv-mono); }
     .sechead { border-top-color: var(--border); }
+    /* HUD 2.0 shell: site row, 4 tabs, footer */
+    .pane.hidden { display: none; }
+    .iconbtn { background: transparent; border: 1px solid var(--border); color: var(--muted); border-radius: 8px; padding: 6px 8px; cursor: pointer; font-weight: 700; }
+    .iconbtn:hover, .iconbtn.active { border-color: var(--accent); color: var(--accent); }
+    .livedot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); margin-right: 5px; box-shadow: 0 0 6px #4edea3; }
+    .siterow { display: flex; align-items: center; gap: 8px; background: var(--panel); border: 1px solid var(--border); border-radius: 9px; padding: 8px 10px; margin-bottom: 10px; font-size: 11px; }
+    .siterow.hidden { display: none; }
+    .sitedomain { font-family: var(--pv-mono); color: var(--text); }
+    .matchchip { font: 700 9px var(--pv-mono); color: var(--accent); background: #4edea31a; border: 1px solid #4edea355; border-radius: 5px; padding: 1px 6px; }
+    .verifiedchip { font: 700 9px var(--pv-mono); color: var(--accent); }
+    .spacer { flex: 1; }
+    .tabcount { margin-left: 5px; font: 700 9px var(--pv-mono); color: var(--faint); }
+    .tabs button.active .tabcount { color: var(--accent); }
+    .genhead { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+    .bitchip { font: 700 9px var(--pv-mono); color: var(--accent); background: #4edea31a; border: 1px solid #4edea355; border-radius: 5px; padding: 1px 6px; }
+    .foot { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); font: 9px var(--pv-mono); color: var(--faint); }
+    .zk { color: var(--accent); }
   </style>
 </head>
 <body>
@@ -177,42 +194,67 @@
       <div class="hint" id="extLockMsg"></div>
     </div>
   </div>
-  <div class="topbar"><div class="brandmark">P</div><div class="brandtx2"><div class="brandname">PHANTOM VAULT</div><div class="brandsub">LOCAL · ZERO-KNOWLEDGE</div></div><span class="vchip">v0.4.1</span><button id="langToggle" title="BN/EN — ভাষা বদলান" aria-label="Switch language / ভাষা বদলান">EN ⇄ BN</button></div>
-  <div class="tabs">
-    <button id="tabVault" class="active">🔑 Vault</button>
-    <button id="tabStats">📊 Stats</button>
-    <button id="tabSettings">⚙️ Autofill Settings</button>
-  </div>
-  <div id="vaultPane">
-    <button id="addItemBtn" class="wide" style="width:100%;margin-bottom:8px">➕ Add login</button>
-    <input id="vaultSearch" placeholder="🔍 Search" aria-label="Search vault" />
-    <div class="filterrow">
-      <select id="folderFilter" aria-label="Filter by folder"><option value="">📁 All folders</option></select>
-      <select id="typeFilter" aria-label="Filter by type">
-        <option value="all">📋 Type: All</option>
-        <option value="1">🔑 Logins</option>
-        <option value="4">💳 Cards</option>
-        <option value="5">🪪 Identities</option>
-        <option value="3">📝 Notes</option>
-      </select>
+  <div class="topbar">
+    <div class="brandmark">P</div>
+    <div class="brandtx2">
+      <div class="brandname">PHANTOM VAULT</div>
+      <div class="brandsub"><span class="livedot"></span> LOCAL · ZERO-KNOWLEDGE</div>
     </div>
+    <span class="vchip">v0.4.1</span>
+    <button id="langToggle" class="iconbtn" title="BN/EN — ভাষা বদলান" aria-label="Switch language">EN</button>
+    <button id="settingsBtn" class="iconbtn" title="Autofill settings" aria-label="Autofill settings">⚙</button>
+  </div>
+
+  <div id="siteRow" class="siterow hidden">
+    <span class="livedot"></span><span id="siteDomain" class="sitedomain">—</span>
+    <span id="siteMatch" class="matchchip">Matched</span>
+    <span class="spacer"></span><span id="siteVerified" class="verifiedchip">Verified</span>
+  </div>
+
+  <nav class="tabs" role="tablist">
+    <button id="tabAutofill" class="active" role="tab">Autofill<span id="tabAutofillCount" class="tabcount"></span></button>
+    <button id="tabAll" role="tab">All Vault<span id="tabAllCount" class="tabcount"></span></button>
+    <button id="tabGen" role="tab">Generator</button>
+    <button id="tabPasskeys" role="tab">Passkeys</button>
+  </nav>
+
+  <div id="autofillPane" class="pane">
     <div id="suggestHead" class="sechead"></div>
-    <button id="neverBtn" class="wide hidden" style="margin-bottom:8px">🚫 Never suggest on this site</button>
-    <button id="otpFillBtn" class="wide hidden" style="margin-bottom:8px">🔑 Fill 2FA code</button>
-    <button id="pkSignBtn" class="wide hidden" style="margin-bottom:8px">🔑 Sign with vault</button>
+    <button id="neverBtn" class="wide hidden" style="margin-bottom:8px">Never suggest on this site</button>
+    <button id="otpFillBtn" class="wide hidden" style="margin-bottom:8px">Fill 2FA code</button>
     <div id="otpCandList"></div>
     <div id="suggestList"></div>
+    <div id="lockHint" class="hint" style="text-align:center"></div>
+    <div id="offlineBanner" class="hint" style="display:none;color:var(--pv-warning)"></div>
+  </div>
+
+  <div id="allPane" class="pane hidden">
+    <input id="vaultSearch" placeholder="Search credentials, cards, notes…" aria-label="Search vault" />
+    <div class="filterrow">
+      <select id="folderFilter" aria-label="Filter by folder"><option value="">All folders</option></select>
+      <select id="typeFilter" aria-label="Filter by type">
+        <option value="all">All types</option>
+        <option value="1">Logins</option>
+        <option value="4">Cards</option>
+        <option value="5">Identities</option>
+        <option value="3">Notes</option>
+      </select>
+    </div>
+    <button id="addItemBtn" class="wide" style="width:100%;margin-bottom:8px">+ Add login</button>
     <div id="allHead" class="sechead"></div>
     <div id="allList"></div>
-    <div class="row" style="margin-top:8px">
-      <button id="genToggle" class="wide">🎲 Generator</button>
-      <div id="genPanel" class="hidden" style="margin-top:6px">
+  </div>
+
+  <div id="genPane" class="pane hidden">
+    <div class="row">
+      <div class="genhead"><span class="t">Quick Password Generator</span><span id="genBits" class="bitchip">128-bit</span></div>
+      <div id="genPanel">
         <div class="pwline" style="margin-left:0">
           <code id="genOut" class="pwDots">••••••••</code>
-          <button id="genNew" class="eye" title="Generate new">🎲</button>
-          <button id="genCopy" class="eye" title="Copy">📋</button>
+          <button id="genNew" class="eye" title="Generate new">↻</button>
+          <button id="genCopy" class="eye" title="Copy">⧉</button>
         </div>
-        <div class="filterrow" style="margin-top:6px;margin-bottom:0">
+        <div class="filterrow" style="margin-top:8px;margin-bottom:0">
           <select id="genLen" title="Length">
             <option value="12">12</option>
             <option value="16">16</option>
@@ -222,18 +264,26 @@
           <button id="genSym" class="eye" title="Symbols on/off">!@# ✓</button>
         </div>
       </div>
+      <button id="genToggle" class="hidden">Generator</button>
     </div>
-    <div id="lockHint" class="hint" style="text-align:center"></div>
-    <div id="offlineBanner" class="hint" style="display:none;color:#fbbf24"></div>
-    <div id="status" aria-live="polite">Loading…</div>
   </div>
-  <div id="statsPane" class="hidden">
-    <div class="row" id="statsBox">Loading…</div>
+
+  <div id="passkeysPane" class="pane hidden">
+    <div class="row">
+      <div class="t">Resident passkeys (WebAuthn)</div>
+      <div class="u">No ceremony pending. Passkey prompts appear here when a site asks; register or sign from the desktop vault.</div>
+      <button id="pkSignBtn" class="wide hidden" style="margin-top:8px">Sign with vault</button>
+    </div>
   </div>
-  <div id="settingsPane" class="hidden">
+
+  <div id="settingsPane" class="pane hidden">
+    <div class="row">
+      <div class="t">Vault health</div>
+      <div id="statsBox">Loading…</div>
+    </div>
     <div class="row" id="settingsForm"></div>
     <div class="row">
-      <div class="t">⏱️ Auto-Lock Timeout</div>
+      <div class="t">Auto-Lock Timeout</div>
       <div class="hint">No PIN — the extension follows the desktop app. After inactivity it re-asks desktop presence.</div>
       <select id="lockTimeout">
         <option value="5">5 minutes</option>
@@ -243,7 +293,7 @@
       </select>
     </div>
     <div class="row">
-      <div class="t">📋 Clipboard auto-clear</div>
+      <div class="t">Clipboard auto-clear</div>
       <div class="hint">Blank a copied password or 2FA code after this delay, even if the popup closes.</div>
       <select id="clipClear">
         <option value="15">15 seconds</option>
@@ -254,7 +304,7 @@
       </select>
     </div>
     <div class="row">
-      <div class="t">🚫 Blocked Domains</div>
+      <div class="t">Blocked Domains</div>
       <div class="hint">One per line — no badges, no autofill here.</div>
       <textarea id="blocked" placeholder="example.com&#10;internal.corp"></textarea>
     </div>
@@ -263,9 +313,12 @@
       <div class="hint" id="neverSaveHint">Sites where you chose "Never" on the save prompt. Remove one to see the prompt again.</div>
       <div id="neverSaveList"></div>
     </div>
-    <button class="wide" id="saveSettings" style="width:100%">💾 Save Settings</button>
+    <button class="wide" id="saveSettings" style="width:100%">Save Settings</button>
     <div class="hint" id="saveHint"></div>
   </div>
+
+  <div id="status" aria-live="polite">Loading…</div>
+  <div class="foot"><span id="footClip">Clipboard purge: 30s</span><span class="spacer"></span><span class="zk">Zero-Knowledge</span></div>
   <script src="domain.js"></script>
   <script src="popup.js"></script>
 </body>

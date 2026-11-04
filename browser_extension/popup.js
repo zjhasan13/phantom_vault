@@ -197,14 +197,23 @@
   }
 
   // ---------- tabs ----------
-  const panes = { tabVault: "vaultPane", tabStats: "statsPane", tabSettings: "settingsPane" };
-  const paneOrder = ["tabVault", "tabStats", "tabSettings"];
+  const panes = { tabAutofill: "autofillPane", tabAll: "allPane", tabGen: "genPane", tabPasskeys: "passkeysPane" };
+  const paneOrder = ["tabAutofill", "tabAll", "tabGen", "tabPasskeys"];
   function selectTab(id) {
     for (const [b, p] of Object.entries(panes)) {
       document.getElementById(b).classList.toggle("active", b === id);
       document.getElementById(p).classList.toggle("hidden", b !== id);
     }
-    if (id === "tabStats") ensureUnlocked().then((ok) => { if (ok) loadStats(); });
+    const sp = document.getElementById("settingsPane");
+    if (sp) sp.classList.add("hidden");
+    const sb = document.getElementById("settingsBtn");
+    if (sb) sb.classList.remove("active");
+    if (id === "tabGen") {
+      const gp = document.getElementById("genPanel");
+      if (gp) gp.classList.remove("hidden");
+      const gn = document.getElementById("genNew");
+      if (gn) gn.click();
+    }
   }
   for (const b of Object.keys(panes)) {
     const btn = document.getElementById(b);
@@ -219,13 +228,21 @@
     });
   }
 
+  function selectSettings() {
+    for (const [b, p] of Object.entries(panes)) {
+      document.getElementById(b).classList.remove("active");
+      document.getElementById(p).classList.add("hidden");
+    }
+    document.getElementById("settingsPane").classList.remove("hidden");
+    document.getElementById("settingsBtn").classList.add("active");
+    ensureUnlocked().then((ok) => { if (ok) loadStats(); });
+  }
+  document.getElementById("settingsBtn").addEventListener("click", selectSettings);
+
   // ---------- language ----------
   const langBtn = document.getElementById("langToggle");
   function applyLang() {
     langBtn.textContent = lang === "en" ? "EN ⇄ BN" : "BN ⇄ EN";
-    document.getElementById("tabVault").textContent = t("vault");
-    document.getElementById("tabStats").textContent = t("stats");
-    document.getElementById("tabSettings").textContent = t("settings");
     document.getElementById("saveSettings").textContent = t("save");
     for (const [key, , fallback] of TOGGLES) {
       const lab = document.querySelector(`label[data-k="${key}"]`);
@@ -331,6 +348,7 @@
     if (clipSel) clipSel.value = String(cur.clipboard_clear_sec ?? 30);
     clipClearSec = Number.isFinite(Number(cur.clipboard_clear_sec))
       ? Number(cur.clipboard_clear_sec) : 30;
+    const fc = document.getElementById("footClip"); if (fc) fc.textContent = "Clipboard purge: " + (clipClearSec ? clipClearSec + "s" : "off");
     const addBtn = document.getElementById("addItemBtn");
     if (addBtn) addBtn.textContent = t("add_item");
     for (const [key] of TOGGLES) inputs[key].checked = cur[key] !== false;
@@ -1464,6 +1482,26 @@
     }
   }
 
+  function paintChrome(suggCount, allCount) {
+    const row = document.getElementById("siteRow");
+    if (row) {
+      if (hostBase) {
+        row.classList.remove("hidden");
+        document.getElementById("siteDomain").textContent = hostBase;
+        const m = document.getElementById("siteMatch");
+        if (m) m.textContent = suggCount ? "Matched" : "No match";
+        const v = document.getElementById("siteVerified");
+        if (v) v.textContent = suggCount ? "Verified" : "";
+      } else {
+        row.classList.add("hidden");
+      }
+    }
+    const ac = document.getElementById("tabAutofillCount");
+    if (ac) ac.textContent = suggCount ? String(suggCount) : "";
+    const at = document.getElementById("tabAllCount");
+    if (at) at.textContent = allCount ? String(allCount) : "";
+  }
+
   function render() {
     const f = currentFilter();
     if (neverBtn) neverBtn.classList.toggle("hidden", !hostBase);
@@ -1517,6 +1555,7 @@
       if (!f.q) renderEmptyCard();
       else status.textContent = t("no_match", f.q || host);
     }
+    paintChrome(sugg.length, totalAll);
     focusRow(0);
   }
 
@@ -1603,16 +1642,19 @@
   const genLen = document.getElementById("genLen");
   const genSym = document.getElementById("genSym");
   let genSymbols = true;
+  let genLastBits = 0;
   function genPassword(len, symbols) {
     const base = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
     const chars = symbols ? base + "!@#$%^&*-_+=" : base;
     const buf = new Uint32Array(len);
     crypto.getRandomValues(buf);
+    genLastBits = Math.round(len * Math.log2(new Set(chars).size));
     return [...buf].map((x) => chars[x % chars.length]).join("");
   }
   function genRefresh() {
     const len = Math.min(64, Math.max(8, Number(genLen.value) || 20));
     genOut.textContent = genPassword(len, genSymbols);
+    const gb = document.getElementById("genBits"); if (gb) gb.textContent = genLastBits + "-bit";
     touchActivityPing();
   }
   chrome.storage.local.get({ gen_len: 20, gen_sym: true }).then((s) => {
