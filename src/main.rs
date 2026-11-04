@@ -8175,6 +8175,24 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_show_generator(false);
     });
 
+    // Generator Studio: copy without clearing the page or closing anything.
+    let gen_weak_copy = main_window.as_weak();
+    let ct_gen_copy = Arc::clone(&clipboard_timeout_secs);
+    main_window.on_copy_generated(move |value| {
+        let Some(ui) = gen_weak_copy.upgrade() else { return; };
+        let v = value.as_str();
+        if v.is_empty() || v.starts_with('⚠') {
+            return;
+        }
+        let secs = ct_gen_copy.load(std::sync::atomic::Ordering::SeqCst);
+        secure_copy_with_feedback(
+            ui.as_weak(),
+            v.to_string(),
+            &format!("📋 Generated secret copied! (Masked from Win+V, auto-clearing in {secs}s)"),
+            secs,
+        );
+    });
+
     let gen_weak_close = main_window.as_weak();
     main_window.on_close_panel(move || {
         if let Some(ui) = gen_weak_close.upgrade() {

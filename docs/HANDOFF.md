@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Settings & Dev Center slice 1 (Aegis header + 6-tab section filter), Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Generator Studio slice 1 (full-page, honest OS CSPRNG, Complex + Diceware, copy), Settings & Dev Center slice 1 (Aegis header + 6-tab section filter), Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -275,6 +275,18 @@
   per row and the second wraps below. A real 2-column grid needs the wide rows
   inside each card to become responsive first; not attempted in this slice.
   Tests 556/4.
+
+- **Generator Studio slice 1 (this batch):** the sidebar "Password Generator"
+  now opens a full page (`active_nav == 4`) instead of the modal; the modal
+  stays for the vault's Generator button. Page: honest OS CSPRNG strip
+  (`rand_core::OsRng`, no hardware-TRNG claim), masked output with HIDE /
+  REGENERATE, entropy bar with the policy estimate (no crack-time/quantum
+  claims), Copy / Clear, Complex + Diceware (EN/BN), and an ENTROPY SPEC card
+  (RNG / RAM only / no network / cleared on leave). A new `copy_generated`
+  callback copies without clearing the page; `changed active_nav` clears the
+  RAM-only output when leaving. Verified: nav opens the page, Diceware produced
+  `6 words - 78 bits`, Copy put the value on the masked clipboard, no crash.
+  Remaining: Pronounceable/PIN modes (no backend), session history.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte

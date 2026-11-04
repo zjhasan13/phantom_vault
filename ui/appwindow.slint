@@ -1013,6 +1013,8 @@ export component MainWindow inherits Window {
     callback confirm_shred_source();
     callback cancel_shred_source();
     in-out property <int> active_nav: 0;
+    // Leaving the Generator Studio clears its RAM-only output.
+    changed active_nav => { if root.active_nav != 4 { root.gen_output = ""; root.gen_entropy_bits = 0; } }
     in-out property <bool> blackout_enabled: false;
     in-out property <bool> favicons_enabled: true;
     // Set once at startup when PHANTOM_VAULT_DIR engaged ("📦 Portable").
@@ -1088,6 +1090,9 @@ export component MainWindow inherits Window {
     in-out property <int> gen_word_count: 6;
     in-out property <string> gen_output: "";
     in-out property <float> gen_entropy_bits: 0.0;
+    // Generator Studio: reveal toggle (RAM-only secret stays masked by default
+    // after you leave the page; the value is cleared on nav change).
+    in-out property <bool> gen_reveal: true;
     callback unlock_requested(string);
     callback copy_password_requested(string);
     callback quick_copy(int, string);
@@ -1296,6 +1301,7 @@ export component MainWindow inherits Window {
     callback toggle_travel(int, string);
     callback regenerate();
     callback use_password(string);
+    callback copy_generated(string);
     callback close_panel();
 
     // ================= LOCK SCREEN (cryptographic gateway) =================
@@ -1688,7 +1694,7 @@ export component MainWindow inherits Window {
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "নিরাপত্তা ও টুলস" : "SECURITY & TOOLS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: root.ui_lang == "bn" ? "সিকিউরিটি অডিট" : "Security Audit"; tapped => { root.show_health = true; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e65f}"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.show_generator; tapped => { root.show_generator = true; root.regenerate(); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e65f}"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.active_nav == 4; tapped => { root.active_nav = 4; root.regenerate(); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ইন্টিগ্রেশন ও সিস্টেম" : "INTEGRATION & SYSTEM"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
@@ -2470,6 +2476,109 @@ export component MainWindow inherits Window {
                         Text { text: root.health_coverage + "%"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 700; width: 44px; horizontal-alignment: right; }
                     }
                 }}
+            }}
+        }
+        if root.active_nav == 4 : Rectangle {
+            background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
+            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+                Rectangle { height: 34px; background: PhantomTheme.surface-low; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border;
+                    HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 12px;
+                        Text { text: "● OS CSPRNG"; color: PhantomTheme.success; font-size: 10px; font-weight: 800; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Text { text: "rand_core::OsRng · no network"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        MonoChip { label: "LOCAL ONLY"; tone: PhantomTheme.primary; }
+                    }
+                }
+                HorizontalLayout { spacing: 10px;
+                    Text { text: "GENERATOR STUDIO"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                    MonoChip { label: "2 MODES"; tone: PhantomTheme.secondary; }
+                    Rectangle { horizontal-stretch: 1; }
+                    Text { text: "SPACE / ENTER regenerates"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
+                }
+                Rectangle { height: 250px; background: PhantomTheme.surface; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 12px;
+                    HorizontalLayout { spacing: 8px;
+                        FieldLabel { text: "GENERATED SECRET"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: root.gen_diceware_mode ? (root.gen_word_count + " words") : (root.gen_length + " chars"); color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Text { text: "· " + Math.round(root.gen_entropy_bits) + " bits"; color: PhantomTheme.secondary; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                    }
+                    Rectangle { height: 76px; background: PhantomTheme.surface-lowest; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
+                        HorizontalLayout { padding-left: 14px; padding-right: 10px; spacing: 10px; alignment: center;
+                            Text { text: root.gen_reveal ? (root.gen_output == "" ? "—" : root.gen_output) : "••••••••••••••••••••"; color: root.gen_output == "" ? PhantomTheme.text-dim : PhantomTheme.text; font-size: 22px; font-weight: 900; font-family: "JetBrains Mono"; letter-spacing: 1px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
+                            AuraButton { label: root.gen_reveal ? "HIDE" : "SHOW"; width: 74px; height: 34px; clicked => { root.gen_reveal = !root.gen_reveal; } }
+                            AuraButton { label: "REGENERATE"; primary: true; width: 132px; height: 34px; clicked => { root.regenerate(); } }
+                        }
+                    }
+                    Rectangle { height: 6px; background: PhantomTheme.surface-high; border-radius: 3px; clip: true;
+                        Rectangle { background: root.gen_entropy_bits >= 80 ? PhantomTheme.primary : (root.gen_entropy_bits >= 50 ? PhantomTheme.secondary : PhantomTheme.warning); border-radius: 3px; height: 6px; width: parent.width * Math.min(root.gen_entropy_bits / 128.0, 1.0); }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        Text { text: "ENTROPY"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; vertical-alignment: center; }
+                        Text { text: Math.round(root.gen_entropy_bits) + " bits"; color: PhantomTheme.secondary; font-size: 11px; font-weight: 800; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "Estimate from the selected policy - not a crack-time claim"; color: PhantomTheme.text-dim; font-size: 9px; vertical-alignment: center; }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Copy Secret"; primary: true; width: 150px; height: 38px; enabled: root.gen_output != ""; clicked => { root.copy_generated(root.gen_output); } }
+                        AuraButton { label: "Clear"; width: 110px; height: 38px; enabled: root.gen_output != ""; clicked => { root.gen_output = ""; root.gen_entropy_bits = 0; } }
+                    }
+                }}
+                HorizontalLayout { spacing: 14px;
+                    VerticalLayout { horizontal-stretch: 1; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "MODE"; }
+                            HorizontalLayout { spacing: 8px;
+                                AuraButton { label: "Cryptographic Random"; primary: !root.gen_diceware_mode; width: 210px; height: 36px; clicked => { root.gen_diceware_mode = false; root.regenerate(); } }
+                                AuraButton { label: "Diceware Passphrase"; primary: root.gen_diceware_mode; width: 200px; height: 36px; clicked => { root.gen_diceware_mode = true; root.regenerate(); } }
+                            }
+                            Text { text: !root.gen_diceware_mode ? "Uniform random characters from the selected sets." : "EFF large wordlist (7776 words) or Bengali words; each word is sampled uniformly."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                        }}
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 12px;
+                            if !root.gen_diceware_mode : VerticalLayout { spacing: 10px;
+                                HorizontalLayout { spacing: 8px;
+                                    FieldLabel { text: "LENGTH"; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    AuraButton { label: "−"; width: 34px; height: 32px; enabled: root.gen_length > 8; clicked => { if root.gen_length > 8 { root.gen_length -= 1; root.regenerate(); } } }
+                                    Text { text: root.gen_length; color: PhantomTheme.secondary; font-size: 15px; font-weight: 800; min-width: 36px; horizontal-alignment: center; vertical-alignment: center; }
+                                    AuraButton { label: "+"; width: 34px; height: 32px; enabled: root.gen_length < 128; clicked => { if root.gen_length < 128 { root.gen_length += 1; root.regenerate(); } } }
+                                }
+                                HorizontalLayout { spacing: 6px;
+                                    AuraButton { label: root.gen_uppercase ? "A-Z ✓" : "A-Z"; primary: root.gen_uppercase; width: 84px; height: 32px; clicked => { root.gen_uppercase = !root.gen_uppercase; root.regenerate(); } }
+                                    AuraButton { label: root.gen_lowercase ? "a-z ✓" : "a-z"; primary: root.gen_lowercase; width: 84px; height: 32px; clicked => { root.gen_lowercase = !root.gen_lowercase; root.regenerate(); } }
+                                    AuraButton { label: root.gen_digits ? "0-9 ✓" : "0-9"; primary: root.gen_digits; width: 84px; height: 32px; clicked => { root.gen_digits = !root.gen_digits; root.regenerate(); } }
+                                    AuraButton { label: root.gen_symbols ? "#$! ✓" : "#$!"; primary: root.gen_symbols; width: 84px; height: 32px; clicked => { root.gen_symbols = !root.gen_symbols; root.regenerate(); } }
+                                    AuraButton { label: root.gen_exclude_ambiguous ? "0/O/l ✓" : "0/O/l"; primary: root.gen_exclude_ambiguous; width: 92px; height: 32px; clicked => { root.gen_exclude_ambiguous = !root.gen_exclude_ambiguous; root.regenerate(); } }
+                                }
+                            }
+                            if root.gen_diceware_mode : VerticalLayout { spacing: 10px;
+                                HorizontalLayout { spacing: 8px;
+                                    FieldLabel { text: "WORD COUNT"; vertical-alignment: center; }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    AuraButton { label: "−"; width: 34px; height: 32px; enabled: root.gen_word_count > 4; clicked => { if root.gen_word_count > 4 { root.gen_word_count -= 1; root.regenerate(); } } }
+                                    Text { text: root.gen_word_count; color: PhantomTheme.secondary; font-size: 15px; font-weight: 800; min-width: 30px; horizontal-alignment: center; vertical-alignment: center; }
+                                    AuraButton { label: "+"; width: 34px; height: 32px; enabled: root.gen_word_count < 12; clicked => { if root.gen_word_count < 12 { root.gen_word_count += 1; root.regenerate(); } } }
+                                }
+                                HorizontalLayout { spacing: 8px;
+                                    AuraButton { label: "English (EFF 7776)"; primary: root.gen_dice_lang == 0; width: 200px; height: 32px; clicked => { root.gen_dice_lang = 0; root.regenerate(); } }
+                                    AuraButton { label: "বাংলা"; primary: root.gen_dice_lang == 1; width: 110px; height: 32px; clicked => { root.gen_dice_lang = 1; root.regenerate(); } }
+                                }
+                            }
+                        }}
+                    }
+                    VerticalLayout { width: 300px; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 8px;
+                            FieldLabel { text: "ENTROPY SPEC"; }
+                            HorizontalLayout { Text { text: "RNG"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-stretch: 1; } Text { text: "rand_core::OsRng"; color: PhantomTheme.text; font-size: 10px; font-family: "JetBrains Mono"; } }
+                            HorizontalLayout { Text { text: "Memory"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-stretch: 1; } Text { text: "RAM only"; color: PhantomTheme.text; font-size: 10px; font-family: "JetBrains Mono"; } }
+                            HorizontalLayout { Text { text: "Network"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-stretch: 1; } Text { text: "none"; color: PhantomTheme.success; font-size: 10px; font-family: "JetBrains Mono"; } }
+                            HorizontalLayout { Text { text: "On leave"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-stretch: 1; } Text { text: "cleared"; color: PhantomTheme.text; font-size: 10px; font-family: "JetBrains Mono"; } }
+                        }}
+                        Rectangle { background: PhantomTheme.surface-low; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 6px;
+                            Text { text: "LOCAL GENERATION"; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
+                            Text { text: "The value is produced on this machine and kept in RAM. Leaving the page or locking the vault clears it; Copy uses the masked clipboard with auto-clear."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                        }}
+                    }
+                }
             }}
         }
         if root.active_nav == 0 : VerticalLayout {
