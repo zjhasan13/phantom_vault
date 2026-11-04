@@ -1764,7 +1764,46 @@
     const typed = ((f && f.users) || [])
       .map((el) => String(el.value || "").trim())
       .find(Boolean) || "";
-    return (typed || pvCarryUser || "").trim().toLowerCase();
+    // Google-style password steps show the account as a chip, not an input.
+    // Read that identifier so the matching vault row ranks first instead of
+    // whichever account was filled last.
+    return (typed || pageAccountHint() || pvCarryUser || "").trim().toLowerCase();
+  }
+  // Non-secret page hint: only an email/username already visible on the page.
+  // This never reads a password and never widens a fill gate; it only orders
+  // the dropdown (rankLogins still keeps every row).
+  function pageAccountHint() {
+    const emailRe = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i;
+    const sels = [
+      "[data-identifier]", "[data-email]", "[data-username]",
+      "#identifierId", "input[type='hidden'][name*='email' i]",
+      "input[type='hidden'][name*='user' i]", "[aria-label*='@']",
+    ];
+    for (const s of sels) {
+      let els = [];
+      try { els = document.querySelectorAll(s); } catch (_) { continue; }
+      for (const el of els) {
+        const v = (
+          el.getAttribute("data-identifier") ||
+          el.getAttribute("data-email") ||
+          el.getAttribute("data-username") ||
+          el.getAttribute("aria-label") ||
+          el.value || el.textContent || ""
+        ).trim();
+        const m = v.match(emailRe);
+        if (m) return m[0];
+      }
+    }
+    // Visible account chooser fallback: first email in the upper half.
+    try {
+      for (const el of document.querySelectorAll("div,span,a,button")) {
+        const r = el.getBoundingClientRect();
+        if (r.top < 0 || r.top > window.innerHeight * 0.55 || r.width < 8) continue;
+        const m = (el.textContent || "").trim().match(emailRe);
+        if (m && m[0].length < 80) return m[0];
+      }
+    } catch (_) {}
+    return "";
   }
   function loginCarryHit(e, carried) {
     return !!(carried && String((e && e.username) || "").trim().toLowerCase() === carried);
