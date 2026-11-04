@@ -670,12 +670,17 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if q.is_empty() {
                 return no("empty query (refusing vault dump)");
             }
-            let entries: Vec<serde_json::Value> = vault
+            // `all` is the address-form path: an identity is not URL-bound, so
+            // the domain hint must not filter it out (same contract as cards).
+            // The non-empty query is still required (anti-dump).
+            let all = req.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+            let mut entries: Vec<serde_json::Value> = vault
                 .identities
                 .iter()
                 .filter(|i| {
                     i.deleted_at.is_none()
-                        && (i.title.to_lowercase().contains(&q)
+                        && (all
+                            || i.title.to_lowercase().contains(&q)
                             || i.full_name.to_lowercase().contains(&q)
                             || i.email.to_lowercase().contains(&q))
                 })
@@ -687,9 +692,15 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "email": i.email,
                         "phone": i.phone,
                         "address": i.address,
+                        "company": i.company,
+                        "city": i.city,
+                        "state": i.state,
+                        "zip": i.zip,
+                        "country": i.country,
                     })
                 })
                 .collect();
+            entries.truncate(25);
             crate::security::access_log::log_event("bridge-identities", &q);
             Answer {
                 reply: serde_json::json!({"ok": true, "entries": entries}),
@@ -2006,6 +2017,11 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let email = clip("email", 254);
             let phone = clip("phone", 40);
             let address = clip("address", 512);
+            let company = clip("company", 128);
+            let city = clip("city", 128);
+            let state = clip("state", 128);
+            let zip = clip("zip", 32);
+            let country = clip("country", 64);
             if full_name.is_empty() {
                 return no("full name required");
             }
@@ -2049,6 +2065,21 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 if !address.is_empty() {
                     i.address = address;
                 }
+                if !company.is_empty() {
+                    i.company = company;
+                }
+                if !city.is_empty() {
+                    i.city = city;
+                }
+                if !state.is_empty() {
+                    i.state = state;
+                }
+                if !zip.is_empty() {
+                    i.zip = zip;
+                }
+                if !country.is_empty() {
+                    i.country = country;
+                }
                 updated = true;
             } else {
                 let id = format!(
@@ -2078,11 +2109,11 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     email,
                     phone,
                     address,
-                    company: String::new(),
-                    city: String::new(),
-                    state: String::new(),
-                    zip: String::new(),
-                    country: String::new(),
+                    company,
+                    city,
+                    state,
+                    zip,
+                    country,
                     folder: crate::models::DEFAULT_FOLDER.to_string(),
                     notes,
                     custom_fields: Vec::new(),
@@ -4523,6 +4554,21 @@ mod tests {
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "cards", "app": "shop.example", "all": true}));
         assert_eq!(r.reply["entries"].as_array().unwrap().len(), 1);
         assert_eq!(r.reply["entries"][0]["number"], "4111111111111111");
+        // Address form: identities are not URL-bound either, and the reply now
+        // carries the structured parts the filler needs.
+        v.identities[0].company = "Analytical Engines".into();
+        v.identities[0].city = "London".into();
+        v.identities[0].state = "Greater London".into();
+        v.identities[0].zip = "N1".into();
+        v.identities[0].country = "United Kingdom".into();
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "identities", "app": "shop.example", "all": true}));
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(r.reply["entries"][0]["city"], "London");
+        assert_eq!(r.reply["entries"][0]["zip"], "N1");
+        assert_eq!(r.reply["entries"][0]["country"], "United Kingdom");
+        // Without `all`, the domain hint still filters (anti-dump).
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "identities", "app": "shop.example"}));
+        assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
     }
 
     #[test]

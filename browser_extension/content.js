@@ -950,20 +950,33 @@
     };
   }
   // Identity reader for the save prompt. Requires a real full name plus at
-  // least one contact field (phone OR street address) — name+email alone is a
-  // signup/newsletter shape, not a profile worth capturing.
+  // least one contact field (email OR phone OR street address); the old
+  // phone/address-only rule refused profiles whose only contact was email.
   function readFormIdentity(form) {
     const scope = form || document;
     const pick = (sel) => {
       const el = [...scope.querySelectorAll(sel)].find((e) => isVisible(e) && !isSearchField(e));
-      return el ? String(el.value || "").trim() : "";
+      if (!el) return "";
+      // A country <select> stores "US"; keep the label ("United States") so the
+      // vault has the human value and the next fill can match it back.
+      if (el.tagName === "SELECT") {
+        const opt = el.selectedOptions && el.selectedOptions[0];
+        const label = opt ? String(opt.textContent || "").trim() : "";
+        return (label && label !== "-") ? label : String(el.value || "").trim();
+      }
+      return String(el.value || "").trim();
     };
     const full_name = pick('input[autocomplete="name"], input[name*="fullname" i], input[name*="full_name" i], input[name="name" i]');
     const email = pick('input[autocomplete="email"], input[type="email"]');
     const phone = pick('input[autocomplete="tel"], input[type="tel"], input[name*="phone" i]');
     const address = pick('input[autocomplete="street-address"], input[name*="address" i], input[name*="street" i]');
-    if (!full_name || (!phone && !address)) return null;
-    return { full_name, email, phone, address };
+    const company = pick('input[autocomplete="organization"], input[name*="company" i], input[name*="organization" i]');
+    const city = pick('input[autocomplete="address-level2"], input[name*="city" i], input[name*="town" i]');
+    const state = pick('input[autocomplete="address-level1"], input[name*="state" i], input[name*="region" i], input[name*="province" i]');
+    const zip = pick('input[autocomplete="postal-code"], input[name*="zip" i], input[name*="postal" i], input[name*="postcode" i]');
+    const country = pick('input[autocomplete="country-name"], select[autocomplete="country-name"], select[name*="country" i], input[name*="country" i]');
+    if (!full_name || (!email && !phone && !address)) return null;
+    return { full_name, email, phone, address, company, city, state, zip, country };
   }
   function cardBrand(num) {
     const d = digitsOf(num);
@@ -1321,7 +1334,7 @@
   // without `urls` — which silently killed identity suggestions. Bypass it,
   // exactly like cards.
   function queryIdentities() {
-    const req = chrome.runtime.sendMessage({ type: "PV_IDENTITIES", app: pageBase() })
+    const req = chrome.runtime.sendMessage({ type: "PV_IDENTITIES", app: pageBase(), all: true })
       .then((res) => {
         if (!res || !res.ok) throw new Error((res && res.error) || "bridge failed");
         return Array.isArray(res.entries) ? res.entries : [];
@@ -1729,11 +1742,23 @@
     notePicked();
   }
   function fillIdentity(entry) {
+    // Country first: a <select> must be matched by option text, not by value.
+    const countryEl = [...document.querySelectorAll(
+      'select[autocomplete="country-name"], select[name*="country" i], input[autocomplete="country-name"], input[name*="country" i]'
+    )].find(isVisible);
+    if (countryEl && entry.country) {
+      if (countryEl.tagName === "SELECT") setSelectByText(countryEl, entry.country);
+      else setNativeValue(countryEl, entry.country);
+    }
     const map = [
       ['input[autocomplete="name"], input[name*="fullname" i], input[name*="full_name" i]', entry.full_name],
+      ['input[autocomplete="organization"], input[name*="company" i], input[name*="organization" i]', entry.company],
       ['input[autocomplete="email"], input[type="email"]', entry.email],
       ['input[autocomplete="tel"], input[name*="phone" i]', entry.phone],
       ['input[autocomplete="street-address"], input[name*="address" i]', entry.address],
+      ['input[autocomplete="address-level2"], input[name*="city" i], input[name*="town" i]', entry.city],
+      ['input[autocomplete="address-level1"], input[name*="state" i], input[name*="region" i], input[name*="province" i]', entry.state],
+      ['input[autocomplete="postal-code"], input[name*="zip" i], input[name*="postal" i], input[name*="postcode" i]', entry.zip],
     ];
     for (const [sel, val] of map) {
       if (!val) continue;
@@ -1742,6 +1767,22 @@
     }
     pingFilled(entry.id);
     notePicked();
+  }
+  // Select-by-visible-label with a value/code fallback (country dropdowns use
+  // "United States"/"US"/"USA" interchangeably across sites).
+  function setSelectByText(sel, want) {
+    const w = String(want || "").trim().toLowerCase();
+    if (!w) return false;
+    const opts = [...(sel.options || [])];
+    const hit = opts.find((o) => (o.textContent || "").trim().toLowerCase() === w)
+      || opts.find((o) => (o.value || "").trim().toLowerCase() === w)
+      || opts.find((o) => (o.textContent || "").trim().toLowerCase().startsWith(w))
+      || opts.find((o) => w.startsWith((o.textContent || "").trim().toLowerCase()) && (o.textContent || "").trim().length > 1);
+    if (!hit) return false;
+    sel.value = hit.value;
+    sel.dispatchEvent(new Event("input", { bubbles: true }));
+    sel.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
   }
   function masked(num) {
     const d = String(num || "").replace(/\D/g, "");
@@ -2878,6 +2919,13 @@
     if (document.getElementById("__pv_saver")) return;
     const p = await pvSavePendingGet();
     if (!p || document.getElementById("__pv_saver")) return;
+    // Bitwarden checks the vault before triggering the add/change notification;
+    // a pair saved in the meantime must not pop a stale card.
+    const cached = existingSync(pageBase());
+    if (cached && classifySubmitted(cached, p.username, p.password) === "known") {
+      await pvSavePendingClear();
+      return;
+    }
     credentialToast({
       accent: p.update ? "#fbbf24" : "#4edea3",
       accentInk: p.update ? "#080c14" : "#003824",
@@ -3281,14 +3329,13 @@
     return idNorm(a.full_name) === idNorm(b.full_name) && idNorm(a.phone) === idNorm(b.phone);
   }
   function identityChanged(a, b) {
-    return (!!b.full_name && idNorm(a.full_name) !== idNorm(b.full_name))
-      || (!!b.email && idNorm(a.email) !== idNorm(b.email))
-      || (!!b.phone && idNorm(a.phone) !== idNorm(b.phone))
-      || (!!b.address && idNorm(a.address) !== idNorm(b.address));
+    return ["full_name", "email", "phone", "address", "company", "city", "state", "zip", "country"]
+      .some((k) => !!b[k] && idNorm(a[k]) !== idNorm(b[k]));
   }
   function offerIdentitySave(idf) {
     if (!idf) return;
-    const fp = [idf.full_name, idf.email, idf.phone, idf.address].join("|").toLowerCase();
+    const fp = [idf.full_name, idf.email, idf.phone, idf.address,
+      idf.company, idf.city, idf.state, idf.zip, idf.country].join("|").toLowerCase();
     if (identityOfferedFor === fp) return;
     identityOfferedFor = fp;
     const cached = identitiesSync();
@@ -3344,6 +3391,11 @@
           email: idf.email || "",
           phone: idf.phone || "",
           address: idf.address || "",
+          company: idf.company || "",
+          city: idf.city || "",
+          state: idf.state || "",
+          zip: idf.zip || "",
+          country: idf.country || "",
           url: captureUrl(),
           title: captureTitle(),
         });

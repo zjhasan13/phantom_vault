@@ -328,6 +328,28 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Identity autofill is complete (this batch):** `PV_IDENTITIES` used to filter
+  by the domain string (identities are not URL-bound, so real vaults returned
+  nothing) and the reply only carried name/email/phone/address. The command now
+  takes `all: true` like cards (still requires a non-empty query as the
+  anti-dump guard, capped at 25) and returns `company/city/state/zip/country`.
+  `fillIdentity` fills all nine fields, with the country `<select>` matched by
+  option label (`United States` / `US` / `USA` variants) through
+  `setSelectByText`. Capture (`readFormIdentity`) now also keeps the structured
+  address parts, accepts an email-only contact (was phone-or-address only), and
+  the save prompt forwards them. Verified by filling a full address form in
+  jsdom and by the Rust `cards/identities` test (`all` bypass, filtered without
+  it, city/zip/country in the reply).
+
+- **Save prompt deeper parity (this batch):** reading Bitwarden's notification
+  path further: `shouldAttemptNotification` requires
+  `username && (password || newPassword)` for an add, the tab's form data is
+  **consumed** by `clearCompletedWebRequest` once the notification fires, and
+  `tabs.onRemoved` clears per-tab state. Our restore path now also drops the
+  record when `classifySubmitted` says the pair is already known (a save from
+  another tab must not pop a stale card); the 60 s TTL is absolute, not reset by
+  a re-show.
+
 - **Badge qualification (this batch):** a shield used to attach to any
   `type=email` / `autocomplete=email` box on a matched site (newsletters,
   contact forms, comment boxes). Bitwarden qualifies with
@@ -1006,6 +1028,27 @@
    "I don't know yet â€” here is how we find out" instead of guessing.
 
 ## 3. Pending queue (ordered)
+
+**Extension gaps (recorded 2026-11-04, still open):**
+
+- **Notes / Cards / Identities editors are desktop-only.** The popup editor
+  (`popup.js:1297 openItemEditor`) only handles logins via
+  `PV_ITEM_CREATE/UPDATE/DELETE`. `PV_LIST` exposes notes/cards/identities for
+  display, but there is no edit form for them; attachments and password history
+  are desktop-only too.
+- **The extension cannot run without the desktop app (by design).** The vault
+  key never leaves the app; the native host's `unlocked` gate refuses everything
+  else. `offline_cache.rs` exists but is not enabled, so with the app closed the
+  popup says "Vault is Locked" - there is no read-only mode yet.
+- **No "Continue as ..." shortcut on the password step.** The dropdown ranks the
+  page account / carry first (`content.js rankLogins`), but there is no
+  one-click "Continue as <account>" row and no auto-fill; the user still opens
+  the list.
+- **Installed app 0.4.0 vs extension 0.4.1 (bridge version mismatch).** The
+  native host refuses the newer extension until the app is upgraded: run
+  `installer-output\PhantomVault-Setup-0.4.1.exe` (in-place upgrade; the vault
+  file is untouched), then reload the extension. Until then the popup shows
+  "Vault is Locked" even with the app running.
 
 1. **A8b Authenticode â€” deferred by product decision (2026-10-31):** no paid
    certificate for now; Ed25519 + SHA-256 + GitHub attestation is the current

@@ -174,6 +174,59 @@ test("Not Now clears the pending capture (no prompt on the next page)", async (t
     "explicit dismiss must clear the pending capture");
 });
 
+test("identity fill covers company, city, state, zip and country", async (t) => {
+  const { window } = env(t, `<form>
+    <input autocomplete="name" name="name">
+    <input autocomplete="organization" name="company">
+    <input autocomplete="email" name="email">
+    <input autocomplete="tel" name="phone">
+    <input autocomplete="street-address" name="street">
+    <input autocomplete="address-level2" name="city">
+    <input autocomplete="address-level1" name="state">
+    <input autocomplete="postal-code" name="zip">
+    <select autocomplete="country-name" name="country">
+      <option>United States</option><option>United Kingdom</option>
+    </select>
+  </form>`, "https://shop.example/checkout", [], [], [
+    { id: "i1", title: "Home", full_name: "Ada Lovelace", email: "ada@example.com",
+      phone: "123", address: "1 Analytical Way", company: "Analytical Engines",
+      city: "London", state: "Greater London", zip: "N1", country: "United Kingdom" },
+  ]);
+  const street = window.document.querySelector('input[name="street"]');
+  street.dispatchEvent(new window.Event("focusin", { bubbles: true }));
+  await flush(80);
+  const row = window.document.querySelector("button[data-pv-index]");
+  assert.ok(row, "the identity row must reach the dropdown");
+  row.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await flush(60);
+  const val = (n) => window.document.querySelector(`[name="${n}"]`).value;
+  assert.equal(val("company"), "Analytical Engines");
+  assert.equal(val("city"), "London");
+  assert.equal(val("state"), "Greater London");
+  assert.equal(val("zip"), "N1");
+  assert.equal(val("country"), "United Kingdom", "country select matched by label");
+  assert.equal(val("name"), "Ada Lovelace");
+});
+
+test("identity capture keeps the structured address parts", async (t) => {
+  const { window } = env(t, `<form>
+    <input autocomplete="name" name="name" value="Ada Lovelace">
+    <input autocomplete="organization" name="company" value="Analytical Engines">
+    <input autocomplete="email" name="email" value="ada@example.com">
+    <input autocomplete="street-address" name="street" value="1 Analytical Way">
+    <input autocomplete="address-level2" name="city" value="London">
+    <input autocomplete="postal-code" name="zip" value="N1">
+    <select autocomplete="country-name" name="country">
+      <option>United States</option><option selected>United Kingdom</option>
+    </select>
+  </form>`, "https://shop.example/checkout");
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  const saver = window.document.getElementById("__pv_saver");
+  assert.ok(saver, "an identity save prompt must appear");
+  assert.match(saver.textContent, /Ada Lovelace|identity/i);
+});
+
 test("identity suggestions reach the dropdown (url-less rows survive)", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="street-address" name="address1" value="">

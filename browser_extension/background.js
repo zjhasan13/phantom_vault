@@ -753,6 +753,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         email: msg.email || "",
         phone: msg.phone || "",
         address: msg.address || "",
+        company: msg.company || "",
+        city: msg.city || "",
+        state: msg.state || "",
+        zip: msg.zip || "",
+        country: msg.country || "",
         url: msg.url || "",
         title: msg.title || "",
       });
@@ -999,14 +1004,15 @@ chrome.tabs.onActivated.addListener(async (info) => {
   } catch (_) {}
 });
 // Bitwarden keeps the pending save on the tab object; a closed tab takes the
-// capture with it. Mirror that: drop the tab-scoped record when the tab dies so
-// a later tab (even on the same site) never inherits someone else's capture.
+// capture with it. Mirror that: drop the tab-scoped record (and the multi-step
+// carry, which is tab-scoped too) when the tab dies so a recycled tab id never
+// inherits someone else's capture.
 if (chrome.tabs.onRemoved) {
   chrome.tabs.onRemoved.addListener((tabId) => {
     try {
-      const prefix = "pvSavePending:tab:" + tabId;
+      const prefixes = ["pvSavePending:tab:" + tabId, "pvCaptureCarry:" + tabId];
       chrome.storage.session.get(null).then((all) => {
-        const keys = Object.keys(all || {}).filter((k) => k === prefix);
+        const keys = Object.keys(all || {}).filter((k) => prefixes.includes(k));
         if (keys.length) chrome.storage.session.remove(keys);
       }).catch(() => {});
     } catch (_) {}
