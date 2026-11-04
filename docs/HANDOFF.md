@@ -1,6 +1,6 @@
 # Session Handoff â€” PhantomVault
 
-> Read this fully in a fresh session BEFORE doing anything. Last updated: Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
+> Read this fully in a fresh session BEFORE doing anything. Last updated: Settings & Dev Center slice 1 (Aegis header + 6-tab section filter), Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 
 ## 1. Where we are
@@ -253,10 +253,24 @@
   migration QR with Page 1/1, and `»`/`«` both toggle. Tests **556 / 4
   ignored**.
 
-  Remaining for full parity: Settings/Dev Center 7-section IA, Generator
-  studio, extension HUD/prompt restyle, and honest substitutions for the
-  AES-256-GCM/Passkey/TPM/IPC claims (never fake them).
+  Remaining for full parity: Settings slice 2 (2-column card grid + per-section
+  polish), Generator studio, extension HUD/prompt restyle, and honest
+  substitutions for the AES-256-GCM/Passkey/TPM/IPC claims (never fake them).
   Verified: `cargo check` green, token gate 21 values.
+
+- **Settings & Dev Center slice 1 (this batch):** the Settings screen now opens
+  with the Aegis header (`SETTINGS & DEV CENTER`, `LOCAL VAULT` / `DPAPI BOUND`
+  chips, version) and a 6-tab filter: **Security / Sync & Devices / Privacy /
+  Recovery / Backups / Dev & API**. The 16 existing cards were split at section
+  boundaries and each tab renders only its own group; every existing control
+  and callback is unchanged. Verified by running the app: Settings opens without
+  a crash, tab 0 shows Security, and clicking **Sync & Devices** swaps in the
+  GitHub/Sharing/Send/P2P cards while the Security card disappears.
+  Important Slint lesson: scrolling to anchors via `settings_scroll.content-y`
+  (directly in a click handler, then from a Timer) overflowed the main thread's
+  stack on this screen in debug builds. The shipped slice uses conditional
+  card rendering instead - do not reintroduce a content-y jump here without a
+  crash test. Tests 556/4.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte

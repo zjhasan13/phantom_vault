@@ -858,6 +858,9 @@ export component MainWindow inherits Window {
     in-out property <bool> ls_relay: false;
     in-out property <int> ls_stage_count: 0;
     in-out property <bool> settings_scroll_share: false;
+    // Settings sub-nav highlight (0 Security, 1 Sync, 2 Privacy,
+    // 3 Recovery, 4 Backups, 5 Dev/API). Purely visual + scroll anchors.
+    in-out property <int> settings_tab: 0;
     in-out property <int> att_inline_count: 0;
     in-out property <int> att_sidecar_count: 0;
     in-out property <string> ls_pass: "";
@@ -2044,9 +2047,27 @@ export component MainWindow inherits Window {
         if root.active_nav == 3 : Rectangle {
             background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
             settings_scroll := ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
-                Text { text: root.ui_lang == "bn" ? "⚙️ সেটিংস ও ডেভ সেন্টার" : "⚙️ Settings & Dev Center"; color: PhantomTheme.text; font-size: 18px; font-weight: 900; }
+                Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
+                    HorizontalLayout { spacing: 10px; alignment: center;
+                        Text { text: "SETTINGS & DEV CENTER"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        MonoChip { label: "LOCAL VAULT"; tone: PhantomTheme.success; }
+                        MonoChip { label: "DPAPI BOUND"; tone: PhantomTheme.secondary; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "v" + root.app_version; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
+                    }
+                    Text { text: "Master password, Windows Hello, sync, privacy, recovery, backups and the local API - every control grouped below."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 6px;
+                        AuraButton { label: "Security"; primary: root.settings_tab == 0; width: 90px; height: 30px; clicked => { root.settings_tab = 0; } }
+                        AuraButton { label: "Sync & Devices"; primary: root.settings_tab == 1; width: 124px; height: 30px; clicked => { root.settings_tab = 1; } }
+                        AuraButton { label: "Privacy"; primary: root.settings_tab == 2; width: 82px; height: 30px; clicked => { root.settings_tab = 2; } }
+                        AuraButton { label: "Recovery"; primary: root.settings_tab == 3; width: 92px; height: 30px; clicked => { root.settings_tab = 3; } }
+                        AuraButton { label: "Backups"; primary: root.settings_tab == 4; width: 86px; height: 30px; clicked => { root.settings_tab = 4; } }
+                        AuraButton { label: "Dev & API"; primary: root.settings_tab == 5; width: 94px; height: 30px; clicked => { root.settings_tab = 5; } }
+                    }
+                }
+                }
                 HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "ভাষা" : "Language"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "English"; primary: root.ui_lang == "en"; width: 100px; height: 30px; clicked => { root.set_language("en"); } } AuraButton { label: "বাংলা"; primary: root.ui_lang == "bn"; width: 100px; height: 30px; clicked => { root.set_language("bn"); } } }
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Security"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 8px; Text { text: "Screen Blackout"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.blackout_enabled ? "ON" : "OFF"; primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Website Favicons (same-origin)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.favicons_enabled ? "ON" : "OFF"; primary: root.favicons_enabled; width: 90px; clicked => { root.set_favicons(!root.favicons_enabled); } } }
@@ -2149,6 +2170,8 @@ export component MainWindow inherits Window {
                     for s in root.ls_rows : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; Text { text: s.detail; color: PhantomTheme.text; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } AuraButton { label: "Revoke"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.login_share_revoke(s.id); } } } }
                     AuraButton { label: "Refresh shares"; width: 140px; height: 30px; clicked => { root.login_share_refresh(); } }
                     FieldLabel { text: root.ui_lang == "bn" ? "অ্যাটাচমেন্ট স্টোরেজ" : "ATTACHMENT STORAGE"; }
+                }}
+                if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Inline: " + root.att_inline_count + " • Sidecar: " + root.att_sidecar_count + " — inline files are re-encrypted with every vault save; sidecars are separate (50MB max, GitHub sync supported)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "Move inline to encrypted sidecars"; width: 260px; height: 34px; clicked => { root.migrate_attachments(); } }
                     HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
@@ -2212,7 +2235,7 @@ export component MainWindow inherits Window {
                     }
                     Text { text: root.update_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📱 Bluetooth Proximity Auto-Lock"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Locks the vault when your paired phone/watch walks away (passive BLE scan, 4s heartbeat)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Enable proximity lock"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.prox_enabled ? "ON" : "OFF"; primary: root.prox_enabled; width: 90px; clicked => { root.set_prox_enabled(!root.prox_enabled); } } }
@@ -2225,7 +2248,7 @@ export component MainWindow inherits Window {
                     }
                     Text { text: root.prox_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "গিটহাব সিঙ্ক" : "GitHub Sync"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     LineEdit { placeholder-text: "Owner (github username)"; text <=> root.sync_owner; height: 36px; }
                     LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.sync_repo; height: 36px; }
@@ -2235,7 +2258,7 @@ export component MainWindow inherits Window {
                     Text { text: root.sync_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.merge_status != "" : Text { text: root.merge_status; color: PhantomTheme.primary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "🔗 Per-Item Sharing (logins)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Grant one login to one grantee key. Revoking marks the grant — then ROTATE the item password (issued copies cannot be un-issued)."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Login item ID (from vault list)"; text <=> root.share_item_id; height: 36px; }
@@ -2249,7 +2272,7 @@ export component MainWindow inherits Window {
                     Text { text: root.share_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.share_output != "" : Text { text: root.share_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "✉️ Secure Send (expiring, one-view)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Sealed note on the relay, key only in the link-code. Reading deletes it (one view); expiry kills it unread. Relay sees ciphertext + expiry only."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Secret note to send (16KB max)"; text <=> root.send_note_input; height: 36px; }
@@ -2267,7 +2290,7 @@ export component MainWindow inherits Window {
                     Text { text: root.send_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.send_output != "" : Text { text: root.send_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "🏢 Business: Members, OIDC, Audit Export"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Roster is machine-local (never synced). Deprovision flips the member off and auto-revokes their key-bound share grants."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Paste member CSV: email[,name[,grantee_fp]] per line"; text <=> root.admin_csv_input; height: 72px; }
@@ -2289,7 +2312,7 @@ export component MainWindow inherits Window {
                     Text { text: root.admin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.admin_output != "" : Text { text: root.admin_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📶 লোকাল ওয়াই-ফাই P2P সিঙ্ক (অফলাইন)" : "📶 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.ui_lang == "bn" ? "👨‍👩‍👧 পারিবারিক সিঙ্ক: একই Wi-Fi + একবারের pairing code — ফোন/PC সিঙ্কে থাকে।" : "👨‍👩‍👧 Family sync: same Wi-Fi + one-time pairing code — phones and PCs stay in sync."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
@@ -2305,7 +2328,7 @@ export component MainWindow inherits Window {
                     Text { text: root.p2p_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.p2p_last_sync != "" : Text { text: "✅ Last sync: " + root.p2p_last_sync; color: PhantomTheme.success; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Browser Bridge (headless)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
@@ -2314,7 +2337,7 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; AuraButton { label: "🦊 Install Firefox Host"; width: 280px; clicked => { root.install_firefox_host(); } } }
                     Text { text: root.bridge_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 4 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📤 ভল্ট এক্সপোর্ট (জিরো ভেন্ডর লক-ইন)" : "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. .pvx/KDBX are encrypted with the separate password you enter. Shred plaintext after moving it."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: "Encrypted (.pvx)"; width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: "Full CSV (all kinds)"; width: 170px; clicked => { root.export_vault(4); } } }
@@ -2322,7 +2345,7 @@ export component MainWindow inherits Window {
                     Text { text: "JSON keeps everything (TOTP, history, custom fields). CSV keeps basics only."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.export_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 4 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "💾 SCHEDULED BACKUPS (CIPHERTEXT)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Snapshots are encrypted blobs — safe anywhere. Oldest pruned with a 3-pass shred past retention."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: "Automatic backups"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.backup_enabled ? "ON" : "OFF"; primary: root.backup_enabled; width: 90px; clicked => { root.set_backup_enabled(!root.backup_enabled); } } }
@@ -2338,7 +2361,7 @@ export component MainWindow inherits Window {
                     Text { text: root.backup_dir; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.backup_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 3 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Paranoia & Recovery"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     // PR-3: persistent backup badge — survives nudge dismissal.
                     if !root.recovery_backed_up : Text { text: "⚠️ Not Backed Up — export your Recovery Sheet PDF"; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; wrap: word-wrap; }
@@ -2385,7 +2408,7 @@ export component MainWindow inherits Window {
                     Text { text: "Tip: Ctrl+Shift+Alt+Q wipes RAM and exits instantly (panic-nuke)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: "🔥 Factory Reset Vault"; danger: true; width: 220px; height: 38px; clicked => { root.factory_reset_start(); } }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 2 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Email Aliases (Addy.io / SimpleLogin)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 6px;
                         AuraButton { label: "Addy.io"; primary: root.alias_provider == 0; horizontal-stretch: 1; clicked => { root.alias_provider = 0; } }
@@ -2397,14 +2420,14 @@ export component MainWindow inherits Window {
                         AuraButton { label: "Save Alias Config"; primary: true; width: 180px; clicked => { root.save_alias_config(root.alias_provider, root.alias_domain, root.alias_token); } }
                     }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 2 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "📷 ANTI-PHOTOGRAPHY & LENS GUARD"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: "Optical defense against external phone cameras and shoulder-surfers."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode || root.moire_guard_active ? "🟢 Guard Active" : "⚪ Inactive (Normal Display)"; color: root.peep_hole_mode || root.moire_guard_active ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; } }
                     HorizontalLayout { spacing: 8px; Text { text: "Hold-to-Reveal Ephemeral Mode"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.peep_hole_mode ? "ON" : "OFF"; primary: root.peep_hole_mode; width: 90px; clicked => { root.set_peep_mode(!root.peep_hole_mode); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Moiré Optical Lens Jammer"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.moire_guard_active ? "ON" : "OFF"; primary: root.moire_guard_active; width: 90px; clicked => { root.set_moire(!root.moire_guard_active); } } }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 5 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "Health & Dev"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: root.health_status; color: PhantomTheme.secondary; font-size: 12px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } } }
@@ -2417,7 +2440,7 @@ export component MainWindow inherits Window {
                         AuraButton { label: "⧉ Nushell"; width: 120px; height: 32px; clicked => { root.copy_shell_complete("nushell"); } }
                     }
                 }}
-                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                if root.settings_tab == 5 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: "🛡️ SECURITY SCOREBOARD"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 12px; alignment: space-between;
                         VerticalLayout { spacing: 2px;
