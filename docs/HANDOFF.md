@@ -340,6 +340,11 @@
   serialising the real jsdom render and screenshotting it in headless Chromium
   (4 seeded accounts, both surfaces); npm tests 135/135.
 
+  The in-field badge (the shield the extension docks inside a password box) got
+  the same treatment: 26px mint chip with a dark shield glyph (cyan + spark on
+  new-password fields), hover lighten, no emoji. Verified the same way against
+  a mock password field.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

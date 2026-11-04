@@ -1670,6 +1670,8 @@
     star: '<svg viewBox="0 0 24 24" width="11" height="11" fill="currentColor"><path d="M12 3l2.6 5.6 6 .8-4.4 4.2 1.1 6-5.3-3-5.3 3 1.1-6L3.4 9.4l6-.8z"/></svg>',
     key: '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="8" cy="8" r="4.2"/><path d="M11 11l8 8M16 16l2-2M19 19l2-2"/></svg>',
     spark: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9z"/></svg>',
+    badgeShield: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+    badgeSpark: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M18 16l.9 2.1L21 19l-2.1.9L18 22l-.9-2.1L15 19l2.1-.9z"/></svg>',
   };
   // One skin for both surfaces: same surfaces/border/radius/type as the app.
   const PV_DROP_CSS = `
@@ -2185,7 +2187,7 @@
   // Right-side overlay: position:fixed from the input's viewport rect, so it
   // can never be crushed by inline layout or clipped by a left border.
   // Repositioned on scroll/resize/DOM churn (see scan() tail).
-  const BADGE_SIZE = 28;
+  const BADGE_SIZE = 26;
   const badges = new Map(); // button -> field
   function badgeRightOffset(field) {
     // Native reveal/caps-lock icons, site eye-toggles, sibling manager
@@ -2222,10 +2224,16 @@
     b.title = withGen
       ? "Fill a saved login or generate a new password (PhantomVault)"
       : "Fill with PhantomVault";
-    b.textContent = "🛡️";
-    b.style.cssText = "position:fixed;z-index:2147483647;width:28px;height:28px;" +
-      "display:flex;align-items:center;justify-content:center;" +
-      "border:1px solid #8b7cf6;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:14px;padding:0;";
+    b.innerHTML = PV_ICO.badgeShield;
+    // Aegis in-field chip: mint block, dark shield. Same size/shape as the
+    // app's primary button so the badge reads as part of the panel, not as a
+    // third-party widget dropped on top of the field.
+    b.style.cssText = "position:fixed;z-index:2147483647;width:" + BADGE_SIZE + "px;height:" + BADGE_SIZE + "px;" +
+      "display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;" +
+      "border:1px solid #4edea3;border-radius:8px;background:#4edea3;color:#003824;" +
+      "box-shadow:0 1px 4px #0006;";
+    b.addEventListener("mouseenter", () => { b.style.background = "#6ff0b8"; });
+    b.addEventListener("mouseleave", () => { b.style.background = "#4edea3"; });
     // mousedown first: preventDefault keeps input focus (no blur flicker),
     // then click smart-fills (1 match) or toggles the dropdown (several).
     // pointerdown CAPTURE is the real modal-killer fix: overlay "click
@@ -2278,10 +2286,14 @@
     b.type = "button";
     b.dataset.pvKind = "dice";
     b.title = "Generate strong password (PhantomVault)";
-    b.textContent = "🎲";
-    b.style.cssText = "position:fixed;z-index:2147483647;width:24px;height:24px;" +
-      "display:flex;align-items:center;justify-content:center;" +
-      "border:1px solid #10b981;border-radius:8px;background:#0d131fee;cursor:pointer;font-size:13px;padding:0;";
+    b.innerHTML = PV_ICO.badgeSpark;
+    // Secondary tone so "generate" never reads as "fill".
+    b.style.cssText = "position:fixed;z-index:2147483647;width:" + BADGE_SIZE + "px;height:" + BADGE_SIZE + "px;" +
+      "display:flex;align-items:center;justify-content:center;padding:0;cursor:pointer;" +
+      "border:1px solid #4cd7f6;border-radius:8px;background:#4cd7f6;color:#003640;" +
+      "box-shadow:0 1px 4px #0006;";
+    b.addEventListener("mouseenter", () => { b.style.background = "#7ae6ff"; });
+    b.addEventListener("mouseleave", () => { b.style.background = "#4cd7f6"; });
     b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
