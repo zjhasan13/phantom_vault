@@ -288,6 +288,14 @@
   `6 words - 78 bits`, Copy put the value on the masked clipboard, no crash.
   Remaining: Pronounceable/PIN modes (no backend), session history.
 
+- **Migration wizard slice 1 (this batch):** the importer now opens with the
+  Aegis header, a 4-stage stepper (Choose file / Dry-run preview / Confirm
+  merge / Done) driven by the real `show_import_preview` + `import_kind`
+  state, a 25/75/100% stage bar, eight provider tiles, and a restyled
+  file-password card + dry-run confirm. No fake byte progress: the bar shows
+  the UI stage only. Verified by running the app: Import opens, step 1 is
+  active, provider tiles render, the app stays alive.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

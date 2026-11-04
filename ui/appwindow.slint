@@ -2025,16 +2025,71 @@ export component MainWindow inherits Window {
         }
         if root.active_nav == 2 : Rectangle {
             background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
-            VerticalLayout { padding: 22px; spacing: 14px; Text { text: root.ui_lang == "bn" ? "📥 ইউনিভার্সাল ভল্ট ইমপোর্টার" : "📥 Universal Vault Importer"; color: PhantomTheme.text; font-size: 18px; font-weight: 900; } Text { text: "Bitwarden • 1Password • KeePass • Chrome • Safari • Proton • CSV/XML — encrypted exports refused with guidance"; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+                Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
+                    HorizontalLayout { spacing: 10px; alignment: center;
+                        Text { text: "UNIVERSAL VAULT IMPORTER"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        MonoChip { label: "LOCAL ONLY"; tone: PhantomTheme.success; }
+                        MonoChip { label: "NO UPLOAD"; tone: PhantomTheme.secondary; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "Bitwarden · 1Password · KeePass · Chrome · Safari · Proton · CSV/XML"; color: PhantomTheme.text-dim; font-size: 10px; }
+                    }
+                    Text { text: "Encrypted exports need their own file password. Nothing leaves this machine; the importer decrypts locally and stages a dry-run before writing."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                }}
                 HorizontalLayout { spacing: 8px;
-                    LineEdit { placeholder-text: "File password - .pvx backup or .kdbx database"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
-                    AuraButton { label: "📁 Browse & Import ANY File"; primary: true; height: 42px; width: 260px; clicked => { root.pick_import_file(); } }
+                    Rectangle { horizontal-stretch: 1; height: 46px; border-radius: 9px; background: (!root.show_import_preview && root.import_kind != "success") ? #10b98122 : PhantomTheme.surface-low; border-width: 1px; border-color: (!root.show_import_preview && root.import_kind != "success") ? PhantomTheme.primary : PhantomTheme.border;
+                        HorizontalLayout { padding: 8px; spacing: 8px; alignment: center;
+                            Rectangle { width: 24px; height: 24px; border-radius: 12px; background: (!root.show_import_preview && root.import_kind != "success") || root.show_import_preview || root.import_kind == "success" ? PhantomTheme.primary : PhantomTheme.surface-high; Text { text: "1"; color: PhantomTheme.on-primary; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                            Text { text: "Choose file"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; height: 46px; border-radius: 9px; background: root.show_import_preview ? #10b98122 : PhantomTheme.surface-low; border-width: 1px; border-color: root.show_import_preview ? PhantomTheme.primary : PhantomTheme.border;
+                        HorizontalLayout { padding: 8px; spacing: 8px; alignment: center;
+                            Rectangle { width: 24px; height: 24px; border-radius: 12px; background: root.show_import_preview ? PhantomTheme.primary : PhantomTheme.surface-high; Text { text: "2"; color: root.show_import_preview ? PhantomTheme.on-primary : PhantomTheme.text-dim; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                            Text { text: "Dry-run preview"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; height: 46px; border-radius: 9px; background: (root.show_import_preview && root.import_kind != "success") ? #10b98122 : PhantomTheme.surface-low; border-width: 1px; border-color: (root.show_import_preview && root.import_kind != "success") ? PhantomTheme.primary : PhantomTheme.border;
+                        HorizontalLayout { padding: 8px; spacing: 8px; alignment: center;
+                            Rectangle { width: 24px; height: 24px; border-radius: 12px; background: (root.show_import_preview && root.import_kind != "success") ? PhantomTheme.primary : PhantomTheme.surface-high; Text { text: "3"; color: (root.show_import_preview && root.import_kind != "success") ? PhantomTheme.on-primary : PhantomTheme.text-dim; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                            Text { text: "Confirm merge"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
+                    Rectangle { horizontal-stretch: 1; height: 46px; border-radius: 9px; background: root.import_kind == "success" ? #10b98122 : PhantomTheme.surface-low; border-width: 1px; border-color: root.import_kind == "success" ? PhantomTheme.primary : PhantomTheme.border;
+                        HorizontalLayout { padding: 8px; spacing: 8px; alignment: center;
+                            Rectangle { width: 24px; height: 24px; border-radius: 12px; background: root.import_kind == "success" ? PhantomTheme.primary : PhantomTheme.surface-high; Text { text: "4"; color: root.import_kind == "success" ? PhantomTheme.on-primary : PhantomTheme.text-dim; font-size: 11px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                            Text { text: "Done"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
                 }
-                AuraButton { label: "🔍 Detect Browsers"; height: 42px; clicked => { root.detect_browsers(); } }
-                if root.browser_detect_status != "" : Rectangle { background: PhantomTheme.surface; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: PhantomTheme.secondary; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
-                Rectangle { background: PhantomTheme.surface-low; border-radius: 10px; min-height: 64px; VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? PhantomTheme.error : (root.import_kind == "success" ? PhantomTheme.success : PhantomTheme.secondary); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
+                Rectangle { height: 4px; background: PhantomTheme.surface-high; border-radius: 2px; clip: true;
+                    Rectangle { background: PhantomTheme.primary; border-radius: 2px; height: 4px; width: parent.width * (root.import_kind == "success" ? 1.0 : (root.show_import_preview ? 0.75 : 0.25)); }
+                }
+                FlexboxLayout { flex-wrap: wrap; spacing: 8px;
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "Bitwarden JSON"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "1Password 1PUX"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "KeePass .kdbx"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "Chrome CSV"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "Safari CSV"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "Proton CSV"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "CSV / XML"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                    Rectangle { width: 168px; height: 38px; border-radius: 8px; background: PhantomTheme.surface-lowest; border-width: 1px; border-color: PhantomTheme.border; Text { text: "Encrypted .pvx / .kdbx"; color: PhantomTheme.text-muted; font-size: 10px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                }
+                Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                    FieldLabel { text: "STEP 1 - CHOOSE A FILE"; }
+                    HorizontalLayout { spacing: 8px;
+                        LineEdit { placeholder-text: "File password - .pvx backup or .kdbx database"; input-type: password; height: 42px; horizontal-stretch: 1; text: root.import_backup_pass; edited(v) => { root.import_backup_pass = v; } }
+                        AuraButton { label: "Browse & Import ANY File"; primary: true; height: 42px; width: 240px; clicked => { root.pick_import_file(); } }
+                    }
+                    HorizontalLayout { spacing: 8px;
+                        AuraButton { label: "Detect Browsers"; height: 38px; width: 180px; clicked => { root.detect_browsers(); } }
+                        Text { text: "Plaintext CSV/JSON hits disk only when you choose it; encrypted exports need the file password above."; color: PhantomTheme.text-dim; font-size: 10px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+                    }
+                }}
+                if root.browser_detect_status != "" : Rectangle { background: PhantomTheme.surface; border-radius: 10px; min-height: 54px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: PhantomTheme.secondary; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
+                if root.import_status != "" : Rectangle { background: PhantomTheme.surface-low; border-radius: 10px; min-height: 54px; border-width: 1px; border-color: root.import_kind == "error" ? PhantomTheme.error : (root.import_kind == "success" ? PhantomTheme.success : PhantomTheme.border); VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? PhantomTheme.error : (root.import_kind == "success" ? PhantomTheme.success : PhantomTheme.secondary); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.show_import_preview : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.primary; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: root.ui_lang == "bn" ? "👁️ ড্রাই-রান প্রিভিউ" : "👁️ Dry-Run Preview"; color: PhantomTheme.text; font-size: 15px; font-weight: 900; horizontal-alignment: center; }
+                    FieldLabel { text: "STEP 3 - CONFIRM MERGE"; }
                     Text { text: root.import_preview_text; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                     ScrollView { height: 150px; VerticalLayout { spacing: 2px; for r in root.import_preview_rows : Text { text: r; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; } } }
                     HorizontalLayout { spacing: 6px; alignment: center;
@@ -2048,7 +2103,7 @@ export component MainWindow inherits Window {
                         AuraButton { label: root.ui_lang == "bn" ? "✕ বাতিল" : "✕ Cancel"; width: 130px; height: 38px; clicked => { root.cancel_import_file(); } }
                     }
                 }}
-            }
+            }}
         }
         if root.active_nav == 3 : Rectangle {
             background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
