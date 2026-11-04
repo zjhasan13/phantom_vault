@@ -296,6 +296,15 @@
   the UI stage only. Verified by running the app: Import opens, step 1 is
   active, provider tiles render, the app stays alive.
 
+- **Recovery Kit / Forensic & Duress / Secure Send pages (this batch):** three
+  new nav routes built from the existing backend, not the mockup promises.
+  Recovery Kit (5): 3-of-5 GF(2^8) Shamir, shard grid with an honest
+  "not generated this session" empty state, Export Printable PDF, two-shard
+  drill. Forensic & Duress (6): the HMAC-chained access log with refresh/export/
+  bridge filter, duress arm, honeytokens. Secure Send (7): create note+TTL,
+  link-code read+burn, offline packet/key, output card. Verified by running the
+  app: all three nav entries open their page, the app stays alive. Tests 556/4.
+
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
   token is DPAPI-sealed (`pv_api_token.dpapi`), expires in 24h and is revoked on

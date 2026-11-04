@@ -1696,6 +1696,9 @@ export component MainWindow inherits Window {
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: root.ui_lang == "bn" ? "সিকিউরিটি অডিট" : "Security Audit"; tapped => { root.show_health = true; } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e65f}"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.active_nav == 4; tapped => { root.active_nav = 4; root.regenerate(); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: "Recovery Kit"; active: root.active_nav == 5; tapped => { root.active_nav = 5; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: "Audit & Duress"; active: root.active_nav == 6; tapped => { root.active_nav = 6; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: "Secure Send"; active: root.active_nav == 7; tapped => { root.active_nav = 7; } }
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ইন্টিগ্রেশন ও সিস্টেম" : "INTEGRATION & SYSTEM"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: root.ui_lang == "bn" ? "এক্সটেনশন ব্রিজ" : "Extension Bridge"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
@@ -2631,6 +2634,146 @@ export component MainWindow inherits Window {
                         Rectangle { background: PhantomTheme.surface-low; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 6px;
                             Text { text: "LOCAL GENERATION"; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                             Text { text: "The value is produced on this machine and kept in RAM. Leaving the page or locking the vault clears it; Copy uses the masked clipboard with auto-clear."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                        }}
+                    }
+                }
+            }}
+        }
+        if root.active_nav == 5 : Rectangle {
+            background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
+            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+                Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
+                    HorizontalLayout { spacing: 10px; alignment: center;
+                        Text { text: "EMERGENCY RECOVERY KIT"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        MonoChip { label: "3-OF-5 SHAMIR"; tone: PhantomTheme.success; }
+                        MonoChip { label: "LOCAL ONLY"; tone: PhantomTheme.secondary; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "v" + root.app_version; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
+                    }
+                    Text { text: "GF(2^8) Shamir over the master secret. Any 3 of the 5 printed shards reconstruct it; the app does not keep the shards after the sheet is exported."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                }}
+                HorizontalLayout { spacing: 14px;
+                    VerticalLayout { horizontal-stretch: 1; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 8px;
+                            FieldLabel { text: "THRESHOLD"; }
+                            HorizontalLayout { Text { text: "Scheme"; color: PhantomTheme.text-dim; font-size: 11px; horizontal-stretch: 1; } Text { text: "GF(2^8) Shamir"; color: PhantomTheme.text; font-size: 11px; font-family: "JetBrains Mono"; } }
+                            HorizontalLayout { Text { text: "Threshold"; color: PhantomTheme.text-dim; font-size: 11px; horizontal-stretch: 1; } Text { text: "3 of 5"; color: PhantomTheme.text; font-size: 11px; font-family: "JetBrains Mono"; } }
+                            HorizontalLayout { Text { text: "Status"; color: PhantomTheme.text-dim; font-size: 11px; horizontal-stretch: 1; } Text { text: root.recovery_backed_up ? "EXPORTED" : "NOT EXPORTED"; color: root.recovery_backed_up ? PhantomTheme.success : PhantomTheme.warning; font-size: 11px; font-weight: 800; font-family: "JetBrains Mono"; } }
+                        }}
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 8px;
+                            FieldLabel { text: "SHARD GRID"; }
+                            Text { text: "Shards are held in RAM only after a sheet export; the printed PDF is the durable copy."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                            Rectangle { height: 30px; background: PhantomTheme.surface-lowest; border-radius: 6px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px; Text { text: "SHARD 01"; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } Text { text: root.shard_1 == "" ? "— not generated this session" : root.shard_1; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } } }
+                            Rectangle { height: 30px; background: PhantomTheme.surface-lowest; border-radius: 6px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px; Text { text: "SHARD 02"; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } Text { text: root.shard_2 == "" ? "— not generated this session" : root.shard_2; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } } }
+                            Rectangle { height: 30px; background: PhantomTheme.surface-lowest; border-radius: 6px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px; Text { text: "SHARD 03"; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } Text { text: root.shard_3 == "" ? "— not generated this session" : root.shard_3; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } } }
+                            Rectangle { height: 30px; background: PhantomTheme.surface-lowest; border-radius: 6px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px; Text { text: "SHARD 04"; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } Text { text: root.shard_4 == "" ? "— not generated this session" : root.shard_4; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } } }
+                            Rectangle { height: 30px; background: PhantomTheme.surface-lowest; border-radius: 6px; HorizontalLayout { padding-left: 10px; padding-right: 10px; spacing: 10px; Text { text: "SHARD 05"; color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; } Text { text: root.shard_5 == "" ? "— not generated this session" : root.shard_5; color: PhantomTheme.text-muted; font-size: 10px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } } }
+                        }}
+                    }
+                    VerticalLayout { width: 320px; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "ACTIONS"; }
+                            AuraButton { label: "Export Printable PDF"; primary: true; height: 38px; clicked => { root.export_recovery_sheet(); } }
+                            Text { text: "The sheet contains the five shards. Store it offline; anyone with 3 shards can reconstruct the vault."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                        }}
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 8px;
+                            FieldLabel { text: "RECOVERY DRILL"; }
+                            Text { text: "Paste any two shards to check they reconstruct a valid secret."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                            drill_a := LineEdit { placeholder-text: "Shard A"; height: 34px; }
+                            drill_b := LineEdit { placeholder-text: "Shard B"; height: 34px; }
+                            AuraButton { label: "Test two shards"; width: 160px; height: 34px; clicked => { root.verify_shard_drill(drill_a.text, drill_b.text); } }
+                        }}
+                    }
+                }
+            }}
+        }
+        if root.active_nav == 6 : Rectangle {
+            background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
+            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+                Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
+                    HorizontalLayout { spacing: 10px; alignment: center;
+                        Text { text: "FORENSIC & DURESS"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        MonoChip { label: "HASH-CHAINED"; tone: PhantomTheme.success; }
+                        MonoChip { label: "LOCAL ONLY"; tone: PhantomTheme.secondary; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "metadata only - never secrets"; color: PhantomTheme.text-dim; font-size: 10px; }
+                    }
+                    Text { text: "The access log is a tamper-evident HMAC chain. Duress opens a decoy vault; honeytokens fire when touched."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                }}
+                HorizontalLayout { spacing: 14px;
+                    VerticalLayout { horizontal-stretch: 1; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            HorizontalLayout { FieldLabel { text: "ACCESS LOG"; horizontal-stretch: 1; } MonoChip { label: "HMAC CHAIN"; tone: PhantomTheme.text-dim; } }
+                            ScrollView { height: 300px; Text { text: root.access_log_text == "" ? "Open the access log to load the latest events." : root.access_log_text; color: PhantomTheme.text-muted; font-size: 11px; font-family: "JetBrains Mono"; wrap: word-wrap; } }
+                            HorizontalLayout { spacing: 8px;
+                                AuraButton { label: "Refresh"; width: 110px; height: 34px; clicked => { root.view_access_log(); } }
+                                AuraButton { label: "Export Audit Log"; width: 170px; height: 34px; clicked => { root.admin_export_audit(); } }
+                                AuraButton { label: root.access_log_hide_bridge ? "Show bridge events" : "Hide bridge events"; width: 180px; height: 34px; clicked => { root.toggle_log_bridge(); } }
+                            }
+                        }}
+                    }
+                    VerticalLayout { width: 340px; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "DURESS & DECOY"; }
+                            Text { text: root.duress_armed ? "ARMED - the decoy password opens a harmless vault." : "Set a second password that opens a decoy vault."; color: root.duress_armed ? PhantomTheme.warning : PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                            LineEdit { placeholder-text: "Duress password"; input-type: password; height: 36px; text <=> root.duress_input; accepted(text) => { root.set_duress_password(text); } }
+                            AuraButton { label: "Arm Decoy"; width: 200px; height: 34px; clicked => { root.set_duress_password(root.duress_input); } }
+                        }}
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "HONEYTOKENS"; }
+                            Text { text: root.canary_count > 0 ? root.canary_count + " planted - touching one fires the alarm" : "No honeytokens planted yet."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
+                            AuraButton { label: "Plant Honeytoken"; width: 200px; height: 34px; clicked => { root.plant_canary(); } }
+                        }}
+                    }
+                }
+            }}
+        }
+        if root.active_nav == 7 : Rectangle {
+            background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
+            ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+                Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
+                    HorizontalLayout { spacing: 10px; alignment: center;
+                        Text { text: "SECURE SEND"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        MonoChip { label: "EXPIRING"; tone: PhantomTheme.success; }
+                        MonoChip { label: "ONE-VIEW"; tone: PhantomTheme.secondary; }
+                        MonoChip { label: "E2E"; tone: PhantomTheme.text-dim; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "key only in the link fragment"; color: PhantomTheme.text-dim; font-size: 10px; }
+                    }
+                    Text { text: "The note is sealed locally; the relay sees ciphertext only. LAN TTL and one-view are enforced by this app; gist expiry is best-effort."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                }}
+                HorizontalLayout { spacing: 14px;
+                    VerticalLayout { horizontal-stretch: 1; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "CREATE"; }
+                            TextEdit { placeholder-text: "Secret note to send (16KB max)"; text <=> root.send_note_input; height: 80px; wrap: word-wrap; }
+                            HorizontalLayout { spacing: 8px;
+                                LineEdit { placeholder-text: "TTL minutes (5..43200)"; text <=> root.send_ttl_input; height: 36px; horizontal-stretch: 1; }
+                                AuraButton { label: "Seal + Publish"; primary: true; width: 170px; height: 36px; clicked => { root.send_create(root.send_note_input, root.send_ttl_input); } }
+                            }
+                        }}
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
+                            FieldLabel { text: "RECEIVE"; }
+                            HorizontalLayout { spacing: 8px;
+                                LineEdit { placeholder-text: "Link-code (base64 key, to read)"; text <=> root.send_code_input; height: 36px; horizontal-stretch: 1; }
+                                AuraButton { label: "Read + Burn"; width: 150px; height: 36px; clicked => { root.send_open(root.send_code_input); } }
+                            }
+                            Text { text: "Offline paste: packet and key"; color: PhantomTheme.text-dim; font-size: 10px; }
+                            LineEdit { placeholder-text: "Packet (base64, offline paste)"; text <=> root.send_packet_input; height: 36px; }
+                            HorizontalLayout { spacing: 8px;
+                                LineEdit { placeholder-text: "Key (base64, offline paste)"; text <=> root.send_key_input; height: 36px; horizontal-stretch: 1; }
+                                AuraButton { label: "Read Pasted"; width: 150px; height: 36px; clicked => { root.send_open_pasted(root.send_packet_input, root.send_key_input); } }
+                            }
+                        }}
+                    }
+                    VerticalLayout { width: 340px; spacing: 14px;
+                        Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 8px;
+                            FieldLabel { text: "OUTPUT"; }
+                            Text { text: root.send_output == "" ? "No note sealed or opened yet." : root.send_output; color: root.send_output == "" ? PhantomTheme.text-dim : PhantomTheme.secondary; font-size: 11px; font-family: "JetBrains Mono"; wrap: word-wrap; }
+                        }}
+                        Rectangle { background: PhantomTheme.surface-low; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 14px; spacing: 6px;
+                            Text { text: "ZERO-KNOWLEDGE RELAY"; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
+                            Text { text: "The relay stores the sealed packet, never the key. Reading deletes the packet on LAN; a gist cannot guarantee one-view."; color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
                         }}
                     }
                 }
