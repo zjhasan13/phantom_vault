@@ -838,15 +838,15 @@ The 13 folders are the source of truth. `Surface` matters: **Slint** screens are
 
 | # | Expected folder (`code.html`) | Surface | Current Slint region | Conversion | Data/model gaps | Effort | Priority |
 |---|---|---|---|---|---|---|---|
-| 1 | `all_vault_items` | **Slint** | Vault 3-col `ui/appwindow.slint:2482+` | Aegis shipped: search-first command bar, type strip (All/Favorites/Recent/Login/Card/Note/SSH), list header with select-all + sort, 76px rows (age / 2FA tag / strength), hover checkboxes + floating bulk bar, detail header + proof strip + two-column username/password + TOTP/passkey + storage/revision/tags + audit | user tags live in `Vault.item_tags`; strength bits shared with the generator | **M** (5-8 d) | **P0 (shipped)** |
+| 1 | `all_vault_items` | **Slint** | Vault 3-col `ui/appwindow.slint:2584+` | Aegis shipped: search-first command bar, type strip (All/Favorites/Recent/Login/Card/Note/SSH), list header with select-all + sort, 76px rows (age / 2FA tag / strength), hover checkboxes + floating bulk bar, detail header + proof strip + two-column username/password + TOTP/passkey + storage/revision/tags + audit | user tags live in `Vault.item_tags`; strength bits shared with the generator | **M** (5-8 d) | **P0 (shipped)** |
 | 2 | `phantom_vault_vault_browser_2.0` | **Slint** | same vault shell/detail | Merge with #1 (same layout, alternate density); detail audit tiles, target URL card, decryption trail | same as #1 + audit-event read API + `expires_at` | **M** (in #1) | **P0** |
-| 3 | `phantom_vault_2fa_hub_2.0` | **Slint** | 2FA hub `:1729+` | Aegis slice 2: search toolbar (Show NEXT/Export/Add), 4 real KPI cards (keys/RFC 6238/local clock/ephemeral), filter chips (All/Starred/TOTP/HOTP/Steam), Vault order / A-Z / Z-A sort, 192px cards with issuer/kind/star, honest `30s · SHA-1 · 6 digits` params, 26px code + ring + Copy, real status footer. Add/Export are centered 660px / 480px sheets; Export opens instantly with a busy/empty/error state and Page X/Y | Environment tags / criticality, drag reorder | **M** (4-6 d) | **P1 (slice 2 shipped)** |
-| 4 | `settings_dev_center` | **Slint** | Settings `ui/appwindow.slint:2047+` | Slice 1 shipped: Aegis header (`SETTINGS & DEV CENTER`, LOCAL VAULT / DPAPI BOUND chips, version) and a 6-tab filter - Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API. Cards are split and each tab renders only its own section; all existing controls/callbacks unchanged | 2-column card grid, per-section polish, honest labels for the anti-photography claims | **L** (6-9 d) | **P1 (slice 1 shipped)** |
+| 3 | `phantom_vault_2fa_hub_2.0` | **Slint** | 2FA hub `:1738+` | Aegis slice 2: search toolbar (Show NEXT/Export/Add), 4 real KPI cards (keys/RFC 6238/local clock/ephemeral), filter chips (All/Starred/TOTP/HOTP/Steam), Vault order / A-Z / Z-A sort, 192px cards with issuer/kind/star, honest `30s · SHA-1 · 6 digits` params, 26px code + ring + Copy, real status footer. Add/Export are centered 660px / 480px sheets; Export opens instantly with a busy/empty/error state and Page X/Y | Environment tags / criticality, drag reorder | **M** (4-6 d) | **P1 (slice 2 shipped)** |
+| 4 | `settings_dev_center` | **Slint** | Settings `ui/appwindow.slint:2053+` | Slice 1 shipped: Aegis header (`SETTINGS & DEV CENTER`, LOCAL VAULT / DPAPI BOUND chips, version) and a 6-tab filter - Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API. Cards are split and each tab renders only its own section; all existing controls/callbacks unchanged | 2-column card grid, per-section polish, honest labels for the anti-photography claims | **L** (6-9 d) | **P1 (slice 1 shipped)** |
 | 5 | `password_passphrase_generator` | **Slint** | Generator Studio `ui/appwindow.slint:2481+` (nav 4); modal panel stays for the vault button | Slice 1 shipped: full-page studio - honest OS CSPRNG strip (`rand_core::OsRng`, no hardware-TRNG claim), masked output with HIDE/REGENERATE, entropy bar + policy estimate (no crack-time/quantum claim), Copy/Clear, Complex + Diceware (EN/BN) with length/sets/word count, and a real ENTROPY SPEC card (OsRng / RAM only / no network / cleared on leave) | Pronounceable + PIN modes (no backend), session history, per-card polish | **M** (3-4 d) | **P1 (slice 1 shipped)** |
-| 6 | `migration_wizard_vault_importer` | **Slint** | Import `:1528-1551` | 4-step stepper; manifest columns; progress bar; provider tiles | import progress events; source password for encrypted exports is a **feature gap** (REJECT until supported) | **M** (3–5 d) | **P2** |
-| 7 | `crypto_envelope_secure_send` | **Slint** | Secure Send card `:1673-1688` | Envelope studio; TTL/packet/read-burn panels; Shamir split narrative | envelope studio + Shamir split of packet are new features, not restyle | **L** (5–7 d) | **P2** |
-| 8 | `emergency_kit_shamir_recovery` | **Slint** | Recovery shards `:2620` | Shard grid, kit card, drill status, optional shard QR | QR-for-shards absent; grid is UI-only | **M** (3–5 d) | **P2** |
-| 9 | `forensic_audit_log_duress_mode` | **Slint** | Access log modal `:2548` + duress settings | Page/timeline view, filters, export, duress/decoy panels | access-log read API/timeline; decoy content generator absent (A18 has decoy) | **M** (4–6 d) | **P2** |
+| 6 | `migration_wizard_vault_importer` | **Slint** | Import `:2026+` | 4-step stepper; manifest columns; progress bar; provider tiles | import progress events; source password for encrypted exports is a **feature gap** (REJECT until supported) | **M** (3–5 d) | **P2** |
+| 7 | `crypto_envelope_secure_send` | **Slint** | Secure Send card `:2282+` | Envelope studio; TTL/packet/read-burn panels; Shamir split narrative | envelope studio + Shamir split of packet are new features, not restyle | **L** (5–7 d) | **P2** |
+| 8 | `emergency_kit_shamir_recovery` | **Slint** | Recovery shards `:1400+` | Shard grid, kit card, drill status, optional shard QR | QR-for-shards absent; grid is UI-only | **M** (3–5 d) | **P2** |
+| 9 | `forensic_audit_log_duress_mode` | **Slint** | Access log modal `:3431` + duress settings | Page/timeline view, filters, export, duress/decoy panels | access-log read API/timeline; decoy content generator absent (A18 has decoy) | **M** (4–6 d) | **P2** |
 | 10 | `phantom_vault_browser_extension_hud_2.0` | **Extension** | `popup.html` | Restyle popup tabs/KPI/footer | folder/type/TOTP/defer options; not Slint | **M** (3–4 d) | P1 ext |
 | 11 | `phantom_vault_browser_extension_hud_3.0_ultra` | **Extension** | same popup | Second responsive layout sharing components | same | **M** (2–3 d) | P2 ext |
 | 12 | `phantom_vault_save_password_prompt` | **Extension** | `content.js` save toast | Rich prompt: folder/type/TOTP/defer/never/edit-first | new fields/defer state; not Slint | **M** (2–3 d) | P1 ext |
@@ -859,10 +859,10 @@ reference shots, not screens; excluded.
 
 | Design element | Model today | Decision |
 |---|---|---|
-| Row strength `96%` / `35%` | only detail strength | derive in `vault_to_items` and add to row model |
+| Row strength `96%` / `35%` | derived into `CredentialView.strength` (`vault_to_items`) | **done** |
 | `Used 12m ago` | no `last_used` | add or label “changed … ago” from `last_changed` |
 | `Expiring in 4d` | no `expires_at` | add or omit the badge |
-| Tags `PROD/INFRA/CRITICAL` | no `tags`/criticality | add `tags: Vec<String>` or drop the chips |
+| Tags `PROD/INFRA/CRITICAL` | `Vault.item_tags` (user-editable, merged with derived tags) | **done** |
 | `Added …` | no `created_at` on credentials | add or omit |
 | Batch Tag / Export selected | no tag model / selection export | add tag action; export-selected is a handler |
 | Pwned verification tile | password HIBP check exists | surface real result; no email lookup (A28) |
@@ -872,6 +872,25 @@ reference shots, not screens; excluded.
 | `0ms local engine` | no latency metric | show version/heartbeat or omit |
 | Decryption audit trail | access log exists | add read API/timeline for the detail panel |
 
+### 30.3b Audit 2026-11-04 - what actually ships
+
+| # | Screen | Status | Evidence / remaining gap |
+|---|---|---|---|
+| 1 | All Items | **shipped** | vault route `:2584+`; command bar, type strip, select-all/sort, 76px rows, tags (`item_tags`), derived strength, bulk bar, detail proof strip |
+| 2 | Vault Browser 2.0 | **merged into #1** | detail has `d_url` / `d_urls_extra` / `d_audit_text`; no separate audit tiles or decryption timeline |
+| 3 | 2FA Hub | **shipped (slice 2)** | `:1738+`; chips, sort, params, centered Add/Export sheets |
+| 4 | Settings | **shipped (slice 1)** | `:2053+`; Aegis header + 6-tab filter, all existing cards |
+| 5 | Generator | **shipped (slice 1)** | `:2481+` (nav 4); full page, Complex + Diceware, honest RNG/entropy |
+| 6 | Migration wizard | **partial** | importer `:2026+` works (browse/detect/preview); no 4-step stepper, progress bar or provider tiles |
+| 7 | Secure Send | **partial** | Settings card `:2282+`; no standalone envelope-studio page |
+| 8 | Emergency Kit | **partial** | lock recovery-shards tab `:1400+`, Paranoia card; no kit page or shard QR |
+| 9 | Forensic / Duress | **partial** | access-log modal `:3431`, duress/honeytoken settings; no timeline page |
+| 10-11 | Extension HUD 2.0 / 3.0 | **not started** | `popup.html` still uses the old emoji style and does not link `design-tokens.css` |
+| 12 | Save prompt | **partial** | `content.js` has the save toast + Never list; no folder/type/TOTP/defer/edit-first prompt |
+| 13 | In-page 2FA dropdown | **partial** | 2FA ambiguity picker exists (`content.js:423`); old styling, not the mockup layout |
+
+Honest boundary: mockup claims that the app cannot back (AES-256-GCM, TPM/SE,
+YubiKey, BLAKE3, quantum-immune, 0ms) remain **REJECT** and are never rendered.
 ### 30.4 Staged conversion plan
 
 | Phase | Scope | Depends on | Estimate |
