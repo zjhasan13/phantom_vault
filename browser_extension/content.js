@@ -2697,6 +2697,66 @@
     if (/[^A-Za-z0-9]/.test(pw)) pool += 33;
     return pool ? Math.round(pw.length * Math.log2(pool)) : 0;
   }
+  // ---------- pending save that survives navigation -------------------
+  // A login POST usually reloads the page (or lands on a dashboard), which used
+  // to throw the prompt away with the old document. The capture is kept in
+  // chrome.storage.session - memory only, gone when the browser closes - keyed
+  // by base domain, so the next page on the same site can offer it again.
+  const PV_SAVE_TTL_MS = 10 * 60 * 1000;
+  const PV_SAVE_MAX_SHOWS = 3;
+  function pvSaveKey() { return "pvSavePending:" + pageBase(); }
+  async function pvSavePendingSet(payload) {
+    try {
+      await chrome.storage.session.set({ [pvSaveKey()]: { ...payload, at: Date.now(), shows: 1 } });
+    } catch (_) {}
+  }
+  async function pvSavePendingGet() {
+    try {
+      const k = pvSaveKey();
+      const s = await chrome.storage.session.get({ [k]: null });
+      const p = s && s[k];
+      if (!p || !p.password || !p.username) return null;
+      if (Date.now() - (p.at || 0) > PV_SAVE_TTL_MS || (p.shows || 0) >= PV_SAVE_MAX_SHOWS) {
+        await chrome.storage.session.remove(k);
+        return null;
+      }
+      return p;
+    } catch (_) { return null; }
+  }
+  async function pvSavePendingBump(p) {
+    try {
+      const k = pvSaveKey();
+      await chrome.storage.session.set({ [k]: { ...p, shows: (p.shows || 1) + 1 } });
+    } catch (_) {}
+  }
+  async function pvSavePendingClear() {
+    try { await chrome.storage.session.remove(pvSaveKey()); } catch (_) {}
+  }
+  // One attempt per document, after the page settles, so a reload or the page
+  // after a login still shows the card. Explicit dismiss/save clears it.
+  async function restorePendingSave() {
+    if (!location.host || isBlocked() || phishingRefuse() || neverSaveHit()) return;
+    if (document.getElementById("__pv_saver")) return;
+    const p = await pvSavePendingGet();
+    if (!p || document.getElementById("__pv_saver")) return;
+    credentialToast({
+      accent: p.update ? "#fbbf24" : "#4edea3",
+      accentInk: p.update ? "#080c14" : "#003824",
+      title: p.update ? "Update saved login?" : "Save this login?",
+      sub: p.update
+        ? `A new password was submitted for ${pageBase()}.`
+        : `Captured on ${pageBase()} - review before saving.`,
+      saveLabel: p.update ? "Update" : "Save",
+      busyLabel: p.update ? "Updating…" : "Saving…",
+      allowNever: !p.update,
+      username: p.username,
+      password: p.password,
+      update: !!p.update,
+      restored: true,
+    });
+    await pvSavePendingBump(p);
+  }
+
   function credentialToast(opts) {
     if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
@@ -2706,16 +2766,30 @@
       "background:#0b1326;border:1px solid " + opts.accent + ";border-radius:14px;padding:14px 16px;" +
       "font:13px 'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 16px 48px #000e;max-width:min(92vw,380px);";
     const head = document.createElement("div");
-    head.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;";
+    head.style.cssText = "display:flex;align-items:center;gap:9px;margin-bottom:8px;";
+    const mark = document.createElement("div");
+    mark.style.cssText = "flex:none;width:30px;height:30px;border-radius:9px;overflow:hidden;" +
+      "background:#222a3d;border:1px solid #3c4a42;color:#4edea3;display:flex;align-items:center;" +
+      "justify-content:center;font:800 12px 'JetBrains Mono',Consolas,monospace;text-transform:uppercase;";
+    if (pvPageIcon) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.style.cssText = "width:100%;height:100%;object-fit:cover;";
+      img.src = pvPageIcon;
+      img.addEventListener("error", () => { img.remove(); mark.textContent = (pageBase() || "?").charAt(0); }, { once: true });
+      mark.appendChild(img);
+    } else {
+      mark.textContent = (pageBase() || "?").charAt(0);
+    }
     const t = document.createElement("div");
-    t.style.cssText = "font-weight:800;font-size:14px;flex:1;";
+    t.style.cssText = "font-weight:800;font-size:14px;flex:1;min-width:0;";
     t.textContent = opts.title;
     const chip = document.createElement("span");
-    chip.textContent = "PROMPT";
-    chip.style.cssText = "font:700 9px ui-monospace,monospace;letter-spacing:.6px;padding:2px 6px;border-radius:5px;background:#4edea31f;color:#4edea3;border:1px solid #4edea355;";
-    head.append(t, chip);
+    chip.textContent = "NATIVE BRIDGE";
+    chip.style.cssText = "font:700 9px 'JetBrains Mono',monospace;letter-spacing:.6px;padding:3px 6px;border-radius:5px;background:#4edea31f;color:#4edea3;border:1px solid #4edea355;white-space:nowrap;";
+    head.append(mark, t, chip);
     const sub = document.createElement("div");
-    sub.style.cssText = "color:#bbcabf;font-size:11px;margin-bottom:10px;";
+    sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = opts.sub;
     // Title/subtitle stay in light DOM (non-secret, and the page already knows
     // the site). Everything that carries or mutates the secret hides.
@@ -2741,16 +2815,6 @@
     const pass = toastField("password", opts.password, "Password");
     const meta = document.createElement("div");
     meta.className = "meta";
-    const scope = document.createElement("div");
-    scope.className = "scope";
-    const scLabel = document.createElement("span");
-    scLabel.textContent = "HOST SCOPE";
-    const scVal = document.createElement("b");
-    scVal.textContent = pageBase() || "\u2014";
-    const scLocal = document.createElement("span");
-    scLocal.textContent = "LOCAL";
-    scLocal.style.color = "#4edea3";
-    scope.append(scLabel, scVal, scLocal);
     const err = document.createElement("div");
     err.style.cssText = "color:#ffb4ab;font-size:11px;margin-bottom:8px;display:none;";
     const row = document.createElement("div");
@@ -2771,21 +2835,32 @@
       row.append(never);
       never.addEventListener("click", async () => {
         try { await markNeverSave(); } catch (_) {}
-        dismiss(true);
+        dismiss(true, true);
         toast(`Save prompt disabled for ${pageBase()}. Re-enable in Settings.`);
       });
     }
     const foot = document.createElement("div");
     foot.className = "foot";
-    foot.textContent = "XChaCha20-Poly1305 \u00b7 native bridge \u00b7 no network";
-    root.append(style, lblU, user, lblP, pass, meta, scope, err, row, foot);
+    foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
+    root.append(style, lblU, user, lblP, pass, meta, err, row, foot);
     document.documentElement.append(box);
+    // Keep the capture for the next page on this site (unless this card IS the
+    // restore). Explicit actions below clear it again.
+    if (!opts.restored) {
+      pvSavePendingSet({
+        username: opts.username,
+        password: opts.password,
+        update: !!opts.update,
+        allowNever: !!opts.allowNever,
+      });
+    }
 
     const updateMeta = () => {
       const p = pass.value;
+      const where = pageBase() || "this site";
       meta.textContent = p
-        ? p.length + " chars \u00b7 " + pvEntropyBits(p) + " bits (estimate)"
-        : "Entropy estimate appears as you type";
+        ? where + " \u00b7 " + p.length + " chars \u00b7 " + pvEntropyBits(p) + " bits (estimate)"
+        : where + " \u00b7 LOCAL only";
     };
     pass.addEventListener("input", updateMeta);
     updateMeta();
@@ -2796,7 +2871,7 @@
       timer = setTimeout(() => dismiss(false), 30000);
     }
     const fieldFocused = () => !!shadow && (root.activeElement === user || root.activeElement === pass);
-    function dismiss(force) {
+    function dismiss(force, clearPending) {
       // A9: never eat an edit that is still being typed - re-arm instead.
       if (!force && fieldFocused()) { arm(); return; }
       if (timer) clearTimeout(timer);
@@ -2804,17 +2879,18 @@
       user.value = "";
       pass.value = "";
       box.remove();
+      if (clearPending) pvSavePendingClear();
     }
     function esc(e) {
       if (e.key !== "Escape") return;
       // Escape inside a field means "let me keep editing", not "discard".
       if (fieldFocused()) return;
       e.stopPropagation();
-      dismiss(true);
+      dismiss(true, true);
     }
     document.addEventListener("keydown", esc, true);
     for (const el of [user, pass]) el.addEventListener("input", arm);
-    no.addEventListener("click", () => dismiss(true));
+    no.addEventListener("click", () => dismiss(true, true));
     arm();
     // Focus the action, not the secret: typing only starts once the user
     // deliberately clicks a field.
@@ -2849,7 +2925,7 @@
           toast(res.updated ? "Login updated in PhantomVault." : "Login saved to PhantomVault.");
           pvCarryClear();
           pvExistingCache = null; // next prompt re-reads the fresh vault
-          dismiss(true);
+          dismiss(true, true);
         } else {
           save.textContent = "Failed: " + ((res && res.error) || "unknown");
         }
@@ -2862,10 +2938,10 @@
     credentialToast({
       accent: "#4edea3",
       accentInk: "#003824",
-      title: "🛡️ Save to PhantomVault?",
-      sub: `New login for ${pageBase()} — correct anything before saving.`,
-      saveLabel: "💾 Save",
-      busyLabel: "⏳ Saving…",
+      title: "Save this login?",
+      sub: `Captured on ${pageBase()} - correct anything before saving.`,
+      saveLabel: "Save",
+      busyLabel: "Saving…",
       allowNever: true,
       username, password,
     });
@@ -2878,11 +2954,12 @@
     credentialToast({
       accent: "#fbbf24",
       accentInk: "#080c14",
-      title: "🔄 Update existing?",
-      sub: `New password submitted for ${pageBase()} — edit, then update. The old value is kept in history.`,
-      saveLabel: "🔄 Update",
-      busyLabel: "⏳ Updating…",
+      title: "Update saved login?",
+      sub: `A new password was submitted for ${pageBase()} - the old value stays in history.`,
+      saveLabel: "Update",
+      busyLabel: "Updating…",
       allowNever: false,
+      update: true,
       username, password,
     });
   }
@@ -3701,6 +3778,9 @@
   scanForms();
   console.log("PV content boot:", location.host || "(no host)");
   try { harvestFavicon(); } catch (_) {}
+  // The login page after a POST is a NEW document: re-offer a capture that is
+  // still pending for this site (memory-only, 10 min, max 3 shows).
+  setTimeout(() => { restorePendingSave().catch(() => {}); }, 1200);
   // E6: ONE debounced observer replaces two synchronous document-wide ones.
   // Framework re-render storms now coalesce into a single scan per 120 ms
   // instead of running both passes for every mutation batch. The immediate

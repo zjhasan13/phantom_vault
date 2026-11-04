@@ -29,7 +29,7 @@ test("login form (username+password) offers a save banner", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner, "save banner should appear for a new login");
-  assert.match(banner.textContent, /Save to PhantomVault/);
+  assert.match(banner.textContent, /Save this login/);
 });
 
 test("G1: signup form with only new-password still offers save (was skipped)", async (t) => {
@@ -130,6 +130,48 @@ test("page hint ranks the displayed account first (Google-style password step)",
   assert.ok(rows.length >= 2, "hint must order rows, never drop them");
   assert.match(rows[0].textContent, /right@example\.com/,
     "the account the page displays must be first");
+});
+
+test("save prompt keeps a pending capture for the next page", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login");
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const pending = store.session["pvSavePending:example.com"];
+  assert.ok(pending, "pending capture must be stored in session memory");
+  assert.equal(pending.username, "alice");
+  assert.equal(pending.password, "pw123");
+});
+
+test("pending capture re-opens the save prompt after a reload", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/home");
+  // Simulate the POST landing on a new document: the previous document's
+  // capture is still in session storage.
+  store.session["pvSavePending:example.com"] = {
+    username: "alice", password: "pw123", at: Date.now(), shows: 1,
+  };
+  await flush(1500);
+  assert.ok(saver(window), "the prompt must come back on the next page");
+});
+
+test("Not Now clears the pending capture (no prompt on the next page)", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/home");
+  store.session["pvSavePending:example.com"] = {
+    username: "alice", password: "pw123", at: Date.now(), shows: 1,
+  };
+  await flush(1500);
+  const notNow = saverButton(window, /Not Now/);
+  assert.ok(notNow, "restored prompt must offer Not Now");
+  notNow.click();
+  await flush(50);
+  assert.equal(store.session["pvSavePending:example.com"], undefined,
+    "explicit dismiss must clear the pending capture");
 });
 
 test("identity suggestions reach the dropdown (url-less rows survive)", async (t) => {

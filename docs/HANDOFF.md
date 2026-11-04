@@ -328,6 +328,31 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt survives navigation (this batch):** a login POST replaces the
+  document, so the old prompt vanished with it. The capture is now kept in
+  `chrome.storage.session` (memory only, cleared when the browser closes) under
+  `pvSavePending:<base domain>` with a 10-minute TTL and a 3-show cap. The next
+  page on that site re-opens the card 1.2 s after boot; Save / Not Now / Never /
+  Esc clear the record, the 30 s auto-dismiss only hides it so a reload can
+  offer it again. The card itself was reskinned to the panel language (site
+  favicon, NATIVE BRIDGE chip, one meta line `domain · chars · bits`).
+  Tests: pending is written on submit, restored on the next document, and
+  cleared by Not Now (npm 141/141).
+
+- **Offline equivalent-domain clusters (this batch):** the Google/Microsoft/
+  Meta/Apple/Amazon/Sony/Yahoo/Proton families were hand-copied in two places
+  (`browser_extension/domain.js:63` and `native_host.rs:2590`), so one edit
+  could silently break the other. `data/equivalent_domains.json` is now the
+  canonical list; `tests/js/equiv.test.mjs` compares it to the JS literal and a
+  Rust test does the same against the embedded copy (`include_str!`), so drift
+  fails `npm test` / `cargo test`. No server lookup: the list ships with the
+  build, which is enough because it changes a few times a year.
+  Also tightened `PV_QUERY` URL matching: `url_matches_variant` compares hosts
+  on label boundaries instead of `url.contains(variant)`, so
+  `notgoogle.com` and `google.com.evil.tld` no longer appear in a `google.com`
+  query, while real subdomains and the ccTLD clusters (`google.co.*`) still do.
+  Title/username matching stays fuzzy on purpose (that is a search box).
+
 - **In-page dropdown skin (this batch):** the login dropdown and the 2FA picker
   now share one Aegis skin - 12px panel on `#0b1326`, search row, `DOMAIN` +
   account-count meta, 30px avatar tiles, icon-only status (shield-check =
