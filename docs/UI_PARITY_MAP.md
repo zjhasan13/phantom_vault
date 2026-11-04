@@ -877,17 +877,17 @@ reference shots, not screens; excluded.
 | # | Screen | Status | Evidence / remaining gap |
 |---|---|---|---|
 | 1 | All Items | **shipped** | vault route `:2584+`; command bar, type strip, select-all/sort, 76px rows, tags (`item_tags`), derived strength, bulk bar, detail proof strip |
-| 2 | Vault Browser 2.0 | **merged into #1** | detail has `d_url` / `d_urls_extra` / `d_audit_text`; no separate audit tiles or decryption timeline |
+| 2 | Vault Browser 2.0 | **merged into #1** | detail proof strip + three real tiles (PWNED / AGE / ENCRYPTION) + `d_audit_text` | per-item decryption/audit timeline |
 | 3 | 2FA Hub | **shipped (slice 2)** | `:1738+`; chips, sort, params, centered Add/Export sheets |
 | 4 | Settings | **shipped (slice 1)** | `:2053+`; Aegis header + 6-tab filter, all existing cards |
 | 5 | Generator | **shipped (slice 1)** | `:2481+` (nav 4); full page, Complex + Diceware, honest RNG/entropy |
-| 6 | Migration wizard | **partial** | importer `:2026+` works (browse/detect/preview); no 4-step stepper, progress bar or provider tiles |
-| 7 | Secure Send | **partial** | Settings card `:2282+`; no standalone envelope-studio page |
-| 8 | Emergency Kit | **partial** | lock recovery-shards tab `:1400+`, Paranoia card; no kit page or shard QR |
-| 9 | Forensic / Duress | **partial** | access-log modal `:3431`, duress/honeytoken settings; no timeline page |
+| 6 | Migration wizard | **shipped (slice 1)** | `:2026+` Aegis header, 4-stage stepper + stage bar, 8 provider tiles, restyled file/preview cards | byte-level progress events |
+| 7 | Secure Send | **shipped (slice 1)** | nav 7 page: create note+TTL, link-code read+burn, offline packet/key, output | envelope/Shamir studio extras |
+| 8 | Emergency Kit | **shipped (slice 1)** | nav 5 page: 3-of-5 shamir, shard grid, PDF export, two-shard drill | shard QR (no backend), trustee metadata |
+| 9 | Forensic / Duress | **shipped (slice 1)** | nav 6 page: HMAC access log + export/filter, duress, honeytokens | parsed timeline/filters |
 | 10-11 | Extension HUD 2.0 / 3.0 | **not started** | `popup.html` still uses the old emoji style and does not link `design-tokens.css` |
-| 12 | Save prompt | **partial** | `content.js` has the save toast + Never list; no folder/type/TOTP/defer/edit-first prompt |
-| 13 | In-page 2FA dropdown | **partial** | 2FA ambiguity picker exists (`content.js:423`); old styling, not the mockup layout |
+| 12 | Save prompt | **shipped (restyled)** | `content.js:2446` Aegis card, labels, live entropy, host scope, Save/Not Now/Never | folder/type/TOTP-defer (bridge fields absent) |
+| 13 | In-page 2FA dropdown | **restyled** | `content.js:423` Aegis palette on the real multi-account picker | keyboard nav/mockup polish |
 
 Honest boundary: mockup claims that the app cannot back (AES-256-GCM, TPM/SE,
 YubiKey, BLAKE3, quantum-immune, 0ms) remain **REJECT** and are never rendered.
