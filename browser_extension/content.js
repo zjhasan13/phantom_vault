@@ -509,14 +509,16 @@
     const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     const style = document.createElement("style");
     style.textContent = `
-      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:92vw;background:#0b1326;color:#dae2fd;
+      .wrap{position:fixed;z-index:2147483647;min-width:min(94vw,320px);max-width:92vw;background:#0b1326;color:#dae2fd;
         border:1px solid #3c4a42;border-radius:12px;box-shadow:0 12px 40px #000d;
         font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
-      .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
+      .hd{display:flex;align-items:center;gap:8px;padding:10px 12px;font:700 10px ui-monospace,monospace;letter-spacing:.5px;text-transform:uppercase;
         color:#bbcabf;background:#131b2e;border-bottom:1px solid #3c4a42}
-      .row{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;
-        border-bottom:1px solid #222a3d}
-      .row:last-child{border-bottom:0}
+      .hd .site{margin-left:auto;font:700 9px ui-monospace,monospace;letter-spacing:.3px;text-transform:none;color:#4edea3;background:#4edea31a;border:1px solid #4edea355;border-radius:5px;padding:2px 6px}
+      .pickfoot{padding:8px 12px;font:9px ui-monospace,monospace;color:#86948a;border-top:1px solid #3c4a42}
+        color:#bbcabf;background:#131b2e;border-bottom:1px solid #3c4a42}
+      .row{display:flex;align-items:center;gap:9px;padding:11px 12px;margin:6px 8px;cursor:pointer;border:1px solid #3c4a42;border-radius:9px;background:#171f33}
+      .row:last-child{margin-bottom:8px}
       .row:hover{background:#2d3449}
       .brand{flex:none;width:22px;height:22px;border-radius:6px;object-fit:cover;
         background:#222a3d;font:700 11px system-ui;color:#dae2fd;display:flex;
@@ -546,7 +548,8 @@
     root.appendChild(style);
     const wrap = document.createElement("div");
     wrap.className = "wrap";
-    wrap.innerHTML = '<div class="hd">Which 2FA account? / যে 2FA account?</div>';
+    wrap.innerHTML = '<div class="hd"><span class="hdt">Which 2FA account?</span><span class="site"></span></div>';
+    const siteEl = wrap.querySelector(".site"); if (siteEl) siteEl.textContent = pageBase();
     const tagEl = (cls, text) => {
       const s = document.createElement("span");
       s.className = "tag " + cls;
@@ -736,6 +739,10 @@
       w.textContent = `সব code-ই মেয়াদ শেষ — ${wait != null ? wait + "s পরে" : "কিছুক্ষণ পরে"} আবার চেপুন।`;
       wrap.appendChild(w);
     }
+    const pickFoot = document.createElement("div");
+    pickFoot.className = "pickfoot";
+    pickFoot.textContent = "Enter / click to fill - Esc to close";
+    wrap.appendChild(pickFoot);
     root.appendChild(wrap);
     wrap.setAttribute("role", "listbox");
     wrap.setAttribute("aria-label", "2FA accounts");
@@ -775,7 +782,7 @@
     const r = otpAnchorRect(anchor);
     // Login-dropdown parity: as wide as the OTP box it anchors to (clamped to
     // the viewport), so both dropdowns read as the same component.
-    const W = r ? Math.max(220, Math.min(r.width, window.innerWidth - 24)) : 300;
+    const W = r ? Math.max(320, Math.min(r.width, window.innerWidth - 24)) : 340;
     wrap.style.width = `${W}px`;
     const rtl = document.dir === "rtl";
     if (rtl && r) {
