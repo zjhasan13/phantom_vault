@@ -509,38 +509,38 @@
     const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
     const style = document.createElement("style");
     style.textContent = `
-      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:92vw;background:#17111f;color:#e9e5f0;
-        border:1px solid #3a2c46;border-radius:12px;box-shadow:0 12px 40px #000d;
+      .wrap{position:fixed;z-index:2147483647;min-width:min(92vw,250px);max-width:92vw;background:#0b1326;color:#dae2fd;
+        border:1px solid #3c4a42;border-radius:12px;box-shadow:0 12px 40px #000d;
         font:13px/1.4 system-ui,-apple-system,Segoe UI,sans-serif;overflow:hidden}
       .hd{padding:8px 11px;font:700 11px system-ui;letter-spacing:.4px;text-transform:uppercase;
-        color:#a99fb8;background:#1f1828;border-bottom:1px solid #3a2c46}
+        color:#bbcabf;background:#131b2e;border-bottom:1px solid #3c4a42}
       .row{display:flex;align-items:center;gap:8px;padding:9px 11px;cursor:pointer;
-        border-bottom:1px solid #2a2033}
+        border-bottom:1px solid #222a3d}
       .row:last-child{border-bottom:0}
-      .row:hover{background:#241b30}
+      .row:hover{background:#2d3449}
       .brand{flex:none;width:22px;height:22px;border-radius:6px;object-fit:cover;
-        background:#2a2033;font:700 11px system-ui;color:#c9c0d8;display:flex;
+        background:#222a3d;font:700 11px system-ui;color:#dae2fd;display:flex;
         align-items:center;justify-content:center;overflow:hidden;text-transform:uppercase}
       .meta{flex:1;min-width:0}
       .name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-      .sub{font-size:11px;color:#9b93ab;margin-top:2px;white-space:nowrap;overflow:hidden;
+      .sub{font-size:11px;color:#86948a;margin-top:2px;white-space:nowrap;overflow:hidden;
         text-overflow:ellipsis}
       .codebox{flex:none;text-align:right}
       .code{font:800 15px ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:2px;
-        color:#f5f3ff}
-      .ttl{font:700 9px ui-monospace,monospace;color:#86efac}
-      .ttl.warn{color:#fcd34d}
-      .ttl.die{color:#fca5a5}
+        color:#4edea3}
+      .ttl{font:700 9px ui-monospace,monospace;color:#4edea3}
+      .ttl.warn{color:#f59e0b}
+      .ttl.die{color:#ffb4ab}
       .tag{font:700 9px system-ui;letter-spacing:.3px;padding:2px 5px;border-radius:5px;
         text-transform:uppercase;white-space:nowrap}
-      .ok{background:#14532d;color:#86efac}
-      .pri{background:#1e3a5f;color:#93c5fd}
-      .dup{background:#4a2c0a;color:#fcd34d}
-      .wait{font-size:11px;color:#9b93ab;padding:8px 11px;border-top:1px solid #3a2c46}
+      .ok{background:#10b98133;color:#4edea3}
+      .pri{background:#4cd7f622;color:#4cd7f6}
+      .dup{background:#f59e0b22;color:#f59e0b}
+      .wait{font-size:11px;color:#86948a;padding:8px 11px;border-top:1px solid #3c4a42}
       .mark{flex:none;font:700 9px system-ui;letter-spacing:.3px;padding:4px 7px;border-radius:6px;
         cursor:pointer;white-space:nowrap;text-transform:uppercase;
-        background:#2a2033;color:#9b93ab;border:1px solid #3a2c46}
-      .mark:hover{background:#3a2c46;color:#e9e5f0}
+        background:#222a3d;color:#86948a;border:1px solid #3c4a42}
+      .mark:hover{background:#3c4a42;color:#dae2fd}
       .mark[disabled]{opacity:.45;cursor:default}
     `;
     root.appendChild(style);
