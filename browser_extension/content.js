@@ -2702,17 +2702,30 @@
   // to throw the prompt away with the old document. The capture is kept in
   // chrome.storage.session - memory only, gone when the browser closes - keyed
   // by base domain, so the next page on the same site can offer it again.
-  const PV_SAVE_TTL_MS = 10 * 60 * 1000;
+  // Bitwarden keeps its pending save per TAB for 60 s
+  // (CLEAR_NOTIFICATION_LOGIN_DATA_DURATION) and clears it when the tab closes.
+  // Same scope here: the background supplies the tab id, with the base domain
+  // as a fallback when it cannot.
+  const PV_SAVE_TTL_MS = 60 * 1000;
   const PV_SAVE_MAX_SHOWS = 3;
-  function pvSaveKey() { return "pvSavePending:" + pageBase(); }
+  let pvSaveTabId = null;
+  async function pvSaveKey() {
+    if (pvSaveTabId == null) {
+      try {
+        const r = await chrome.runtime.sendMessage({ type: "PV_TAB_ID" });
+        if (r && r.ok && r.tabId != null) pvSaveTabId = r.tabId;
+      } catch (_) {}
+    }
+    return pvSaveTabId != null ? `pvSavePending:tab:${pvSaveTabId}` : `pvSavePending:${pageBase()}`;
+  }
   async function pvSavePendingSet(payload) {
     try {
-      await chrome.storage.session.set({ [pvSaveKey()]: { ...payload, at: Date.now(), shows: 1 } });
+      await chrome.storage.session.set({ [await pvSaveKey()]: { ...payload, at: Date.now(), shows: 1 } });
     } catch (_) {}
   }
   async function pvSavePendingGet() {
     try {
-      const k = pvSaveKey();
+      const k = await pvSaveKey();
       const s = await chrome.storage.session.get({ [k]: null });
       const p = s && s[k];
       if (!p || !p.password || !p.username) return null;
@@ -2725,12 +2738,12 @@
   }
   async function pvSavePendingBump(p) {
     try {
-      const k = pvSaveKey();
+      const k = await pvSaveKey();
       await chrome.storage.session.set({ [k]: { ...p, shows: (p.shows || 1) + 1 } });
     } catch (_) {}
   }
   async function pvSavePendingClear() {
-    try { await chrome.storage.session.remove(pvSaveKey()); } catch (_) {}
+    try { await chrome.storage.session.remove(await pvSaveKey()); } catch (_) {}
   }
   // One attempt per document, after the page settles, so a reload or the page
   // after a login still shows the card. Explicit dismiss/save clears it.

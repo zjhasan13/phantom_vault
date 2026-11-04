@@ -998,6 +998,20 @@ chrome.tabs.onActivated.addListener(async (info) => {
     if (tab && tab.url) scheduleBadge(info.tabId, tab.url);
   } catch (_) {}
 });
+// Bitwarden keeps the pending save on the tab object; a closed tab takes the
+// capture with it. Mirror that: drop the tab-scoped record when the tab dies so
+// a later tab (even on the same site) never inherits someone else's capture.
+if (chrome.tabs.onRemoved) {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    try {
+      const prefix = "pvSavePending:tab:" + tabId;
+      chrome.storage.session.get(null).then((all) => {
+        const keys = Object.keys(all || {}).filter((k) => k === prefix);
+        if (keys.length) chrome.storage.session.remove(keys);
+      }).catch(() => {});
+    } catch (_) {}
+  });
+}
 
 // Debounced badge refresh: rapid tab switches queue ONE native-host spawn
 // per tab (500ms trailing), not a process storm.

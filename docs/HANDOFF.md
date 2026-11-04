@@ -329,15 +329,29 @@
   AccessKit tree exposes the Check label at an off-screen rect.
 
 - **Save prompt survives navigation (this batch):** a login POST replaces the
-  document, so the old prompt vanished with it. The capture is now kept in
-  `chrome.storage.session` (memory only, cleared when the browser closes) under
-  `pvSavePending:<base domain>` with a 10-minute TTL and a 3-show cap. The next
-  page on that site re-opens the card 1.2 s after boot; Save / Not Now / Never /
-  Esc clear the record, the 30 s auto-dismiss only hides it so a reload can
-  offer it again. The card itself was reskinned to the panel language (site
-  favicon, NATIVE BRIDGE chip, one meta line `domain · chars · bits`).
+  document, so the old prompt vanished with it. Bitwarden's own answer is a
+  per-tab map in the background (`overlay-notifications.background.ts:143-183`),
+  a 60 s TTL (`CLEAR_NOTIFICATION_LOGIN_DATA_DURATION`), and a re-trigger from
+  `webRequest`/`webNavigation` once the tab finishes loading. We mirror the
+  shape rather than the plumbing: the capture lives in `chrome.storage.session`
+  under `pvSavePending:tab:<id>` (base-domain key only when the background
+  cannot report a tab id), 60 s TTL, 3-show cap, cleared when the tab closes
+  (`tabs.onRemoved`). The next document on that tab re-opens the card 1.2 s
+  after boot; Save / Not Now / Never / Esc clear it, the 30 s auto-dismiss only
+  hides it. Card reskin: site favicon, NATIVE BRIDGE chip, one meta line
+  `domain · chars · bits`.
   Tests: pending is written on submit, restored on the next document, and
   cleared by Not Now (npm 141/141).
+
+- **Multi-page login (verified against Bitwarden):** Bitwarden does carry the
+  username into the password step, but only for the save/notification path -
+  `storeModifiedLoginFormData` merges `username || existing.username`,
+  `password || existing.password`, `newPassword || existing.newPassword` per tab
+  (`overlay-notifications.background.ts:152-173`). Our carry is the same idea
+  with a longer lease (session storage, base domain, username only - the
+  password is never carried) and it also feeds the *fill* ranking
+  (`page hint → carry → last filled → verified`), which Bitwarden's inline menu
+  does not do (it sorts by `lastUsedDate`, see AUTOFILL_ACCOUNT_RANKING.md).
 
 - **Offline equivalent-domain clusters (this batch):** the Google/Microsoft/
   Meta/Apple/Amazon/Sony/Yahoo/Proton families were hand-copied in two places
