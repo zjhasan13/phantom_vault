@@ -578,7 +578,9 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     let title = c.title.to_lowercase();
                     let user = c.username.to_lowercase();
                     variants.iter().any(|v| {
-                        title.contains(v) || user.contains(v) || c.urls.iter().any(|u| u.url().to_lowercase().contains(v))
+                        title.contains(v)
+                            || user.contains(v)
+                            || c.urls.iter().any(|u| url_matches_variant(u.url(), v))
                     })
                 })
                 .map(|c| {
@@ -2336,6 +2338,42 @@ fn url_domain(raw: &str) -> String {
     } else {
         parts[parts.len() - 2..].join(".")
     }
+}
+
+/// Full lowercased host of a stored URL (`https://mail.google.com/x` ->
+/// `mail.google.com`). Used by the domain-boundary matcher below.
+fn host_of_url(raw: &str) -> String {
+    let h = raw.trim().to_lowercase();
+    let h = h.rsplit("://").next().unwrap_or(&h);
+    let h = h.split('/').next().unwrap_or(h);
+    let h = h.split('?').next().unwrap_or(h);
+    let h = h.split('#').next().unwrap_or(h);
+    let h = h.split(':').next().unwrap_or(h);
+    h.trim_matches('.').to_string()
+}
+
+/// Domain-boundary match of a stored login URL against one query variant.
+/// The old `url.contains(variant)` let `notgoogle.com` (and
+/// `google.com.evil.tld`) satisfy a `google.com` query; both are refused here
+/// while real subdomains and the ccTLD clusters still match.
+fn url_matches_variant(url: &str, variant: &str) -> bool {
+    let v = variant.trim().trim_end_matches('.').to_lowercase();
+    if v.is_empty() {
+        return false;
+    }
+    let host = host_of_url(url);
+    if host.is_empty() {
+        return false;
+    }
+    if host == v
+        || host.ends_with(&format!(".{v}"))
+        || v.ends_with(&format!(".{host}"))
+    {
+        return true;
+    }
+    // ccTLD cluster members are stored truncated (`google.co` for
+    // `google.co.*`), so allow a label-boundary prefix hit: `mail.google.co.uk`.
+    v.contains('.') && host.contains(&format!(".{v}."))
 }
 
 /// Normalized lookup key: lowercase, scheme/path/port stripped, leading
@@ -4953,6 +4991,38 @@ mod tests {
         assert!(!valid_firefox_id("chrome-extension://abc/"));
         assert!(!valid_firefox_id(&"a".repeat(129)));
         assert!(register_firefox_host("not an id!!").is_err());
+    }
+
+    #[test]
+    fn url_matching_uses_domain_boundaries() {
+        // Real subdomains and the stored domain itself match.
+        assert!(url_matches_variant("https://accounts.google.com/signin", "google.com"));
+        assert!(url_matches_variant("https://google.com", "google.com"));
+        assert!(url_matches_variant("https://accounts.google.com/signin", "accounts.google.com"));
+        // Lookalikes must not: the old substring check accepted both.
+        assert!(!url_matches_variant("https://notgoogle.com/login", "google.com"));
+        assert!(!url_matches_variant("https://google.com.evil.tld/", "google.com"));
+        assert!(!url_matches_variant("https://evil.tld/?next=google.com", "google.com"));
+        // ccTLD cluster prefix members still reach the regional domain.
+        assert!(url_matches_variant("https://mail.google.co.uk/x", "google.co"));
+        assert!(!url_matches_variant("https://notgoogle.co.uk/x", "google.co"));
+    }
+
+    #[test]
+    fn clusters_match_the_canonical_json() {
+        let raw = include_str!("../../data/equivalent_domains.json");
+        let doc: serde_json::Value = serde_json::from_str(raw).expect("canonical JSON parses");
+        let groups = doc["clusters"].as_array().expect("clusters array");
+        assert_eq!(groups.len(), EQUIV_CLUSTERS.len(), "cluster count drifted");
+        for (i, group) in groups.iter().enumerate() {
+            let list: Vec<&str> = group
+                .as_array()
+                .expect("group array")
+                .iter()
+                .map(|m| m.as_str().expect("member string"))
+                .collect();
+            assert_eq!(list, EQUIV_CLUSTERS[i].to_vec(), "cluster {i} drifted");
+        }
     }
 
     #[test]

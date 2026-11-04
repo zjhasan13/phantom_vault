@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "comment": "Canonical equivalent-domain clusters (offline; no server lookup). Both browser_extension/domain.js (EQUIV_CLUSTERS) and src/windows_native/native_host.rs (EQUIV_CLUSTERS) load this list; parity tests on both sides fail if either copy drifts. '.*' means any ccTLD tail (google.co.uk, amazon.com.au).",
+  "clusters": [
+    ["proton.me", "protonmail.com", "protonvpn.com", "protondrive.com"],
+    ["google.com", "youtube.com", "gmail.com", "googlemail.com", "gstatic.com", "google.co.*"],
+    ["facebook.com", "messenger.com", "instagram.com", "threads.net"],
+    ["microsoft.com", "live.com", "office.com", "login.microsoftonline.com", "xbox.com", "outlook.com", "hotmail.com", "onedrive.com"],
+    ["apple.com", "icloud.com"],
+    ["amazon.com", "primevideo.com", "audible.com", "amazon.co.*"],
+    ["sony.com", "playstation.com", "playstationnetwork.com"],
+    ["yahoo.com", "aol.com"]
+  ]
+}
