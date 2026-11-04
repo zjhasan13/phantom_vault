@@ -1758,8 +1758,11 @@
   document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrop("escape"); }, true);
 
   // One ranking for EVERY fill path (in-page dropdown, hotkey, context menu):
-  // carried account → verified → recently filled → A→Z. Ordering only —
+  // page/typed account → recently filled → verified → A→Z. Ordering only —
   // callers must never drop rows because of it (K1: a carry cannot gate a fill).
+  // Recency beats `verified` on purpose: `verified` is sticky forever, so a
+  // stale-but-once-working account would otherwise outrank the one this site
+  // was last used with (Bitwarden orders by lastUsedDate first, name second).
   function carriedUserFor(f) {
     const typed = ((f && f.users) || [])
       .map((el) => String(el.value || "").trim())
@@ -1812,8 +1815,8 @@
     return [...(list || [])].sort(
       (a, b) =>
         (loginCarryHit(b, carried) ? 1 : 0) - (loginCarryHit(a, carried) ? 1 : 0) ||
-        (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
         (b.last_filled || 0) - (a.last_filled || 0) ||
+        (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
         String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
     );
   }
@@ -1864,8 +1867,10 @@
     // never a filter, so the K1 invariant (a carry must not gate a fill) still
     // holds. A username the page already prefilled wins over the carry.
     const carried = carriedUserFor(f);
-    // Trust rank: carried account → verified → recently filled → A→Z. Fakes
-    // (unverified, never filled) sink to the bottom automatically.
+    // Trust rank: page/typed account → recently filled → verified → A→Z. The
+    // page hint wins because it is about THIS step; after that recency is the
+    // strongest signal, and the sticky `verified` flag only breaks the tie.
+    // Unfilled, unverified rows are dimmed but never hidden.
     const hIcon = (h) => (h === "reused" ? "♻️" : h === "weak" ? "🟡" : h === "stale" ? "🕰️" : "");
     const agoShort = (ts) => {
       const s = Math.max(0, Math.floor(Date.now() / 1000) - (ts || 0));

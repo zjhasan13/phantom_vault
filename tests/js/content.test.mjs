@@ -94,6 +94,44 @@ test("carry-priority: previous step's email sorts first in the login dropdown", 
   assert.match(rows[1].textContent, /zed@example\.com/);
 });
 
+test("recency beats the sticky verified flag when the page shows no account", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/login", [
+    { id: "old", title: "Example", username: "old@example.com", password: "p1",
+      urls: ["example.com"], verified: true, last_filled: 1600000000 },
+    { id: "fresh", title: "Example", username: "fresh@example.com", password: "p2",
+      urls: ["example.com"], verified: false, last_filled: Math.floor(Date.now() / 1000) },
+  ]);
+  const pw = window.document.querySelector('input[type="password"]');
+  pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
+  await flush(80);
+  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  assert.ok(rows.length >= 2, "both accounts must stay listed");
+  assert.match(rows[0].textContent, /fresh@example\.com/,
+    "the most recently filled account wins over a stale verified one");
+  assert.match(rows[1].textContent, /old@example\.com/);
+});
+
+test("page hint ranks the displayed account first (Google-style password step)", async (t) => {
+  const { window } = env(t, `<div data-identifier="right@example.com"></div>
+  <form>
+    <input type="password" name="password" value="">
+  </form>`, "https://example.com/login", [
+    { id: "wrong", title: "Example", username: "wrong@example.com", password: "p1",
+      urls: ["example.com"], verified: true, last_filled: Math.floor(Date.now() / 1000) },
+    { id: "right", title: "Example", username: "right@example.com", password: "p2",
+      urls: ["example.com"], verified: false, last_filled: 0 },
+  ]);
+  const pw = window.document.querySelector('input[type="password"]');
+  pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
+  await flush(80);
+  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  assert.ok(rows.length >= 2, "hint must order rows, never drop them");
+  assert.match(rows[0].textContent, /right@example\.com/,
+    "the account the page displays must be first");
+});
+
 test("identity suggestions reach the dropdown (url-less rows survive)", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="street-address" name="address1" value="">
