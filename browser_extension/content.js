@@ -2430,9 +2430,9 @@
   // can still observe key events that bubble out of the shadow tree, exactly as
   // it can observe the original typing. Do not claim more than that.
   const PV_FIELD_CSS = "input{width:100%;box-sizing:border-box;margin:0 0 8px;" +
-    "background:#070b12;color:#eef1ff;border:1px solid #26315c;border-radius:8px;" +
-    "padding:8px 10px;font:13px system-ui}" +
-    "input::placeholder{color:#5b6589}";
+    "background:#060e20;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;" +
+    "padding:8px 10px;font:13px 'Segoe UI',system-ui}" +
+    "input::placeholder{color:#86948a}";
   function toastField(type, value, placeholder) {
     const el = document.createElement("input");
     el.type = type;
@@ -2443,31 +2443,69 @@
     el.spellcheck = false;
     return el;
   }
+  function pvEntropyBits(pw) {
+    if (!pw) return 0;
+    let pool = 0;
+    if (/[a-z]/.test(pw)) pool += 26;
+    if (/[A-Z]/.test(pw)) pool += 26;
+    if (/[0-9]/.test(pw)) pool += 10;
+    if (/[^A-Za-z0-9]/.test(pw)) pool += 33;
+    return pool ? Math.round(pw.length * Math.log2(pool)) : 0;
+  }
   function credentialToast(opts) {
     if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
-      "background:#0d131f;border:1px solid " + opts.accent + ";border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
+      "background:#0b1326;border:1px solid " + opts.accent + ";border-radius:14px;padding:14px 16px;" +
+      "font:13px 'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 16px 48px #000e;max-width:min(92vw,380px);";
+    const head = document.createElement("div");
+    head.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;";
     const t = document.createElement("div");
-    t.style.cssText = "font-weight:700;margin-bottom:8px;";
+    t.style.cssText = "font-weight:800;font-size:14px;flex:1;";
     t.textContent = opts.title;
+    const chip = document.createElement("span");
+    chip.textContent = "PROMPT";
+    chip.style.cssText = "font:700 9px ui-monospace,monospace;letter-spacing:.6px;padding:2px 6px;border-radius:5px;background:#4edea31f;color:#4edea3;border:1px solid #4edea355;";
+    head.append(t, chip);
     const sub = document.createElement("div");
-    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.style.cssText = "color:#bbcabf;font-size:11px;margin-bottom:10px;";
     sub.textContent = opts.sub;
     // Title/subtitle stay in light DOM (non-secret, and the page already knows
     // the site). Everything that carries or mutates the secret hides.
-    box.append(t, sub);
+    box.append(head, sub);
 
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
     const root = shadow || box;
     if (shadow) root.append(document.createElement("slot"));
     const style = document.createElement("style");
-    style.textContent = PV_FIELD_CSS;
+    style.textContent = PV_FIELD_CSS +
+      ".lbl{font:700 9px ui-monospace,monospace;letter-spacing:.6px;color:#86948a;margin:0 0 4px}" +
+      ".meta{font:10px ui-monospace,monospace;color:#86948a;margin:-2px 0 8px}" +
+      ".scope{display:flex;align-items:center;gap:6px;font:10px ui-monospace,monospace;color:#86948a;margin:0 0 10px}" +
+      ".scope b{color:#dae2fd;font-weight:700}" +
+      ".foot{font:9px ui-monospace,monospace;color:#86948a;margin-top:8px}";
+    const lblU = document.createElement("div");
+    lblU.className = "lbl";
+    lblU.textContent = "IDENTITY / USERNAME";
     const user = toastField("text", opts.username, "Username");
+    const lblP = document.createElement("div");
+    lblP.className = "lbl";
+    lblP.textContent = "SECRET PASSWORD";
     const pass = toastField("password", opts.password, "Password");
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    const scope = document.createElement("div");
+    scope.className = "scope";
+    const scLabel = document.createElement("span");
+    scLabel.textContent = "HOST SCOPE";
+    const scVal = document.createElement("b");
+    scVal.textContent = pageBase() || "\u2014";
+    const scLocal = document.createElement("span");
+    scLocal.textContent = "LOCAL";
+    scLocal.style.color = "#4edea3";
+    scope.append(scLabel, scVal, scLocal);
     const err = document.createElement("div");
     err.style.cssText = "color:#ffb4ab;font-size:11px;margin-bottom:8px;display:none;";
     const row = document.createElement("div");
@@ -2475,16 +2513,16 @@
     const save = document.createElement("button");
     save.textContent = opts.saveLabel;
     save.style.cssText = "flex:1;background:" + opts.accent + ";color:" + opts.accentInk +
-      ";border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+      ";border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "✕ Not Now";
-    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    no.textContent = "Not Now";
+    no.style.cssText = "flex:1;background:#131b2e;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     if (opts.allowNever) {
       const never = document.createElement("button");
-      never.textContent = "🚫 Never";
+      never.textContent = "Never";
       never.title = "Never offer to save logins for this site";
-      never.style.cssText = "flex:1;background:#1a2450;color:#ffb4ab;border:1px solid #5a2530;border-radius:8px;padding:8px;font-size:11px;cursor:pointer;";
+      never.style.cssText = "flex:1;background:transparent;color:#ffb4ab;border:1px solid #ffb4ab55;border-radius:8px;padding:9px;font-weight:700;cursor:pointer;";
       row.append(never);
       never.addEventListener("click", async () => {
         try { await markNeverSave(); } catch (_) {}
@@ -2492,8 +2530,20 @@
         toast(`Save prompt disabled for ${pageBase()}. Re-enable in Settings.`);
       });
     }
-    root.append(style, user, pass, err, row);
+    const foot = document.createElement("div");
+    foot.className = "foot";
+    foot.textContent = "XChaCha20-Poly1305 \u00b7 native bridge \u00b7 no network";
+    root.append(style, lblU, user, lblP, pass, meta, scope, err, row, foot);
     document.documentElement.append(box);
+
+    const updateMeta = () => {
+      const p = pass.value;
+      meta.textContent = p
+        ? p.length + " chars \u00b7 " + pvEntropyBits(p) + " bits (estimate)"
+        : "Entropy estimate appears as you type";
+    };
+    pass.addEventListener("input", updateMeta);
+    updateMeta();
 
     let timer = 0;
     function arm() {
@@ -2502,7 +2552,7 @@
     }
     const fieldFocused = () => !!shadow && (root.activeElement === user || root.activeElement === pass);
     function dismiss(force) {
-      // A9: never eat an edit that is still being typed — re-arm instead.
+      // A9: never eat an edit that is still being typed - re-arm instead.
       if (!force && fieldFocused()) { arm(); return; }
       if (timer) clearTimeout(timer);
       document.removeEventListener("keydown", esc, true);
@@ -2528,15 +2578,15 @@
       const u = user.value.trim();
       const p = pass.value;
       if (!u || !p) {
-        err.textContent = !u ? "⚠️ Enter a username first." : "⚠️ Enter a password first.";
+        err.textContent = !u ? "Enter a username first." : "Enter a password first.";
         err.style.display = "block";
         return;
       }
-      // A9: the corrected pair may already be stored — don't spend a host
+      // A9: the corrected pair may already be stored - don't spend a host
       // round-trip on a no-op.
       const cached = existingSync(pageBase());
       if (cached && classifySubmitted(cached, u, p) === "known") {
-        err.textContent = "⚠️ This login is already saved.";
+        err.textContent = "This login is already saved.";
         err.style.display = "block";
         return;
       }
@@ -2551,22 +2601,22 @@
           title: captureTitle(),
         });
         if (res && res.ok) {
-          toast(res.updated ? "✅ Login updated in PhantomVault." : "✅ Login saved to PhantomVault.");
+          toast(res.updated ? "Login updated in PhantomVault." : "Login saved to PhantomVault.");
           pvCarryClear();
           pvExistingCache = null; // next prompt re-reads the fresh vault
           dismiss(true);
         } else {
-          save.textContent = "⚠️ " + ((res && res.error) || "failed");
+          save.textContent = "Failed: " + ((res && res.error) || "unknown");
         }
       } catch (_) {
-        save.textContent = "⚠️ Bridge unreachable";
+        save.textContent = "Bridge unreachable";
       }
     });
   }
   function saverToast(username, password) {
     credentialToast({
-      accent: "#8b7cf6",
-      accentInk: "#fff",
+      accent: "#4edea3",
+      accentInk: "#003824",
       title: "🛡️ Save to PhantomVault?",
       sub: `New login for ${pageBase()} — correct anything before saving.`,
       saveLabel: "💾 Save",

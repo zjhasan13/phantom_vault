@@ -849,7 +849,7 @@ The 13 folders are the source of truth. `Surface` matters: **Slint** screens are
 | 9 | `forensic_audit_log_duress_mode` | **Slint** | Access log modal `:3431` + duress settings | Page/timeline view, filters, export, duress/decoy panels | access-log read API/timeline; decoy content generator absent (A18 has decoy) | **M** (4–6 d) | **P2** |
 | 10 | `phantom_vault_browser_extension_hud_2.0` | **Extension** | `popup.html` | Restyle popup tabs/KPI/footer | folder/type/TOTP/defer options; not Slint | **M** (3–4 d) | P1 ext |
 | 11 | `phantom_vault_browser_extension_hud_3.0_ultra` | **Extension** | same popup | Second responsive layout sharing components | same | **M** (2–3 d) | P2 ext |
-| 12 | `phantom_vault_save_password_prompt` | **Extension** | `content.js` save toast | Rich prompt: folder/type/TOTP/defer/never/edit-first | new fields/defer state; not Slint | **M** (2–3 d) | P1 ext |
+| 12 | `phantom_vault_save_password_prompt` | **Extension** | `content.js:2446` | Aegis save prompt: 380px card, PROMPT chip, identity/password labels, live charset entropy estimate, host scope, Save / Not Now / Never, honest footer | Folder/type/TOTP-defer fields (bridge does not carry them yet) | **M** (2-3 d) | **P1 (restyled)** |
 | 13 | `phantom_vault_in_page_autofill_multi_2fa_dropdown` | **Extension** | `content.js:423` | Aegis palette applied to the existing 2FA ambiguity picker (navy/mint/cyan, mono codes, status tags); multi-account rows + countdown already present | Keyboard nav/mockup layout polish | **S-M** (2-3 d) | **P1 (restyled)** |
 
 Three loose PNGs (`bpi6n3ifbr`, `chrome_2kq9l2jhdt`, `chrome_pesstwstdb`) are browser
