@@ -270,7 +270,11 @@
   (directly in a click handler, then from a Timer) overflowed the main thread's
   stack on this screen in debug builds. The shipped slice uses conditional
   card rendering instead - do not reintroduce a content-y jump here without a
-  crash test. Tests 556/4.
+  crash test. Slice 2 note: a 2-column `FlexboxLayout` (48% cards) does not fit
+  at 1280 logical px - the cards' min-content width is ~657px, so only one fits
+  per row and the second wraps below. A real 2-column grid needs the wide rows
+  inside each card to become responsive first; not attempted in this slice.
+  Tests 556/4.
 
 - **A23 slice 1 — local API + `pv` CLI (this batch):** opt-in Settings toggle
   starts a **loopback-only** (127.0.0.1, random port) read API. The 32-byte
