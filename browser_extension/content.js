@@ -496,6 +496,11 @@
     return anchor.getBoundingClientRect();
   }
 
+  // Page icon URL harvested once (same-origin <link rel=icon> or
+  // /favicon.ico). Used for brand marks in the in-page surfaces; never sent
+  // anywhere except the background's local disk cache.
+  let pvPageIcon = "";
+
   // `candidates` come straight from the native ranked payload. We never sort
   // here — the bridge already ordered them, and re-sorting in the client would
   // hide the tie it wants the user to resolve.
@@ -567,7 +572,7 @@
     // first letter. A per-account icon would mean resolving an issuer STRING to
     // a domain inside the vault, which is a lookup the bridge does not do and
     // which would hand a hostile page a free image-timing oracle for no gain.
-    const brandSrc = typeof iconUrl === "string" ? iconUrl : "";
+    const brandSrc = pvPageIcon;
     const makeBrand = (label) => {
       const b = document.createElement("div");
       b.className = "brand";
@@ -1781,8 +1786,21 @@
         // issuer icon - that would leak a lookup to the page).
         const icon = document.createElement("div");
         icon.className = "pvx-av";
-        if (r.glyphIco && PV_ICO[r.glyphIco]) icon.innerHTML = PV_ICO[r.glyphIco];
-        else icon.textContent = r.glyph || brandLetter(r.entry || {});
+        const letter = r.glyph || brandLetter(r.entry || {});
+        if (r.glyphIco && PV_ICO[r.glyphIco]) {
+          icon.innerHTML = PV_ICO[r.glyphIco];
+        } else if (pvPageIcon) {
+          // The page's own favicon: same origin, already harvested, and the
+          // correct brand for every row in this dropdown. On any load failure
+          // the letter tile takes over - never an empty box.
+          const img = document.createElement("img");
+          img.alt = "";
+          img.src = pvPageIcon;
+          img.addEventListener("error", () => { img.remove(); icon.textContent = letter; }, { once: true });
+          icon.appendChild(img);
+        } else {
+          icon.textContent = letter;
+        }
         const tx = document.createElement("div");
         tx.className = "pvx-tx";
         const t = document.createElement("div");
@@ -3256,6 +3274,7 @@
       try {
         iconUrl = href ? new URL(href, location.href).href : new URL("/favicon.ico", location.origin).href;
       } catch (_) { return; }
+      pvPageIcon = iconUrl;
       chrome.runtime.sendMessage({ type: "PV_FAVICON_HARVEST", domain: host, iconUrl }).catch(() => {});
     } catch (_) {}
   }
