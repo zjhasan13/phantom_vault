@@ -358,6 +358,48 @@ test("matched username-only step still gets its single shield", async (t) => {
     "multi-step email/username pages must stay clickable");
 });
 
+test("newsletter / contact email boxes never get a shield, even on a matched site", async (t) => {
+  const { window } = env(t, `<div class="footer">
+    <input type="email" name="newsletter" placeholder="Your email">
+    <input type="email" name="email" autocomplete="email" placeholder="Email address">
+    <input type="text" name="contact" placeholder="Contact">
+  </div>`,
+    "https://example.com/",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(120);
+  const badged = (n) =>
+    !!window.document.querySelector(`input[name="${n}"]`).dataset.pvBadged;
+  assert.equal(badged("newsletter"), false);
+  assert.equal(badged("email"), false,
+    "autocomplete=email alone is not proof of a login form");
+  assert.equal(badged("contact"), false);
+});
+
+test("identity fields (tel/address) are never login usernames", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="tel" name="phone" autocomplete="tel">
+    <input type="text" name="street" autocomplete="street-address">
+  </form>`,
+    "https://example.com/signin",
+    [{ id: "e1", username: "a", password: "p", urls: ["example.com"] }]);
+  await flush(120);
+  const badged = (n) =>
+    !!window.document.querySelector(`input[name="${n}"]`).dataset.pvBadged;
+  assert.equal(badged("phone"), false);
+  assert.equal(badged("street"), false);
+});
+
+test("explicit autocomplete=username still earns the shield on a challenge URL", async (t) => {
+  const { window } = env(t, `<form>
+    <input type="email" name="identifier" autocomplete="username">
+  </form>`,
+    "https://accounts.google.com/v3/signin/challenge/pwd",
+    [{ id: "e1", username: "a", password: "p", urls: ["google.com"] }]);
+  await flush(120);
+  assert.ok(window.document.querySelector('input[name="identifier"]').dataset.pvBadged,
+    "developer-declared username fields must stay clickable");
+});
+
 test("a revealed password replaces the standalone email shield", async (t) => {
   const { window } = env(t, `<form action="/login"><input type="email" name="email"></form>`,
     "https://example.com/start",

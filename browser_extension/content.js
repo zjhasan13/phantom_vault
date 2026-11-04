@@ -1013,10 +1013,13 @@
   // reads like a credential step. Otherwise a matched domain badged every
   // newsletter/contact email field on the site (page-match rule (a)).
   function loginContextFor(el) {
+    if (hasIdentityAutocomplete(el)) return false;
     const ac = (el.autocomplete || "").toLowerCase();
-    if (ac === "username" || ac === "email") return true;
-    if (el.form && /log ?in|sign ?in|sign ?up|register|auth/i.test(el.form.action || "")) return true;
-    return /log ?in|sign ?in|sign ?up|register|auth/i.test(location.pathname + " " + (document.title || ""));
+    if (ac === "username") return true;
+    if (passwordNear(el)) return true;
+    if (looksLikeMarketingField(el)) return false;
+    if (el.form && /log ?-?in|sign ?-?in|signin|logon|auth/i.test(el.form.getAttribute("action") || "")) return true;
+    return pageLooksLikeAuth();
   }
   function passwordNear(el) {
     const pw = [...deepQuery('input[type="password"]')].filter(isVisible);
@@ -1040,16 +1043,60 @@
     }
     return false;
   }
+  // Identity / marketing boxes share type=email with logins. Bitwarden vetoes
+  // them before any page-level guess (isUsernameFieldForLoginForm ->
+  // isNonLoginUsernameField / isExplicitIdentityEmailField); mirror that.
+  const IDENTITY_AC = new Set([
+    "name", "honorific-prefix", "given-name", "additional-name", "family-name",
+    "honorific-suffix", "nickname", "organization", "organization-title",
+    "street-address", "address-line1", "address-line2", "address-line3",
+    "address-level1", "address-level2", "address-level3", "address-level4",
+    "postal-code", "country", "country-name", "tel", "tel-national",
+    "tel-area-code", "tel-local", "tel-extension", "bday", "bday-day",
+    "bday-month", "bday-year", "sex", "url", "photo", "impp",
+  ]);
+  // Marketing / comment fields: fine to veto only when no password sits beside
+  // them, because enterprise logins do use words like "company" or "contact".
+  const MARKETING_TOKENS = [
+    "newsletter", "subscribe", "subscription", "contact", "comment", "reply",
+    "feedback", "coupon", "promo", "invite", "referral", "subject", "message",
+    "bio", "nickname", "displayname",
+  ];
+  function hasIdentityAutocomplete(el) {
+    const ac = (el.autocomplete || "").toLowerCase().trim().split(/\s+/)[0];
+    return !!ac && IDENTITY_AC.has(ac);
+  }
+  function looksLikeMarketingField(el) {
+    const hay = (fieldText(el) + " " + explicitHintText(el)).toLowerCase();
+    const tokens = hay.split(/[^a-z0-9]+/).filter(Boolean);
+    return tokens.some((tk) => MARKETING_TOKENS.includes(tk));
+  }
+  // Page-level credential signal, consulted only after the vetoes above.
+  function pageLooksLikeAuth() {
+    try {
+      const href = (location.pathname + " " + location.search).toLowerCase();
+      const title = (document.title || "").toLowerCase();
+      const heads = [...document.querySelectorAll("h1, h2")]
+        .slice(0, 4).map((h) => (h.textContent || "").toLowerCase()).join(" ");
+      const actions = [...document.querySelectorAll("form")]
+        .slice(0, 6).map((f) => (f.getAttribute("action") || "").toLowerCase()).join(" ");
+      return /log ?-?in|sign ?-?in|signin|logon|auth|password|passcode/.test(
+        href + " " + title + " " + heads + " " + actions);
+    } catch (_) { return false; }
+  }
   function isUsernameField(el) {
     if (isSearchField(el)) return false;
+    if (hasIdentityAutocomplete(el)) return false;
     const ac = (el.autocomplete || "").toLowerCase();
-    if (ac === "username" || ac === "email") return true;
     const type = (el.type || "").toLowerCase();
-    if (type === "email") return true;
+    const near = passwordNear(el);
+    if (ac === "username") return true;
+    if (!near && looksLikeMarketingField(el)) return false;
+    if (type === "email") return near || pageLooksLikeAuth();
     if (type !== "text") return false;
     // type=text counts ONLY beside a password field in the SAME form, or in
     // the same login cluster when the site wraps fields without a <form>.
-    return passwordNear(el);
+    return near;
   }
   // Split-input OTP groups (Google/Stripe/banks) give their boxes names like
   // "digit-0" or no name at all, so every keyword path below misses them and
