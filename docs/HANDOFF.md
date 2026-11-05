@@ -328,6 +328,16 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Extension item editor covers all four kinds (this batch):** the bridge gained
+  generic `create_item` / `update_item` / `delete_item` commands (`kind` is
+  explicit, so an identity edit can never become a login write; soft delete;
+  card Luhn/month/year/CVV validation; note/card/identity validation). The
+  popup editor reuses one form per kind (login keeps its reprompt/TOTP/show
+  controls) and card/identity/note rows now carry an edit button. The popup's
+  identity fill also fills company/city/state/zip and matches the country
+  `<select>` by label. Tests: Rust generic-item lifecycle + Luhn/expiry + locked
+  refusal, popup source-shape tests updated for the kind-aware editor.
+
 - **Identity autofill is complete (this batch):** `PV_IDENTITIES` used to filter
   by the domain string (identities are not URL-bound, so real vaults returned
   nothing) and the reply only carried name/email/phone/address. The command now
@@ -1032,10 +1042,9 @@
 **Extension gaps (recorded 2026-11-04, still open):**
 
 - **Notes / Cards / Identities editors are desktop-only.** The popup editor
-  (`popup.js:1297 openItemEditor`) only handles logins via
-  `PV_ITEM_CREATE/UPDATE/DELETE`. `PV_LIST` exposes notes/cards/identities for
-  display, but there is no edit form for them; attachments and password history
-  are desktop-only too.
+  (`popup.js openItemEditor`) now handles all four kinds through the generic
+  `create_item` / `update_item` / `delete_item` bridge commands; what is still
+  desktop-only is attachments and password-history browsing.
 - **The extension cannot run without the desktop app (by design).** The vault
   key never leaves the app; the native host's `unlocked` gate refuses everything
   else. `offline_cache.rs` exists but is not enabled, so with the app closed the

@@ -1272,15 +1272,17 @@
     return r.token;
   }
 
-  async function editEntryById(id) {
+  const KIND_NUM = { login: 1, note: 3, card: 4, identity: 5 };
+
+  async function editEntryById(id, kind = "login") {
     try {
-      openItemEditor(await fetchEntry(1, id));
+      openItemEditor(await fetchEntry(KIND_NUM[kind] || 1, id), kind);
     } catch (err) {
       status.textContent = "⚠️ " + ((err && err.message) || err);
     }
   }
 
-  function editButton(id) {
+  function editButton(id, kind = "login") {
     const b = document.createElement("button");
     b.className = "editBtn";
     b.textContent = "✏️";
@@ -1289,12 +1291,12 @@
     b.addEventListener("click", (ev) => {
       ev.stopPropagation();
       touchActivityPing();
-      editEntryById(id);
+      editEntryById(id, kind);
     });
     return b;
   }
 
-  function openItemEditor(entry) {
+  function openItemEditor(entry, kind = "login") {
     const isNew = !entry || !entry.id;
     const prev = document.querySelector(".pvmodal");
     if (prev) prev.remove();
@@ -1303,7 +1305,8 @@
     const card = document.createElement("div");
     card.className = "card";
     const h = document.createElement("h2");
-    h.textContent = isNew ? t("ed_new") : t("ed_edit");
+    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : "";
+    h.textContent = (isNew ? t("ed_new") : t("ed_edit")) + kindLabel;
     card.append(h);
 
     const mkField = (label, value, type = "text", autocomplete = "off") => {
@@ -1316,10 +1319,46 @@
       card.append(lab, inp);
       return inp;
     };
+    const mkArea = (label, value) => {
+      const lab = document.createElement("label");
+      lab.textContent = label;
+      const ta = document.createElement("textarea");
+      ta.value = value || "";
+      ta.rows = 5;
+      card.append(lab, ta);
+      return ta;
+    };
+
     const titleIn = mkField(t("ed_title"), entry && entry.title);
-    const userIn = mkField(t("ed_username"), entry && entry.username);
-    const passIn = mkField(t("ed_password"), entry && entry.password, "password", "new-password");
-    const urlIn = mkField(t("ed_url"), entry && entry.urls && entry.urls[0] ? urlText(entry.urls[0]) : (tabUrl || ""));
+    let userIn = null, passIn = null, urlIn = null, totpIn = null, contentIn = null;
+    let holderIn = null, numIn = null, mmIn = null, yyIn = null, cvvIn = null;
+    let nameIn = null, emailIn = null, phoneIn = null, addrIn = null;
+    let companyIn = null, cityIn = null, stateIn = null, zipIn = null, countryIn = null;
+    if (kind === "login") {
+      userIn = mkField(t("ed_username"), entry && entry.username);
+      passIn = mkField(t("ed_password"), entry && entry.password, "password", "new-password");
+      urlIn = mkField(t("ed_url"), entry && entry.urls && entry.urls[0] ? urlText(entry.urls[0]) : (tabUrl || ""));
+      totpIn = mkField(t("ed_totp"), "", "password", "off");
+      totpIn.placeholder = isNew ? "JBSWY3DPEHPK3PXP" : "Leave blank to keep current";
+    } else if (kind === "note") {
+      contentIn = mkArea("Note", entry && entry.content);
+    } else if (kind === "card") {
+      holderIn = mkField("Cardholder", entry && entry.cardholder);
+      numIn = mkField("Card number", entry && entry.number, "text", "cc-number");
+      mmIn = mkField("Expiry month (MM)", entry && entry.exp_month, "text", "cc-exp-month");
+      yyIn = mkField("Expiry year (YY)", entry && entry.exp_year, "text", "cc-exp-year");
+      cvvIn = mkField("CVV", entry && entry.cvv, "password", "cc-csc");
+    } else {
+      nameIn = mkField("Full name", entry && entry.full_name);
+      emailIn = mkField("Email", entry && entry.email, "email");
+      phoneIn = mkField("Phone", entry && entry.phone, "tel");
+      addrIn = mkField("Street address", entry && entry.address);
+      companyIn = mkField("Company", entry && entry.company);
+      cityIn = mkField("City", entry && entry.city);
+      stateIn = mkField("State / region", entry && entry.state);
+      zipIn = mkField("ZIP / postal code", entry && entry.zip);
+      countryIn = mkField("Country", entry && entry.country);
+    }
     const folderIn = mkField(t("ed_folder"), (entry && entry.folder) || (folderNames[0] || "General"));
     folderIn.setAttribute("list", "pvFolderList");
     let dl = document.getElementById("pvFolderList");
@@ -1334,32 +1373,39 @@
       o.value = f;
       dl.append(o);
     });
-    const totpIn = mkField(t("ed_totp"), "", "password", "off");
-    totpIn.placeholder = isNew ? "JBSWY3DPEHPK3PXP" : "Leave blank to keep current";
 
-    const checks = document.createElement("div");
-    checks.className = "checks";
-    const rp = document.createElement("input");
-    rp.type = "checkbox";
-    rp.id = "pvReprompt";
-    rp.checked = !!(entry && entry.reprompt);
-    const rpLab = document.createElement("label");
-    rpLab.htmlFor = "pvReprompt";
-    rpLab.style.margin = "0";
-    rpLab.textContent = t("ed_reprompt");
-    checks.append(rp, rpLab);
-    card.append(checks);
+    // Login-only controls: re-prompt + reveal. The other kinds have no
+    // reprompt flag in the vault model.
+    let rp = { checked: false };
+    let needsToken = () => false;
+    if (kind === "login") {
+      const checks = document.createElement("div");
+      checks.className = "checks";
+      const rpEl = document.createElement("input");
+      rpEl.type = "checkbox";
+      rpEl.id = "pvReprompt";
+      rpEl.checked = !!(entry && entry.reprompt);
+      rp = rpEl;
+      const rpLab = document.createElement("label");
+      rpLab.htmlFor = "pvReprompt";
+      rpLab.style.margin = "0";
+      rpLab.textContent = t("ed_reprompt");
+      checks.append(rpEl, rpLab);
+      card.append(checks);
 
-    const showRow = document.createElement("div");
-    showRow.className = "checks";
-    const show = document.createElement("input");
-    show.type = "checkbox";
-    const showLab = document.createElement("label");
-    showLab.textContent = "Show password";
-    showLab.style.margin = "0";
-    show.addEventListener("change", () => { passIn.type = show.checked ? "text" : "password"; });
-    showRow.append(show, showLab);
-    card.append(showRow);
+      const showRow = document.createElement("div");
+      showRow.className = "checks";
+      const show = document.createElement("input");
+      show.type = "checkbox";
+      const showLab = document.createElement("label");
+      showLab.textContent = "Show password";
+      showLab.style.margin = "0";
+      show.addEventListener("change", () => { passIn.type = show.checked ? "text" : "password"; });
+      showRow.append(show, showLab);
+      card.append(showRow);
+
+      needsToken = () => (entry && entry.reprompt) || rp.checked;
+    }
 
     const errEl = document.createElement("div");
     errEl.className = "err";
@@ -1388,31 +1434,63 @@
     bg.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
     titleIn.focus();
 
-    const needsToken = () => (entry && entry.reprompt) || rp.checked;
-
     saveBtn.addEventListener("click", async () => {
       errEl.textContent = "";
-      const username = userIn.value.trim();
-      if (!username) { errEl.textContent = t("ed_need_user"); return; }
-      const title = titleIn.value.trim() || username;
-      saveBtn.disabled = true;
-      try {
-        const token = needsToken() ? await requestReprompt(title) : null;
-        const payload = {
-          type: isNew ? "PV_ITEM_CREATE" : "PV_ITEM_UPDATE",
-          id: isNew ? "" : entry.id,
-          title,
-          username,
-          password: passIn.value,
-          url: urlIn.value.trim(),
-          urls: urlIn.value.trim() ? [urlIn.value.trim()] : [],
-          folder: folderIn.value.trim() || "General",
-          reprompt: rp.checked,
-        };
-        if (token) payload.reprompt_token = token;
+      const title = titleIn.value.trim();
+      let token = null;
+      const payload = {
+        type: isNew ? "PV_ITEM_CREATE" : "PV_ITEM_UPDATE",
+        kind,
+        id: isNew ? "" : entry.id,
+        title,
+        folder: folderIn.value.trim() || "General",
+      };
+      if (kind === "login") {
+        const username = userIn.value.trim();
+        if (!username) { errEl.textContent = t("ed_need_user"); return; }
+        payload.title = title || username;
+        payload.username = username;
+        payload.password = passIn.value;
+        payload.url = urlIn.value.trim();
+        payload.urls = urlIn.value.trim() ? [urlIn.value.trim()] : [];
+        payload.reprompt = rp.checked;
         // Blank TOTP means "keep existing"; sending the fetched live code
         // would overwrite the secret with a 6-digit OTP.
         if (totpIn.value.trim()) payload.totp = totpIn.value.trim();
+      } else if (kind === "note") {
+        payload.content = contentIn.value;
+        if (!title && !payload.content.trim()) {
+          errEl.textContent = "Title or note body required";
+          return;
+        }
+        payload.title = title || "Untitled";
+      } else if (kind === "card") {
+        payload.cardholder = holderIn.value.trim();
+        payload.number = numIn.value.trim();
+        payload.exp_month = mmIn.value.trim();
+        payload.exp_year = yyIn.value.trim();
+        payload.cvv = cvvIn.value.trim();
+        if (!payload.number) { errEl.textContent = "Card number required"; return; }
+        payload.title = title || "Card";
+      } else {
+        payload.full_name = nameIn.value.trim();
+        payload.email = emailIn.value.trim();
+        payload.phone = phoneIn.value.trim();
+        payload.address = addrIn.value.trim();
+        payload.company = companyIn.value.trim();
+        payload.city = cityIn.value.trim();
+        payload.state = stateIn.value.trim();
+        payload.zip = zipIn.value.trim();
+        payload.country = countryIn.value.trim();
+        if (!payload.full_name) { errEl.textContent = "Full name required"; return; }
+        payload.title = title || payload.full_name;
+      }
+      saveBtn.disabled = true;
+      try {
+        if (kind === "login" && needsToken()) {
+          token = await requestReprompt(payload.title || payload.username || "this item");
+          if (token) payload.reprompt_token = token;
+        }
         const res = await withTimeout(
           chrome.runtime.sendMessage(payload), QUERY_TIMEOUT_MS, "item save");
         if (!res || !res.ok) throw new Error((res && res.error) || "save failed");
@@ -1431,9 +1509,11 @@
         errEl.textContent = "";
         delBtn.disabled = true;
         try {
-          const token = entry.reprompt ? await requestReprompt(entry.title || entry.username || "this item") : null;
-          const payload = { type: "PV_ITEM_DELETE", id: entry.id };
-          if (token) payload.reprompt_token = token;
+          const payload = { type: "PV_ITEM_DELETE", id: entry.id, kind };
+          if (kind === "login" && entry.reprompt) {
+            const token = await requestReprompt(entry.title || entry.username || "this item");
+            if (token) payload.reprompt_token = token;
+          }
           const res = await withTimeout(
             chrome.runtime.sendMessage(payload), QUERY_TIMEOUT_MS, "item delete");
           if (!res || !res.ok) throw new Error((res && res.error) || "delete failed");
@@ -1447,7 +1527,6 @@
       });
     }
   }
-
   const addItemBtn = document.getElementById("addItemBtn");
   if (addItemBtn) {
     addItemBtn.addEventListener("click", () => openItemEditor(null));
@@ -2379,6 +2458,7 @@
     // Quick-view: masked sub + eye reveal for the full number (15s remask).
     passwordReveal(row, async () => (await fetchEntry(4, c.id)).number || "", null);
     actionButtons(row, fillOne, copyOne);
+    row.querySelector(".btns").append(editButton(c.id, "card"));
     wireKeys(row, idx, c, fillOne);
     rows.push(row);
     return row;
@@ -2401,10 +2481,28 @@
               Object.getOwnPropertyDescriptor(proto, "value").set.call(el, v);
               el.dispatchEvent(new Event("input", { bubbles: true }));
             };
+            const setSel = (sel, v) => {
+              const el = document.querySelector(sel);
+              if (!el || !v || el.tagName !== "SELECT") return;
+              const w = String(v).trim().toLowerCase();
+              const opts = [...el.options];
+              const hit = opts.find((o) => (o.textContent || "").trim().toLowerCase() === w)
+                || opts.find((o) => String(o.value).trim().toLowerCase() === w)
+                || opts.find((o) => (o.textContent || "").trim().toLowerCase().startsWith(w));
+              if (!hit) return;
+              el.value = hit.value;
+              el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
             set('input[autocomplete="name"], input[name*="fullname" i]', idn.full_name || "");
+            set('input[autocomplete="organization"], input[name*="company" i]', idn.company || "");
             set('input[autocomplete="email"], input[type="email"]', idn.email || "");
             set('input[autocomplete="tel"], input[name*="phone" i]', idn.phone || "");
             set('input[autocomplete="street-address"], input[name*="address" i]', idn.address || "");
+            set('input[autocomplete="address-level2"], input[name*="city" i]', idn.city || "");
+            set('input[autocomplete="address-level1"], input[name*="state" i]', idn.state || "");
+            set('input[autocomplete="postal-code"], input[name*="zip" i]', idn.zip || "");
+            setSel('select[name*="country" i], select[autocomplete="country-name"]', idn.country || "");
+            set('input[autocomplete="country-name"], input[name*="country" i]', idn.country || "");
           },
           args: [full],
         });
@@ -2419,6 +2517,7 @@
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
     actionButtons(row, fillOne, copyOne);
+    row.querySelector(".btns").append(editButton(i.id, "identity"));
     wireKeys(row, idx, i, fillOne);
     rows.push(row);
     return row;
@@ -2435,6 +2534,7 @@
     // Quick-view: eye reveal for the note body (ellipsis + 15s remask).
     passwordReveal(row, async () => (await fetchEntry(3, n.id)).content || "", null);
     actionButtons(row, copyOne, copyOne);
+    row.querySelector(".btns").append(editButton(n.id, "note"));
     wireKeys(row, idx, n, copyOne);
     rows.push(row);
     return row;

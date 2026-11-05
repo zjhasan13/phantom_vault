@@ -484,6 +484,34 @@ fn req_folder(vault: &mut Vault, raw: &str) -> String {
     name.to_string()
 }
 
+/// A3b: collision-free id for extension-created notes/cards/identities.
+fn next_item_id(vault: &Vault, prefix: &str) -> String {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let mut bump = 0u32;
+    loop {
+        let cand = if bump == 0 {
+            format!("{prefix}{ms}")
+        } else {
+            format!("{prefix}{ms}-{bump}")
+        };
+        let taken = vault.credentials.iter().any(|x| x.id == cand)
+            || vault.notes.iter().any(|x| x.id == cand)
+            || vault.cards.iter().any(|x| x.id == cand)
+            || vault.identities.iter().any(|x| x.id == cand)
+            || vault.ssh_keys.iter().any(|x| x.id == cand)
+            || vault.licenses.iter().any(|x| x.id == cand)
+            || vault.passkeys.iter().any(|x| x.id == cand)
+            || vault.totp_accounts.iter().any(|x| x.id == cand);
+        if !taken {
+            return cand;
+        }
+        bump = bump.saturating_add(1);
+    }
+}
+
 pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Answer {
     let no = |s: &str| Answer {
         reply: err(s),
@@ -1806,7 +1834,280 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: true,
             }
         }
-        // Smart-autofill: save a freshly submitted login (update or append).
+        // A3b: generic editor for the non-login kinds (note / card / identity).
+        // `kind` is explicit so an identity edit can never become a login write.
+        "create_item" | "update_item" | "delete_item" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let kind = req
+                .get("kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if !matches!(kind.as_str(), "note" | "card" | "identity") {
+                return no("unsupported kind");
+            }
+            let creating = cmd == "create_item";
+            let deleting = cmd == "delete_item";
+            let id = req.get("id").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            if !creating && id.is_empty() {
+                return no("id required");
+            }
+            let now = crate::models::current_timestamp();
+            let clip = |key: &str, max: usize| -> String {
+                req.get(key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .trim()
+                    .chars()
+                    .take(max)
+                    .collect()
+            };
+            if deleting {
+                let hit = match kind.as_str() {
+                    "note" => vault
+                        .notes
+                        .iter_mut()
+                        .find(|n| n.id == id && n.deleted_at.is_none())
+                        .map(|n| n.deleted_at = Some(now))
+                        .is_some(),
+                    "card" => vault
+                        .cards
+                        .iter_mut()
+                        .find(|k| k.id == id && k.deleted_at.is_none())
+                        .map(|k| k.deleted_at = Some(now))
+                        .is_some(),
+                    _ => vault
+                        .identities
+                        .iter_mut()
+                        .find(|i| i.id == id && i.deleted_at.is_none())
+                        .map(|i| i.deleted_at = Some(now))
+                        .is_some(),
+                };
+                if !hit {
+                    return no("unknown id");
+                }
+                crate::security::access_log::log_event("bridge-delete", &short_id(&id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "deleted": true, "id": id}),
+                    persist: true,
+                };
+            }
+            let folder = req_folder(vault, req.get("folder").and_then(|v| v.as_str()).unwrap_or(""));
+            if kind == "note" {
+                let title = clip("title", 128);
+                let content = clip("content", 20000);
+                if creating {
+                    let new_id = next_item_id(vault, "extn");
+                    vault.notes.push(crate::models::SecureNote {
+                        id: new_id.clone(),
+                        title: if title.is_empty() { "Untitled".into() } else { title },
+                        content,
+                        folder,
+                        custom_fields: Vec::new(),
+                        attachments: Vec::new(),
+                        travel_safe: false,
+                        favorite: false,
+                        deleted_at: None,
+                    });
+                    crate::security::access_log::log_event("bridge-create", &short_id(&new_id));
+                    return Answer {
+                        reply: serde_json::json!({"ok": true, "id": new_id}),
+                        persist: true,
+                    };
+                }
+                let Some(n) = vault.notes.iter_mut().find(|n| n.id == id && n.deleted_at.is_none()) else {
+                    return no("unknown id");
+                };
+                if !title.is_empty() {
+                    n.title = title;
+                }
+                if !content.is_empty() {
+                    n.content = content;
+                }
+                n.folder = folder;
+                crate::security::access_log::log_event("bridge-update", &short_id(&id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "id": id}),
+                    persist: true,
+                };
+            }
+            if kind == "card" {
+                let number_raw: String = req
+                    .get("number")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect();
+                let month_raw = clip("exp_month", 2);
+                let year_raw: String = req
+                    .get("exp_year")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect();
+                let cvv: String = req
+                    .get("cvv")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .chars()
+                    .filter(|c| c.is_ascii_digit())
+                    .collect();
+                let holder = clip("cardholder", 128);
+                let title = clip("title", 128);
+                let mut month = String::new();
+                let mut year = String::new();
+                if !month_raw.is_empty() || !year_raw.is_empty() {
+                    let m = month_raw.parse::<u32>().unwrap_or(0);
+                    if !(1..=12).contains(&m) {
+                        return no("invalid expiry month");
+                    }
+                    month = format!("{m:02}");
+                    year = match year_raw.len() {
+                        2 => year_raw,
+                        4 => year_raw[2..].to_string(),
+                        _ => return no("invalid expiry year"),
+                    };
+                }
+                if creating {
+                    if number_raw.len() < 12 || number_raw.len() > 19 || !crate::luhn_valid(&number_raw) {
+                        return no("invalid card number");
+                    }
+                    if month.is_empty() || year.is_empty() {
+                        return no("expiry required");
+                    }
+                    if !cvv.is_empty() && !(3..=4).contains(&cvv.len()) {
+                        return no("invalid cvv");
+                    }
+                    let new_id = next_item_id(vault, "extc");
+                    vault.cards.push(crate::models::PaymentCard {
+                        id: new_id.clone(),
+                        title: if title.is_empty() { "Card".into() } else { title },
+                        cardholder_name: holder,
+                        card_number: number_raw,
+                        exp_month: month,
+                        exp_year: year,
+                        cvv,
+                        folder,
+                        notes: String::from("Created via browser extension"),
+                        custom_fields: Vec::new(),
+                        attachments: Vec::new(),
+                        travel_safe: false,
+                        favorite: false,
+                        deleted_at: None,
+                    });
+                    crate::security::access_log::log_event("bridge-create", &short_id(&new_id));
+                    return Answer {
+                        reply: serde_json::json!({"ok": true, "id": new_id}),
+                        persist: true,
+                    };
+                }
+                let Some(k) = vault.cards.iter_mut().find(|k| k.id == id && k.deleted_at.is_none()) else {
+                    return no("unknown id");
+                };
+                if !number_raw.is_empty() {
+                    if number_raw.len() < 12 || number_raw.len() > 19 || !crate::luhn_valid(&number_raw) {
+                        return no("invalid card number");
+                    }
+                    k.card_number = number_raw;
+                }
+                if !month.is_empty() {
+                    k.exp_month = month;
+                    k.exp_year = year;
+                }
+                if !cvv.is_empty() {
+                    if !(3..=4).contains(&cvv.len()) {
+                        return no("invalid cvv");
+                    }
+                    k.cvv = cvv;
+                }
+                if !holder.is_empty() {
+                    k.cardholder_name = holder;
+                }
+                if !title.is_empty() {
+                    k.title = title;
+                }
+                k.folder = folder;
+                crate::security::access_log::log_event("bridge-update", &short_id(&id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "id": id}),
+                    persist: true,
+                };
+            }
+            // identity
+            let full_name = clip("full_name", 128);
+            let email = clip("email", 254);
+            let phone = clip("phone", 40);
+            let address = clip("address", 512);
+            let company = clip("company", 128);
+            let city = clip("city", 128);
+            let state = clip("state", 128);
+            let zip = clip("zip", 32);
+            let country = clip("country", 64);
+            let title = clip("title", 128);
+            if creating {
+                if full_name.is_empty() {
+                    return no("full name required");
+                }
+                let new_id = next_item_id(vault, "exti");
+                vault.identities.push(crate::models::IdentityItem {
+                    id: new_id.clone(),
+                    title: if title.is_empty() { String::from("Identity") } else { title },
+                    full_name,
+                    nid_or_passport: String::new(),
+                    email,
+                    phone,
+                    address,
+                    company,
+                    city,
+                    state,
+                    zip,
+                    country,
+                    folder,
+                    notes: String::from("Created via browser extension"),
+                    custom_fields: Vec::new(),
+                    attachments: Vec::new(),
+                    travel_safe: false,
+                    favorite: false,
+                    deleted_at: None,
+                });
+                crate::security::access_log::log_event("bridge-create", &short_id(&new_id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "id": new_id}),
+                    persist: true,
+                };
+            }
+            let Some(i) = vault.identities.iter_mut().find(|i| i.id == id && i.deleted_at.is_none()) else {
+                return no("unknown id");
+            };
+            let pairs = [
+                (&mut i.full_name, full_name),
+                (&mut i.email, email),
+                (&mut i.phone, phone),
+                (&mut i.address, address),
+                (&mut i.company, company),
+                (&mut i.city, city),
+                (&mut i.state, state),
+                (&mut i.zip, zip),
+                (&mut i.country, country),
+                (&mut i.title, title),
+            ];
+            for (slot, value) in pairs {
+                if !value.is_empty() {
+                    *slot = value;
+                }
+            }
+            i.folder = folder;
+            crate::security::access_log::log_event("bridge-update", &short_id(&id));
+            Answer {
+                reply: serde_json::json!({"ok": true, "id": id}),
+                persist: true,
+            }
+        }
         // persist:true → the serve loop re-seals to disk; cloud sync follows
         // on the next desktop-app save (the host never pushes directly).
         "save_login" => {
@@ -3110,7 +3411,7 @@ pub fn serve_cli() -> i32 {
         if serving_decoy
             && matches!(
                 req_cmd,
-                "save_login" | "save_card" | "save_identity" | "create_login" | "update_login" | "delete_login" | "verify_master"
+                "save_login" | "save_card" | "save_identity" | "create_login" | "update_login" | "delete_login" | "create_item" | "update_item" | "delete_item" | "verify_master"
             )
         {
             let frame = encode_frame(&err("save refused"));
@@ -4569,6 +4870,69 @@ mod tests {
         // Without `all`, the domain hint still filters (anti-dump).
         let r = answer(&mut v, true, &serde_json::json!({"cmd": "identities", "app": "shop.example"}));
         assert_eq!(r.reply["entries"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn generic_item_editor_writes_non_login_kinds() {
+        let mut v = vault_with_login();
+        // Note: create -> update -> delete (soft).
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "note", "title": "Wifi", "content": "hunter2"
+        }));
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        let note_id = r.reply["id"].as_str().unwrap().to_string();
+        assert_eq!(v.notes.len(), 1);
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "update_item", "kind": "note", "id": note_id, "content": "rotated"
+        }));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(v.notes[0].content, "rotated");
+        assert_eq!(v.notes[0].title, "Wifi");
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "delete_item", "kind": "note", "id": note_id
+        }));
+        assert_eq!(r.reply["ok"], true);
+        assert!(v.notes[0].deleted_at.is_some());
+
+        // Card: Luhn gate, 4-digit year normalised to 2.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "card", "number": "4111111111111112",
+            "exp_month": "12", "exp_year": "30"
+        }));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "card", "title": "Visa",
+            "number": "4111 1111 1111 1111", "exp_month": "12", "exp_year": "2030",
+            "cvv": "123", "cardholder": "Ada"
+        }));
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.cards.len(), 1);
+        assert_eq!(v.cards[0].card_number, "4111111111111111");
+        assert_eq!(v.cards[0].exp_year, "30");
+
+        // Identity: full name is the only hard requirement.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "identity", "full_name": "Ada Lovelace",
+            "city": "London", "country": "United Kingdom"
+        }));
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.identities.len(), 1);
+        assert_eq!(v.identities[0].city, "London");
+
+        // Unknown id / unsupported kind are refused, nothing mutates.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "delete_item", "kind": "card", "id": "nope"
+        }));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "login", "title": "x"
+        }));
+        assert_eq!(r.reply["ok"], false);
+        // Locked vault refuses every branch.
+        let r = answer(&mut v, false, &serde_json::json!({
+            "cmd": "create_item", "kind": "note", "title": "x"
+        }));
+        assert_eq!(r.reply["ok"], false);
     }
 
     #[test]

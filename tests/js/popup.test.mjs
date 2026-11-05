@@ -77,29 +77,29 @@ test("P6: popup gates and suggestions include embedded frame origins", () => {
 // ---- A3: item editor ----
 
 test("A3: popup sends create/update/delete only through the editor", () => {
-  assert.match(SRC, /function openItemEditor\(entry\)/, "editor present");
+  assert.match(SRC, /function openItemEditor\(entry, kind = "login"\)/, "editor present");
   assert.match(SRC, /type: isNew \? "PV_ITEM_CREATE" : "PV_ITEM_UPDATE"/);
   assert.match(SRC, /type: "PV_ITEM_DELETE"/);
   assert.match(SRC, /document\.getElementById\("addItemBtn"\)/, "Add button wired");
-  assert.match(SRC, /function editButton\(id\)/, "per-row edit control present");
+  assert.match(SRC, /function editButton\(id, kind = "login"\)/, "per-row edit control present");
 });
 
 test("A3: armed items require the master reprompt before any mutation", () => {
   const editor = SRC.slice(SRC.indexOf("async function requestReprompt"), SRC.indexOf("function currentFilter"));
   assert.match(editor, /type: "PV_REPROMPT"/, "reprompt goes through the bridge");
   const save = editor.slice(editor.indexOf("saveBtn.addEventListener"), editor.indexOf("if (delBtn)"));
-  assert.match(save, /needsToken\(\) \? await requestReprompt/, "save gates on reprompt");
-  assert.ok(save.indexOf("requestReprompt") < save.indexOf("PV_ITEM_UPDATE"),
+  assert.match(save, /needsToken\(\)\) \{[\s\S]*requestReprompt/, "save gates on reprompt");
+  assert.ok(save.indexOf("requestReprompt") < save.indexOf("chrome.runtime.sendMessage(payload)"),
     "reprompt happens before the mutation");
   const del = editor.slice(editor.indexOf("delBtn.addEventListener"));
-  assert.match(del, /entry\.reprompt \? await requestReprompt/, "delete gates on reprompt");
+  assert.match(del, /kind === "login" && entry\.reprompt[\s\S]*requestReprompt/, "delete gates on reprompt");
   assert.match(del, /PV_ITEM_DELETE/);
 });
 
 test("A3: edit flow never overwrites a TOTP secret with a live code", () => {
   assert.match(SRC, /if \(totpIn\.value\.trim\(\)\) payload\.totp = totpIn\.value\.trim\(\);/,
     "blank TOTP field is omitted, not sent");
-  assert.match(SRC, /fetchEntry\(1, id\)/, "editor loads the full item on demand");
+  assert.match(SRC, /fetchEntry\(KIND_NUM\[kind\] \|\| 1, id\)/, "editor loads the full item on demand");
 });
 
 // ---- A4: clipboard auto-clear ----

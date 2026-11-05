@@ -609,30 +609,38 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_ITEM_CREATE" || msg.type === "PV_ITEM_UPDATE" || msg.type === "PV_ITEM_DELETE") {
       const denied = popupOnly();
       if (denied) return { ok: false, error: denied };
-      const cmd = msg.type === "PV_ITEM_CREATE"
-        ? "create_login"
-        : msg.type === "PV_ITEM_UPDATE" ? "update_login" : "delete_login";
-      const payload = {
-        cmd,
-        id: String(msg.id || ""),
-        title: String(msg.title || ""),
-        username: String(msg.username || ""),
-        password: String(msg.password || ""),
-        totp: String(msg.totp || ""),
-        folder: String(msg.folder || ""),
-        url: String(msg.url || ""),
-        urls: Array.isArray(msg.urls) ? msg.urls.filter((u) => typeof u === "string").slice(0, 10) : [],
-        reprompt: msg.reprompt === true,
-      };
-      if (msg.reprompt_token) payload.reprompt_token = String(msg.reprompt_token);
-      // Update is partial: only send fields the editor actually has.
-      if (msg.type === "PV_ITEM_UPDATE") {
-        for (const k of ["title", "username", "password", "totp", "folder", "url", "urls", "reprompt"]) {
+      const kind = String(msg.kind || "login").toLowerCase();
+      const isLogin = kind === "login";
+      if (!isLogin && !["note", "card", "identity"].includes(kind)) {
+        return { ok: false, error: "unsupported kind" };
+      }
+      const cmd = isLogin
+        ? (msg.type === "PV_ITEM_CREATE" ? "create_login"
+          : msg.type === "PV_ITEM_UPDATE" ? "update_login" : "delete_login")
+        : (msg.type === "PV_ITEM_CREATE" ? "create_item"
+          : msg.type === "PV_ITEM_UPDATE" ? "update_item" : "delete_item");
+      const loginFields = ["title", "username", "password", "totp", "folder", "url", "urls", "reprompt"];
+      const itemFields = ["title", "folder", "content", "number", "cardholder", "exp_month",
+        "exp_year", "cvv", "full_name", "email", "phone", "address", "company", "city",
+        "state", "zip", "country"];
+      const fields = isLogin ? loginFields : itemFields;
+      const payload = { cmd, id: String(msg.id || "") };
+      if (!isLogin) payload.kind = kind;
+      for (const k of fields) {
+        if (k in msg) payload[k] = msg[k];
+      }
+      if (isLogin) {
+        if (Array.isArray(msg.urls)) {
+          payload.urls = msg.urls.filter((u) => typeof u === "string").slice(0, 10);
+        }
+        payload.reprompt = msg.reprompt === true;
+        if (msg.reprompt_token) payload.reprompt_token = String(msg.reprompt_token);
+      }
+      // Update/delete are partial: only send fields the editor actually has.
+      if (msg.type !== "PV_ITEM_CREATE") {
+        for (const k of fields) {
           if (!(k in msg)) delete payload[k];
         }
-      }
-      if (msg.type === "PV_ITEM_DELETE") {
-        for (const k of ["title", "username", "password", "totp", "folder", "url", "urls", "reprompt"]) delete payload[k];
       }
       const r = await hostRequest(payload);
       if (r && r.ok) { touchActivity(); retouchBadge(); }
