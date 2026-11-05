@@ -249,6 +249,25 @@ test("save prompt sends the folder and can be dismissed with x", async (t) => {
   assert.equal(store.session["pvSavePending:example.com"], undefined);
 });
 
+test("save prompt lets the user edit the title and URL", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login");
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  const ins = [...root.querySelectorAll("input")];
+  assert.ok(ins.length >= 4, "title/username/password/url fields");
+  ins[0].value = "My Example";
+  ins[3].value = "https://example.com/account";
+  const saveBtn = [...root.querySelectorAll("button")].find((b) => /^Save$/.test(b.textContent.trim()));
+  saveBtn.click();
+  await flush(80);
+  assert.equal(store.saves[0].title, "My Example");
+  assert.equal(store.saves[0].url, "https://example.com/account");
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">
@@ -963,7 +982,7 @@ test("A9: save prompt pre-fills editable fields in a closed shadow root", async 
   assert.equal(host.shadowRoot, null, "root must be closed to page scripts");
   assert.equal(host.querySelector("input"), null, "no input leaks into light DOM");
   const root = saverRoot(window);
-  const user = root.querySelector('input[type="text"]');
+  const user = root.querySelector('[data-pv-field="username"]');
   const pass = root.querySelector('input[type="password"]');
   assert.equal(user.value, "alice");
   assert.equal(pass.value, "pw123");
@@ -976,7 +995,7 @@ test("A9: corrected fields are what gets saved", async (t) => {
   submit(window, window.document.querySelector("form"));
   await flush();
   const root = saverRoot(window);
-  root.querySelector('input[type="text"]').value = "alice@corp.example";
+  root.querySelector('[data-pv-field="username"]').value = "alice@corp.example";
   root.querySelector('input[type="password"]').value = "RightPass!1";
   saverButton(window, /Save/).click();
   await flush();
@@ -991,7 +1010,7 @@ test("A9: blank fields block the save instead of writing garbage", async (t) => 
   submit(window, window.document.querySelector("form"));
   await flush();
   const root = saverRoot(window);
-  root.querySelector('input[type="text"]').value = "   ";
+  root.querySelector('[data-pv-field="username"]').value = "   ";
   root.querySelector('input[type="password"]').value = "";
   saverButton(window, /Save/).click();
   await flush();
@@ -1024,7 +1043,7 @@ test("A9: update prompt saves corrected username and password", async (t) => {
   submit(window, window.document.querySelector("form"));
   await flush();
   const root = saverRoot(window);
-  root.querySelector('input[type="text"]').value = "bob@example.com";
+  root.querySelector('[data-pv-field="username"]').value = "bob@example.com";
   root.querySelector('input[type="password"]').value = "EvenNewer1";
   saverButton(window, /Update/).click();
   await flush();

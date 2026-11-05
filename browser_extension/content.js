@@ -3072,6 +3072,8 @@
       busyLabel: p.update ? "Updating…" : "Saving…",
       allowNever: !p.update,
       folder: p.folder,
+      itemTitle: p.title,
+      url: p.url,
       existing,
       username: p.username,
       password: p.password,
@@ -3142,14 +3144,26 @@
       ".scope{display:flex;align-items:center;gap:6px;font:10px ui-monospace,monospace;color:#86948a;margin:0 0 10px}" +
       ".scope b{color:#dae2fd;font-weight:700}" +
       ".foot{font:9px ui-monospace,monospace;color:#86948a;margin-top:8px}";
+    const lblT = document.createElement("div");
+    lblT.className = "lbl";
+    lblT.textContent = "TITLE";
+    const titleIn = toastField("text", opts.itemTitle || captureTitle(), "Title");
+    titleIn.setAttribute("data-pv-field", "title");
     const lblU = document.createElement("div");
     lblU.className = "lbl";
     lblU.textContent = "IDENTITY / USERNAME";
     const user = toastField("text", opts.username, "Username");
+    user.setAttribute("data-pv-field", "username");
     const lblP = document.createElement("div");
     lblP.className = "lbl";
     lblP.textContent = "SECRET PASSWORD";
     const pass = toastField("password", opts.password, "Password");
+    pass.setAttribute("data-pv-field", "password");
+    const lblR = document.createElement("div");
+    lblR.className = "lbl";
+    lblR.textContent = "WEBSITE URL";
+    const urlIn = toastField("text", opts.url || captureUrl(), "https://…");
+    urlIn.setAttribute("data-pv-field", "url");
     const meta = document.createElement("div");
     meta.className = "meta";
     // Folder picker (Bitwarden's save bar has one too). Populated from
@@ -3243,8 +3257,8 @@
     const foot = document.createElement("div");
     foot.className = "foot";
     foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
-    if (candLbl && candRow) root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
-    else root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, err, row, foot);
+    if (candLbl && candRow) root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
+    else root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, meta, lblF, folderSel, err, row, foot);
     document.documentElement.append(box);
     // Keep the capture for the next page on this site (unless this card IS the
     // restore). Explicit actions below clear it again.
@@ -3255,6 +3269,8 @@
         update: !!opts.update,
         allowNever: !!opts.allowNever,
         folder: folderSel.value || "General",
+        title: titleIn.value.trim() || captureTitle(),
+        url: urlIn.value.trim() || captureUrl(),
       });
     }
 
@@ -3321,8 +3337,8 @@
           type: "PV_SAVE_LOGIN",
           username: u,
           password: p,
-          url: captureUrl(),
-          title: captureTitle(),
+          url: urlIn.value.trim() || captureUrl(),
+          title: titleIn.value.trim() || captureTitle(),
           folder: folderSel.value || "General",
           id: targetId || "",
         });

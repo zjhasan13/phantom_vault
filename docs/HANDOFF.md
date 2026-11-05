@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt: edit title/URL (batch 3, this batch):** the prompt now shows
+  editable `TITLE` and `WEBSITE URL` fields (defaults from `captureTitle()` /
+  `captureUrl()`), so the user can rename the item or pin the exact URL before
+  saving. Edits survive a reload through the pending record. The page's prompt
+  heading stays separate (`opts.title`), so the item title can never inherit
+  "Save this login?" (that bug was caught by the A9 tests). Tests: edited title
+  and URL reach `PV_SAVE_LOGIN` (npm 154/154).
+
 - **Save prompt: choose the update target (batch 2, this batch):** the prompt
   lists this site's existing logins as chips (`EXISTING ON THIS SITE`) plus a
   `Save as new` chip; picking one switches the primary action to `Update` and
