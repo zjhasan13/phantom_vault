@@ -268,6 +268,19 @@ test("save prompt lets the user edit the title and URL", async (t) => {
   assert.equal(store.saves[0].url, "https://example.com/account");
 });
 
+test("save prompt shows weak and HIBP breach flags", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="password">
+  </form>`, "https://example.com/login");
+  store.breach = 12;
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  const text = saverRoot(window).textContent;
+  assert.match(text, /weak/i, "low-entropy password is flagged locally");
+  assert.match(text, /breached/i, "HIBP count surfaces as a chip");
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">

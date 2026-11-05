@@ -51,6 +51,7 @@ function makeChrome(store) {
       const id = msg.id ? String(msg.id) : "";
       return { ok: true, candidates: id ? all.filter((c) => String(c.id) === id) : all };
     }
+    if (msg.type === "PV_BREACH") return { ok: true, breach: store.breach ?? null };
     if (msg.type === "PV_SAVE_LOGIN") {
       store.saves.push(msg);
       return { ok: true, updated: false };
@@ -128,7 +129,7 @@ export function loadContent(html, url = "https://example.com/login", entries = [
       } catch (_) {}
     }
   }
-  const store = { entries, cards, identities, totp, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [], local: { ...local } };
+  const store = { entries, cards, identities, totp, breach: null, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [], local: { ...local } };
   window.chrome = makeChrome(store);
   // jsdom has no innerText. content.js reads it for OTP hint/context text, so
   // map it to textContent; without this the hint paths see empty strings and

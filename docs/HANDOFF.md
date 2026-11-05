@@ -328,6 +328,16 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **At-risk flags on the save prompt (batch 5, this batch):** a new
+  `breach_check` bridge command runs HIBP k-anonymity for the submitted
+  password (only the 5-char SHA-1 prefix leaves the machine; the reply is
+  `null` = clean, `N` = seen N times, any error is NOT reported as clean). The
+  prompt shows a local `WEAK (estimate)` chip below 40 bits and, when the host
+  answers, `BREACHED - seen Nx` or `not in HIBP`. Tests: host refuses
+  empty/locked requests; jsdom prompt renders both chips (npm 155/155).
+  Known boundary: the desktop's session-only offline kill-switch lives in the
+  app process, so it does not gate the host's HIBP call.
+
 - **Save prompts fully shadow-isolated (batch 4, this batch):** login, card and
   identity prompts now build their entire card inside a closed shadow root
   (the host keeps only `id="__pv_saver"`). Page CSS can no longer restyle the

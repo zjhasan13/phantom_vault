@@ -3130,11 +3130,42 @@
     const sub = document.createElement("div");
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = opts.sub;
+    // At-risk hints: local entropy estimate is instant; the HIBP result arrives
+    // asynchronously and only adds a chip when the host answers. Errors add
+    // nothing (never a fake "clean").
+    const flags = document.createElement("div");
+    flags.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 8px;";
+    const addFlag = (text, kind) => {
+      const c = document.createElement("span");
+      c.textContent = text;
+      const palette = {
+        warn: ["#f59e0b", "rgba(245,158,11,.18)"],
+        bad: ["#ffb4ab", "rgba(255,180,171,.16)"],
+        ok: ["#4edea3", "rgba(78,222,163,.14)"],
+      };
+      const [fg, bg] = palette[kind] || palette.warn;
+      c.style.cssText = "font:700 9px 'JetBrains Mono',monospace;letter-spacing:.4px;text-transform:uppercase;" +
+        "padding:4px 6px;border-radius:5px;border:1px solid " + fg + "44;background:" + bg + ";color:" + fg + ";";
+      flags.appendChild(c);
+    };
+    if (opts.password && pvEntropyBits(opts.password) < 40) addFlag("weak (estimate)", "warn");
+    if (opts.password) {
+      try {
+        chrome.runtime.sendMessage({ type: "PV_BREACH", password: opts.password }).then((r) => {
+          if (!r || !r.ok) return;
+          if (typeof r.breach === "number" && r.breach > 0) {
+            addFlag("breached - seen " + r.breach + "x", "bad");
+          } else if (r.breach === null) {
+            addFlag("not in HIBP", "ok");
+          }
+        }).catch(() => {});
+      } catch (_) {}
+    }
     // Batch 4: the whole card lives inside a closed shadow root, so page CSS
     // cannot restyle it and page frameworks cannot scrape our field values.
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
     const root = shadow || box;
-    if (shadow) root.append(head, sub);
+    root.append(head, sub, flags);
     const style = document.createElement("style");
     style.textContent = PV_FIELD_CSS +
       ".lbl{font:700 9px ui-monospace,monospace;letter-spacing:.6px;color:#86948a;margin:0 0 4px}" +

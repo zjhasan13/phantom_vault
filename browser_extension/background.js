@@ -524,6 +524,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       touchActivity();
       return await hostRequest({ cmd: "folders" });
     }
+    // At-risk hint: the host runs the HIBP k-anonymity query (only the SHA-1
+    // prefix leaves the machine). Errors are returned as failures, never as
+    // "clean".
+    if (msg.type === "PV_BREACH") {
+      return await hostRequest({ cmd: "breach_check", password: msg.password || "" }, 25000);
+    }
     if (msg.type === "PV_FETCH") {
       touchActivity();
       return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });

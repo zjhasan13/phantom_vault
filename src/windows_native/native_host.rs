@@ -1508,6 +1508,35 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: false,
             }
         }
+        // HIBP k-anonymity for the password the page just submitted. Only the
+        // 5-char SHA-1 prefix leaves this machine; the bridge already receives
+        // the plaintext on save, so this adds no new trust boundary. The reply
+        // is null = clean, N = seen N times, error = unknown (never "clean").
+        "breach_check" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            let pw = req.get("password").and_then(|v| v.as_str()).unwrap_or("");
+            if pw.trim().is_empty() || pw.chars().count() > 512 {
+                return no("password required");
+            }
+            let rt = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
+                Ok(rt) => rt,
+                Err(e) => return no(&format!("breach runtime failed: {e}")),
+            };
+            crate::security::access_log::log_event("bridge-breach", "check");
+            match rt.block_on(crate::security::breach_check::check_password(pw)) {
+                Ok(None) => Answer {
+                    reply: serde_json::json!({"ok": true, "breach": null}),
+                    persist: false,
+                },
+                Ok(Some(n)) => Answer {
+                    reply: serde_json::json!({"ok": true, "breach": n}),
+                    persist: false,
+                },
+                Err(e) => no(&format!("breach check failed: {e}")),
+            }
+        }
         // Fetch ONE item's fill secrets by (kind, id). Trashed never served.
         // This is what backs Fill/Copy on metadata rows — no vault dump.
         "fetch" => {
@@ -5109,6 +5138,17 @@ mod tests {
         let r = answer(&mut v, false, &serde_json::json!({
             "cmd": "create_item", "kind": "note", "title": "x"
         }));
+        assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn breach_check_command_refuses_without_a_password_or_unlock() {
+        let mut v = vault_with_login();
+        let r = answer(&mut v, false, &serde_json::json!({"cmd": "breach_check", "password": "x"}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "breach_check", "password": ""}));
+        assert_eq!(r.reply["ok"], false);
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "breach_check", "password": "   "}));
         assert_eq!(r.reply["ok"], false);
     }
 
