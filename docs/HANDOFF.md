@@ -328,6 +328,25 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt keyboard/a11y (batch 7, this batch):** all three prompts expose
+  `role="dialog"` + an `aria-label`, render a `:focus-visible` mint outline
+  inside the shadow root, and the at-risk chips are `aria-live="polite"`.
+  Escape now only dismisses while focus is inside the prompt (a page-level
+  Escape no longer discards the capture), and dismiss/save returns focus to the
+  field the user was typing in. Deliberately no focus trap: like Bitwarden's
+  non-modal notification bar, the page stays usable.
+
+- **Save prompt: notes, reuse hint, card/identity parity (batch 6, this batch):**
+  the login prompt gained an optional NOTES field (persisted with the pending
+  record and sent as `notes`), and the HIBP reply now also carries a local
+  `reuse` count so the prompt can show `reused in N other item(s)` without a
+  second call. Card and identity prompts now have the same FOLDER picker, send
+  `folder` (bridge honours it on create and keeps it on update), and persist
+  across navigation like the login prompt (`kind: card|identity` in
+  `pvSavePending`); the restore path dispatches to the right prompt. Tests:
+  notes reach `PV_SAVE_LOGIN`, reuse chip renders, card prompt restores on the
+  next document (npm 157/157), Rust notes/folder + reuse helper (cargo suite).
+
 - **At-risk flags on the save prompt (batch 5, this batch):** a new
   `breach_check` bridge command runs HIBP k-anonymity for the submitted
   password (only the 5-char SHA-1 prefix leaves the machine; the reply is

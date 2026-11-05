@@ -281,6 +281,43 @@ test("save prompt shows weak and HIBP breach flags", async (t) => {
   assert.match(text, /breached/i, "HIBP count surfaces as a chip");
 });
 
+test("save prompt sends notes and shows a reuse hint", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login");
+  store.reuse = 3;
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  const root = saverRoot(window);
+  assert.match(root.textContent, /reused in 2 other/i, "reuse count (minus this item) shows");
+  const notes = root.querySelector("textarea");
+  assert.ok(notes, "notes field present");
+  notes.value = "recovery codes in the safe";
+  const saveBtn = [...root.querySelectorAll("button")].find((b) => /^Save$/.test(b.textContent.trim()));
+  saveBtn.click();
+  await flush(80);
+  assert.equal(store.saves[0].notes, "recovery codes in the safe");
+});
+
+test("card prompt persists across navigation", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input autocomplete="cc-number" name="cardnumber" value="4111 1111 1111 1111">
+    <input autocomplete="cc-exp" name="exp" value="12/30">
+    <input autocomplete="cc-csc" name="cvv" value="123">
+  </form>`, "https://shop.example/checkout");
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  assert.ok(saver(window), "card prompt shows");
+  const pending = store.session["pvSavePending:shop.example"];
+  assert.ok(pending && pending.kind === "card" && pending.card, "card pending record");
+  // A fresh document on the same site restores the card prompt.
+  const second = env(t, `<div>done</div>`, "https://shop.example/account");
+  second.store.session["pvSavePending:shop.example"] = pending;
+  await flush(1500);
+  assert.ok(saver(second.window), "card prompt restored after navigation");
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">

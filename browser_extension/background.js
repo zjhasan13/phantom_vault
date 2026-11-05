@@ -734,7 +734,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (await neverSaveHit(msg.url)) {
         return { ok: false, error: "never save for this site" };
       }
-      const r = await hostRequest({ cmd: "save_login", id: msg.id || "", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "", folder: msg.folder || "" });
+      const r = await hostRequest({ cmd: "save_login", id: msg.id || "", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "", folder: msg.folder || "", notes: msg.notes || "" });
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }
@@ -753,6 +753,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         exp_month: msg.exp_month || "",
         exp_year: msg.exp_year || "",
         cvv: msg.cvv || "",
+        folder: msg.folder || "",
         url: msg.url || "",
         title: msg.title || "",
       });
@@ -778,6 +779,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         state: msg.state || "",
         zip: msg.zip || "",
         country: msg.country || "",
+        folder: msg.folder || "",
         url: msg.url || "",
         title: msg.title || "",
       });

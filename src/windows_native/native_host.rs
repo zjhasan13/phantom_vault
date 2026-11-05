@@ -1525,13 +1525,16 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 Err(e) => return no(&format!("breach runtime failed: {e}")),
             };
             crate::security::access_log::log_event("bridge-breach", "check");
+            // Local reuse count (no network): how many live logins share this
+            // exact password, including the item the user may be updating.
+            let reuse = pw_reuse_count(vault, pw);
             match rt.block_on(crate::security::breach_check::check_password(pw)) {
                 Ok(None) => Answer {
-                    reply: serde_json::json!({"ok": true, "breach": null}),
+                    reply: serde_json::json!({"ok": true, "breach": null, "reuse": reuse}),
                     persist: false,
                 },
                 Ok(Some(n)) => Answer {
-                    reply: serde_json::json!({"ok": true, "breach": n}),
+                    reply: serde_json::json!({"ok": true, "breach": n, "reuse": reuse}),
                     persist: false,
                 },
                 Err(e) => no(&format!("breach check failed: {e}")),
@@ -2227,6 +2230,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             }
             let title = req.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let totp = req.get("totp").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let notes_req = req.get("notes").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             // Optional folder from the save prompt. Empty = General for a new
             // item and "leave unchanged" for an update.
             let folder_req = req
@@ -2281,6 +2285,9 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 if !folder_req.is_empty() {
                     c.folder = folder;
                 }
+                if !notes_req.is_empty() {
+                    c.notes = notes_req.chars().take(2000).collect();
+                }
                 updated = true;
             } else {
                 let id = format!(
@@ -2300,7 +2307,11 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     apps: Vec::new(),
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
-                    notes: String::from("Saved via browser extension"),
+                    notes: if notes_req.is_empty() {
+                        String::from("Saved via browser extension")
+                    } else {
+                        notes_req.chars().take(2000).collect()
+                    },
                     folder,
                     reprompt: false,
                     attachments: Vec::new(),
@@ -2366,6 +2377,12 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 return no("invalid cvv");
             }
             let holder = req.get("cardholder").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let folder_req = req.get("folder").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let folder = if folder_req.is_empty() {
+                crate::models::DEFAULT_FOLDER.to_string()
+            } else {
+                req_folder(vault, &folder_req)
+            };
             let url = canonical_login_url(req.get("url").and_then(|v| v.as_str()).unwrap_or(""));
             let dom = url_domain(&url);
             let existing = vault.cards.iter_mut().find(|k| {
@@ -2382,6 +2399,9 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 k.exp_year = year;
                 if !cvv.is_empty() {
                     k.cvv = cvv;
+                }
+                if !folder_req.is_empty() {
+                    k.folder = folder;
                 }
                 updated = true;
             } else {
@@ -2412,7 +2432,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     exp_month: month,
                     exp_year: year,
                     cvv,
-                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    folder,
                     notes,
                     custom_fields: Vec::new(),
                     attachments: Vec::new(),
@@ -2457,6 +2477,12 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             let state = clip("state", 128);
             let zip = clip("zip", 32);
             let country = clip("country", 64);
+            let folder_req = req.get("folder").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            let folder = if folder_req.is_empty() {
+                crate::models::DEFAULT_FOLDER.to_string()
+            } else {
+                req_folder(vault, &folder_req)
+            };
             if full_name.is_empty() {
                 return no("full name required");
             }
@@ -2515,6 +2541,9 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 if !country.is_empty() {
                     i.country = country;
                 }
+                if !folder_req.is_empty() {
+                    i.folder = folder;
+                }
                 updated = true;
             } else {
                 let id = format!(
@@ -2549,7 +2578,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     state,
                     zip,
                     country,
-                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    folder,
                     notes,
                     custom_fields: Vec::new(),
                     attachments: Vec::new(),
@@ -2764,6 +2793,19 @@ fn login_health_kind(password: &str, last_changed: u64, now: u64, freq: usize) -
 
 /// Password reuse frequencies over live logins (empty passwords excluded —
 /// blank shared fields are missing data, not reuse). Pure.
+/// Live logins that share this exact password (local reuse hint; empty never
+/// counts). Pure so the save prompt's reuse flag is unit-testable.
+fn pw_reuse_count(vault: &Vault, password: &str) -> usize {
+    if password.is_empty() {
+        return 0;
+    }
+    vault
+        .credentials
+        .iter()
+        .filter(|c| c.deleted_at.is_none() && c.password == password)
+        .count()
+}
+
 fn login_pw_freq(vault: &Vault) -> std::collections::HashMap<&str, usize> {
     let mut freq = std::collections::HashMap::new();
     for c in &vault.credentials {
@@ -5171,6 +5213,24 @@ mod tests {
         assert_eq!(r.reply["updated"], true, "{:?}", r.reply);
         assert_eq!(v.credentials.iter().find(|c| c.id == "c2").unwrap().password, "new");
         assert_eq!(v.credentials.iter().find(|c| c.id == "c1").unwrap().password, "ghp_x");
+    }
+
+    #[test]
+    fn save_login_honours_notes_and_the_prompt_folder() {
+        let mut v = Vault::new();
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({
+                "cmd": "save_login", "username": "a@b.c", "password": "p",
+                "url": "https://x.example", "folder": "Work", "notes": "keep this"
+            }),
+        );
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.credentials[0].folder, "Work");
+        assert_eq!(v.credentials[0].notes, "keep this");
+        assert_eq!(pw_reuse_count(&v, "p"), 1);
+        assert_eq!(pw_reuse_count(&v, ""), 0);
     }
 
     #[test]

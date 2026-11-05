@@ -3026,7 +3026,11 @@
       const k = await pvSaveKey();
       const s = await chrome.storage.session.get({ [k]: null });
       const p = s && s[k];
-      if (!p || !p.password || !p.username) return null;
+      if (!p) return null;
+      const isLogin = !p.kind || p.kind === "login";
+      if (isLogin && (!p.password || !p.username)) return null;
+      if (p.kind === "card" && !p.card) return null;
+      if (p.kind === "identity" && !p.idf) return null;
       if (Date.now() - (p.at || 0) > PV_SAVE_TTL_MS || (p.shows || 0) >= PV_SAVE_MAX_SHOWS) {
         await chrome.storage.session.remove(k);
         return null;
@@ -3050,6 +3054,16 @@
     if (document.getElementById("__pv_saver")) return;
     const p = await pvSavePendingGet();
     if (!p || document.getElementById("__pv_saver")) return;
+    if (p.kind === "card" && p.card) {
+      cardSaverToast(p.card, !!p.updated, true);
+      await pvSavePendingBump(p);
+      return;
+    }
+    if (p.kind === "identity" && p.idf) {
+      identitySaverToast(p.idf, !!p.updated, true);
+      await pvSavePendingBump(p);
+      return;
+    }
     // Bitwarden checks the vault before triggering the add/change notification;
     // a pair saved in the meantime must not pop a stale card.
     const cached = existingSync(pageBase());
@@ -3074,6 +3088,7 @@
       folder: p.folder,
       itemTitle: p.title,
       url: p.url,
+      notes: p.notes,
       existing,
       username: p.username,
       password: p.password,
@@ -3086,8 +3101,11 @@
   function credentialToast(opts) {
     if (neverSaveHit()) return;
     if (document.getElementById("__pv_saver")) return;
+    const focusBack = document.activeElement;
     const box = document.createElement("div");
     box.id = "__pv_saver";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", opts.title);
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
       "background:#0b1326;border:1px solid " + opts.accent + ";border-radius:14px;padding:14px 16px;" +
       "font:13px 'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 16px 48px #000e;max-width:min(92vw,380px);";
@@ -3135,6 +3153,7 @@
     // nothing (never a fake "clean").
     const flags = document.createElement("div");
     flags.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 8px;";
+    flags.setAttribute("aria-live", "polite");
     const addFlag = (text, kind) => {
       const c = document.createElement("span");
       c.textContent = text;
@@ -3158,6 +3177,9 @@
           } else if (r.breach === null) {
             addFlag("not in HIBP", "ok");
           }
+          if (typeof r.reuse === "number" && r.reuse > 1) {
+            addFlag("reused in " + (r.reuse - 1) + " other item(s)", "warn");
+          }
         }).catch(() => {});
       } catch (_) {}
     }
@@ -3172,7 +3194,8 @@
       ".meta{font:10px ui-monospace,monospace;color:#86948a;margin:-2px 0 8px}" +
       ".scope{display:flex;align-items:center;gap:6px;font:10px ui-monospace,monospace;color:#86948a;margin:0 0 10px}" +
       ".scope b{color:#dae2fd;font-weight:700}" +
-      ".foot{font:9px ui-monospace,monospace;color:#86948a;margin-top:8px}";
+      ".foot{font:9px ui-monospace,monospace;color:#86948a;margin-top:8px}" +
+      "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
     const lblT = document.createElement("div");
     lblT.className = "lbl";
     lblT.textContent = "TITLE";
@@ -3193,6 +3216,15 @@
     lblR.textContent = "WEBSITE URL";
     const urlIn = toastField("text", opts.url || captureUrl(), "https://…");
     urlIn.setAttribute("data-pv-field", "url");
+    const lblN = document.createElement("div");
+    lblN.className = "lbl";
+    lblN.textContent = "NOTES (OPTIONAL)";
+    const notesIn = document.createElement("textarea");
+    notesIn.rows = 2;
+    notesIn.value = opts.notes || "";
+    notesIn.placeholder = "Anything you want on this item";
+    notesIn.style.cssText = "width:100%;box-sizing:border-box;background:#0b1326;border:1px solid #3c4a42;" +
+      "border-radius:8px;color:#dae2fd;padding:8px 9px;font:12px 'Segoe UI',system-ui;resize:vertical;margin-bottom:6px;";
     const meta = document.createElement("div");
     meta.className = "meta";
     // Folder picker (Bitwarden's save bar has one too). Populated from
@@ -3286,8 +3318,8 @@
     const foot = document.createElement("div");
     foot.className = "foot";
     foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
-    if (candLbl && candRow) root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
-    else root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, meta, lblF, folderSel, err, row, foot);
+    if (candLbl && candRow) root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, lblN, notesIn, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
+    else root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, lblN, notesIn, meta, lblF, folderSel, err, row, foot);
     document.documentElement.append(box);
     // Keep the capture for the next page on this site (unless this card IS the
     // restore). Explicit actions below clear it again.
@@ -3300,6 +3332,8 @@
         folder: folderSel.value || "General",
         title: titleIn.value.trim() || captureTitle(),
         url: urlIn.value.trim() || captureUrl(),
+        notes: notesIn.value.trim(),
+        kind: "login",
       });
     }
 
@@ -3328,14 +3362,25 @@
       pass.value = "";
       box.remove();
       if (clearPending) pvSavePendingClear();
+      // Return focus to whatever the user was typing in, so dismissing the
+      // prompt does not strand keyboard users on the page body.
+      try {
+        if (focusBack && focusBack.isConnected && typeof focusBack.focus === "function") {
+          focusBack.focus({ preventScroll: true });
+        }
+      } catch (_) {}
     }
     function esc(e) {
       if (e.key !== "Escape") return;
       // Escape inside a field means "let me keep editing", not "discard".
       if (fieldFocused()) return;
+      // Only react while the prompt owns focus; a page-level Escape must not
+      // discard the capture the user is still looking at.
+      if (!promptFocused()) return;
       e.stopPropagation();
       dismiss(true, true);
     }
+    const promptFocused = () => document.activeElement === box || (!!shadow && !!shadow.activeElement);
     document.addEventListener("keydown", esc, true);
     for (const el of [user, pass]) el.addEventListener("input", arm);
     no.addEventListener("click", () => dismiss(true, true));
@@ -3370,6 +3415,7 @@
           title: titleIn.value.trim() || captureTitle(),
           folder: folderSel.value || "General",
           id: targetId || "",
+          notes: notesIn.value.trim(),
         });
         if (res && res.ok) {
           toast(res.updated ? "Login updated in PhantomVault." : "Login saved to PhantomVault.");
@@ -3505,7 +3551,37 @@
       cardSaverToast(card, !!existing);
     }).catch(() => {}); // locked/bridge down: a save click would fail anyway
   }
-  function cardSaverToast(card, updated) {
+  // Shared folder picker for the card/identity prompts (the login prompt has
+  // its own inline copy). Names only; defaults to General.
+  function pvFolderPicker(want) {
+    const deep = document.createElement("div");
+    deep.className = "lbl";
+    deep.textContent = "FOLDER";
+    const sel = document.createElement("select");
+    sel.style.cssText = "width:100%;box-sizing:border-box;background:#0b1326;border:1px solid #3c4a42;" +
+      "border-radius:8px;color:#dae2fd;padding:8px 9px;font:12px 'Segoe UI',system-ui;margin-bottom:8px;";
+    const wantV = String(want || "General").trim() || "General";
+    const fill = (list) => {
+      const names = Array.from(new Set([].concat(list || [], [wantV, "General"]).filter(Boolean)));
+      sel.innerHTML = "";
+      for (const name of names) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        sel.appendChild(o);
+      }
+      sel.value = names.includes(wantV) ? wantV : "General";
+    };
+    fill([]);
+    try {
+      chrome.runtime.sendMessage({ type: "PV_FOLDERS" }).then((res) => {
+        if (res && res.ok && Array.isArray(res.folders)) fill(res.folders);
+      }).catch(() => {});
+    } catch (_) {}
+    return { lbl: deep, sel };
+  }
+
+  function cardSaverToast(card, updated, restored) {
     if (document.getElementById("__pv_saver")) return;
     const brand = cardBrand(card.number);
     const box = document.createElement("div");
@@ -3522,6 +3598,7 @@
       .filter(Boolean).join(" · ") + " — store it encrypted.";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
+    const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(card.folder);
     const save = document.createElement("button");
     save.textContent = updated ? "Update" : "Save";
     save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
@@ -3531,10 +3608,25 @@
     row.append(save, no);
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
     const root = shadow || box;
-    root.append(t, sub, row);
+    const a11y = document.createElement("style");
+    a11y.textContent = "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
+    root.append(a11y, t, sub, folderLbl, folderSel, row);
     document.documentElement.append(box);
-    const dismissCard = () => { document.removeEventListener("keydown", escCard, true); box.remove(); };
-    const escCard = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissCard(); } };
+    if (!restored) {
+      pvSavePendingSet({
+        kind: "card",
+        card: { ...card, folder: folderSel.value || "General" },
+        updated: !!updated,
+      });
+    }
+    const dismissCard = () => {
+      document.removeEventListener("keydown", escCard, true);
+      box.remove();
+      pvSavePendingClear();
+      try { if (focusBack && focusBack.isConnected) focusBack.focus({ preventScroll: true }); } catch (_) {}
+    };
+    const cardPromptFocused = () => document.activeElement === box || (!!shadow && !!shadow.activeElement);
+    const escCard = (e) => { if (e.key === "Escape" && cardPromptFocused()) { e.stopPropagation(); dismissCard(); } };
     document.addEventListener("keydown", escCard, true);
     no.addEventListener("click", dismissCard);
     setTimeout(dismissCard, 30000);
@@ -3549,6 +3641,7 @@
           exp_month: card.exp_month,
           exp_year: card.exp_year,
           cvv: card.cvv || "",
+          folder: folderSel.value || "General",
           url: captureUrl(),
           title: captureTitle(),
         });
@@ -3618,7 +3711,7 @@
       identitySaverToast(idf, !!existing);
     }).catch(() => {}); // locked/bridge down: a save click would fail anyway
   }
-  function identitySaverToast(idf, updated) {
+  function identitySaverToast(idf, updated, restored) {
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";
@@ -3628,12 +3721,15 @@
     const t = document.createElement("div");
     t.style.cssText = "font-weight:800;margin-bottom:6px;";
     t.textContent = updated ? "Update this identity?" : "Save this identity?";
+    box.setAttribute("role", "dialog");
+    box.setAttribute("aria-label", t.textContent);
     const sub = document.createElement("div");
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [idf.full_name, idf.email || idf.phone || idf.address]
       .filter(Boolean).join(" · ") + " — store it encrypted.";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
+    const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(idf.folder);
     const save = document.createElement("button");
     save.textContent = updated ? "Update" : "Save";
     save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
@@ -3643,10 +3739,25 @@
     row.append(save, no);
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
     const root = shadow || box;
-    root.append(t, sub, row);
+    const a11y = document.createElement("style");
+    a11y.textContent = "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
+    root.append(a11y, t, sub, folderLbl, folderSel, row);
     document.documentElement.append(box);
-    const dismissId = () => { document.removeEventListener("keydown", escId, true); box.remove(); };
-    const escId = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissId(); } };
+    if (!restored) {
+      pvSavePendingSet({
+        kind: "identity",
+        idf: { ...idf, folder: folderSel.value || "General" },
+        updated: !!updated,
+      });
+    }
+    const dismissId = () => {
+      document.removeEventListener("keydown", escId, true);
+      box.remove();
+      pvSavePendingClear();
+      try { if (focusBack && focusBack.isConnected) focusBack.focus({ preventScroll: true }); } catch (_) {}
+    };
+    const idPromptFocused = () => document.activeElement === box || (!!shadow && !!shadow.activeElement);
+    const escId = (e) => { if (e.key === "Escape" && idPromptFocused()) { e.stopPropagation(); dismissId(); } };
     document.addEventListener("keydown", escId, true);
     no.addEventListener("click", dismissId);
     setTimeout(dismissId, 30000);
@@ -3665,6 +3776,7 @@
           state: idf.state || "",
           zip: idf.zip || "",
           country: idf.country || "",
+          folder: folderSel.value || "General",
           url: captureUrl(),
           title: captureTitle(),
         });
