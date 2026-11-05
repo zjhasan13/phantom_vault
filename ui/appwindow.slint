@@ -1908,23 +1908,25 @@ export component MainWindow inherits Window {
                     x: Math.max((parent.width - self.width) / 2, 12px);
                     y: Math.max((parent.height - self.height) / 2, 12px);
                     width: 480px;
-                    height: 560px;
+                    height: export_layout.preferred-height;
                     background: PhantomTheme.surface;
                     border-radius: 18px;
                     border-width: 1px;
                     border-color: PhantomTheme.surface-highest;
                     clip: true;
-                    VerticalLayout { spacing: 0px;
+                    export_layout := VerticalLayout { spacing: 0px; padding-bottom: 24px;
                         Rectangle { height: 72px; background: PhantomTheme.surface-low;
-                            HorizontalLayout { padding-left: 20px; padding-right: 14px; spacing: 12px; alignment: center;
-                                Rectangle { width: 38px; height: 38px; border-radius: 10px; background: #4cd7f61f; border-width: 1px; border-color: PhantomTheme.secondary;
-                                    Text { text: "QR"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 900; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; }
+                            VerticalLayout { alignment: center; padding-left: 20px; padding-right: 14px; padding-top: 6px;
+                                HorizontalLayout { vertical-stretch: 0; height: 38px; spacing: 12px; alignment: center;
+                                    Rectangle { width: 38px; height: 38px; border-radius: 10px; background: #4cd7f61f; border-width: 1px; border-color: PhantomTheme.secondary;
+                                        Text { text: "QR"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 900; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 2px; alignment: center;
+                                        Text { text: "EXPORT TO AUTHENTICATOR"; color: PhantomTheme.text; font-size: 13px; font-weight: 800; letter-spacing: 0.8px; }
+                                        Text { text: "Scan with any otpauth-compatible app."; color: PhantomTheme.text-dim; font-size: 11px; }
+                                    }
+                                    VerticalLayout { alignment: center; AuraButton { label: "X"; width: 32px; height: 30px; clicked => { root.ga_show = false; } } }
                                 }
-                                VerticalLayout { horizontal-stretch: 1; spacing: 2px; alignment: center;
-                                    Text { text: "EXPORT TO AUTHENTICATOR"; color: PhantomTheme.text; font-size: 13px; font-weight: 800; letter-spacing: 0.8px; }
-                                    Text { text: "Scan with any otpauth-compatible app."; color: PhantomTheme.text-dim; font-size: 11px; }
-                                }
-                                AuraButton { label: "X"; width: 32px; height: 30px; clicked => { root.ga_show = false; } }
                             }
                         }
                         VerticalLayout { padding: 18px; spacing: 12px; vertical-stretch: 1;
@@ -1950,14 +1952,18 @@ export component MainWindow inherits Window {
                             if root.ga_warn != "" : Rectangle { height: 36px; background: #f59e0b1a; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.warning;
                                 HorizontalLayout { padding-left: 10px; padding-right: 10px; Text { text: root.ga_warn; color: PhantomTheme.warning; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } }
                             }
-                            Rectangle { horizontal-stretch: 1; }
-                            Text { text: "LIVE SECRETS - do not screen-share while this sheet is open."; color: PhantomTheme.warning; font-size: 9px; font-family: "JetBrains Mono"; wrap: word-wrap; }
+                            Rectangle { vertical-stretch: 1; }
                         }
-                        Rectangle { height: 66px; background: PhantomTheme.surface-low;
-                            HorizontalLayout { padding-left: 18px; padding-right: 16px; spacing: 10px; alignment: center;
-                                AuraButton { label: "Copy URI"; width: 120px; height: 40px; enabled: root.ga_page_total > 0; clicked => { root.ga_copy_uri(); } }
-                                Rectangle { horizontal-stretch: 1; }
-                                AuraButton { label: "Done"; primary: true; width: 120px; height: 40px; clicked => { root.ga_show = false; } }
+                        // Warning + actions grouped at the bottom, with 24px
+                        // breathing room below the sheet.
+                        Rectangle { background: PhantomTheme.surface-low;
+                            VerticalLayout { padding-left: 18px; padding-right: 16px; padding-top: 10px; spacing: 6px;
+                                Text { text: "LIVE SECRETS - do not screen-share while this sheet is open."; color: PhantomTheme.warning; font-size: 9px; font-family: "JetBrains Mono"; wrap: word-wrap; }
+                                HorizontalLayout { spacing: 10px; alignment: center;
+                                    AuraButton { label: "Copy URI"; width: 120px; height: 40px; enabled: root.ga_page_total > 0; clicked => { root.ga_copy_uri(); } }
+                                    Rectangle { horizontal-stretch: 1; }
+                                    AuraButton { label: "Done"; primary: true; width: 120px; height: 40px; clicked => { root.ga_show = false; } }
+                                }
                             }
                         }
                     }
@@ -1974,23 +1980,25 @@ export component MainWindow inherits Window {
                     x: Math.max((parent.width - self.width) / 2, 12px);
                     y: Math.max((parent.height - self.height) / 2, 12px);
                     width: 660px;
-                    height: 548px;
+                    height: import_layout.preferred-height;
                     background: PhantomTheme.surface;
                     border-radius: 18px;
                     border-width: 1px;
                     border-color: PhantomTheme.surface-highest;
                     clip: true;
-                    VerticalLayout { spacing: 0px;
+                    import_layout := VerticalLayout { spacing: 0px; padding-bottom: 24px;
                         Rectangle { height: 76px; background: PhantomTheme.surface-low;
-                            HorizontalLayout { padding-left: 20px; padding-right: 14px; spacing: 12px; alignment: center;
-                                Rectangle { width: 40px; height: 40px; border-radius: 11px; background: #4edea31f; border-width: 1px; border-color: PhantomTheme.primary;
-                                    Text { text: "+"; color: PhantomTheme.primary; font-size: 26px; font-weight: 400; horizontal-alignment: center; vertical-alignment: center; }
+                            VerticalLayout { alignment: center; padding-left: 20px; padding-right: 14px; padding-top: 6px;
+                                HorizontalLayout { vertical-stretch: 0; height: 40px; spacing: 12px; alignment: center;
+                                    Rectangle { width: 40px; height: 40px; border-radius: 11px; background: #4edea31f; border-width: 1px; border-color: PhantomTheme.primary;
+                                        Text { text: "+"; color: PhantomTheme.primary; font-size: 26px; font-weight: 400; horizontal-alignment: center; vertical-alignment: center; }
+                                    }
+                                    VerticalLayout { horizontal-stretch: 1; spacing: 2px; alignment: center;
+                                        Text { text: "ADD 2FA ACCOUNT"; color: PhantomTheme.text; font-size: 15px; font-weight: 800; letter-spacing: 1px; }
+                                        Text { text: "Scan, paste or import. Secrets never leave this device."; color: PhantomTheme.text-dim; font-size: 11px; }
+                                    }
+                                    VerticalLayout { alignment: center; AuraButton { label: "X"; width: 32px; height: 30px; clicked => { root.show_2fa_import = false; } } }
                                 }
-                                VerticalLayout { horizontal-stretch: 1; spacing: 2px; alignment: center;
-                                    Text { text: "ADD 2FA ACCOUNT"; color: PhantomTheme.text; font-size: 15px; font-weight: 800; letter-spacing: 1px; }
-                                    Text { text: "Scan, paste or import. Secrets never leave this device."; color: PhantomTheme.text-dim; font-size: 11px; }
-                                }
-                                AuraButton { label: "X"; width: 32px; height: 30px; clicked => { root.show_2fa_import = false; } }
                             }
                         }
                         VerticalLayout { padding-left: 20px; padding-right: 20px; padding-top: 16px; padding-bottom: 16px; spacing: 12px; vertical-stretch: 1;
@@ -2029,7 +2037,7 @@ export component MainWindow inherits Window {
                             }
                             Rectangle { height: 1px; background: PhantomTheme.border; }
                             Text { text: "02 / PASTE MANUALLY"; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; letter-spacing: 1px; }
-                            TextEdit { placeholder-text: "otpauth://totp/Issuer:account?secret=...   (one per line, or a JSON export)"; text <=> root.import_input; height: 92px; wrap: word-wrap; }
+                            TextEdit { placeholder-text: "otpauth://totp/Issuer:account?secret=...   (one per line, or a JSON export)"; text <=> root.import_input; min-height: 92px; max-height: 92px; preferred-height: 92px; wrap: word-wrap; }
                             if root.import_2fa_status != "" : Rectangle { height: 34px; background: PhantomTheme.surface-low; border-radius: 7px; border-width: 1px; border-color: PhantomTheme.secondary;
                                 HorizontalLayout { padding-left: 10px; padding-right: 10px; Text { text: root.import_2fa_status; color: PhantomTheme.secondary; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } }
                             }
@@ -3392,15 +3400,17 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 400px;
+            height: rp_layout.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.warning;
             drop-shadow-blur: 28px;
             drop-shadow-color: #00000088;
-            VerticalLayout {
-                padding: 22px;
-                spacing: 10px;
+            rp_layout := VerticalLayout {
+                padding: 24px;
+                spacing: 20px;
+                alignment: center;
                 HorizontalLayout {
                     spacing: 12px;
                     alignment: center;
@@ -3648,21 +3658,23 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 520px;
+            height: health_layout.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
             drop-shadow-color: #4edea344;
-            VerticalLayout {
+            health_layout := VerticalLayout {
                 padding: 20px;
-                spacing: 10px;
+                padding-bottom: 24px;
+                spacing: 12px;
                 Text { text: "🛡️  Vault Health Report"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
                 // Score + count chips (props already published by the audit).
-                HorizontalLayout { spacing: 8px; alignment: center;
+                HorizontalLayout { spacing: 10px; alignment: center;
                     Text { text: root.health_score + " / 100"; color: root.health_score >= 90 ? PhantomTheme.success : (root.health_score >= 70 ? PhantomTheme.warning : PhantomTheme.error); font-size: 22px; font-weight: 900; vertical-alignment: center; }
-                    VerticalLayout { spacing: 0px;
-                        Text { text: root.health_headline; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    VerticalLayout { spacing: 2px;
+                        Text { text: root.health_headline; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; }
                         HorizontalLayout { spacing: 10px;
                             Text { text: "🚨 " + root.health_breached; color: PhantomTheme.error; font-size: 11px; font-weight: 700; }
                             Text { text: "🔁 " + root.health_reused; color: PhantomTheme.warning; font-size: 11px; font-weight: 700; }
@@ -3672,8 +3684,12 @@ export component MainWindow inherits Window {
                     }
                 }
                 ScrollView {
-                    vertical-stretch: 1;
-                    min-height: 220px;
+                    // Slint's ScrollView defaults to preferred-height: 100%, which
+                    // would stretch this modal to the full window height. Size the
+                    // list to its rows (capped) so small reports stay compact.
+                    preferred-height: min(240px, max(64px, root.health_rows.length * 62px + 10px));
+                    min-height: 64px;
+                    max-height: 240px;
                     VerticalLayout { spacing: 4px; padding-left: 2px; padding-right: 2px;
                         if root.health_rows.length == 0 : Text { text: "✅ All passwords look healthy — no breaches, reuse, or weakness found."; color: PhantomTheme.success; font-size: 12px; wrap: word-wrap; }
                         for row in root.health_rows : Rectangle {
