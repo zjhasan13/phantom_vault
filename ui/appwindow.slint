@@ -1676,15 +1676,19 @@ export component MainWindow inherits Window {
                     // Collapsed rail: stack the mark and the expand chevron.
                     // Side by side they need 92px, so the 64px rail clipped
                     // the only control that could reopen the sidebar.
-                    if root.sidebar_collapsed : VerticalLayout { spacing: 0px; alignment: center;
-                        Rectangle { width: 30px; height: 30px; border-radius: 8px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                        AuraButton { label: "»"; width: 26px; height: 22px; clicked => { root.sidebar_collapsed = false; } }
+                    if root.sidebar_collapsed : VerticalLayout { alignment: center; spacing: 2px; padding-top: 6px; padding-bottom: 4px;
+                        HorizontalLayout { alignment: center;
+                            Rectangle { width: 30px; height: 30px; border-radius: 8px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                        }
+                        HorizontalLayout { alignment: center;
+                            AuraButton { label: "»"; width: 26px; height: 22px; clicked => { root.sidebar_collapsed = false; } }
+                        }
                     }
                     if !root.sidebar_collapsed : HorizontalLayout { padding-left: 14px; padding-right: 10px; spacing: 10px;
                         Rectangle { width: 34px; height: 34px; border-radius: 9px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 17px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                         VerticalLayout { spacing: 0px; Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; letter-spacing: -0.2px; } Text { text: "v" + root.app_version + " · " + (root.pq_paranoid_on ? "PQ ENCLAVE" : "NATIVE VAULT"); color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; } }
                         Rectangle { horizontal-stretch: 1; }
-                        VerticalLayout { width: 26px; alignment: center;
+                        VerticalLayout { alignment: center;
                             AuraButton { label: "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = true; } }
                         }
                     }
@@ -2822,14 +2826,26 @@ export component MainWindow inherits Window {
             padding-top: 10px; padding-left: 12px; padding-right: 12px;
             // P0: full-width command bar (spans list + detail).
             Rectangle { height: 58px; background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border;
-                HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 8px;
-                    search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 36px; min-width: 160px; max-width: 560px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
-                    if root.search_query != "" : AuraButton { label: "✕"; width: 34px; height: 34px; clicked => { root.search_query = ""; root.search_changed(""); } }
-                    Rectangle { horizontal-stretch: 1; }
-                    Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: "ZERO-KNOWLEDGE"; color: PhantomTheme.success; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
-                    Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "🛡"; font-size: 10px; vertical-alignment: center; } Text { text: "RAM-SAFE"; color: PhantomTheme.text-muted; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
-                    Rectangle { height: 26px; border-radius: 9999px; background: PhantomTheme.surface; border-width: 1px; border-color: PhantomTheme.border; HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: root.ui_lang == "bn" ? "লোকাল" : "LOCAL"; color: PhantomTheme.text; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
-                    AuraButton { label: root.ui_lang == "bn" ? "+ নতুন" : "+ New"; primary: true; width: 96px; height: 34px; clicked => { root.show_new_menu = !root.show_new_menu; } }
+                VerticalLayout { alignment: center; padding-left: 12px; padding-right: 12px;
+                    HorizontalLayout { height: 36px; spacing: 8px;
+                        search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 36px; min-width: 160px; max-width: 560px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
+                        if root.search_query != "" : VerticalLayout { alignment: center;
+                            AuraButton { label: "✕"; width: 34px; height: 34px; clicked => { root.search_query = ""; root.search_changed(""); } }
+                        }
+                        Rectangle { horizontal-stretch: 1; }
+                        VerticalLayout { alignment: center;
+                            Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: "ZERO-KNOWLEDGE"; color: PhantomTheme.success; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                        }
+                        VerticalLayout { alignment: center;
+                            Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "🛡"; font-size: 10px; vertical-alignment: center; } Text { text: "RAM-SAFE"; color: PhantomTheme.text-muted; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                        }
+                        VerticalLayout { alignment: center;
+                            Rectangle { height: 26px; border-radius: 9999px; background: PhantomTheme.surface; border-width: 1px; border-color: PhantomTheme.border; HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: root.ui_lang == "bn" ? "লোকাল" : "LOCAL"; color: PhantomTheme.text; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
+                        }
+                        VerticalLayout { alignment: center;
+                            AuraButton { label: root.ui_lang == "bn" ? "+ নতুন" : "+ New"; primary: true; width: 96px; height: 34px; clicked => { root.show_new_menu = !root.show_new_menu; } }
+                        }
+                    }
                 }
             }
             // P0: filter strip + select action bar span both panes.
@@ -2896,14 +2912,24 @@ export component MainWindow inherits Window {
                         }
                     }
                     // P0: list header strip (real match count, no fake index badge).
-                    Rectangle { height: 34px; background: PhantomTheme.surface-low; HorizontalLayout { padding-left: 14px; padding-right: 12px; spacing: 8px;
-                        Rectangle { width: 18px; height: 18px; border-radius: 4px; background: root.all_selected ? PhantomTheme.primary-container : transparent; border-width: 1px; border-color: root.all_selected ? PhantomTheme.primary : PhantomTheme.border; if root.all_selected : Text { text: "✓"; color: PhantomTheme.on-primary; font-size: 10px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } if !root.all_selected && root.selected_count > 0 : Text { text: "–"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; } TouchArea { mouse-cursor: pointer; clicked => { root.select_all_visible(!root.all_selected); } } }
-                        Text { text: root.ui_lang == "bn" ? "ভল্ট আইটেম" : "VAULT ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; vertical-alignment: center; }
-                        Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; vertical-alignment: center; }
-                        Rectangle { horizontal-stretch: 1; }
-                        ComboBox { model: ["Default", "Recent", "Name A-Z", "Name Z-A", "Weakest", "Type"]; current-index <=> root.sort_mode; width: 112px; height: 24px; selected(value) => { root.sort_changed(value); } }
-                        Text { text: root.ui_lang == "bn" ? "লোকাল ইনডেক্স" : "LOCAL INDEX"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; vertical-alignment: center; }
-                    } }
+                    Rectangle { height: 36px; background: PhantomTheme.surface-low;
+                        HorizontalLayout { padding-left: 14px; padding-right: 12px; spacing: 8px;
+                            VerticalLayout { alignment: center;
+                                Rectangle { width: 18px; height: 18px; border-radius: 4px; background: root.all_selected ? PhantomTheme.primary-container : transparent; border-width: 1px; border-color: root.all_selected ? PhantomTheme.primary : PhantomTheme.border;
+                                    if root.all_selected : Text { text: "V"; color: PhantomTheme.on-primary; font-size: 10px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; }
+                                    if !root.all_selected && root.selected_count > 0 : Text { text: "-"; color: PhantomTheme.text-dim; font-size: 10px; horizontal-alignment: center; vertical-alignment: center; }
+                                    TouchArea { mouse-cursor: pointer; clicked => { root.select_all_visible(!root.all_selected); } }
+                                }
+                            }
+                            Text { text: root.ui_lang == "bn" ? "ভল্ট আইটেম" : "VAULT ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                            Text { text: root.total_matches_count; color: PhantomTheme.primary; font-size: 9px; font-weight: 800; vertical-alignment: center; }
+                            Rectangle { horizontal-stretch: 1; }
+                            VerticalLayout { alignment: center;
+                                ComboBox { model: ["Default", "Recent", "Name A-Z", "Name Z-A", "Weakest", "Type"]; current-index <=> root.sort_mode; width: 112px; height: 26px; selected(value) => { root.sort_changed(value); } }
+                            }
+                            Text { text: root.ui_lang == "bn" ? "লোকাল ইনডেক্স" : "LOCAL INDEX"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; vertical-alignment: center; }
+                        }
+                    }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px; padding-bottom: root.selected_count > 0 ? 96px : 0px;
                         for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (cred.sel ? #4edea31a : (touch.has-hover ? PhantomTheme.surface : transparent)); border-radius: 6px; height: 76px;
                             touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); }
