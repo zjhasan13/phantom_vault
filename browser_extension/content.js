@@ -3130,13 +3130,11 @@
     const sub = document.createElement("div");
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = opts.sub;
-    // Title/subtitle stay in light DOM (non-secret, and the page already knows
-    // the site). Everything that carries or mutates the secret hides.
-    box.append(head, sub);
-
+    // Batch 4: the whole card lives inside a closed shadow root, so page CSS
+    // cannot restyle it and page frameworks cannot scrape our field values.
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
     const root = shadow || box;
-    if (shadow) root.append(document.createElement("slot"));
+    if (shadow) root.append(head, sub);
     const style = document.createElement("style");
     style.textContent = PV_FIELD_CSS +
       ".lbl{font:700 9px ui-monospace,monospace;letter-spacing:.6px;color:#86948a;margin:0 0 4px}" +
@@ -3500,7 +3498,9 @@
     no.textContent = "Not now";
     no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
-    box.append(t, sub, row);
+    const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
+    const root = shadow || box;
+    root.append(t, sub, row);
     document.documentElement.append(box);
     const dismissCard = () => { document.removeEventListener("keydown", escCard, true); box.remove(); };
     const escCard = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissCard(); } };
@@ -3610,7 +3610,9 @@
     no.textContent = "Not now";
     no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
-    box.append(t, sub, row);
+    const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
+    const root = shadow || box;
+    root.append(t, sub, row);
     document.documentElement.append(box);
     const dismissId = () => { document.removeEventListener("keydown", escId, true); box.remove(); };
     const escId = (e) => { if (e.key === "Escape") { e.stopPropagation(); dismissId(); } };

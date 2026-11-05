@@ -29,7 +29,7 @@ test("login form (username+password) offers a save banner", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner, "save banner should appear for a new login");
-  assert.match(banner.textContent, /Save this login/);
+  assert.match(saverRoot(window).textContent, /Save this login/);
 });
 
 test("G1: signup form with only new-password still offers save (was skipped)", async (t) => {
@@ -242,7 +242,7 @@ test("save prompt sends the folder and can be dismissed with x", async (t) => {
   await flush(120);
   const box2 = saver(window);
   assert.ok(box2, "prompt re-opened");
-  const x = box2.querySelector('button[aria-label="Dismiss save prompt"]');
+  const x = saverRoot(window).querySelector('button[aria-label="Dismiss save prompt"]');
   assert.ok(x, "close button present");
   x.click();
   await flush(50);
@@ -318,7 +318,7 @@ test("identity capture keeps the structured address parts", async (t) => {
   await flush(150);
   const saver = window.document.getElementById("__pv_saver");
   assert.ok(saver, "an identity save prompt must appear");
-  assert.match(saver.textContent, /Ada Lovelace|identity/i);
+  assert.match(saverRoot(window).textContent, /Ada Lovelace|identity/i);
 });
 
 test("identity suggestions reach the dropdown (url-less rows survive)", async (t) => {
@@ -399,7 +399,7 @@ test("card form submit offers to save the card", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner, "card save banner should appear");
-  assert.match(banner.textContent, /Save this card/i);
+  assert.match(saverRoot(window).textContent, /Save this card/i);
   const save = saverButton(window, /Save/);
   save.click();
   await flush();

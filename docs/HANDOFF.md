@@ -328,6 +328,13 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompts fully shadow-isolated (batch 4, this batch):** login, card and
+  identity prompts now build their entire card inside a closed shadow root
+  (the host keeps only `id="__pv_saver"`). Page CSS can no longer restyle the
+  prompt and page frameworks cannot read or scrape its fields; the light-DOM
+  text is gone, so tests read `saverRoot(window)`. Behaviour (persist, folder,
+  target chips, x) is unchanged. npm 154/154.
+
 - **Save prompt: edit title/URL (batch 3, this batch):** the prompt now shows
   editable `TITLE` and `WEBSITE URL` fields (defaults from `captureTitle()` /
   `captureUrl()`), so the user can rename the item or pin the exact URL before
