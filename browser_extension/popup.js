@@ -1638,7 +1638,8 @@
       return String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" });
     });
     sectionHead(suggestHead, t("suggest_head", hostBase || t("this_page"), sugg.length), !sugg.length, t("suggest_empty"));
-    sugg.slice(0, 20).forEach((e, i) => suggestList.append(buildLoginRow(e, i)));
+    const heroShown = renderHero(sugg[0] || null);
+    sugg.slice(heroShown ? 1 : 0, 20).forEach((e, i) => suggestList.append(buildLoginRow(e, i)));
     // --- Tier 2: rest of the vault (metadata; secrets fetched on demand) ---
     const rest = [];
     if (f.type === "all" || f.type === "1") {
@@ -2253,6 +2254,109 @@
   // Full login row (suggestion tier): USERNAME is the bold primary line,
   // domain/title secondary — 20+ same-domain accounts scan by email, not
   // by identical titles. TOTP badge, compact audit, Fill/Copy/Copy-user.
+  // HUD 3.0 hero: the top-ranked match gets the focused card (reveal, copy,
+  // live TOTP, one primary action). Everything here is real vault data; the
+  // mockup's enclave/quantum chips are intentionally not reproduced.
+  function renderHero(entry) {
+    const box = document.getElementById("heroCard");
+    if (!box) return false;
+    box.innerHTML = "";
+    if (!entry) { box.classList.add("hidden"); return false; }
+    box.classList.remove("hidden");
+    const head = document.createElement("div");
+    head.className = "herohead";
+    const bi = brandIcon(entry);
+    const ic = document.createElement("div");
+    ic.className = "brandic";
+    ic.style.cssText = "width:30px;height:30px;border-radius:9px;display:flex;align-items:center;" +
+      "justify-content:center;font-weight:900;font-size:14px;background:" + bi.bg + ";color:" + bi.fg + ";";
+    ic.textContent = bi.letter;
+    const tx = document.createElement("div");
+    tx.className = "brandtx";
+    const ttl = document.createElement("div");
+    ttl.className = "herotitle";
+    ttl.textContent = entry.username || entry.title || "(untitled)";
+    const sub = document.createElement("div");
+    sub.className = "herosub";
+    sub.textContent = [entry.title || "", entry.reprompt ? "re-prompt" : ""].filter(Boolean).join(" · ");
+    tx.append(ttl, sub);
+    const chips = document.createElement("div");
+    chips.className = "herochips";
+    const chip = (label, cls) => {
+      const c = document.createElement("span");
+      c.className = "chip " + (cls || "");
+      c.textContent = label;
+      chips.append(c);
+    };
+    if (entry.verified) chip("verified", "ok");
+    if (entry.health === "reused") chip("reused", "warn");
+    if (entry.health === "weak") chip("weak", "warn");
+    if (entry.health === "stale") chip("old", "warn");
+    if (entry.reprompt) chip("locked");
+    head.append(ic, tx, chips);
+
+    const pw = document.createElement("div");
+    pw.className = "heropw";
+    const pv = document.createElement("span");
+    pv.className = "pv";
+    const dots = "\u2022".repeat(Math.max(10, Math.min(18, (entry.password || "").length || 12)));
+    pv.textContent = dots;
+    let shown = false;
+    const eye = document.createElement("button");
+    eye.type = "button";
+    eye.textContent = "\u{1F441}";
+    eye.title = "Reveal password";
+    eye.setAttribute("aria-label", "Reveal password");
+    eye.addEventListener("click", () => {
+      shown = !shown;
+      pv.textContent = shown ? (entry.password || "") : dots;
+      eye.textContent = shown ? "\u{1F648}" : "\u{1F441}";
+    });
+    const cp = document.createElement("button");
+    cp.type = "button";
+    cp.textContent = "\u29C9";
+    cp.title = t("copy");
+    cp.setAttribute("aria-label", t("copy"));
+    cp.addEventListener("click", async () => {
+      if (entry.reprompt && !window.confirm(`\u{1F512} "${entry.title || "Sensitive credential"}" needs verification before copying. Copy now?`)) return;
+      await clipText(entry.password, cp);
+    });
+    pw.append(pv, eye, cp);
+
+    const actions = document.createElement("div");
+    actions.className = "heroactions";
+    const fill = document.createElement("button");
+    fill.className = "fill";
+    fill.textContent = t("fill");
+    fill.addEventListener("click", () => doFill(entry));
+    const submit = document.createElement("button");
+    submit.textContent = "Fill & submit";
+    submit.title = "Fill, then submit the form (same guards as Fill)";
+    submit.addEventListener("click", () => doFillSubmit(entry));
+    actions.append(fill, submit);
+
+    box.append(head, pw);
+    if (entry.totp) {
+      const row = document.createElement("div");
+      row.className = "herototp";
+      const code = document.createElement("code");
+      code.textContent = entry.totp;
+      code.setAttribute("data-totp-id", entry.id);
+      code.title = "Click to copy";
+      code.style.cursor = "pointer";
+      code.addEventListener("click", () => clipTotp(() => code.textContent, null));
+      const timer = document.createElement("span");
+      timer.className = "totpTimer ttl";
+      const btn = document.createElement("button");
+      btn.textContent = "Copy 2FA";
+      btn.addEventListener("click", () => clipTotp(() => code.textContent, btn));
+      row.append(code, timer, btn);
+      box.append(row);
+    }
+    box.append(actions);
+    return true;
+  }
+
   function buildLoginRow(e, idx) {
     const uname = e.username || e.title || "(untitled)";
     // ✅ = user-confirmed working password (never the password itself —

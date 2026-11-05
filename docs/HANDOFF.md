@@ -328,6 +328,15 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **HUD 3.0 hero slice (this batch):** the top-ranked site match now renders as a
+  focused card above the list (`#heroCard`, `renderHero`): brand tile,
+  username/title, `VERIFIED` / reuse / weak / old / locked chips, a password row
+  with reveal + copy, a live TOTP row with `Copy 2FA` (reuses the popup's
+  `data-totp-id` ticker), and `Fill` / `Fill & submit` (both go through the same
+  guards as the list rows). The remaining accounts stay in the normal list.
+  The mockup's RAM-enclave / IPC-latency / quantum-entropy chips are not
+  reproduced - no backend proves them.
+
 - **"+ Add" chooses the item kind (this batch):** the popup only had an
   "Add login" button even after the editor learned notes/cards/identities. It
   now opens a small kind chooser (Login / Note / Card / Identity) and reuses the

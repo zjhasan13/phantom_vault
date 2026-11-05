@@ -202,6 +202,36 @@
     .btns button { padding: 9px; }
     .sechead { font-size: 10px; letter-spacing: .5px; }
     .foot { margin-top: 12px; padding-top: 10px; }
+    /* HUD 3.0 hero: the top-ranked login gets a focused card with reveal,
+       copy, a live TOTP row and one primary action. Honest labels only - no
+       fake enclave/quantum chips. */
+    .hero { border-color: var(--accent); box-shadow: inset 0 0 0 1px rgba(78,222,163,.10); }
+    .herohead { display: flex; align-items: center; gap: 10px; }
+    .herotitle { font-weight: 800; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .herosub { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .herochips { display: flex; gap: 4px; margin-left: auto; flex: none; }
+    .chip { font: 700 8.5px/1 var(--pv-mono); letter-spacing: .5px; text-transform: uppercase;
+      padding: 3px 5px; border-radius: 5px; background: var(--panel2); color: var(--faint);
+      border: 1px solid var(--border); white-space: nowrap; }
+    .chip.ok { color: var(--accent); border-color: rgba(78,222,163,.35); }
+    .chip.warn { color: var(--pv-warning); border-color: rgba(245,158,11,.35); }
+    .heropw { display: flex; align-items: center; gap: 6px; margin-top: 9px; background: var(--bg);
+      border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
+    .heropw .pv { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font-family: var(--pv-mono); font-size: 12px; letter-spacing: 1px; }
+    .heropw button { flex: none; background: transparent; border: 0; color: var(--faint);
+      cursor: pointer; font-size: 13px; padding: 2px; }
+    .herototp { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 7px 9px;
+      border: 1px solid rgba(78,222,163,.3); border-radius: 8px; background: rgba(78,222,163,.06); }
+    .herototp code { font: 800 15px/1 var(--pv-mono); letter-spacing: 2px; color: var(--accent); }
+    .herototp .ttl { font: 700 9px/1 var(--pv-mono); color: var(--faint); }
+    .herototp button { margin-left: auto; background: var(--panel2); border: 1px solid var(--border);
+      color: var(--text); border-radius: 7px; padding: 5px 8px; font: 700 9px var(--pv-mono);
+      letter-spacing: .4px; text-transform: uppercase; cursor: pointer; }
+    .heroactions { display: flex; gap: 8px; margin-top: 9px; }
+    .heroactions button { flex: 1; border-radius: 9px; padding: 9px; font-weight: 800;
+      cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--text); }
+    .heroactions button.fill { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
   </style>
 </head>
 <body>
@@ -241,6 +271,7 @@
   </nav>
 
   <div id="autofillPane" class="pane">
+    <div id="heroCard" class="row hero hidden"></div>
     <div id="suggestHead" class="sechead"></div>
     <button id="neverBtn" class="wide hidden" style="margin-bottom:8px">Never suggest on this site</button>
     <button id="otpFillBtn" class="wide hidden" style="margin-bottom:8px">Fill 2FA code</button>
