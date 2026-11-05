@@ -1589,10 +1589,22 @@ export component MainWindow inherits Window {
                             Text { text: "🔑"; font-size: 44px; horizontal-alignment: center; }
                             Text { text: "Your Master Password is your ONLY key"; color: PhantomTheme.text; font-size: 18px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                             Text { text: "We never store or transmit it. If you lose it AND your recovery shards, nobody — not even us — can open your vault."; color: PhantomTheme.text-muted; font-size: 13px; horizontal-alignment: center; wrap: word-wrap; }
-                            HorizontalLayout { spacing: 8px; alignment: center;
-                                
-                                    CheckBox { text: "I understand — shards can be re-exported anytime in Settings"; checked <=> root.ob_shards_ok; }
-                                
+                            HorizontalLayout { spacing: 8px; alignment: center; padding-left: 24px; padding-right: 24px;
+                                CheckBox { text: ""; checked <=> root.ob_shards_ok; }
+                                Rectangle {
+                                    horizontal-stretch: 1;
+                                    Text {
+                                        text: "I understand — shards can be re-exported anytime in Settings";
+                                        color: PhantomTheme.text;
+                                        font-size: 12px;
+                                        wrap: word-wrap;
+                                        vertical-alignment: center;
+                                    }
+                                    TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.ob_shards_ok = !root.ob_shards_ok; }
+                                    }
+                                }
                             }
                             Text { text: "📄 Right after setup you will get ONE prompt to print your 5 recovery shards. Do not skip it."; color: PhantomTheme.warning; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         }
