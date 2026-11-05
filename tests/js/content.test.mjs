@@ -350,7 +350,7 @@ test("card form submit offers to save the card", async (t) => {
   await flush();
   const banner = saver(window);
   assert.ok(banner, "card save banner should appear");
-  assert.match(banner.textContent, /Save card/i);
+  assert.match(banner.textContent, /Save this card/i);
   const save = saverButton(window, /Save/);
   save.click();
   await flush();

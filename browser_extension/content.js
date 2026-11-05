@@ -1443,7 +1443,6 @@
       ok.style.cssText = "flex:1;background:#8b7cf6;color:#fff;border:0;border-radius:8px;padding:9px;font-weight:700;cursor:pointer;";
       const no = document.createElement("button");
       no.textContent = "Cancel";
-      no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:9px;cursor:pointer;";
       row.append(ok, no);
       box.append(h, p, row);
       ov.append(box);
@@ -3378,23 +3377,23 @@
     const box = document.createElement("div");
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
-      "background:#0d131f;border:1px solid #10b981;border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
+      "background:#0b1326;border:1px solid #3c4a42;border-radius:12px;padding:12px 14px;" +
+      "font:12.5px/1.4 Inter,'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 14px 36px #000d;max-width:min(92vw,340px);";
     const t = document.createElement("div");
-    t.style.cssText = "font-weight:700;margin-bottom:8px;";
-    t.textContent = updated ? "🔄 Update card in PhantomVault?" : "🛡️ Save card to PhantomVault?";
+    t.style.cssText = "font-weight:800;margin-bottom:6px;";
+    t.textContent = updated ? "Update this card?" : "Save this card?";
     const sub = document.createElement("div");
-    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [brand || "Card", masked(card.number), card.cardholder]
       .filter(Boolean).join(" · ") + " — store it encrypted.";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
     const save = document.createElement("button");
-    save.textContent = updated ? "🔄 Update" : "💾 Save";
-    save.style.cssText = "flex:1;background:#10b981;color:#04110b;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    save.textContent = updated ? "Update" : "Save";
+    save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "✕ Not Now";
-    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    no.textContent = "Not now";
+    no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     box.append(t, sub, row);
     document.documentElement.append(box);
@@ -3405,7 +3404,7 @@
     setTimeout(dismissCard, 30000);
     save.focus();
     save.addEventListener("click", async () => {
-      save.textContent = "⏳ Saving…";
+      save.textContent = "Saving…";
       try {
         const res = await chrome.runtime.sendMessage({
           type: "PV_SAVE_CARD",
@@ -3488,23 +3487,23 @@
     const box = document.createElement("div");
     box.id = "__pv_saver";
     box.style.cssText = "position:fixed;bottom:16px;right:16px;z-index:2147483647;" +
-      "background:#0d131f;border:1px solid #38e1ff;border-radius:12px;padding:12px 14px;" +
-      "font:13px system-ui;color:#eef1ff;box-shadow:0 12px 40px #000d;max-width:min(92vw,320px);";
+      "background:#0b1326;border:1px solid #3c4a42;border-radius:12px;padding:12px 14px;" +
+      "font:12.5px/1.4 Inter,'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 14px 36px #000d;max-width:min(92vw,340px);";
     const t = document.createElement("div");
-    t.style.cssText = "font-weight:700;margin-bottom:8px;";
-    t.textContent = updated ? "🔄 Update identity in PhantomVault?" : "🛡️ Save identity to PhantomVault?";
+    t.style.cssText = "font-weight:800;margin-bottom:6px;";
+    t.textContent = updated ? "Update this identity?" : "Save this identity?";
     const sub = document.createElement("div");
-    sub.style.cssText = "color:#8e99c0;font-size:11px;margin-bottom:10px;";
+    sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [idf.full_name, idf.email || idf.phone || idf.address]
       .filter(Boolean).join(" · ") + " — store it encrypted.";
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
     const save = document.createElement("button");
-    save.textContent = updated ? "🔄 Update" : "💾 Save";
-    save.style.cssText = "flex:1;background:#38e1ff;color:#02131a;border:0;border-radius:8px;padding:8px;font-weight:700;cursor:pointer;";
+    save.textContent = updated ? "Update" : "Save";
+    save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "✕ Not Now";
-    no.style.cssText = "flex:1;background:#1a2450;color:#fff;border:1px solid #26315c;border-radius:8px;padding:8px;cursor:pointer;";
+    no.textContent = "Not now";
+    no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     box.append(t, sub, row);
     document.documentElement.append(box);
@@ -3515,7 +3514,7 @@
     setTimeout(dismissId, 30000);
     save.focus();
     save.addEventListener("click", async () => {
-      save.textContent = "⏳ Saving…";
+      save.textContent = "Saving…";
       try {
         const res = await chrome.runtime.sendMessage({
           type: "PV_SAVE_IDENTITY",

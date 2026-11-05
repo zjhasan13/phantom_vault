@@ -409,7 +409,9 @@
   hides it. Card reskin: site favicon, NATIVE BRIDGE chip, one meta line
   `domain · chars · bits`.
   Tests: pending is written on submit, restored on the next document, and
-  cleared by Not Now (npm 141/141).
+  cleared by Not Now (npm 141/141). The card and identity save prompts now use
+  the same panel (mint primary, quiet secondary, no emoji titles) so every
+  save surface matches the app.
 
 - **Multi-page login (verified against Bitwarden):** Bitwarden does carry the
   username into the password step, but only for the save/notification path -
