@@ -2850,7 +2850,7 @@ export component MainWindow inherits Window {
             }
             // P0: filter strip + select action bar span both panes.
             Rectangle { height: 44px; background: PhantomTheme.surface-low; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
-                HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px;
+                VerticalLayout { alignment: center; padding-left: 14px; padding-right: 14px;
                     HorizontalLayout { spacing: 4px;
                         AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
                         AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
@@ -2859,8 +2859,10 @@ export component MainWindow inherits Window {
                         AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
                         AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
                         AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        AuraButton { label: "Identity"; primary: root.type_filter == 5; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        AuraButton { label: "License"; primary: root.type_filter == 2; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        Rectangle { horizontal-stretch: 1; }
                     }
-                    Rectangle { horizontal-stretch: 1; }
                 }
             }
             HorizontalLayout {
