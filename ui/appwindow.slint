@@ -1676,15 +1676,17 @@ export component MainWindow inherits Window {
                     // Collapsed rail: stack the mark and the expand chevron.
                     // Side by side they need 92px, so the 64px rail clipped
                     // the only control that could reopen the sidebar.
-                    if root.sidebar_collapsed : VerticalLayout { spacing: 0px; alignment: center; padding-top: 3px;
-                        Rectangle { width: 28px; height: 28px; border-radius: 8px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
-                        AuraButton { label: "»"; width: 40px; height: 20px; clicked => { root.sidebar_collapsed = false; } }
+                    if root.sidebar_collapsed : VerticalLayout { spacing: 0px; alignment: center;
+                        Rectangle { width: 30px; height: 30px; border-radius: 8px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 15px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
+                        AuraButton { label: "»"; width: 26px; height: 22px; clicked => { root.sidebar_collapsed = false; } }
                     }
-                    if !root.sidebar_collapsed : HorizontalLayout { padding-left: 14px; padding-right: 8px; spacing: 10px;
+                    if !root.sidebar_collapsed : HorizontalLayout { padding-left: 14px; padding-right: 10px; spacing: 10px;
                         Rectangle { width: 34px; height: 34px; border-radius: 9px; background: PhantomTheme.primary; Text { text: "P"; color: PhantomTheme.on-primary; font-size: 17px; font-weight: 900; horizontal-alignment: center; vertical-alignment: center; } }
                         VerticalLayout { spacing: 0px; Text { text: "PHANTOM VAULT"; color: PhantomTheme.text; font-size: 13px; font-weight: 900; letter-spacing: -0.2px; } Text { text: "v" + root.app_version + " · " + (root.pq_paranoid_on ? "PQ ENCLAVE" : "NATIVE VAULT"); color: PhantomTheme.primary; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; } }
                         Rectangle { horizontal-stretch: 1; }
-                        AuraButton { label: "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = true; } }
+                        VerticalLayout { width: 26px; alignment: center;
+                            AuraButton { label: "«"; width: 26px; height: 26px; clicked => { root.sidebar_collapsed = true; } }
+                        }
                     }
                 }
                 // enclave mode (honest: local mode, not "airgapped")
@@ -2816,12 +2818,14 @@ export component MainWindow inherits Window {
             }}
         }
         if root.active_nav == 0 : VerticalLayout {
-            spacing: 0px; horizontal-stretch: 1;
+            spacing: 8px; horizontal-stretch: 1;
+            padding-top: 10px; padding-left: 12px; padding-right: 12px;
             // P0: full-width command bar (spans list + detail).
-            Rectangle { height: 56px; background: PhantomTheme.surface-lowest;
-                HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 8px;
-                    search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 34px; min-width: 160px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
+            Rectangle { height: 58px; background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border;
+                HorizontalLayout { padding-left: 12px; padding-right: 12px; spacing: 8px;
+                    search_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "ভল্ট, কী, ট্যাগ খুঁজুন…" : "Search vault items, keys…"; text <=> root.search_query; height: 36px; min-width: 160px; max-width: 560px; horizontal-stretch: 1; edited(text) => { root.search_changed(text); } }
                     if root.search_query != "" : AuraButton { label: "✕"; width: 34px; height: 34px; clicked => { root.search_query = ""; root.search_changed(""); } }
+                    Rectangle { horizontal-stretch: 1; }
                     Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: "ZERO-KNOWLEDGE"; color: PhantomTheme.success; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
                     Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface; HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 5px; Text { text: "🛡"; font-size: 10px; vertical-alignment: center; } Text { text: "RAM-SAFE"; color: PhantomTheme.text-muted; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
                     Rectangle { height: 26px; border-radius: 9999px; background: PhantomTheme.surface; border-width: 1px; border-color: PhantomTheme.border; HorizontalLayout { padding-left: 9px; padding-right: 9px; spacing: 5px; Text { text: "●"; color: PhantomTheme.success; font-size: 9px; vertical-alignment: center; } Text { text: root.ui_lang == "bn" ? "লোকাল" : "LOCAL"; color: PhantomTheme.text; font-size: 9px; font-weight: 800; vertical-alignment: center; } } }
@@ -2829,7 +2833,7 @@ export component MainWindow inherits Window {
                 }
             }
             // P0: filter strip + select action bar span both panes.
-            Rectangle { height: 42px; background: PhantomTheme.surface-low;
+            Rectangle { height: 44px; background: PhantomTheme.surface-low; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
                 HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 6px;
                     HorizontalLayout { spacing: 4px;
                         AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
