@@ -3617,6 +3617,14 @@ pub fn serve_cli() -> i32 {
                 let _ = output.flush();
                 continue;
             }
+            // A11: a bridge-side mutation (save/update/delete from the popup)
+            // must refresh the read-only offline cache too, otherwise a deleted
+            // password stays readable while the app is closed.
+            if crate::security::offline_cache::enabled() {
+                if let Err(e) = crate::security::offline_cache::refresh(&vault) {
+                    bridge_log(&format!("offline cache refresh failed: {e}"));
+                }
+            }
         }
         let frame = encode_frame(&ans.reply);
         if output.write_all(&frame).and(output.flush()).is_err() {

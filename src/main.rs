@@ -45,7 +45,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use storage::save_vault_secret;
+use storage::save_vault_secret as save_vault_raw;
 use zeroize::Zeroize;
 
 slint::include_modules!();
@@ -71,6 +71,21 @@ const HEARTBEAT_FILE: &str = "vault_heartbeat.json";
 /// decoy bridge is designed to serve, so it needs liveness too). Idempotent:
 /// re-unlocking while a beater lives just adds a redundant writer; every
 /// beater exits on its own once the master store is wiped (lock).
+/// Persist the vault, then rebuild the opt-in offline cache from the same
+/// snapshot. Every mutation path in this file goes through here, so a delete or
+/// password change can never leave a stale credential readable offline.
+fn save_vault_secret<P: AsRef<std::path::Path>>(
+    vault: &Vault,
+    master_password: &SecretString,
+    file_path: P,
+) -> Result<(), String> {
+    save_vault_raw(vault, master_password, file_path)?;
+    if let Some(Err(e)) = crate::security::offline_cache::refresh_if_enabled(vault) {
+        eprintln!("offline cache refresh failed: {e}");
+    }
+    Ok(())
+}
+
 fn start_bridge_heartbeat(master: &Arc<Mutex<Option<SecretString>>>) {
     let _ = std::fs::write(HEARTBEAT_FILE, crate::models::current_timestamp().to_string());
     let m = Arc::clone(master);

@@ -31,6 +31,9 @@ pub const CACHE_MAGIC: &[u8; 5] = b"PVOC1";
 pub const SESSION_TTL_SECS: u64 = 15 * 60;
 /// Bound the cache so a giant vault cannot turn into a giant DPAPI blob.
 pub const MAX_ITEMS: usize = 1000;
+/// A cache older than this is refused: the desktop app must be opened to
+/// rebuild it (a deleted/rotated credential must not stay readable forever).
+pub const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 
 type CacheResult<T> = std::result::Result<T, String>;
 
@@ -218,12 +221,26 @@ fn entry_json(item: &CachedLogin) -> serde_json::Value {
 /// Native-host `cache_status`: does a cache exist, and is a PIN enrolled?
 /// Never prompts and returns no secrets, so the popup can offer the right
 /// unlock methods while the desktop is closed.
+/// Age of the sealed cache file (mtime; no unseal, no secret read). Used to
+/// refuse a stale snapshot before prompting Hello.
+pub fn cache_age_secs_at(base: &Path) -> Option<u64> {
+    let modified = std::fs::metadata(base.join(CACHE_FILE)).ok()?.modified().ok()?;
+    std::time::SystemTime::now()
+        .duration_since(modified)
+        .ok()
+        .map(|d| d.as_secs())
+}
+
 pub fn cache_status_at(base: &Path) -> serde_json::Value {
+    let age = cache_age_secs_at(base);
     serde_json::json!({
         "ok": true,
         "enabled": enabled_at(base),
         "pin_set": crate::security::ext_pin::is_set(base),
         "pin_allowed": pin_allowed_at(base) && crate::security::ext_pin::is_set(base),
+        "age_secs": age.unwrap_or(0),
+        "stale": age.map(|a| a > MAX_AGE_SECS).unwrap_or(false),
+        "max_age_secs": MAX_AGE_SECS,
     })
 }
 
@@ -250,6 +267,16 @@ pub fn handle_cache_get_at(
 ) -> CacheResult<serde_json::Value> {
     if !enabled_at(base) {
         return Err("offline cache is not enabled".to_string());
+    }
+    // Freshness gate BEFORE any Hello/PIN prompt: a week-old snapshot may hold
+    // a password that was rotated or deleted since.
+    if let Some(age) = cache_age_secs_at(base) {
+        if age > MAX_AGE_SECS {
+            return Err(format!(
+                "offline cache is stale ({}d old) - open PhantomVault to refresh",
+                age / 86_400
+            ));
+        }
     }
     match method {
         "hello" => {
@@ -336,6 +363,53 @@ mod tests {
         assert_eq!(snap.items.len(), 1);
         assert_eq!(snap.items[0].id, "a");
         assert_eq!(snap.items[0].password, "secret");
+    }
+
+    #[test]
+    fn refresh_replaces_stale_snapshot_after_edit_and_delete() {
+        let dir = std::env::temp_dir().join(format!("pv-offline-refresh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v = Vault::new();
+        v.credentials.push(login("a", "Alpha"));
+        refresh_at(&dir, &v).unwrap();
+        assert_eq!(read_snapshot_at(&dir).unwrap().items[0].password, "secret");
+
+        v.credentials[0].password = "rotated".into();
+        v.credentials.push(login("b", "Beta"));
+        refresh_at(&dir, &v).unwrap();
+        let second = read_snapshot_at(&dir).unwrap();
+        assert_eq!(second.items.len(), 2);
+        assert_eq!(second.items[0].password, "rotated");
+
+        // A deleted login must disappear on the next refresh - otherwise the
+        // old password stays readable while the desktop app is closed.
+        v.credentials[1].deleted_at = Some(1);
+        refresh_at(&dir, &v).unwrap();
+        let third = read_snapshot_at(&dir).unwrap();
+        assert_eq!(third.items.len(), 1);
+        assert!(third.items.iter().all(|i| i.id != "b"));
+    }
+
+    #[test]
+    fn stale_cache_is_refused_before_prompting() {
+        let dir = std::env::temp_dir().join(format!("pv-offline-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut v = Vault::new();
+        v.credentials.push(login("s1", "Stale Site"));
+        refresh_at(&dir, &v).unwrap();
+        let f = std::fs::File::options()
+            .write(true)
+            .open(dir.join(CACHE_FILE))
+            .unwrap();
+        f.set_modified(
+            std::time::SystemTime::now() - std::time::Duration::from_secs(8 * 86_400),
+        )
+        .unwrap();
+        let err = handle_cache_get_at(&dir, "hello", None).unwrap_err();
+        assert!(err.contains("stale"), "{err}");
+        assert_eq!(cache_status_at(&dir)["stale"], true);
     }
 
     #[test]

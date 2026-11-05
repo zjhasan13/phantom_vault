@@ -491,6 +491,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           enabled: !!r.enabled,
           pin_set: !!r.pin_set,
           pin_allowed: !!r.pin_allowed,
+          age_secs: Number(r.age_secs) || 0,
+          stale: !!r.stale,
           cached: warm,
           until: warm ? offlineCache.until : 0,
         };

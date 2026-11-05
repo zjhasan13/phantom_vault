@@ -328,6 +328,16 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Offline cache freshness (this batch):** every app-side save now rebuilds the
+  opt-in snapshot through one wrapper (`save_vault_secret` in `main.rs`), and
+  the native host refreshes it after a bridge-side persist (save/update/delete
+  from the popup) - so a rotated or deleted password cannot stay readable while
+  the desktop is closed. `cache_status` now reports `age_secs` / `stale`, and
+  `cache_get` refuses a snapshot older than 7 days BEFORE prompting Hello/PIN
+  ("open PhantomVault to refresh"); the popup offline screen shows the stale
+  notice. Tests: refresh drops deleted logins + rotated password; stale file is
+  refused without a prompt (cargo 564/4).
+
 - **Attachment + password-history viewer (this batch):** `fetch` kind 1 now
   returns the retired passwords (already capped by `push_history`) and attachment
   METADATA (filename/mime/size) alongside the login. The popup editor renders a

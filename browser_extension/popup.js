@@ -62,6 +62,7 @@
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
       sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
       offline_banner: "🔌 Offline cache — read-only. Changes are refused until the desktop app is open.",
+  offline_stale: "Cache is stale - open the desktop app to refresh it.",
       offline_unlock_title: "🔌 Offline cache",
       offline_unlock_sub: "Read-only. Unlock with Windows Hello or your extension PIN.",
       offline_pin_go: "🔓 Unlock with PIN",
@@ -134,6 +135,7 @@
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
       sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
       offline_banner: "🔌 অফলাইন ক্যাশ — শুধু পড়া যায়। ডেস্কটপ অ্যাপ চালু না হলে কোনো পরিবর্তন হবে না।",
+  offline_stale: "?????? ??????? - refresh ????? ??? ?????? ?????????? ??????",
       offline_unlock_title: "🔌 অফলাইন ক্যাশ",
       offline_unlock_sub: "শুধু পড়া যায়। Windows Hello অথবা extension PIN দিয়ে খোলো।",
       offline_pin_go: "🔓 PIN দিয়ে খোলো",
@@ -896,6 +898,7 @@
   let offlineMode = false; // A11: desktop unreachable, cache is serving
   let offlineAvailable = false; // cache exists but this SW has not unlocked it
   let offlinePinSet = false;
+  let offlineStale = false;
   async function desktopReachable() {
     try {
       const pong = await withTimeout(
@@ -944,7 +947,7 @@
   // A11b: offline cache unlock screen — Windows Hello or the extension PIN.
   function showOfflineLock() {
     document.getElementById("extLockTitle").textContent = t("offline_unlock_title");
-    document.getElementById("extLockSub").textContent = t("offline_unlock_sub");
+    document.getElementById("extLockSub").textContent = offlineStale ? t("offline_stale") : t("offline_unlock_sub");
     const input = document.getElementById("extPinInput");
     const ub = document.getElementById("extUnlockBtn");
     const rb = document.getElementById("extRetryBtn");
