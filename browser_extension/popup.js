@@ -818,7 +818,7 @@
 
   // ---------- two-tier data: domain suggestions + full metadata ----------
   let suggEntries = []; // full login entries (with secrets) for this domain
-  let allData = { logins: [], cards: [], identities: [], notes: [] };
+  let allData = { logins: [], cards: [], identities: [], notes: [], ssh_keys: [], licenses: [] };
   let folderNames = [];
   const suggIds = new Set();
   const rows = [];
@@ -1158,7 +1158,7 @@
     status.textContent = t("loading");
     suggEntries = [];
     suggIds.clear();
-    allData = { logins: [], cards: [], identities: [], notes: [] };
+    allData = { logins: [], cards: [], identities: [], notes: [], ssh_keys: [], licenses: [] };
     try {
       // Fast lock gate: a 3s ping short-circuits the 10s query wait when
       // the desktop vault is locked (bridge errors fall through to the
@@ -1228,6 +1228,8 @@
         allData.cards = l.cards || [];
         allData.identities = l.identities || [];
         allData.notes = l.notes || [];
+      allData.ssh_keys = l.ssh_keys || [];
+      allData.licenses = l.licenses || [];
       }
       buildFolderOptions();
       render();
@@ -1243,7 +1245,7 @@
     const folders = [];
     const touch = (f) => { const v = (f || "").trim() || "General"; if (!seen.has(v)) { seen.add(v); folders.push(v); } };
     suggEntries.forEach((e) => touch(e.folder));
-    ["logins", "cards", "identities", "notes"].forEach((k) => allData[k].forEach((e) => touch(e.folder)));
+    ["logins", "cards", "identities", "notes", "ssh_keys", "licenses"].forEach((k) => allData[k].forEach((e) => touch(e.folder)));
     folders.sort((a, b) => a.localeCompare(b));
     folderNames = folders.slice();
     const cur = folderSel.value;
@@ -1655,7 +1657,7 @@
       allData.notes.forEach((e) => rest.push({ kind: 3, e }));
     }
     const restShown = rest.filter(({ e }) => matchText(e, f.q) && matchFolder(e, f.folder));
-    const totalAll = allData.logins.length + allData.cards.length + allData.identities.length + allData.notes.length;
+    const totalAll = allData.logins.length + allData.cards.length + allData.identities.length + allData.notes.length + allData.ssh_keys.length + allData.licenses.length;
     sectionHead(allHead, t("all_head", totalAll), false, "");
     restShown.slice(0, 60).forEach(({ kind, e }) => {
       if (kind === 1) allList.append(buildLoginMetaRow(e));
@@ -2688,6 +2690,55 @@
     rows.push(row);
     return row;
   }
+  function buildSshRow(s) {
+    const idx = rows.length;
+    const row = brandRow(brandIcon({ title: s.title }), "🔑 " + (s.title || "SSH key"), s.fingerprint || "");
+    const mkBtn = (label) => {
+      const b = document.createElement("button");
+      b.textContent = label;
+      return b;
+    };
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    const pub = mkBtn("Copy public");
+    pub.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try { await clipText((await fetchEntry(6, s.id)).public_key, pub); }
+      catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    });
+    const priv = mkBtn("Copy private");
+    priv.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      if (!window.confirm("Copy the PRIVATE key to the clipboard? It is cleared automatically.")) return;
+      try { await clipText((await fetchEntry(6, s.id)).private_key, priv); }
+      catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    });
+    btns.append(pub, priv);
+    row.append(btns);
+    wireKeys(row, idx, s, () => pub.click());
+    rows.push(row);
+    return row;
+  }
+  function buildLicenseRow(l) {
+    const idx = rows.length;
+    const sub = l.expiry ? "Expires " + l.expiry : "";
+    const row = brandRow(brandIcon({ title: l.title }), "📄 " + (l.title || "License"), sub);
+    const btns = document.createElement("div");
+    btns.className = "btns";
+    const key = document.createElement("button");
+    key.textContent = "Copy license key";
+    key.addEventListener("click", async (ev) => {
+      ev.stopPropagation();
+      try { await clipText((await fetchEntry(7, l.id)).license_key, key); }
+      catch (err) { status.textContent = "⚠️ " + (err.message || err); }
+    });
+    btns.append(key);
+    row.append(btns);
+    wireKeys(row, idx, l, () => key.click());
+    rows.push(row);
+    return row;
+  }
+
   function focusRow(i) {
     const n = rows.length;
     if (!n) return;

@@ -1444,12 +1444,57 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     })
                 })
                 .collect();
+            // Metadata only; the private key / license key are handed out by
+            // `fetch` on an explicit click, never in the list payload.
+            let ssh_keys: Vec<serde_json::Value> = vault
+                .ssh_keys
+                .iter()
+                .filter(|s| s.deleted_at.is_none())
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.id,
+                        "title": s.title,
+                        "fingerprint": s.fingerprint,
+                        "folder": s.folder,
+                    })
+                })
+                .collect();
+            let licenses: Vec<serde_json::Value> = vault
+                .licenses
+                .iter()
+                .filter(|l| l.deleted_at.is_none())
+                .map(|l| {
+                    serde_json::json!({
+                        "id": l.id,
+                        "title": l.app_name,
+                        "expiry": l.expiry_date,
+                        "folder": l.folder,
+                    })
+                })
+                .collect();
             crate::security::access_log::log_event(
                 "bridge-list",
-                &format!("{}+{}+{}+{}", logins.len(), cards.len(), identities.len(), notes.len()),
+                &format!(
+                    "{}+{}+{}+{}+{}+{}",
+                    logins.len(),
+                    cards.len(),
+                    identities.len(),
+                    notes.len(),
+                    ssh_keys.len(),
+                    licenses.len()
+                ),
             );
             Answer {
-                reply: serde_json::json!({"ok": true, "logins": logins, "cards": cards, "identities": identities, "notes": notes, "folders": vault.folders}),
+                reply: serde_json::json!({
+                    "ok": true,
+                    "logins": logins,
+                    "cards": cards,
+                    "identities": identities,
+                    "notes": notes,
+                    "ssh_keys": ssh_keys,
+                    "licenses": licenses,
+                    "folders": vault.folders
+                }),
                 persist: false,
             }
         }
@@ -1482,6 +1527,20 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 3 => vault.notes.iter().find(|n| n.id == id && n.deleted_at.is_none()).map(|n| {
                     serde_json::json!({
                         "id": n.id, "kind": 3, "title": n.title, "content": n.content,
+                    })
+                }),
+                6 => vault.ssh_keys.iter().find(|s| s.id == id && s.deleted_at.is_none()).map(|s| {
+                    serde_json::json!({
+                        "id": s.id, "kind": 6, "title": s.title,
+                        "public_key": s.public_key, "private_key": s.private_key,
+                        "fingerprint": s.fingerprint,
+                    })
+                }),
+                7 => vault.licenses.iter().find(|l| l.id == id && l.deleted_at.is_none()).map(|l| {
+                    serde_json::json!({
+                        "id": l.id, "kind": 7, "title": l.app_name,
+                        "app_name": l.app_name, "license_key": l.license_key,
+                        "expiry": l.expiry_date,
                     })
                 }),
                 _ => vault.credentials.iter().find(|c| c.id == id && c.deleted_at.is_none()).map(|c| {
@@ -1867,24 +1926,18 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             };
             if deleting {
                 let hit = match kind.as_str() {
-                    "note" => vault
-                        .notes
-                        .iter_mut()
-                        .find(|n| n.id == id && n.deleted_at.is_none())
-                        .map(|n| n.deleted_at = Some(now))
-                        .is_some(),
-                    "card" => vault
-                        .cards
-                        .iter_mut()
-                        .find(|k| k.id == id && k.deleted_at.is_none())
-                        .map(|k| k.deleted_at = Some(now))
-                        .is_some(),
-                    _ => vault
-                        .identities
-                        .iter_mut()
-                        .find(|i| i.id == id && i.deleted_at.is_none())
-                        .map(|i| i.deleted_at = Some(now))
-                        .is_some(),
+                    "note" => match vault.notes.iter_mut().find(|n| n.id == id && n.deleted_at.is_none()) {
+                        Some(n) => { n.deleted_at = Some(now); true }
+                        None => false,
+                    },
+                    "card" => match vault.cards.iter_mut().find(|k| k.id == id && k.deleted_at.is_none()) {
+                        Some(k) => { k.deleted_at = Some(now); true }
+                        None => false,
+                    },
+                    _ => match vault.identities.iter_mut().find(|i| i.id == id && i.deleted_at.is_none()) {
+                        Some(i) => { i.deleted_at = Some(now); true }
+                        None => false,
+                    },
                 };
                 if !hit {
                     return no("unknown id");
@@ -4751,6 +4804,47 @@ mod tests {
         assert_eq!(c1["health"], "reused");
         // No TOTP secret on either fixture login ⇒ no 2FA buttons.
         assert_eq!(c1["has_totp"], false);
+    }
+
+    #[test]
+    fn list_and_fetch_cover_ssh_and_licenses() {
+        let mut v = Vault::new();
+        v.ssh_keys.push(crate::models::SshKeyItem {
+            id: "s1".into(),
+            title: "Deploy".into(),
+            public_key: "ssh-ed25519 AAAA".into(),
+            private_key: "PRIVATE-KEY".into(),
+            fingerprint: "SHA256:abc".into(),
+            folder: String::new(),
+            notes: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        v.licenses.push(crate::models::SoftwareLicense {
+            id: "l1".into(),
+            app_name: "Acme".into(),
+            license_key: "KEY-123".into(),
+            expiry_date: Some("2030-01-01".into()),
+            folder: String::new(),
+            custom_fields: Vec::new(),
+            attachments: Vec::new(),
+            travel_safe: false,
+            favorite: false,
+            deleted_at: None,
+        });
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "list"}));
+        assert_eq!(r.reply["ssh_keys"][0]["fingerprint"], "SHA256:abc");
+        assert_eq!(r.reply["licenses"][0]["expiry"], "2030-01-01");
+        // The list is metadata only; secrets come from `fetch` on demand.
+        assert!(r.reply["ssh_keys"][0].get("private_key").is_none());
+        assert!(r.reply["licenses"][0].get("license_key").is_none());
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 6, "id": "s1"}));
+        assert_eq!(r.reply["entry"]["private_key"], "PRIVATE-KEY");
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 7, "id": "l1"}));
+        assert_eq!(r.reply["entry"]["license_key"], "KEY-123");
     }
 
     #[test]

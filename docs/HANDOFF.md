@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **SSH keys and licenses in the extension (this batch):** `PV_LIST` now carries
+  `ssh_keys` (title/fingerprint/folder) and `licenses` (title/expiry/folder) as
+  metadata only; `fetch` gained kinds 6 (SSH: public+private key) and 7
+  (license key). The popup's All Vault tab lists both (new type-filter entries)
+  with **Copy public** / **Copy private** (private needs an explicit confirm) and
+  **Copy license key**. Secrets never appear in the list payload, and every copy
+  uses the existing clipboard auto-clear.
+
 - **HUD 3.0 hero slice (this batch):** the top-ranked site match now renders as a
   focused card above the list (`#heroCard`, `renderHero`): brand tile,
   username/title, icon status chips (shield-check verified, recycle reused,
