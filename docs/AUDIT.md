@@ -365,6 +365,73 @@ success without changing the value (A5).
 3. A5, A9, A10 — needs a live target app to verify.
 4. UX items 1-4 in one UI batch.
 
+## 9. Auto-type UI surfaces + theme conformance (2026-11-05)
+
+Second read-only pass, same day. Scope: the three UI surfaces the desktop fill
+path touches — `QuickBarWindow` (`ui/appwindow.slint:3846`), `QuickCaptureWindow`
+(`:3994`), and the notification toast (`:3077`) — checked against
+`design/tokens.json`, `docs/UI_TOKENS.md` and the `PhantomTheme` block
+(`ui/appwindow.slint:140`). Static only: no build, no screenshot, nothing
+reproduced.
+
+### Code / behaviour findings (continues the A-series)
+
+| ID | Defect | Location |
+|---|---|---|
+| A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` |
+| A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) |
+| A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` |
+| A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` |
+| A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` |
+| A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` |
+| A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` |
+| A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` |
+| A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` |
+| A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` |
+| A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` |
+| A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` |
+| A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` |
+| A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` |
+
+### Theme conformance (Aegis palette, `design/tokens.json`)
+
+Verdict: **no colour is off-palette.** Every popup colour resolves to an Aegis
+token value. The drift is in scale, token discipline, semantic tone, brand
+casing and one contrast pair.
+
+| ID | Drift | Evidence | Token value |
+|---|---|---|---|
+| T1 | Off-scale spacing: 18px padding, 10px and 6px gaps | `ui/appwindow.slint:3899`, `:4041`, `:3903`, `:3968` | `spacing` = 4 / 8 / 12 / 20 / 32 |
+| T2 | Off-scale radius: 18px window, 10px tiles | `:3874`, `:4020`, `:3907`, `:3956` | `radius` = 2 / 4 / 6 / 8 / 12 / pill |
+| T3 | Off-scale type: 14px/800 headers, 11px captions, 9px chips | `:3914`, `:3915`, `:4056`, `:235` | `typography` = 15 / 13 / 12 / 10 |
+| T4 | Alpha tints are raw hex, not tokens: `#060e20f2`, `#4edea366`, `#4edea333`, `#ffb4ab1a`, `#ffb4ab55` | `:3873`, `:3878`, `:4019`, `:4024`, `:199`, `:195`, `:197` | no alpha scale exists; `UI_TOKENS.md:24,89` already lists this as remaining debt |
+| T5 | Active `GatewayTab` uses white on `primary-container` = **2.55:1**, below AA 4.5 (and below AA-large 3.0). `on-primary` gives 5.2:1 | `:245` | `on_primary` = `#003824` |
+| T6 | Popup background is 95% opaque (`#060e20f2`) over an arbitrary wallpaper, so `text-dim` contrast is backdrop-dependent (6.35:1 on the token surface, lower on a bright desktop) | `:3873`, `:4019` | `surface_lowest` = `#060e20` |
+| T7 | Magic `y: 2px` / `y: 0px` inside layout rows instead of a centred `VerticalLayout` | `:3971-3975`, `:3077` | AGENTS.md §6 layout pattern |
+| T8 | Brand casing: "Phantom Quick Bar" / "PhantomVault Quick Bar" vs the two-word all-caps rule; the main window follows it | `:3914`, `:3852`, `:4000` | AGENTS.md §1 |
+| T9 | i18n gaps inside otherwise localized windows: "hits", the search placeholder, the footer hint and "Type" stay English | `:3918`, `:3922`, `:3985`, `:3971` | A26 |
+| T10 | Zero accessibility properties in the whole UI file (`accessible-role` / `accessible-label` = 0 matches), so both popups are unnamed to screen readers | whole file | — |
+
+Not defects: emoji icons in the popups are explicitly allowed by the icon
+policy (`docs/UI_TOKENS.md:62-71`), and the popups reuse `AuraButton`,
+`FieldLabel`, `MonoChip` as required.
+
+### Recommended UI batch (theme-first, smallest set)
+
+1. Focus on open + reset `qb_index` + reset `cap_show_pass` (A21, A22, A29) —
+   three lines, fixes the "keyboard does nothing" first impression.
+2. `focus-out` auto-hide with a short grace, plus a drag region on both popups
+   (A23, A24).
+3. Notification semantics: set `notification_kind` for every auto-type outcome
+   and make warn/error sticky instead of 4 s (A25, A26).
+4. Surface the block reason where the user is looking (A28) and stop clobbering
+   the canary banner (A27).
+5. Token work: add `primary-glow`, `danger-tint`, `surface-scrim` to
+   `design/tokens.json`, mirror them in `PhantomTheme`, then replace the popup
+   literals; switch `GatewayTab` to `on-primary` (T4, T5).
+6. Then the visual-scale sweep (T1, T2, T3), brand casing and the four English
+   strings (T8, T9).
+
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
 - New native document `phantomvault-backup` v1: the full `Vault` (logins,

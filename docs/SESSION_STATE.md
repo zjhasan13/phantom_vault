@@ -88,11 +88,12 @@ Run Rust gates with `-j 1`; see "Known traps".
 6. **A26 Bengali pass**: remaining dialogs and Rust-generated status strings are
    still English (`docs/A26_BN.md`).
 7. **Manual 100% / 125% layout pass** across all screens (no automated DPI test).
-8. **Desktop auto-type fixes** — 20 findings and 12 UX items are queued in
-   `docs/AUDIT.md` §8 (A1-A20). Start with A1-A4 (fail-open guard, password-focused
-   field, card 3-vs-4 Tab stops, multi-line SSH/note typing); all four are small
-   and unit-testable. Static analysis only so far: nothing was reproduced on
-   screen, and no gate has run on this tree.
+8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
+   `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
+   T1-T10). Start with A1-A4 (fail-open guard, password-focused field, card 3-vs-4
+   Tab stops, multi-line SSH/note typing); all four are small and unit-testable.
+   Static analysis only so far: nothing was reproduced on screen, and no gate has
+   run on this tree.
 
 ## Recently shipped (newest first, ~15 commits)
 
