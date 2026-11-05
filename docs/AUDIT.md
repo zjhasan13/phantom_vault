@@ -280,6 +280,91 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
   (Rust untouched). The jsdom harness now honours `storage.session` reads and
   stubs `PV_IDENTITIES`.
 
+## 8. Desktop auto-type / autofill audit (2026-11-05)
+
+Read-only static sweep of the non-browser fill path: `src/windows_native/autotype.rs`
+(433 lines), `src/windows_native/desktop_autofill.rs` (671 lines), and the
+`TypeRequest` / `trigger_autotype` / `chain_2fa_watch` glue in `src/main.rs`.
+**No finding was reproduced on screen** — the build was blocked at audit time by
+the Windows commit limit (pagefile fixed at 4096 MB, peak 4095/4096), so nothing
+was compiled or run. Treat this as a ranked hypothesis list backed by code
+citations, not as verified behaviour. Baseline at audit time: `main` @
+`de7e189`, 0.4.1.
+
+### P0 — correctness and safety
+
+| ID | Defect | Location | Fix direction |
+|---|---|---|---|
+| A1 | Both guards are fail-open: `if let Ok(ctx) = inspect_active_context()` skips the spoof **and** app-binding checks when COM/UIA fails, then typing proceeds | `main.rs:326`, `:346` | For app-bound items, inspection failure must abort and log (`autotype-blocked-nocontext`). |
+| A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. |
+| A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. |
+| A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. |
+| A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. |
+
+### P1 — reliability and false positives
+
+| ID | Defect | Location | Fix direction |
+|---|---|---|---|
+| A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. |
+| A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. |
+| A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. |
+| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. |
+| A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. |
+| A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. |
+| A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. |
+
+### P2 — polish, privacy, diagnostics
+
+| ID | Defect | Location | Note |
+|---|---|---|---|
+| A13 | `chain_2fa.pref` is read from the current working directory and defaults to ON | `main.rs:295` | Relative path is a project-wide convention, but TOTP auto-type is opt-out, not per-fill consent. |
+| A14 | "focus the target field…" is set on a window that is being minimized, so the user never sees it | `main.rs:365-366` | Use a tray balloon / toast. |
+| A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. |
+| A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. |
+| A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. |
+| A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. |
+| A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. |
+| A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. |
+
+### UX improvements (ranked by impact)
+
+1. Countdown toast ("Typing into Discord in 3…") with Esc cancel, replacing the
+   invisible minimize notification (A14).
+2. Show the target in the Quick Bar: `target: Discord (discord.exe)`.
+3. Granular fill: username only / password only / both, plus "fill without submit"
+   (today every login types Enter, `main.rs:182`).
+4. Post-fill verification: re-read the password field length (never the value) and
+   warn when the fill did not land.
+5. Warn before typing an item that contains characters auto-type cannot send
+   (tab/newline) and offer copy instead (A4).
+6. 2FA pill with a 30 s countdown and cancel; type only when the OTP field is
+   focused (A9, A10).
+7. Turn a block into an action: "bound to Discord, active app is Notepad" with
+   "Bind to Notepad" / "Always allow".
+8. Quick Bar empty state: "No items bound to Notepad — Alt+S to capture".
+9. Remember the last successful target app per item ("Type into Discord again").
+10. Tray quick-fill menu with the focused app's top three items.
+11. Announce block/abort messages through a UIA live region, not just a
+    notification text.
+12. Force-keystroke toggle when UIA fill had no effect (A5).
+
+### Test gaps
+
+Unit tests cover the pure helpers only: `pick_login_pair`, `uia_value_allowed`,
+`otp_like`, `sanitize_field`, `build_sequence` / `build_tabbed_sequence`,
+`field_units_cover_ascii_and_surrogates`, `c_encodes_byte_exact`, and
+`app_binding_matches_exe_pretty_name_and_unbound` (`main.rs:16051`). Nothing
+pins: the fail-open guard (A1), the password-focused case (A2), the card 3-vs-4
+field contract (A3), multi-line stripping (A4), or a `SetValue` that reports
+success without changing the value (A5).
+
+### Suggested fix order
+
+1. A1, A2, A3, A4 — small, unit-testable, no UI work.
+2. A6, A7 — reliability, one function each.
+3. A5, A9, A10 — needs a live target app to verify.
+4. UX items 1-4 in one UI batch.
+
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
 - New native document `phantomvault-backup` v1: the full `Vault` (logins,
