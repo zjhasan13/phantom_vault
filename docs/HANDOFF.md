@@ -328,6 +328,12 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Vault top bar redesign (this batch):** the command bar was flush against the
+  window frame and shared edges with the filter strip. The vault column now has
+  a 10px top gap and 12px side padding; the command bar and filter strip are
+  rounded surface cards with borders, and the search field is 36px. Verified by
+  running a fresh build through onboarding and capturing the unlocked vault.
+
 - **Save prompt localization (batch 8, this batch):** the in-page prompts now
   follow the popup's EN/BN toggle (`settings.lang`, which the popup already
   stores). Titles, field labels, buttons, existing-item chips, at-risk flags and
