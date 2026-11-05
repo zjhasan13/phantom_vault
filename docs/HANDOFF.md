@@ -1277,7 +1277,14 @@
    then `cargo test` + one live sync round-trip.
    Dismiss command (needs `gh auth login` first):
    `gh api -X PATCH repos/zjhasan13/phantom_vault/dependabot/alerts/1 -f state=dismissed -f dismissed_reason=not_used -f dismissed_comment="jsonwebtoken 9.3.1 is only reachable through octocrab, which signs GitHub App JWTs; PhantomVault never verifies a JWT (no decode path). Fix tracked as the octocrab 0.54.9 bump."`
-10. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
+10. **Desktop auto-type audit — single source is `docs/AUDIT.md` §8-§9:** 34 code
+   findings (A1-A34) and 10 theme-conformance findings (T1-T10), each with
+   `file:line` evidence, a ranked fix order and a `Status` column. The audit is
+   static only: no build ran and nothing was reproduced on screen. Do not copy
+   the rows here - when a fix lands, set that row's `Status` in
+   `docs/AUDIT.md` to `fixed @<hash>` (or `wontfix (reason)`). First batch:
+   A1-A4 plus the `GatewayTab` contrast fix (T5).
+11. **Dropped scope (do not revisit without new cause):** full A2 encrypted-RAM
    rewrite (canceled), `rqrr-zeroize` fork (rejected), tokio current-thread
    (rejected), License purchase/vendor/seats, SSH passphrase decrypt,
    name-split/SSN, card billing address.

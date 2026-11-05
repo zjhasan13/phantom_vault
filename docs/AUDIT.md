@@ -293,38 +293,38 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 
 ### P0 — correctness and safety
 
-| ID | Defect | Location | Fix direction |
-|---|---|---|---|
-| A1 | Both guards are fail-open: `if let Ok(ctx) = inspect_active_context()` skips the spoof **and** app-binding checks when COM/UIA fails, then typing proceeds | `main.rs:326`, `:346` | For app-bound items, inspection failure must abort and log (`autotype-blocked-nocontext`). |
-| A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. |
-| A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. |
-| A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. |
-| A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. |
+| ID | Defect | Location | Fix direction | Status |
+|---|---|---|---|---|
+| A1 | Both guards are fail-open: `if let Ok(ctx) = inspect_active_context()` skips the spoof **and** app-binding checks when COM/UIA fails, then typing proceeds | `main.rs:326`, `:346` | For app-bound items, inspection failure must abort and log (`autotype-blocked-nocontext`). | open |
+| A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. | open |
+| A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. | open |
+| A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. | open |
+| A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. | open |
 
 ### P1 — reliability and false positives
 
-| ID | Defect | Location | Fix direction |
-|---|---|---|---|
-| A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. |
-| A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. |
-| A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. |
-| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. |
-| A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. |
-| A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. |
-| A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. |
+| ID | Defect | Location | Fix direction | Status |
+|---|---|---|---|---|
+| A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | open |
+| A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | open |
+| A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | open |
+| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | open |
+| A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | open |
+| A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. | open |
+| A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. | open |
 
 ### P2 — polish, privacy, diagnostics
 
-| ID | Defect | Location | Note |
-|---|---|---|---|
-| A13 | `chain_2fa.pref` is read from the current working directory and defaults to ON | `main.rs:295` | Relative path is a project-wide convention, but TOTP auto-type is opt-out, not per-fill consent. |
-| A14 | "focus the target field…" is set on a window that is being minimized, so the user never sees it | `main.rs:365-366` | Use a tray balloon / toast. |
-| A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. |
-| A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. |
-| A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. |
-| A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. |
-| A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. |
-| A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. |
+| ID | Defect | Location | Note | Status |
+|---|---|---|---|---|
+| A13 | `chain_2fa.pref` is read from the current working directory and defaults to ON | `main.rs:295` | Relative path is a project-wide convention, but TOTP auto-type is opt-out, not per-fill consent. | open |
+| A14 | "focus the target field…" is set on a window that is being minimized, so the user never sees it | `main.rs:365-366` | Use a tray balloon / toast. | open |
+| A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. | open |
+| A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. | open |
+| A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. | open |
+| A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. | open |
+| A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. | open |
+| A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. | open |
 
 ### UX improvements (ranked by impact)
 
@@ -376,22 +376,22 @@ reproduced.
 
 ### Code / behaviour findings (continues the A-series)
 
-| ID | Defect | Location |
-|---|---|---|
-| A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` |
-| A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) |
-| A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` |
-| A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` |
-| A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` |
-| A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` |
-| A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` |
-| A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` |
-| A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` |
-| A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` |
-| A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` |
-| A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` |
-| A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` |
-| A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` |
+| ID | Defect | Location | Status |
+|---|---|---|---|
+| A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` | open |
+| A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) | open |
+| A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` | open |
+| A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` | open |
+| A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` | open |
+| A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` | open |
+| A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | open |
+| A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` | open |
+| A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | open |
+| A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | open |
+| A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | open |
+| A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | open |
+| A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` | open |
+| A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` | open |
 
 ### Theme conformance (Aegis palette, `design/tokens.json`)
 
@@ -399,18 +399,18 @@ Verdict: **no colour is off-palette.** Every popup colour resolves to an Aegis
 token value. The drift is in scale, token discipline, semantic tone, brand
 casing and one contrast pair.
 
-| ID | Drift | Evidence | Token value |
-|---|---|---|---|
-| T1 | Off-scale spacing: 18px padding, 10px and 6px gaps | `ui/appwindow.slint:3899`, `:4041`, `:3903`, `:3968` | `spacing` = 4 / 8 / 12 / 20 / 32 |
-| T2 | Off-scale radius: 18px window, 10px tiles | `:3874`, `:4020`, `:3907`, `:3956` | `radius` = 2 / 4 / 6 / 8 / 12 / pill |
-| T3 | Off-scale type: 14px/800 headers, 11px captions, 9px chips | `:3914`, `:3915`, `:4056`, `:235` | `typography` = 15 / 13 / 12 / 10 |
-| T4 | Alpha tints are raw hex, not tokens: `#060e20f2`, `#4edea366`, `#4edea333`, `#ffb4ab1a`, `#ffb4ab55` | `:3873`, `:3878`, `:4019`, `:4024`, `:199`, `:195`, `:197` | no alpha scale exists; `UI_TOKENS.md:24,89` already lists this as remaining debt |
-| T5 | Active `GatewayTab` uses white on `primary-container` = **2.55:1**, below AA 4.5 (and below AA-large 3.0). `on-primary` gives 5.2:1 | `:245` | `on_primary` = `#003824` |
-| T6 | Popup background is 95% opaque (`#060e20f2`) over an arbitrary wallpaper, so `text-dim` contrast is backdrop-dependent (6.35:1 on the token surface, lower on a bright desktop) | `:3873`, `:4019` | `surface_lowest` = `#060e20` |
-| T7 | Magic `y: 2px` / `y: 0px` inside layout rows instead of a centred `VerticalLayout` | `:3971-3975`, `:3077` | AGENTS.md §6 layout pattern |
-| T8 | Brand casing: "Phantom Quick Bar" / "PhantomVault Quick Bar" vs the two-word all-caps rule; the main window follows it | `:3914`, `:3852`, `:4000` | AGENTS.md §1 |
-| T9 | i18n gaps inside otherwise localized windows: "hits", the search placeholder, the footer hint and "Type" stay English | `:3918`, `:3922`, `:3985`, `:3971` | A26 |
-| T10 | Zero accessibility properties in the whole UI file (`accessible-role` / `accessible-label` = 0 matches), so both popups are unnamed to screen readers | whole file | — |
+| ID | Drift | Evidence | Token value | Status |
+|---|---|---|---|---|
+| T1 | Off-scale spacing: 18px padding, 10px and 6px gaps | `ui/appwindow.slint:3899`, `:4041`, `:3903`, `:3968` | `spacing` = 4 / 8 / 12 / 20 / 32 | open |
+| T2 | Off-scale radius: 18px window, 10px tiles | `:3874`, `:4020`, `:3907`, `:3956` | `radius` = 2 / 4 / 6 / 8 / 12 / pill | open |
+| T3 | Off-scale type: 14px/800 headers, 11px captions, 9px chips | `:3914`, `:3915`, `:4056`, `:235` | `typography` = 15 / 13 / 12 / 10 | open |
+| T4 | Alpha tints are raw hex, not tokens: `#060e20f2`, `#4edea366`, `#4edea333`, `#ffb4ab1a`, `#ffb4ab55` | `:3873`, `:3878`, `:4019`, `:4024`, `:199`, `:195`, `:197` | no alpha scale exists; `UI_TOKENS.md:24,89` already lists this as remaining debt | open |
+| T5 | Active `GatewayTab` uses white on `primary-container` = **2.55:1**, below AA 4.5 (and below AA-large 3.0). `on-primary` gives 5.2:1 | `:245` | `on_primary` = `#003824` | open |
+| T6 | Popup background is 95% opaque (`#060e20f2`) over an arbitrary wallpaper, so `text-dim` contrast is backdrop-dependent (6.35:1 on the token surface, lower on a bright desktop) | `:3873`, `:4019` | `surface_lowest` = `#060e20` | open |
+| T7 | Magic `y: 2px` / `y: 0px` inside layout rows instead of a centred `VerticalLayout` | `:3971-3975`, `:3077` | AGENTS.md §6 layout pattern | open |
+| T8 | Brand casing: "Phantom Quick Bar" / "PhantomVault Quick Bar" vs the two-word all-caps rule; the main window follows it | `:3914`, `:3852`, `:4000` | AGENTS.md §1 | open |
+| T9 | i18n gaps inside otherwise localized windows: "hits", the search placeholder, the footer hint and "Type" stay English | `:3918`, `:3922`, `:3985`, `:3971` | A26 | open |
+| T10 | Zero accessibility properties in the whole UI file (`accessible-role` / `accessible-label` = 0 matches), so both popups are unnamed to screen readers | whole file | — | open |
 
 Not defects: emoji icons in the popups are explicitly allowed by the icon
 policy (`docs/UI_TOKENS.md:62-71`), and the popups reuse `AuraButton`,
