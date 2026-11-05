@@ -2254,6 +2254,16 @@
   // Full login row (suggestion tier): USERNAME is the bold primary line,
   // domain/title secondary — 20+ same-domain accounts scan by email, not
   // by identical titles. TOTP badge, compact audit, Fill/Copy/Copy-user.
+  // Hero status icons (static inline SVG, 12px). Text lives in the tooltip so
+  // the card stays compact like the rest of the HUD.
+  const HERO_ICONS = {
+    shieldCheck: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg>',
+    reuse: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 2l3 3-3 3"/><path d="M3 11V9a4 4 0 014-4h13"/><path d="M7 22l-3-3 3-3"/><path d="M21 13v2a4 4 0 01-4 4H4"/></svg>',
+    weak: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l9 16H3z"/><path d="M12 9v4M12 16.5v.01"/></svg>',
+    clock: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>',
+    lock: '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>',
+  };
+
   // HUD 3.0 hero: the top-ranked match gets the focused card (reveal, copy,
   // live TOTP, one primary action). Everything here is real vault data; the
   // mockup's enclave/quantum chips are intentionally not reproduced.
@@ -2282,17 +2292,19 @@
     tx.append(ttl, sub);
     const chips = document.createElement("div");
     chips.className = "herochips";
-    const chip = (label, cls) => {
+    const chip = (ico, label, cls) => {
       const c = document.createElement("span");
       c.className = "chip " + (cls || "");
-      c.textContent = label;
+      c.innerHTML = HERO_ICONS[ico] || "";
+      c.title = label;
+      c.setAttribute("aria-label", label);
       chips.append(c);
     };
-    if (entry.verified) chip("verified", "ok");
-    if (entry.health === "reused") chip("reused", "warn");
-    if (entry.health === "weak") chip("weak", "warn");
-    if (entry.health === "stale") chip("old", "warn");
-    if (entry.reprompt) chip("locked");
+    if (entry.verified) chip("shieldCheck", "Verified on this site", "ok");
+    if (entry.health === "reused") chip("reuse", "Password reused", "info");
+    if (entry.health === "weak") chip("weak", "Weak password", "warn");
+    if (entry.health === "stale") chip("clock", "Old password", "warn");
+    if (entry.reprompt) chip("lock", "Re-prompt required", "");
     head.append(ic, tx, chips);
 
     const pw = document.createElement("div");

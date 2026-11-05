@@ -330,8 +330,9 @@
 
 - **HUD 3.0 hero slice (this batch):** the top-ranked site match now renders as a
   focused card above the list (`#heroCard`, `renderHero`): brand tile,
-  username/title, `VERIFIED` / reuse / weak / old / locked chips, a password row
-  with reveal + copy, a live TOTP row with `Copy 2FA` (reuses the popup's
+  username/title, icon status chips (shield-check verified, recycle reused,
+  warning weak, clock old, lock re-prompt - labels in tooltips/aria), a password
+  row with reveal + copy, a live TOTP row with `Copy 2FA` (reuses the popup's
   `data-totp-id` ticker), and `Fill` / `Fill & submit` (both go through the same
   guards as the list rows). The remaining accounts stay in the normal list.
   The mockup's RAM-enclave / IPC-latency / quantum-entropy chips are not

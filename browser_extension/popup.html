@@ -210,10 +210,12 @@
     .herotitle { font-weight: 800; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .herosub { color: var(--faint); font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .herochips { display: flex; gap: 4px; margin-left: auto; flex: none; }
-    .chip { font: 700 8.5px/1 var(--pv-mono); letter-spacing: .5px; text-transform: uppercase;
-      padding: 3px 5px; border-radius: 5px; background: var(--panel2); color: var(--faint);
-      border: 1px solid var(--border); white-space: nowrap; }
+    .chip { display: inline-flex; align-items: center; justify-content: center; flex: none;
+      width: 20px; height: 20px; padding: 0; border-radius: 6px; background: var(--panel2);
+      color: var(--faint); border: 1px solid var(--border); }
+    .chip svg { width: 12px; height: 12px; display: block; }
     .chip.ok { color: var(--accent); border-color: rgba(78,222,163,.35); }
+    .chip.info { color: var(--cyan); border-color: rgba(76,215,246,.35); }
     .chip.warn { color: var(--pv-warning); border-color: rgba(245,158,11,.35); }
     .heropw { display: flex; align-items: center; gap: 6px; margin-top: 9px; background: var(--bg);
       border: 1px solid var(--border); border-radius: 8px; padding: 7px 9px; }
