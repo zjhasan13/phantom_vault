@@ -1527,9 +1527,42 @@
       });
     }
   }
+  // Kind chooser for "+ Add": one bridge path per kind, same editor.
+  function openKindPicker() {
+    const prev = document.querySelector(".pvmodal");
+    if (prev) prev.remove();
+    const bg = document.createElement("div");
+    bg.className = "pvmodal";
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h2");
+    h.textContent = "New item";
+    const grid = document.createElement("div");
+    grid.className = "actions";
+    let first = null;
+    for (const [kind, label] of [["login", "Login"], ["note", "Note"], ["card", "Card"], ["identity", "Identity"]]) {
+      const b = document.createElement("button");
+      b.textContent = label;
+      if (kind === "login") b.className = "primary";
+      b.addEventListener("click", () => { bg.remove(); openItemEditor(null, kind); });
+      if (!first) first = b;
+      grid.append(b);
+    }
+    const cancel = document.createElement("button");
+    cancel.textContent = t("cancel");
+    grid.append(cancel);
+    const close = () => bg.remove();
+    cancel.addEventListener("click", close);
+    bg.addEventListener("click", (ev) => { if (ev.target === bg) close(); });
+    bg.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
+    card.append(h, grid);
+    bg.append(card);
+    document.body.append(bg);
+    if (first) first.focus();
+  }
   const addItemBtn = document.getElementById("addItemBtn");
   if (addItemBtn) {
-    addItemBtn.addEventListener("click", () => openItemEditor(null));
+    addItemBtn.addEventListener("click", () => openKindPicker());
   }
 
   function currentFilter() {

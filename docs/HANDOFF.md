@@ -328,6 +328,12 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **"+ Add" chooses the item kind (this batch):** the popup only had an
+  "Add login" button even after the editor learned notes/cards/identities. It
+  now opens a small kind chooser (Login / Note / Card / Identity) and reuses the
+  same editor + `create_item` bridge path. JS-only change; cargo gates were
+  skipped on request (low disk) - npm 152/152, dist rebuilt.
+
 - **"Continue as ..." on the password step (this batch):** when the page shows /
   carries exactly one vault account and there is no visible username field, a
   compact chip appears under the password box: site favicon, `CONTINUE AS
@@ -1051,10 +1057,11 @@
 
 **Extension gaps (recorded 2026-11-04, still open):**
 
-- **Notes / Cards / Identities editors are desktop-only.** The popup editor
-  (`popup.js openItemEditor`) now handles all four kinds through the generic
-  `create_item` / `update_item` / `delete_item` bridge commands; what is still
-  desktop-only is attachments and password-history browsing.
+- **Notes / Cards / Identities editors are desktop-only.** Shipped: the popup
+  editor covers all four kinds through the generic `create_item` /
+  `update_item` / `delete_item` bridge commands, and "+ Add" opens a kind
+  chooser (Login / Note / Card / Identity). What is still desktop-only is
+  attachments and password-history browsing.
 - **The extension cannot run without the desktop app (by design).** The vault
   key never leaves the app; the native host's `unlocked` gate refuses everything
   else. `offline_cache.rs` exists but is not enabled, so with the app closed the
