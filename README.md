@@ -13,6 +13,9 @@ enable sync, the ciphertext goes to storage *you* control.
 > Read [Security model](#security-model) and [Known gaps](#known-gaps-and-honest-limits)
 > before trusting it with anything that matters. This project documents its own
 > limits instead of hiding them.
+>
+> Working on the code? Start with `AGENTS.md` and `docs/SESSION_STATE.md`.
+> Feature status: `docs/FEATURE_LEDGER.md`.
 
 ---
 

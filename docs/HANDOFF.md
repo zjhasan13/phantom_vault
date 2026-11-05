@@ -1,5 +1,9 @@
 # Session Handoff â€” PhantomVault
 
+> **Fresh session?** Read `docs/SESSION_STATE.md` first (current commit, gates,
+> next move, UI harness), then `AGENTS.md` (the contract), then this file for
+> history. Feature status: `docs/FEATURE_LEDGER.md`.
+>
 > Read this fully in a fresh session BEFORE doing anything. Last updated: Generator Studio slice 1 (full-page, honest OS CSPRNG, Complex + Diceware, copy), Settings & Dev Center slice 1 (Aegis header + 6-tab section filter), Aegis 2FA hub slices 1-2 (filter chips / sort / per-account params), centered Add-2FA + Export sheets with explicit busy / empty / error states, and a collapsed-rail `»` expand button; before that, login-page parity pass 2 (pinned brand header, PQ-aware hero pill, honest 3-tab strip, 5-segment entropy), UI token foundation (design/tokens.json) after A24d/A24c/A24b/A24a/A20c/A20b/A20a/A26/A23/A22/A20/E5/T5/A19/A18/A15c/A16/A12/A17/A11b/A14.
 > Companion: `rules.md` (architecture invariants â€” non-negotiable).
 

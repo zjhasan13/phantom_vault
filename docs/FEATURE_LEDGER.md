@@ -1,0 +1,114 @@
+# FEATURE_LEDGER — what exists, what is partial, what is intentionally absent
+
+Status legend: **✅ shipped** · **◐ partial** · **⛔ absent by design**
+
+This ledger is the quick answer to "does feature X exist, and where?". It is not
+marketing: every row points at the file or gate that can prove it. Update a row
+when a user-visible capability is added, changed, or deliberately removed.
+
+> Last updated: 2026-11-05 · `171eb92`
+
+## 1. Desktop UI (Slint — `ui/appwindow.slint`)
+
+| Area | Status | Notes / where |
+|---|---|---|
+| Unlock / lock screen | ✅ | master password, EN/BN toggle, Hello/PIN states, recovery entry |
+| Onboarding | ✅ | 3 steps; recovery-shards checkbox kept inside the card (`a1ac396`) |
+| Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`) |
+| Item detail (all kinds) | ✅ | login, card, note, identity, license, SSH; history, attachments, TOTP |
+| Add / edit editor | ✅ | per-kind fields, folder, tags, favourite |
+| Password generator | ✅ | OS CSPRNG, Complex + Diceware, copy |
+| 2FA hub | ✅ | filter chips, sort, per-account params, HOTP next, Add-2FA sheet |
+| 2FA import sheet | ✅ | screen/webcam/file QR + manual paste; content-sized (`171eb92`) |
+| 2FA export sheet | ✅ | paginated otpauth QR, copy URI, honest empty/error states |
+| Vault health report | ✅ | breached / reused / weak / stale, per-row open; content-sized (`171eb92`) |
+| Master reprompt | ✅ | guard for reveal / autofill / delete / export; content-sized (`171eb92`) |
+| Recovery kit + shards | ✅ | print sheet, shard drill |
+| Audit & duress | ✅ | duress password, honeytokens, factory reset (3-pass) |
+| Secure Send | ✅ | expiring one-view notes, TTL, read + burn (`docs/A20_SEND.md`) |
+| Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback |
+| Extension bridge | ✅ | native-messaging host install, allowed origins |
+| Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
+| Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs |
+| Offline cache | ✅ | snapshot + DPAPI key + Hello/PIN gate; freshness + sealed timestamp |
+| Travel mode | ✅ | local-only switch |
+| Localization | ◐ | EN/BN for shell + most dialogs; Rust status strings and some dialogs still English (`docs/A26_BN.md`) |
+
+## 2. Browser extension (`browser_extension/`)
+
+| Area | Status | Notes / where |
+|---|---|---|
+| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry |
+| Continue-as (identifier step) | ✅ | username-only step carries to password step (`fc1def7`) |
+| Save prompt — login | ✅ | closed shadow root, 60 s TTL, per-tab, folder picker, notes, editable title/URL, update-target chips, EN/BN, at-risk hint |
+| Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |
+| Badge qualification | ✅ | no badge on newsletter/contact/identity fields (`fbe7881`, `7bca1b6`) |
+| Popup list | ✅ | all kinds, folders, search, health badges |
+| Popup editor | ✅ | create/update/delete for all kinds; notes/cards/identities (`b5d9e04`) |
+| HUD 3.0 hero card | ◐ | hero slice shipped (`25008cc`, `09059bb`); full 640px dual-column not built |
+| Generator in popup | ✅ | same honest generator |
+| SSH keys + licenses | ◐ | list + copy (`b399b06`); no editor yet |
+| Attachments + history | ◐ | metadata + open/download (`a133375`); upload from popup not built |
+| Offline cache | ✅ | warm cache, freshness gate, tab scope (`55fe343`, `b69f8b6`) |
+| At-risk hint | ✅ | host-side HIBP k-anonymity (SHA-1 prefix only) + local reuse count |
+| Firefox build | ✅ | `manifest.firefox.json` + `browser_extension/build.ps1` |
+
+## 3. Core / security capabilities (Rust)
+
+| Capability | Status | Where |
+|---|---|---|
+| Vault encryption | ✅ | `src/crypto.rs`, `src/storage/` — Argon2id + XChaCha20-Poly1305 |
+| PQ hybrid envelope | ✅ | ML-KEM layer, portable `PV2` envelope (`rules.md` §3) |
+| Recovery shards | ✅ | shard drill callback, recovery kit |
+| Import/export | ✅ | `.pvx`, Bitwarden JSON, CSV, KeePass KDBX (`docs/A13_KDBX.md`) |
+| Expiring shares | ✅ | `src/share*.rs`, one-view/TTL, fragment key |
+| Local API | ✅ | `src/api/`, `docs/A23_LOCAL_API.md` |
+| Attachments | ✅ | `src/attachment_store.rs`, `docs/A24_ATTACHMENTS.md` |
+| Access log (hash-chained) | ✅ | metadata only, `open_access_log` in `main.rs` |
+| Windows Hello / PIN / DPAPI | ✅ | `src/security/`, `src/windows_native/` |
+| Zeroize / secrecy | ✅ | required by `rules.md`; enforced in review + clippy |
+
+## 4. Deliberately absent (do not "fix" without asking)
+
+| Not present | Why |
+|---|---|
+| Organizations / collections | Vault model is single-user; there is nothing to pick. Do not add org pickers to save prompts. |
+| Cloud sync account / vendor lock-in | Local-first by design; GitHub/P2P/QR are user-owned transports. |
+| Fake security chips ("AES-256-GCM", "quantum-immune", "0M leak", "0 ms") | Dishonest. The extension explicitly does not reproduce the mockup's enclave/quantum chips (`popup.js:2336`, `popup.html:207`). |
+| WebView / Electron | Hard invariant (`rules.md` §1). |
+
+Honest caveat: the **desktop shell** still shows the label "ENCLAVE MODE"
+(`ui/appwindow.slint:1699`) and "LOCAL ENCLAVE SYNCHRONIZED" (`:3284`) from an
+earlier pass. They are UI labels, not claims under test; renaming them is a
+product-copy decision, not a bug fix.
+
+## 5. Recent additions / changes (newest first)
+
+| Commit | What changed |
+|---|---|
+| `171eb92` | four dialogs content-sized; import/export headers centered and contained |
+| `1aa3a70` | filter strip centered; Identity + License chips |
+| `a1f53f8`, `0c7ce6c` | vault top bar spacing, collapse controls centered |
+| `a1ac396` | onboarding recovery-shards checkbox no longer overflows |
+| `2d7a6f4` | save prompts follow the EN/BN setting |
+| `b8ff022` | save-prompt notes, reuse hint, card/identity parity, a11y |
+| `396b0ac` | at-risk flags (HIBP k-anonymity) in save prompts |
+| `c4be27c` | save prompts in closed shadow roots |
+| `7462714` | editable title/URL in save prompts |
+| `43a876d` | choose which existing login a save updates |
+| `41329b8` | folder picker + close button in save prompts |
+| `b69f8b6`, `55fe343` | offline cache hardening + freshness |
+| `a133375` | password history + attachment metadata in the extension editor |
+| `b399b06` | SSH keys + licenses in the popup |
+| `25008cc`, `09059bb` | HUD 3.0 hero card |
+| `fc1def7` | Continue-as one-click fill |
+
+For full detail: `git log --oneline` and `docs/HANDOFF.md`.
+
+## 6. How to update this file
+
+1. Add/change the row in the feature table (status + file/gate pointer).
+2. If something was removed on purpose, add it to §4 with the reason.
+3. Add one line to §5 with the commit hash.
+4. Keep claims verifiable: a row is only ✅ if a test, a screenshot, or a code
+   path proves it.
