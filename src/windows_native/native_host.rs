@@ -1498,6 +1498,16 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 persist: false,
             }
         }
+        // Folder names only - the save prompt's picker. No items, no secrets.
+        "folders" => {
+            if !unlocked {
+                return no("vault locked");
+            }
+            Answer {
+                reply: serde_json::json!({"ok": true, "folders": vault.folders}),
+                persist: false,
+            }
+        }
         // Fetch ONE item's fill secrets by (kind, id). Trashed never served.
         // This is what backs Fill/Copy on metadata rows — no vault dump.
         "fetch" => {
@@ -2188,6 +2198,19 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             }
             let title = req.get("title").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
             let totp = req.get("totp").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
+            // Optional folder from the save prompt. Empty = General for a new
+            // item and "leave unchanged" for an update.
+            let folder_req = req
+                .get("folder")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let folder = if folder_req.is_empty() {
+                crate::models::DEFAULT_FOLDER.to_string()
+            } else {
+                req_folder(vault, &folder_req)
+            };
             let now = crate::models::current_timestamp();
             let dom = url_domain(&url);
             // C6: strict registrable-domain equality — substring matching let
@@ -2213,6 +2236,9 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 if !c.urls.iter().any(|u| u.url().to_lowercase() == url.to_lowercase()) {
                     c.urls.push(crate::models::LoginUrl::from(url));
                 }
+                if !folder_req.is_empty() {
+                    c.folder = folder;
+                }
                 updated = true;
             } else {
                 let id = format!(
@@ -2233,7 +2259,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     backup_codes: Vec::new(),
                     custom_fields: Vec::new(),
                     notes: String::from("Saved via browser extension"),
-                    folder: crate::models::DEFAULT_FOLDER.to_string(),
+                    folder,
                     reprompt: false,
                     attachments: Vec::new(),
                     travel_safe: false,
@@ -5071,6 +5097,35 @@ mod tests {
             "cmd": "create_item", "kind": "note", "title": "x"
         }));
         assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn save_login_honours_the_prompt_folder() {
+        let mut v = Vault::new();
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({
+                "cmd": "save_login", "username": "a@b.c", "password": "p",
+                "url": "https://x.example", "folder": "Work"
+            }),
+        );
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.credentials[0].folder, "Work");
+        // An update without a folder keeps the existing one.
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({
+                "cmd": "save_login", "username": "a@b.c", "password": "p2",
+                "url": "https://x.example"
+            }),
+        );
+        assert_eq!(r.reply["updated"], true);
+        assert_eq!(v.credentials[0].folder, "Work");
+        // The folders command exposes the picker list.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "folders"}));
+        assert!(r.reply["folders"].as_array().unwrap().iter().any(|f| f == "Work"));
     }
 
     #[test]

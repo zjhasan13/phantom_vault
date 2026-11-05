@@ -219,6 +219,36 @@ test("Continue as: never on a page that already has a username field", async (t)
     "the normal dropdown covers user+pass forms");
 });
 
+test("save prompt sends the folder and can be dismissed with x", async (t) => {
+  const { window, store } = env(t, `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password" value="pw123">
+  </form>`, "https://example.com/login");
+  submit(window, window.document.querySelector("form"));
+  await flush();
+  const root = saverRoot(window);
+  const sel = root.querySelector("select");
+  assert.ok(sel, "folder picker must render");
+  const saveBtn = [...root.querySelectorAll("button")].find((b) => /^Save$/.test(b.textContent.trim()));
+  assert.ok(saveBtn, "save button present");
+  saveBtn.click();
+  await flush(80);
+  assert.ok(store.saves.length, "save message sent");
+  assert.equal(store.saves[0].folder, "General");
+
+  // A second submit shows the prompt again; the header x must clear the
+  // pending capture without saving.
+  submit(window, window.document.querySelector("form"));
+  await flush(120);
+  const box2 = saver(window);
+  assert.ok(box2, "prompt re-opened");
+  const x = box2.querySelector('button[aria-label="Dismiss save prompt"]');
+  assert.ok(x, "close button present");
+  x.click();
+  await flush(50);
+  assert.equal(store.session["pvSavePending:example.com"], undefined);
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">

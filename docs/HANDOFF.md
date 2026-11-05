@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt: folder picker + close (batch 1, this batch):** the prompt now
+  has a `FOLDER` select populated from a new `folders` bridge command (names
+  only, no items); `save_login` accepts `folder` (new item lands there, an update
+  without a folder keeps the old one), and the pending record carries the choice
+  so a reload restores it. A header `x` closes/discards the prompt (same clear
+  path as Not Now). Tests: folder reaches `PV_SAVE_LOGIN`, x clears pending
+  (npm 153/153), Rust folder update semantics + `folders` command (cargo 566/4).
+
 - **Offline cache hardening (Phase 3, this batch):** snapshot plaintext is
   wrapped in `Zeroizing` on both encode and decode, and `CachedLogin` wipes its
   password on drop. A second staleness gate now runs on the SEALED

@@ -520,6 +520,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       touchActivity();
       return await hostRequest({ cmd: "list" });
     }
+    if (msg.type === "PV_FOLDERS") {
+      touchActivity();
+      return await hostRequest({ cmd: "folders" });
+    }
     if (msg.type === "PV_FETCH") {
       touchActivity();
       return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });
@@ -724,7 +728,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (await neverSaveHit(msg.url)) {
         return { ok: false, error: "never save for this site" };
       }
-      const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "" });
+      const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "", folder: msg.folder || "" });
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }

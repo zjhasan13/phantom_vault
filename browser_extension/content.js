@@ -3067,6 +3067,7 @@
       saveLabel: p.update ? "Update" : "Save",
       busyLabel: p.update ? "Updating…" : "Saving…",
       allowNever: !p.update,
+      folder: p.folder,
       username: p.username,
       password: p.password,
       update: !!p.update,
@@ -3105,7 +3106,20 @@
     const chip = document.createElement("span");
     chip.textContent = "NATIVE BRIDGE";
     chip.style.cssText = "font:700 9px 'JetBrains Mono',monospace;letter-spacing:.6px;padding:3px 6px;border-radius:5px;background:#4edea31f;color:#4edea3;border:1px solid #4edea355;white-space:nowrap;";
-    head.append(mark, t, chip);
+    // Bitwarden parity: the save bar can be closed without choosing an action.
+    // Closing discards the pending capture (same as Not Now) so it does not
+    // reappear on the next page.
+    const xBtn = document.createElement("button");
+    xBtn.type = "button";
+    xBtn.textContent = "\u00d7";
+    xBtn.title = "Dismiss";
+    xBtn.setAttribute("aria-label", "Dismiss save prompt");
+    xBtn.style.cssText = "flex:none;background:transparent;border:1px solid #3c4a42;border-radius:6px;" +
+      "color:#86948a;width:22px;height:22px;line-height:1;padding:0;cursor:pointer;font-size:13px;";
+    xBtn.addEventListener("mouseenter", () => { xBtn.style.color = "#dae2fd"; });
+    xBtn.addEventListener("mouseleave", () => { xBtn.style.color = "#86948a"; });
+    xBtn.addEventListener("click", () => dismiss(true, true));
+    head.append(mark, t, chip, xBtn);
     const sub = document.createElement("div");
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = opts.sub;
@@ -3133,6 +3147,32 @@
     const pass = toastField("password", opts.password, "Password");
     const meta = document.createElement("div");
     meta.className = "meta";
+    // Folder picker (Bitwarden's save bar has one too). Populated from
+    // PV_FOLDERS; defaults to the current folder when restoring a pending save.
+    const lblF = document.createElement("div");
+    lblF.className = "lbl";
+    lblF.textContent = "FOLDER";
+    const folderSel = document.createElement("select");
+    folderSel.style.cssText = "width:100%;box-sizing:border-box;background:#0b1326;border:1px solid #3c4a42;" +
+      "border-radius:8px;color:#dae2fd;padding:8px 9px;font:12px 'Segoe UI',system-ui;margin-bottom:8px;";
+    const wantFolder = (opts.folder || "General").trim() || "General";
+    const setFolders = (list) => {
+      const names = Array.from(new Set([].concat(list || [], [wantFolder, "General"]).filter(Boolean)));
+      folderSel.innerHTML = "";
+      for (const name of names) {
+        const o = document.createElement("option");
+        o.value = name;
+        o.textContent = name;
+        folderSel.appendChild(o);
+      }
+      folderSel.value = names.includes(wantFolder) ? wantFolder : "General";
+    };
+    setFolders([]);
+    try {
+      chrome.runtime.sendMessage({ type: "PV_FOLDERS" }).then((res) => {
+        if (res && res.ok && Array.isArray(res.folders)) setFolders(res.folders);
+      }).catch(() => {});
+    } catch (_) {}
     const err = document.createElement("div");
     err.style.cssText = "color:#ffb4ab;font-size:11px;margin-bottom:8px;display:none;";
     const row = document.createElement("div");
@@ -3160,7 +3200,7 @@
     const foot = document.createElement("div");
     foot.className = "foot";
     foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
-    root.append(style, lblU, user, lblP, pass, meta, err, row, foot);
+    root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, err, row, foot);
     document.documentElement.append(box);
     // Keep the capture for the next page on this site (unless this card IS the
     // restore). Explicit actions below clear it again.
@@ -3170,6 +3210,7 @@
         password: opts.password,
         update: !!opts.update,
         allowNever: !!opts.allowNever,
+        folder: folderSel.value || "General",
       });
     }
 
@@ -3238,6 +3279,7 @@
           password: p,
           url: captureUrl(),
           title: captureTitle(),
+          folder: folderSel.value || "General",
         });
         if (res && res.ok) {
           toast(res.updated ? "Login updated in PhantomVault." : "Login saved to PhantomVault.");
