@@ -328,6 +328,16 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **"Continue as ..." on the password step (this batch):** when the page shows /
+  carries exactly one vault account and there is no visible username field, a
+  compact chip appears under the password box: site favicon, `CONTINUE AS
+  <account>`, one **Fill** button and a dismiss `x`. Fill runs the normal
+  `requireExtPin` + `fillLogin` path; dismiss is remembered per site in session
+  storage; the chip never appears when a username field exists (the dropdown
+  owns that case), when the hint matches zero or multiple accounts, or while the
+  dropdown is open. Data shape: page chip / typed value / carried username, the
+  same order the dropdown ranks by.
+
 - **Extension item editor covers all four kinds (this batch):** the bridge gained
   generic `create_item` / `update_item` / `delete_item` commands (`kind` is
   explicit, so an identity edit can never become a login write; soft delete;
@@ -1049,10 +1059,9 @@
   key never leaves the app; the native host's `unlocked` gate refuses everything
   else. `offline_cache.rs` exists but is not enabled, so with the app closed the
   popup says "Vault is Locked" - there is no read-only mode yet.
-- **No "Continue as ..." shortcut on the password step.** The dropdown ranks the
-  page account / carry first (`content.js rankLogins`), but there is no
-  one-click "Continue as <account>" row and no auto-fill; the user still opens
-  the list.
+- **No "Continue as ..." shortcut on the password step.** Shipped in this batch
+  (`#__pv_continue` chip); remaining polish is only visual tuning against the
+  mockup.
 - **Installed app 0.4.0 vs extension 0.4.1 (bridge version mismatch).** The
   native host refuses the newer extension until the app is upgraded: run
   `installer-output\PhantomVault-Setup-0.4.1.exe` (in-place upgrade; the vault

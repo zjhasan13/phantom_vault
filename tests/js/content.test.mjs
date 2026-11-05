@@ -174,6 +174,51 @@ test("Not Now clears the pending capture (no prompt on the next page)", async (t
     "explicit dismiss must clear the pending capture");
 });
 
+test("Continue as: one matching account on a password-only step fills in one click", async (t) => {
+  const { window } = env(t, `<div data-identifier="alice@example.com"></div>
+    <form><input type="password" name="password" value=""></form>`,
+    "https://example.com/signin", [
+      { id: "c1", title: "Example", username: "alice@example.com", password: "pw1", urls: ["example.com"] },
+      { id: "c2", title: "Example", username: "bob@example.com", password: "pw2", urls: ["example.com"] },
+    ]);
+  await flush(600);
+  const el = window.document.getElementById("__pv_continue");
+  assert.ok(el, "the continue-as chip must appear");
+  assert.match(el.textContent, /alice@example\.com/);
+  const fill = [...el.querySelectorAll("button")].find((b) => /Fill/i.test(b.textContent));
+  fill.click();
+  await flush(60);
+  assert.equal(window.document.querySelector('input[name="password"]').value, "pw1");
+});
+
+test("Continue as: dismissed chip stays hidden for the site", async (t) => {
+  const { window } = env(t, `<div data-identifier="alice@example.com"></div>
+    <form><input type="password" name="password" value=""></form>`,
+    "https://example.com/signin", [
+      { id: "c1", title: "Example", username: "alice@example.com", password: "pw1", urls: ["example.com"] },
+    ]);
+  await flush(600);
+  const el = window.document.getElementById("__pv_continue");
+  assert.ok(el, "chip appears first");
+  el.querySelector(".x").click();
+  await flush(400);
+  assert.equal(window.document.getElementById("__pv_continue"), null);
+});
+
+test("Continue as: never on a page that already has a username field", async (t) => {
+  const { window } = env(t, `<div data-identifier="alice@example.com"></div>
+    <form>
+      <input type="email" name="email" autocomplete="username" value="alice@example.com">
+      <input type="password" name="password" value="">
+    </form>`,
+    "https://example.com/signin", [
+      { id: "c1", title: "Example", username: "alice@example.com", password: "pw1", urls: ["example.com"] },
+    ]);
+  await flush(600);
+  assert.equal(window.document.getElementById("__pv_continue"), null,
+    "the normal dropdown covers user+pass forms");
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">

@@ -1905,6 +1905,7 @@
 
   function showDrop(anchor, rows) {
     closeDrop("replace");
+    dismissContinueAs(false);
     if (!rows.length || !isVisible(anchor)) return;
     dropEl = document.createElement("div");
     dropEl.id = "__pv_drop";
@@ -2157,6 +2158,136 @@
         (b.verified ? 1 : 0) - (a.verified ? 1 : 0) ||
         String(a.username || "").localeCompare(String(b.username || ""), undefined, { sensitivity: "base" }),
     );
+  }
+
+  // ---------- "Continue as ..." on a password-only step ----------
+  // Google (and most SSO flows) show the account as a chip, not an input. When
+  // the page displays / carries exactly ONE vault account, offer a single
+  // one-click row instead of making the user open the whole dropdown. Ordering
+  // and fill gates are the same as every other path (K1: nothing is dropped,
+  // and a fill still needs the user gesture + PIN gate).
+  const PV_CONTINUE_CSS = `
+    #__pv_continue{position:fixed;z-index:2147483647;display:flex;align-items:center;gap:9px;
+      max-width:min(92vw,360px);padding:8px 9px;background:#0b1326;border:1px solid #3c4a42;
+      border-radius:11px;box-shadow:0 14px 36px #000d;color:#dae2fd;box-sizing:border-box;
+      font:12px/1.35 Inter,"Segoe UI",system-ui,sans-serif}
+    #__pv_continue .av{flex:none;width:26px;height:26px;border-radius:8px;overflow:hidden;
+      background:#222a3d;border:1px solid #3c4a42;color:#4edea3;display:flex;align-items:center;
+      justify-content:center;font:800 11px "JetBrains Mono",monospace;text-transform:uppercase}
+    #__pv_continue .av img{width:100%;height:100%;object-fit:cover}
+    #__pv_continue .who{min-width:0;display:flex;flex-direction:column;gap:1px}
+    #__pv_continue .lbl{font:700 8.5px "JetBrains Mono",monospace;letter-spacing:.6px;color:#86948a}
+    #__pv_continue .u{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    #__pv_continue .fill{flex:none;background:#4edea3;color:#003824;border:1px solid #4edea3;
+      border-radius:7px;padding:5px 9px;font:700 9px "JetBrains Mono",monospace;letter-spacing:.5px;
+      text-transform:uppercase;cursor:pointer}
+    #__pv_continue .fill:hover{background:#6ff0b8}
+    #__pv_continue .x{flex:none;background:transparent;border:1px solid #3c4a42;border-radius:7px;
+      color:#86948a;width:22px;height:22px;cursor:pointer;line-height:1;padding:0;font-size:13px}
+    #__pv_continue .x:hover{color:#dae2fd;border-color:#86948a}
+  `;
+  let continueAsEl = null;
+  let continueAsField = null;
+  let continueAsTried = "";
+  function dismissContinueAs(remember) {
+    if (remember) {
+      try { sessionStorage.setItem("pvContinueDismiss:" + pageBase(), "1"); } catch (_) {}
+    }
+    if (continueAsEl) continueAsEl.remove();
+    continueAsEl = null;
+    continueAsField = null;
+  }
+  function positionContinueAs() {
+    if (!continueAsEl || !continueAsField || !isVisible(continueAsField)) {
+      if (continueAsEl && continueAsField && !isVisible(continueAsField)) dismissContinueAs(false);
+      return;
+    }
+    const r = continueAsField.getBoundingClientRect();
+    const w = continueAsEl.offsetWidth || 320;
+    const left = Math.min(Math.max(8, r.left), Math.max(8, window.innerWidth - w - 8));
+    continueAsEl.style.left = (left + window.scrollX) + "px";
+    continueAsEl.style.top = (r.bottom + window.scrollY + 6) + "px";
+  }
+  async function maybeContinueAs() {
+    if (isBlocked() || phishingRefuse() || !location.host) return;
+    if (continueAsEl) { positionContinueAs(); return; }
+    const f = findFields();
+    // Password-only step: a visible username field means the normal dropdown
+    // already covers it, and a multi-account page must not be pre-decided.
+    if (!f.pass.length || f.users.length) return;
+    const hint = carriedUserFor(f);
+    if (!hint) return;
+    try {
+      if (sessionStorage.getItem("pvContinueDismiss:" + pageBase()) === "1") return;
+    } catch (_) {}
+    const key = pageBase() + "|" + hint;
+    if (continueAsTried === key) return;
+    continueAsTried = key;
+    let logins = [];
+    try { logins = await queryHost("PV_QUERY", pageBase()); } catch (_) { return; }
+    const hit = (logins || []).filter(
+      (e) => String(e.username || "").trim().toLowerCase() === hint);
+    if (hit.length !== 1) return;
+    const entry = hit[0];
+    if (continueAsEl) return;
+    const el = document.createElement("div");
+    el.id = "__pv_continue";
+    const style = document.createElement("style");
+    style.textContent = PV_CONTINUE_CSS;
+    const av = document.createElement("div");
+    av.className = "av";
+    if (pvPageIcon) {
+      const img = document.createElement("img");
+      img.alt = "";
+      img.src = pvPageIcon;
+      img.addEventListener("error", () => { img.remove(); av.textContent = (pageBase() || "?").charAt(0); }, { once: true });
+      av.appendChild(img);
+    } else {
+      av.textContent = (pageBase() || "?").charAt(0);
+    }
+    const who = document.createElement("div");
+    who.className = "who";
+    const lbl = document.createElement("span");
+    lbl.className = "lbl";
+    lbl.textContent = "CONTINUE AS";
+    const u = document.createElement("span");
+    u.className = "u";
+    u.textContent = entry.username;
+    who.append(lbl, u);
+    const fill = document.createElement("button");
+    fill.type = "button";
+    fill.className = "fill";
+    fill.textContent = "Fill";
+    fill.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    fill.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (!(await requireExtPin())) return;
+      fillLogin(entry, findFields());
+      notePicked();
+      dismissContinueAs(false);
+    });
+    const x = document.createElement("button");
+    x.type = "button";
+    x.className = "x";
+    x.textContent = "\u00d7";
+    x.title = "Hide for this site";
+    x.setAttribute("aria-label", "Hide Continue as");
+    x.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
+    x.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); dismissContinueAs(true); });
+    el.append(style, av, who, fill, x);
+    continueAsEl = el;
+    continueAsField = f.pass[0];
+    document.documentElement.appendChild(el);
+    positionContinueAs();
+  }
+  let continueAsT = 0;
+  function queueContinueAs() {
+    if (continueAsT) return;
+    continueAsT = setTimeout(() => {
+      continueAsT = 0;
+      maybeContinueAs().catch(() => {});
+    }, 180);
   }
 
   // Shared row resolver: classifies the anchor, queries the vault ONCE, and
@@ -2802,6 +2933,7 @@
       else placeBadge(field, w.gen);
     }
     repositionBadges();
+    queueContinueAs();
   }
 
   // ---------- auto-save: offer to store freshly submitted credentials ----------
@@ -4014,7 +4146,7 @@
     const now = Date.now();
     if (now - reposT < 100) return;
     reposT = now;
-    requestAnimationFrame(repositionBadges);
+    requestAnimationFrame(() => { repositionBadges(); positionContinueAs(); });
   };
   window.addEventListener("scroll", queueRepos, { passive: true, capture: true });
   window.addEventListener("resize", queueRepos, { passive: true });
