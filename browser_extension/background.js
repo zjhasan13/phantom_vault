@@ -728,7 +728,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (await neverSaveHit(msg.url)) {
         return { ok: false, error: "never save for this site" };
       }
-      const r = await hostRequest({ cmd: "save_login", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "", folder: msg.folder || "" });
+      const r = await hostRequest({ cmd: "save_login", id: msg.id || "", username: msg.username || "", password: msg.password || "", url: msg.url || "", title: msg.title || "", totp: msg.totp || "", folder: msg.folder || "" });
       if (r && r.ok) { touchActivity(); retouchBadge(); }
       return r;
     }

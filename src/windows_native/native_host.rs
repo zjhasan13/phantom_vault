@@ -2219,12 +2219,25 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
             if dom.split('.').filter(|p| !p.is_empty()).count() < 2 {
                 return no("url domain invalid");
             }
-            let existing = vault.credentials.iter_mut().find(|c| {
-                c.deleted_at.is_none()
-                    && c.username.to_lowercase() == username.to_lowercase()
-                    && (c.urls.iter().any(|u| url_domain(u.url()) == dom)
-                        || c.title.to_lowercase() == dom)
-            });
+            let target_id = req
+                .get("id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            let existing = if !target_id.is_empty() {
+                vault
+                    .credentials
+                    .iter_mut()
+                    .find(|c| c.id == target_id && c.deleted_at.is_none())
+            } else {
+                vault.credentials.iter_mut().find(|c| {
+                    c.deleted_at.is_none()
+                        && c.username.to_lowercase() == username.to_lowercase()
+                        && (c.urls.iter().any(|u| url_domain(u.url()) == dom)
+                            || c.title.to_lowercase() == dom)
+                })
+            };
             let updated;
             if let Some(c) = existing {
                 if c.password != password {
@@ -5097,6 +5110,27 @@ mod tests {
             "cmd": "create_item", "kind": "note", "title": "x"
         }));
         assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn save_login_can_target_an_explicit_item() {
+        let mut v = vault_with_login();
+        let mut second = v.credentials[0].clone();
+        second.id = "c2".into();
+        second.username = "hubot".into();
+        second.password = "old".into();
+        v.credentials.push(second);
+        let r = answer(
+            &mut v,
+            true,
+            &serde_json::json!({
+                "cmd": "save_login", "id": "c2", "username": "octo",
+                "password": "new", "url": "https://github.com/login"
+            }),
+        );
+        assert_eq!(r.reply["updated"], true, "{:?}", r.reply);
+        assert_eq!(v.credentials.iter().find(|c| c.id == "c2").unwrap().password, "new");
+        assert_eq!(v.credentials.iter().find(|c| c.id == "c1").unwrap().password, "ghp_x");
     }
 
     #[test]

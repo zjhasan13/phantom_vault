@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt: choose the update target (batch 2, this batch):** the prompt
+  lists this site's existing logins as chips (`EXISTING ON THIS SITE`) plus a
+  `Save as new` chip; picking one switches the primary action to `Update` and
+  sends its id, so the bridge edits that exact item even when the page's username
+  differs (`save_login` honours an explicit `id`). The default is `Save as new`;
+  an "update" capture preselects the same-username item. The restored prompt
+  re-reads the site's list so the choice survives a reload.
+
 - **Save prompt: folder picker + close (batch 1, this batch):** the prompt now
   has a `FOLDER` select populated from a new `folders` bridge command (names
   only, no items); `save_login` accepts `folder` (new item lands there, an update

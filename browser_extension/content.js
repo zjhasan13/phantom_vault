@@ -3057,6 +3057,10 @@
       await pvSavePendingClear();
       return;
     }
+    let existing = cached;
+    if (!existing) {
+      try { existing = await getExisting(pageBase()); } catch (_) { existing = []; }
+    }
     credentialToast({
       accent: p.update ? "#fbbf24" : "#4edea3",
       accentInk: p.update ? "#080c14" : "#003824",
@@ -3068,6 +3072,7 @@
       busyLabel: p.update ? "Updating…" : "Saving…",
       allowNever: !p.update,
       folder: p.folder,
+      existing,
       username: p.username,
       password: p.password,
       update: !!p.update,
@@ -3185,6 +3190,44 @@
     no.textContent = "Not Now";
     no.style.cssText = "flex:1;background:#131b2e;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
+    // Bitwarden parity: list this site's existing logins so the user chooses
+    // which item a save should update - the bridge now honours an explicit id.
+    let targetId = "";
+    let candLbl = null;
+    let candRow = null;
+    const cands = (opts.existing || []).filter((e) => e && e.id);
+    if (cands.length) {
+      if (opts.update) {
+        const same = cands.find((e) =>
+          String(e.username || "").toLowerCase() === String(opts.username || "").toLowerCase());
+        if (same) targetId = same.id;
+      }
+      candLbl = document.createElement("div");
+      candLbl.className = "lbl";
+      candLbl.textContent = "EXISTING ON THIS SITE";
+      candRow = document.createElement("div");
+      candRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px;";
+      const paintCands = () => {
+        candRow.innerHTML = "";
+        const chip = (label, id, on) => {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.textContent = label;
+          b.style.cssText = "font:700 9px 'JetBrains Mono',monospace;letter-spacing:.3px;" +
+            "padding:5px 7px;border-radius:6px;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;" +
+            (on ? "background:#4edea31f;border:1px solid #4edea3;color:#4edea3;"
+              : "background:#171f33;border:1px solid #3c4a42;color:#86948a;");
+          b.addEventListener("click", () => { targetId = id; paintCands(); });
+          return b;
+        };
+        for (const e of cands.slice(0, 4)) {
+          candRow.append(chip((e.title || e.username || e.id) + " · " + (e.username || ""), e.id, targetId === e.id));
+        }
+        candRow.append(chip("Save as new", "", targetId === ""));
+        save.textContent = targetId ? "Update" : opts.saveLabel;
+      };
+      paintCands();
+    }
     if (opts.allowNever) {
       const never = document.createElement("button");
       never.textContent = "Never";
@@ -3200,7 +3243,8 @@
     const foot = document.createElement("div");
     foot.className = "foot";
     foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
-    root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, err, row, foot);
+    if (candLbl && candRow) root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
+    else root.append(style, lblU, user, lblP, pass, meta, lblF, folderSel, err, row, foot);
     document.documentElement.append(box);
     // Keep the capture for the next page on this site (unless this card IS the
     // restore). Explicit actions below clear it again.
@@ -3280,6 +3324,7 @@
           url: captureUrl(),
           title: captureTitle(),
           folder: folderSel.value || "General",
+          id: targetId || "",
         });
         if (res && res.ok) {
           toast(res.updated ? "Login updated in PhantomVault." : "Login saved to PhantomVault.");
@@ -3294,7 +3339,7 @@
       }
     });
   }
-  function saverToast(username, password) {
+  function saverToast(username, password, existing) {
     credentialToast({
       accent: "#4edea3",
       accentInk: "#003824",
@@ -3303,6 +3348,7 @@
       saveLabel: "Save",
       busyLabel: "Saving…",
       allowNever: true,
+      existing,
       username, password,
     });
   }
@@ -3310,7 +3356,7 @@
   // "Update" reuses the bridge upsert (PV_SAVE_LOGIN matches username +
   // domain → rotates into history, returns updated:true). Never auto-saves:
   // explicit click only, Not Now + 30s auto-dismiss like the save prompt.
-  function updateToast(username, password) {
+  function updateToast(username, password, existing) {
     credentialToast({
       accent: "#fbbf24",
       accentInk: "#080c14",
@@ -3320,6 +3366,7 @@
       busyLabel: "Updating…",
       allowNever: false,
       update: true,
+      existing,
       username, password,
     });
   }
@@ -3354,10 +3401,10 @@
   function existingSync(base) {
     return (pvExistingCache && pvExistingCache.base === base) ? pvExistingCache.list : null;
   }
-  function offerSave(verdict, username, password) {
+  function offerSave(verdict, username, password, existing) {
     if (!verdict || verdict === "known") return;
-    if (verdict !== "new") updateToast(username, password);
-    else saverToast(username, password);
+    if (verdict !== "new") updateToast(username, password, existing);
+    else saverToast(username, password, existing);
   }
 
   // ---------- card save: prompt + dedup ----------
@@ -3655,9 +3702,9 @@
         // C1: synchronous when the cache is warm (the common case) — the banner
         // is shown before the navigation commits.
         const cached = existingSync(base);
-        if (cached) { offerSave(classifySubmitted(cached, username, password), username, password); return; }
+        if (cached) { offerSave(classifySubmitted(cached, username, password), username, password, cached); return; }
         getExisting(base).then((list) => {
-          offerSave(classifySubmitted(list, username, password), username, password);
+          offerSave(classifySubmitted(list, username, password), username, password, list);
         }).catch(() => {});
       } catch (_) {}
     });
@@ -3905,9 +3952,9 @@
       if (spaSaveOfferedFor === fp) return; // one prompt per credential
       spaSaveOfferedFor = fp;
       const cached = existingSync(base);
-      if (cached) { offerSave(classifySubmitted(cached, username, password), username, password); return; }
+      if (cached) { offerSave(classifySubmitted(cached, username, password), username, password, cached); return; }
       getExisting(base).then((list) => {
-        offerSave(classifySubmitted(list, username, password), username, password);
+        offerSave(classifySubmitted(list, username, password), username, password, list);
       }).catch(() => {});
     } catch (_) {}
   }
