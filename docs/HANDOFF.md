@@ -328,6 +328,15 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Save prompt localization (batch 8, this batch):** the in-page prompts now
+  follow the popup's EN/BN toggle (`settings.lang`, which the popup already
+  stores). Titles, field labels, buttons, existing-item chips, at-risk flags and
+  the footer are all translated. Theme stays the Aegis dark panel on every page
+  on purpose - it is the product surface, not the page's; a light variant would
+  break brand consistency and the tokens are dark-only. Tests: BN setting shows
+  Bengali labels (npm 158/158). Org/collection pickers remain N/A (the vault
+  model has no organizations).
+
 - **Save prompt keyboard/a11y (batch 7, this batch):** all three prompts expose
   `role="dialog"` + an `aria-label`, render a `:focus-visible` mint outline
   inside the shadow root, and the at-risk chips are `aria-live="polite"`.

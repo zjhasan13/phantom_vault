@@ -318,6 +318,16 @@ test("card prompt persists across navigation", async (t) => {
   assert.ok(saver(second.window), "card prompt restored after navigation");
 });
 
+test("save prompt follows the BN language setting", async (t) => {
+  const { window } = env(t, loginForm("alice", "pw123"), "https://example.com/login",
+    [], [], [], [], { lang: "bn" });
+  submit(window, window.document.querySelector("form"));
+  await flush(120);
+  const text = saverRoot(window).textContent;
+  assert.match(text, /সেভ/, "Save button is Bengali");
+  assert.match(text, /ইউজারনেম/, "username label is Bengali");
+});
+
 test("identity fill covers company, city, state, zip and country", async (t) => {
   const { window } = env(t, `<form>
     <input autocomplete="name" name="name">

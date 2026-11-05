@@ -34,8 +34,11 @@
     // Enforced here (prompt never appears) and in background.js (refuses the
     // save even if a content script asks anyway).
     never_save_domains: [],
+    // Popup's language toggle writes this key; the in-page prompts follow it.
+    lang: "en",
   };
   let settings = { ...DEFAULTS };
+  const pvT = (en, bn) => (settings.lang === "bn" ? bn : en);
   // H15: multi-step pending entry lives in this isolated-world closure var,
   // NEVER in page-readable sessionStorage (any XSS/third-party script could
   // read password+TOTP from there for the whole login window).
@@ -3167,18 +3170,18 @@
         "padding:4px 6px;border-radius:5px;border:1px solid " + fg + "44;background:" + bg + ";color:" + fg + ";";
       flags.appendChild(c);
     };
-    if (opts.password && pvEntropyBits(opts.password) < 40) addFlag("weak (estimate)", "warn");
+    if (opts.password && pvEntropyBits(opts.password) < 40) addFlag(pvT("weak (estimate)", "দুর্বল (অনুমান)"), "warn");
     if (opts.password) {
       try {
         chrome.runtime.sendMessage({ type: "PV_BREACH", password: opts.password }).then((r) => {
           if (!r || !r.ok) return;
           if (typeof r.breach === "number" && r.breach > 0) {
-            addFlag("breached - seen " + r.breach + "x", "bad");
+            addFlag(pvT("breached - seen ", "ফাঁস হয়েছে - ") + r.breach + pvT("x", " বার"), "bad");
           } else if (r.breach === null) {
-            addFlag("not in HIBP", "ok");
+            addFlag(pvT("not in HIBP", "HIBP-তে নেই"), "ok");
           }
           if (typeof r.reuse === "number" && r.reuse > 1) {
-            addFlag("reused in " + (r.reuse - 1) + " other item(s)", "warn");
+            addFlag(pvT("reused in " + (r.reuse - 1) + " other item(s)", "আরও " + (r.reuse - 1) + " আইটেমে ব্যবহৃত"), "warn");
           }
         }).catch(() => {});
       } catch (_) {}
@@ -3198,27 +3201,27 @@
       "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
     const lblT = document.createElement("div");
     lblT.className = "lbl";
-    lblT.textContent = "TITLE";
+    lblT.textContent = pvT("TITLE", "টাইটেল");
     const titleIn = toastField("text", opts.itemTitle || captureTitle(), "Title");
     titleIn.setAttribute("data-pv-field", "title");
     const lblU = document.createElement("div");
     lblU.className = "lbl";
-    lblU.textContent = "IDENTITY / USERNAME";
+    lblU.textContent = pvT("IDENTITY / USERNAME", "ইউজারনেম");
     const user = toastField("text", opts.username, "Username");
     user.setAttribute("data-pv-field", "username");
     const lblP = document.createElement("div");
     lblP.className = "lbl";
-    lblP.textContent = "SECRET PASSWORD";
+    lblP.textContent = pvT("SECRET PASSWORD", "পাসওয়ার্ড");
     const pass = toastField("password", opts.password, "Password");
     pass.setAttribute("data-pv-field", "password");
     const lblR = document.createElement("div");
     lblR.className = "lbl";
-    lblR.textContent = "WEBSITE URL";
+    lblR.textContent = pvT("WEBSITE URL", "ওয়েবসাইট URL");
     const urlIn = toastField("text", opts.url || captureUrl(), "https://…");
     urlIn.setAttribute("data-pv-field", "url");
     const lblN = document.createElement("div");
     lblN.className = "lbl";
-    lblN.textContent = "NOTES (OPTIONAL)";
+    lblN.textContent = pvT("NOTES (OPTIONAL)", "নোট (ঐচ্ছিক)");
     const notesIn = document.createElement("textarea");
     notesIn.rows = 2;
     notesIn.value = opts.notes || "";
@@ -3231,7 +3234,7 @@
     // PV_FOLDERS; defaults to the current folder when restoring a pending save.
     const lblF = document.createElement("div");
     lblF.className = "lbl";
-    lblF.textContent = "FOLDER";
+    lblF.textContent = pvT("FOLDER", "ফোল্ডার");
     const folderSel = document.createElement("select");
     folderSel.style.cssText = "width:100%;box-sizing:border-box;background:#0b1326;border:1px solid #3c4a42;" +
       "border-radius:8px;color:#dae2fd;padding:8px 9px;font:12px 'Segoe UI',system-ui;margin-bottom:8px;";
@@ -3262,7 +3265,7 @@
     save.style.cssText = "flex:1;background:" + opts.accent + ";color:" + opts.accentInk +
       ";border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "Not Now";
+    no.textContent = pvT("Not Now", "এখন নয়");
     no.style.cssText = "flex:1;background:#131b2e;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     // Bitwarden parity: list this site's existing logins so the user chooses
@@ -3279,7 +3282,7 @@
       }
       candLbl = document.createElement("div");
       candLbl.className = "lbl";
-      candLbl.textContent = "EXISTING ON THIS SITE";
+      candLbl.textContent = pvT("EXISTING ON THIS SITE", "এই সাইটে আছে");
       candRow = document.createElement("div");
       candRow.style.cssText = "display:flex;flex-wrap:wrap;gap:6px;margin:2px 0 8px;";
       const paintCands = () => {
@@ -3298,14 +3301,14 @@
         for (const e of cands.slice(0, 4)) {
           candRow.append(chip((e.title || e.username || e.id) + " · " + (e.username || ""), e.id, targetId === e.id));
         }
-        candRow.append(chip("Save as new", "", targetId === ""));
+        candRow.append(chip(pvT("Save as new", "নতুন হিসেবে সেভ"), "", targetId === ""));
         save.textContent = targetId ? "Update" : opts.saveLabel;
       };
       paintCands();
     }
     if (opts.allowNever) {
       const never = document.createElement("button");
-      never.textContent = "Never";
+      never.textContent = pvT("Never", "কখনো নয়");
       never.title = "Never offer to save logins for this site";
       never.style.cssText = "flex:1;background:transparent;color:#ffb4ab;border:1px solid #ffb4ab55;border-radius:8px;padding:9px;font-weight:700;cursor:pointer;";
       row.append(never);
@@ -3317,7 +3320,7 @@
     }
     const foot = document.createElement("div");
     foot.className = "foot";
-    foot.textContent = "XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network";
+    foot.textContent = pvT("XChaCha20-Poly1305 \u00b7 saved by the desktop app \u00b7 no network", "XChaCha20-Poly1305 \u00b7 ডেস্কটপ অ্যাপে সংরক্ষিত \u00b7 নেটওয়ার্ক নেই");
     if (candLbl && candRow) root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, lblN, notesIn, meta, lblF, folderSel, candLbl, candRow, err, row, foot);
     else root.append(style, lblT, titleIn, lblU, user, lblP, pass, lblR, urlIn, lblN, notesIn, meta, lblF, folderSel, err, row, foot);
     document.documentElement.append(box);
@@ -3392,7 +3395,7 @@
       const u = user.value.trim();
       const p = pass.value;
       if (!u || !p) {
-        err.textContent = !u ? "Enter a username first." : "Enter a password first.";
+        err.textContent = !u ? pvT("Enter a username first.", "আগে ইউজারনেম দিন।") : pvT("Enter a password first.", "আগে পাসওয়ার্ড দিন।");
         err.style.display = "block";
         return;
       }
@@ -3434,10 +3437,10 @@
     credentialToast({
       accent: "#4edea3",
       accentInk: "#003824",
-      title: "Save this login?",
+      title: pvT("Save this login?", "এই লগইন সেভ করবেন?"),
       sub: `Captured on ${pageBase()} - correct anything before saving.`,
-      saveLabel: "Save",
-      busyLabel: "Saving…",
+      saveLabel: pvT("Save", "সেভ"),
+      busyLabel: pvT("Saving…", "সেভ হচ্ছে…"),
       allowNever: true,
       existing,
       username, password,
@@ -3451,10 +3454,10 @@
     credentialToast({
       accent: "#fbbf24",
       accentInk: "#080c14",
-      title: "Update saved login?",
+      title: pvT("Update saved login?", "সেভ করা লগইন আপডেট করবেন?"),
       sub: `A new password was submitted for ${pageBase()} - the old value stays in history.`,
-      saveLabel: "Update",
-      busyLabel: "Updating…",
+      saveLabel: pvT("Update", "আপডেট"),
+      busyLabel: pvT("Updating…", "আপডেট হচ্ছে…"),
       allowNever: false,
       update: true,
       existing,
@@ -3556,7 +3559,7 @@
   function pvFolderPicker(want) {
     const deep = document.createElement("div");
     deep.className = "lbl";
-    deep.textContent = "FOLDER";
+    deep.textContent = pvT("FOLDER", "ফোল্ডার");
     const sel = document.createElement("select");
     sel.style.cssText = "width:100%;box-sizing:border-box;background:#0b1326;border:1px solid #3c4a42;" +
       "border-radius:8px;color:#dae2fd;padding:8px 9px;font:12px 'Segoe UI',system-ui;margin-bottom:8px;";
@@ -3591,7 +3594,7 @@
       "font:12.5px/1.4 Inter,'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 14px 36px #000d;max-width:min(92vw,340px);";
     const t = document.createElement("div");
     t.style.cssText = "font-weight:800;margin-bottom:6px;";
-    t.textContent = updated ? "Update this card?" : "Save this card?";
+    t.textContent = updated ? pvT("Update this card?", "এই কার্ড আপডেট করবেন?") : pvT("Save this card?", "এই কার্ড সেভ করবেন?");
     const sub = document.createElement("div");
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [brand || "Card", masked(card.number), card.cardholder]
@@ -3600,10 +3603,10 @@
     row.style.cssText = "display:flex;gap:8px;";
     const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(card.folder);
     const save = document.createElement("button");
-    save.textContent = updated ? "Update" : "Save";
+    save.textContent = updated ? pvT("Update", "আপডেট") : pvT("Save", "সেভ");
     save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "Not now";
+    no.textContent = pvT("Not now", "এখন নয়");
     no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
@@ -3720,7 +3723,7 @@
       "font:12.5px/1.4 Inter,'Segoe UI',system-ui;color:#dae2fd;box-shadow:0 14px 36px #000d;max-width:min(92vw,340px);";
     const t = document.createElement("div");
     t.style.cssText = "font-weight:800;margin-bottom:6px;";
-    t.textContent = updated ? "Update this identity?" : "Save this identity?";
+    t.textContent = updated ? pvT("Update this identity?", "এই আইডেন্টিটি আপডেট করবেন?") : pvT("Save this identity?", "এই আইডেন্টিটি সেভ করবেন?");
     box.setAttribute("role", "dialog");
     box.setAttribute("aria-label", t.textContent);
     const sub = document.createElement("div");
@@ -3731,10 +3734,10 @@
     row.style.cssText = "display:flex;gap:8px;";
     const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(idf.folder);
     const save = document.createElement("button");
-    save.textContent = updated ? "Update" : "Save";
+    save.textContent = updated ? pvT("Update", "আপডেট") : pvT("Save", "সেভ");
     save.style.cssText = "flex:1;background:#4edea3;color:#003824;border:0;border-radius:8px;padding:9px;font-weight:800;cursor:pointer;";
     const no = document.createElement("button");
-    no.textContent = "Not now";
+    no.textContent = pvT("Not now", "এখন নয়");
     no.style.cssText = "flex:1;background:#171f33;color:#dae2fd;border:1px solid #3c4a42;border-radius:8px;padding:9px;cursor:pointer;";
     row.append(save, no);
     const shadow = box.attachShadow ? box.attachShadow({ mode: "closed" }) : null;
