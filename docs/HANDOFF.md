@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Offline cache hardening (Phase 3, this batch):** snapshot plaintext is
+  wrapped in `Zeroizing` on both encode and decode, and `CachedLogin` wipes its
+  password on drop. A second staleness gate now runs on the SEALED
+  `created_at` after unseal (the pre-prompt gate uses file mtime, which a
+  same-user attacker could touch). Hello stays the default; the PIN fallback is
+  still opt-in behind the app's "weaker than Hello" toggle. Test: a fresh-mtime
+  file with an 8-day-old sealed timestamp is refused even with a valid PIN.
+
 - **Offline cache freshness (this batch):** every app-side save now rebuilds the
   opt-in snapshot through one wrapper (`save_vault_secret` in `main.rs`), and
   the native host refreshes it after a bridge-side persist (save/update/delete

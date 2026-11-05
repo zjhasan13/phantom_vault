@@ -50,6 +50,14 @@ pub struct CachedLogin {
     pub verified: bool,
 }
 
+impl Drop for CachedLogin {
+    fn drop(&mut self) {
+        // The snapshot is decrypted into this struct; wipe the secret when it
+        // leaves scope so a heap dump after serving cannot reuse it.
+        self.password.zeroize();
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Snapshot {
     pub version: u32,
@@ -85,7 +93,9 @@ pub fn build_snapshot(vault: &Vault, now: u64) -> Snapshot {
 
 /// Pure encode/decode, unit-tested without touching DPAPI or disk.
 pub fn encode_snapshot(key: &[u8; 32], snapshot: &Snapshot) -> CacheResult<Vec<u8>> {
-    let plain = serde_json::to_vec(snapshot).map_err(|e| format!("cache encode failed: {e}"))?;
+    let plain = zeroize::Zeroizing::new(
+        serde_json::to_vec(snapshot).map_err(|e| format!("cache encode failed: {e}"))?,
+    );
     let sealed = crate::crypto::seal_with_raw_key(key, &plain)?;
     let mut out = Vec::with_capacity(CACHE_MAGIC.len() + sealed.len());
     out.extend_from_slice(CACHE_MAGIC);
@@ -97,8 +107,10 @@ pub fn decode_snapshot(key: &[u8; 32], blob: &[u8]) -> CacheResult<Snapshot> {
     let body = blob
         .strip_prefix(CACHE_MAGIC.as_slice())
         .ok_or_else(|| "cache file has the wrong magic".to_string())?;
-    let plain = crate::crypto::open_with_raw_key(key, body)
-        .map_err(|_| "cache decrypt failed (wrong key or tampered file)".to_string())?;
+    let plain = zeroize::Zeroizing::new(
+        crate::crypto::open_with_raw_key(key, body)
+            .map_err(|_| "cache decrypt failed (wrong key or tampered file)".to_string())?,
+    );
     serde_json::from_slice(&plain).map_err(|e| format!("cache decode failed: {e}"))
 }
 
@@ -309,6 +321,18 @@ pub fn handle_cache_get_at(
         _ => return Err("unknown offline cache unlock method".to_string()),
     }
     let snapshot = read_snapshot_at(base)?;
+    // Second freshness gate on the SEALED timestamp: the pre-check uses the
+    // file mtime, which a same-user attacker could touch; the signed/encrypted
+    // created_at cannot be forged without the cache key.
+    let now = crate::models::current_timestamp();
+    let age = if snapshot.created_at > now.saturating_add(300) {
+        u64::MAX
+    } else {
+        now.saturating_sub(snapshot.created_at)
+    };
+    if age > MAX_AGE_SECS {
+        return Err("offline cache is stale - open PhantomVault to refresh".to_string());
+    }
     crate::security::access_log::log_event(
         "offline-cache",
         if method == "pin" { "read-pin" } else { "read-hello" },
@@ -410,6 +434,28 @@ mod tests {
         let err = handle_cache_get_at(&dir, "hello", None).unwrap_err();
         assert!(err.contains("stale"), "{err}");
         assert_eq!(cache_status_at(&dir)["stale"], true);
+    }
+
+    #[test]
+    fn sealed_timestamp_blocks_stale_cache_even_with_fresh_mtime() {
+        let dir = std::env::temp_dir().join(format!("pv-offline-sealed-stale-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let key = [7u8; 32];
+        let snap = Snapshot {
+            version: 1,
+            created_at: crate::models::current_timestamp().saturating_sub(8 * 86_400),
+            items: Vec::new(),
+        };
+        let blob = encode_snapshot(&key, &snap).unwrap();
+        let sealed_key = crate::core::memory::DpapiGuard::protect(&key).unwrap();
+        std::fs::write(dir.join(KEY_FILE), &sealed_key).unwrap();
+        std::fs::write(dir.join(CACHE_FILE), &blob).unwrap();
+        crate::security::ext_pin::set(&dir, "1234").unwrap();
+        set_pin_allowed_at(&dir, true).unwrap();
+        // The file mtime is fresh, so only the sealed created_at can stop it.
+        let err = handle_cache_get_at(&dir, "pin", Some("1234")).unwrap_err();
+        assert!(err.contains("stale"), "{err}");
     }
 
     #[test]
