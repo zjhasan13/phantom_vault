@@ -328,6 +328,14 @@
   Note: the window must be foreground for UIA coordinate clicks - the Slint
   AccessKit tree exposes the Check label at an off-screen rect.
 
+- **Attachment + password-history viewer (this batch):** `fetch` kind 1 now
+  returns the retired passwords (already capped by `push_history`) and attachment
+  METADATA (filename/mime/size) alongside the login. The popup editor renders a
+  read-only "PASSWORD HISTORY" list (date + masked + Copy with a confirm) and an
+  "ATTACHMENTS" list; attachment bytes never cross the bridge, and the UI says
+  so (open the app to export). Tests: Rust fetch contract (history present,
+  `data` absent).
+
 - **SSH keys and licenses in the extension (this batch):** `PV_LIST` now carries
   `ssh_keys` (title/fingerprint/folder) and `licenses` (title/expiry/folder) as
   metadata only; `fetch` gained kinds 6 (SSH: public+private key) and 7
@@ -1080,8 +1088,9 @@
 - **Notes / Cards / Identities editors are desktop-only.** Shipped: the popup
   editor covers all four kinds through the generic `create_item` /
   `update_item` / `delete_item` bridge commands, and "+ Add" opens a kind
-  chooser (Login / Note / Card / Identity). What is still desktop-only is
-  attachments and password-history browsing.
+  chooser (Login / Note / Card / Identity). Attachments are listed read-only
+  (metadata) and password history is viewable/copyable; exporting attachment
+  bytes still requires the desktop app.
 - **The extension cannot run without the desktop app (by design).** The vault
   key never leaves the app; the native host's `unlocked` gate refuses everything
   else. `offline_cache.rs` exists but is not enabled, so with the app closed the

@@ -1550,6 +1550,19 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                         "totp": live_totp(&c.totp_secret),
                         "urls": c.urls, "reprompt": c.reprompt,
                         "last_changed": c.last_changed,
+                        // Read-only detail sections: retired passwords (newest
+                        // first, already capped) and attachment METADATA only.
+                        // Bytes never cross the bridge here.
+                        "history": c.password_history.iter().map(|h| serde_json::json!({
+                            "password": h.password,
+                            "changed_at": h.changed_at,
+                        })).collect::<Vec<_>>(),
+                        "attachments": c.attachments.iter().map(|a| serde_json::json!({
+                            "id": a.id,
+                            "filename": a.filename,
+                            "mime_type": a.mime_type,
+                            "size_bytes": a.size_bytes,
+                        })).collect::<Vec<_>>(),
                     })
                 }),
             };
@@ -4804,6 +4817,29 @@ mod tests {
         assert_eq!(c1["health"], "reused");
         // No TOTP secret on either fixture login ⇒ no 2FA buttons.
         assert_eq!(c1["has_totp"], false);
+    }
+
+    #[test]
+    fn fetch_login_carries_history_and_attachment_metadata() {
+        let mut v = vault_with_login();
+        let id = v.credentials[0].id.clone();
+        v.credentials[0].password_history = vec![crate::models::PasswordHistoryEntry {
+            password: "old-pw".into(),
+            changed_at: 1_700_000_000,
+        }];
+        let mut att = crate::models::EncryptedAttachment::default();
+        att.id = "a1".into();
+        att.filename = "doc.pdf".into();
+        att.mime_type = "application/pdf".into();
+        att.size_bytes = 1234;
+        att.data = vec![1, 2, 3];
+        v.credentials[0].attachments = vec![att];
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "fetch", "kind": 1, "id": id}));
+        assert_eq!(r.reply["entry"]["history"][0]["password"], "old-pw");
+        assert_eq!(r.reply["entry"]["attachments"][0]["filename"], "doc.pdf");
+        assert_eq!(r.reply["entry"]["attachments"][0]["size_bytes"], 1234);
+        // Attachment BYTES never cross the bridge; only metadata does.
+        assert!(r.reply["entry"]["attachments"][0].get("data").is_none());
     }
 
     #[test]

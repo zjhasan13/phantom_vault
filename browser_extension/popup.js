@@ -1409,6 +1409,68 @@
       needsToken = () => (entry && entry.reprompt) || rp.checked;
     }
 
+    // Read-only detail sections (login only for now): retired passwords and
+    // attachment metadata. Bytes never reach the extension.
+    if (kind === "login" && !isNew && ((entry.history && entry.history.length) ||
+        (entry.attachments && entry.attachments.length))) {
+      const det = document.createElement("div");
+      det.className = "detailsec";
+      const fmtBytes = (n) => {
+        const v = Number(n) || 0;
+        if (v < 1024) return v + " B";
+        if (v < 1024 * 1024) return (v / 1024).toFixed(1) + " KB";
+        return (v / (1024 * 1024)).toFixed(1) + " MB";
+      };
+      if (entry.history && entry.history.length) {
+        const head = document.createElement("div");
+        head.className = "dethead";
+        head.textContent = "PASSWORD HISTORY (" + entry.history.length + ")";
+        det.append(head);
+        for (const old of entry.history.slice(0, 6)) {
+          const row = document.createElement("div");
+          row.className = "detrow";
+          const when = document.createElement("span");
+          when.className = "detwhen";
+          when.textContent = old.changed_at
+            ? new Date(old.changed_at * 1000).toLocaleDateString() : "-";
+          const pw = document.createElement("span");
+          pw.className = "detpw";
+          pw.textContent = "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022";
+          const cp = document.createElement("button");
+          cp.textContent = "Copy";
+          cp.addEventListener("click", async () => {
+            if (!window.confirm("Copy a retired password? It is cleared automatically.")) return;
+            await clipText(old.password, cp);
+          });
+          row.append(when, pw, cp);
+          det.append(row);
+        }
+      }
+      if (entry.attachments && entry.attachments.length) {
+        const head = document.createElement("div");
+        head.className = "dethead";
+        head.textContent = "ATTACHMENTS (" + entry.attachments.length + ")";
+        det.append(head);
+        for (const a of entry.attachments) {
+          const row = document.createElement("div");
+          row.className = "detrow";
+          const nm = document.createElement("span");
+          nm.className = "detname";
+          nm.textContent = a.filename || "(file)";
+          const sz = document.createElement("span");
+          sz.className = "detsize";
+          sz.textContent = fmtBytes(a.size_bytes);
+          row.append(nm, sz);
+          det.append(row);
+        }
+        const note = document.createElement("div");
+        note.className = "hint";
+        note.textContent = "Encrypted in the desktop vault - open the app to export.";
+        det.append(note);
+      }
+      card.append(det);
+    }
+
     const errEl = document.createElement("div");
     errEl.className = "err";
     const actions = document.createElement("div");

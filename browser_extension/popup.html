@@ -234,6 +234,17 @@
     .heroactions button { flex: 1; border-radius: 9px; padding: 9px; font-weight: 800;
       cursor: pointer; border: 1px solid var(--border); background: var(--panel2); color: var(--text); }
     .heroactions button.fill { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+    /* Read-only detail sections in the item editor. */
+    .detailsec { margin-top: 10px; border-top: 1px solid var(--panel2); padding-top: 8px; }
+    .dethead { font: 700 9px var(--pv-mono); letter-spacing: .5px; color: var(--faint);
+      margin: 6px 0 4px; text-transform: uppercase; }
+    .detrow { display: flex; align-items: center; gap: 8px; padding: 4px 0; font-size: 12px; }
+    .detwhen { color: var(--faint); font-family: var(--pv-mono); font-size: 10px; min-width: 74px; }
+    .detpw { flex: 1; color: var(--muted); font-family: var(--pv-mono); letter-spacing: 1px; }
+    .detrow button { background: var(--panel2); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-size: 10px; padding: 3px 7px; cursor: pointer; }
+    .detname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .detsize { color: var(--faint); font-family: var(--pv-mono); font-size: 10px; }
   </style>
 </head>
 <body>
