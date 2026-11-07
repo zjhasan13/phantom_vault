@@ -264,23 +264,40 @@ pub fn fill_login_pair(username: &str, password: &str) -> bool {
     };
     // A7: preserve whatever the user already typed in the username box. A
     // failed password write used to blank it, destroying a typed email.
-    let prev_user = unsafe {
-        up.CurrentValue()
-            .map(bstr_to_string_raw)
-            .unwrap_or_default()
+    // A5: read both previous values so an ignored write can be rolled back.
+    let (prev_user, prev_pass) = unsafe {
+        (
+            up.CurrentValue().map(bstr_to_string_raw).unwrap_or_default(),
+            pp.CurrentValue().map(bstr_to_string_raw).unwrap_or_default(),
+        )
     };
     // SAFETY: both patterns were validated as writable above.
-    unsafe {
-        if up.SetValue(&BSTR::from(user.as_str())).is_err() {
-            return false;
-        }
-        if pp.SetValue(&BSTR::from(pass.as_str())).is_err() {
-            // Never leave a half-filled pair, and never destroy the old value.
-            let _ = up.SetValue(&BSTR::from(prev_user.as_str()));
-            return false;
+    let user_ok = unsafe { up.SetValue(&BSTR::from(user.as_str())).is_ok() };
+    let pass_ok = user_ok && unsafe { pp.SetValue(&BSTR::from(pass.as_str())).is_ok() };
+    if user_ok && pass_ok {
+        // A5: controlled inputs can accept SetValue and discard it. Only
+        // report success when the new value is actually readable back. A
+        // read-only value pattern (common for password boxes) keeps the old
+        // trust-on-write behaviour.
+        let user_read = unsafe { up.CurrentValue().ok().map(bstr_to_string_raw) };
+        let pass_read = unsafe { pp.CurrentValue().ok().map(bstr_to_string_raw) };
+        if value_matches(user_read.as_deref(), &user) && value_matches(pass_read.as_deref(), &pass) {
+            return true;
         }
     }
-    true
+    // Never leave a half-filled pair, and never destroy the old values.
+    unsafe {
+        let _ = up.SetValue(&BSTR::from(prev_user.as_str()));
+        let _ = pp.SetValue(&BSTR::from(prev_pass.as_str()));
+    }
+    false
+}
+
+/// A5: did the write land? `None` means the control does not expose its value;
+/// in that case keep the historical trust-on-write behaviour rather than
+/// double-typing a secret.
+fn value_matches(observed: Option<&str>, expected: &str) -> bool {
+    observed.map(|v| v == expected).unwrap_or(true)
 }
 
 fn value_writable(el: &IUIAutomationElement) -> Option<IUIAutomationValuePattern> {
@@ -324,7 +341,21 @@ pub fn set_focused_value(value: &str) -> bool {
         if !uia_value_allowed(is_edit(&el), enabled, read_only) {
             return false;
         }
-        pattern.SetValue(&BSTR::from(sanitized.as_str())).is_ok()
+        if pattern.SetValue(&BSTR::from(sanitized.as_str())).is_err() {
+            return false;
+        }
+        // A5: React/Electron inputs can accept SetValue and discard it. Verify
+        // the value and let the caller fall back to keystrokes when it did not
+        // land. A pattern that cannot be read keeps the old behaviour.
+        //
+        // Password boxes are exempt: their value is masked or withheld, so a
+        // mismatch there would re-type a secret that did land. They usually
+        // reject SetValue as read-only anyway.
+        if is_password(&el) {
+            return true;
+        }
+        let observed = pattern.CurrentValue().ok().map(bstr_to_string_raw);
+        value_matches(observed.as_deref(), &sanitized)
     }
 }
 
@@ -563,6 +594,9 @@ pub fn otp_screen_visible() -> bool {
             Ok(w) => w,
             Err(_) => return false,
         };
+        // A10: only type when the OTP control (or a child box of a composite
+        // widget) actually has keyboard focus.
+        let focused = auto.GetFocusedElement().ok();
         // Iterative DFS with a hard cap (never hang the watcher thread).
         let mut stack = vec![root];
         let mut visited = 0usize;
@@ -579,7 +613,10 @@ pub fn otp_screen_visible() -> bool {
                 .CurrentAutomationId()
                 .map(bstr_to_string)
                 .unwrap_or_default();
-            if otp_like(&name, &aid) && (is_edit(&el) || is_password(&el)) {
+            if otp_like(&name, &aid)
+                && (is_edit(&el) || is_password(&el))
+                && focus_within(&auto, &walker, focused.as_ref(), &el)
+            {
                 return true;
             }
             // Children via first/next sibling walk (bounded).
@@ -598,6 +635,35 @@ pub fn otp_screen_visible() -> bool {
         false
     }
 }
+
+/// A10: is `target` (or one of its ancestors, up to 4) the focused element?
+/// Composite OTP widgets put focus on a child box; the labelled parent still
+/// qualifies, so the guard does not require the label node itself to be focused.
+fn focus_within(
+    auto: &IUIAutomation,
+    walker: &IUIAutomationTreeWalker,
+    focused: Option<&IUIAutomationElement>,
+    target: &IUIAutomationElement,
+) -> bool {
+    let Some(mut cur) = focused.cloned() else {
+        return false;
+    };
+    for _ in 0..4 {
+        // SAFETY: read-only comparison / parent walk; any failure = false.
+        let same = unsafe { auto.CompareElements(&cur, target) }
+            .map(|b| b.as_bool())
+            .unwrap_or(false);
+        if same {
+            return true;
+        }
+        match unsafe { walker.GetParentElement(&cur) } {
+            Ok(p) => cur = p,
+            Err(_) => return false,
+        }
+    }
+    false
+}
+
 /// app name + title with empty username and `is_password_focused = false`.
 pub fn inspect_active_context() -> Result<DesktopContext> {
     let _com = ComGuard::enter()?;
@@ -743,5 +809,15 @@ mod tests {
         let typed = BSTR::from("  user@example.com  ");
         assert_eq!(bstr_to_string_raw(typed.clone()), "  user@example.com  ");
         assert_eq!(bstr_to_string(typed), "user@example.com");
+    }
+
+    #[test]
+    fn setvalue_readback_detects_an_ignored_write() {
+        // A5: SetValue returning Ok is not proof that the value changed.
+        assert!(value_matches(Some("pw"), "pw"));
+        assert!(!value_matches(Some(""), "pw"));
+        assert!(!value_matches(Some("old"), "pw"));
+        // A pattern that does not expose its value keeps trust-on-write.
+        assert!(value_matches(None, "pw"));
     }
 }

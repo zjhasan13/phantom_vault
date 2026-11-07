@@ -616,6 +616,10 @@ export component MainWindow inherits Window {
     // Full coverage without touching 100+ call sites: any toast resets to
     // info unless Rust sets a kind right AFTER the text (same closure).
     changed notification_text => { root.notification_kind = "info"; }
+    // A10: hands-free 2FA watcher state (30 s countdown + Cancel).
+    in-out property <bool> chain_2fa_active: false;
+    in-out property <int> chain_2fa_secs: 0;
+    callback cancel_chain_2fa();
     in-out property <bool> sidebar_collapsed: false;
     in-out property <[CredentialView]> credentials;
     in-out property <string> search_query;
@@ -3075,6 +3079,13 @@ export component MainWindow inherits Window {
                         }
                     }}
                     if root.notification_text != "" : Rectangle { background: root.notification_kind == "success" ? #4edea31a : (root.notification_kind == "error" ? #ffb4ab1a : (root.notification_kind == "warn" ? #f59e0b1a : #101834)); border-radius: 8px; border-width: 1px; border-color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.border)); height: 32px; HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px; Text { text: root.notification_text; color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.secondary)); font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "✕"; width: 36px; height: 32px; y: 0px; clicked => { root.notification_text = ""; root.notification_kind = "info"; } } }
+                    // A10: visible countdown + cancel for the hands-free 2FA watcher.
+                    if root.chain_2fa_active : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.secondary; height: 32px;
+                        HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px;
+                            Text { text: "🔐 2FA auto-fill in " + root.chain_2fa_secs + "s"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+                            AuraButton { label: "Cancel"; width: 90px; height: 26px; clicked => { root.cancel_chain_2fa(); } }
+                        }
+                    }
                     toast_timer := Timer { interval: 4s; running: root.notification_text != ""; triggered => { root.notification_text = ""; root.notification_kind = "info"; } } }
                     if root.is_travel_mode : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL MODE"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
                     // SELECTED ITEM DETAIL

@@ -42,7 +42,8 @@ use secrecy::{ExposeSecret, SecretString};
 use models::{dup_key, dup_marks, Credential, TotpAccount, Vault};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use storage::save_vault_secret as save_vault_raw;
@@ -297,6 +298,13 @@ fn chain_2fa_enabled() -> bool {
         .unwrap_or(true)
 }
 
+/// A10: one hands-free 2FA watch at a time. The Cancel pill and the watcher
+/// thread share this flag.
+fn chain_2fa_cancel_flag() -> &'static Arc<AtomicBool> {
+    static FLAG: OnceLock<Arc<AtomicBool>> = OnceLock::new();
+    FLAG.get_or_init(|| Arc::new(AtomicBool::new(false)))
+}
+
 /// P2: app binding gate for Auto-Type. Empty `apps` = unbound web item (allow).
 /// Case-insensitive match against the executable stem OR the pretty app name.
 fn app_binding_matches(apps: &[String], exe: &str, app_name: &str) -> bool {
@@ -505,9 +513,12 @@ fn trigger_autotype(
         // password-submit round-trip instead of serializing after it).
         let chain_handle = chained.then(|| {
             let weak = main_weak.clone();
+            let watch_ui = main_weak.clone();
+            let cancel = Arc::clone(chain_2fa_cancel_flag());
+            cancel.store(false, Ordering::SeqCst);
             let mut secret = req.totp_secret.trim().to_string();
             thread::spawn(move || {
-                let code = chain_2fa_watch(&secret);
+                let code = chain_2fa_watch(&secret, watch_ui, cancel);
                 {
                     use zeroize::Zeroize;
                     secret.zeroize();
@@ -551,29 +562,68 @@ fn trigger_autotype(
     });
 }
 
-/// Phase 23: 30s OTP watch. Polls for an OTP screen, then types the live
+/// Phase 23: 30s OTP watch. Polls for a focused OTP field, then types the live
 /// code + Enter. Returns Some on success. All secrets zeroized on the way out.
-fn chain_2fa_watch(totp_secret: &str) -> Option<()> {
+///
+/// A10: publishes a visible countdown (`chain_2fa_secs`) and honours the shared
+/// cancel flag. The watcher never types unless `otp_screen_visible` reports a
+/// focused OTP control.
+fn chain_2fa_watch(
+    totp_secret: &str,
+    ui: slint::Weak<MainWindow>,
+    cancel: Arc<AtomicBool>,
+) -> Option<()> {
     use core::memory::LockedBytes;
     use windows_native::desktop_autofill::otp_screen_visible;
     let secret = LockedBytes::new(totp_secret.trim().to_string().into_bytes()).ok()?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(30);
-    while std::time::Instant::now() < deadline {
+    let publish = |active: bool, secs: i32| {
+        let ui = ui.clone();
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(u) = ui.upgrade() {
+                u.set_chain_2fa_active(active);
+                u.set_chain_2fa_secs(secs.max(0));
+            }
+        });
+    };
+    publish(true, 30);
+    let mut remaining: i32 = 30;
+    while remaining > 0 {
+        if cancel.load(Ordering::SeqCst) {
+            publish(false, 0);
+            return None;
+        }
+        publish(true, remaining);
         if otp_screen_visible() {
             std::thread::sleep(Duration::from_millis(300));
-            let (code, _) = totp_engine::generate_live_code(secret.expose_str()).ok()?;
+            if cancel.load(Ordering::SeqCst) {
+                publish(false, 0);
+                return None;
+            }
+            // Re-check at the moment of typing: focus may have moved during
+            // the settle, and a code must never land in another field.
+            if !otp_screen_visible() {
+                std::thread::sleep(Duration::from_secs(1));
+                remaining -= 1;
+                continue;
+            }
+            let Ok((code, _)) = totp_engine::generate_live_code(secret.expose_str()) else {
+                publish(false, 0);
+                return None;
+            };
             let mut code = code;
-            let typed =
-                windows_native::autotype::type_text_raw(&code, true).is_ok();
+            let typed = windows_native::autotype::type_text_raw(&code, true).is_ok();
             {
                 use zeroize::Zeroize;
                 code.zeroize();
             }
             drop(secret);
+            publish(false, 0);
             return typed.then_some(());
         }
         std::thread::sleep(Duration::from_secs(1));
+        remaining -= 1;
     }
+    publish(false, 0);
     drop(secret);
     None
 }
@@ -10239,6 +10289,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
             &format!("📋 Migration URI copied! Secrets on clipboard — auto-clearing in {secs}s."),
             secs,
         );
+    });
+    // A10: the countdown pill's Cancel button stops the hands-free watcher.
+    main_window.on_cancel_chain_2fa(|| {
+        chain_2fa_cancel_flag().store(true, Ordering::SeqCst);
     });
     // Full-vault file export: master-gated via the reprompt modal (action 4).
     let exp_weak = main_window.as_weak();
