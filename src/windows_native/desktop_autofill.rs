@@ -464,7 +464,11 @@ pub fn executable_spoof_brand(exe: &str) -> Option<&'static str> {
 }
 
 /// OTP-screen matcher: names, labels, or automation IDs containing any of
-/// these (case-insensitive) mark a 2FA/OTP input. Pure — unit tested.
+/// these (case-insensitive) mark a 2FA/OTP input. Pure - unit tested.
+///
+/// A9: card checkout fields ("Security code", CVV/CVC, expiry) are explicitly
+/// rejected so a live TOTP can never be typed into a card form. An explicit
+/// OTP/2FA/authenticator word still wins if both appear.
 pub fn otp_like(name: &str, automation_id: &str) -> bool {
     const KEYS: &[&str] = &[
         "2fa",
@@ -478,16 +482,43 @@ pub fn otp_like(name: &str, automation_id: &str) -> bool {
         "twostep",
         "two-factor",
         "twofactor",
-        "securitycode",
-        "security-code",
         "mfacode",
     ];
     // Bare "code" only counts with an auth-ish neighbor word to avoid matching
     // "postal code", "promo code", "country code", "area code", etc.
     const CODE_NEIGHBORS: &[&str] = &[
-        "auth", "verif", "2fa", "otp", "factor", "token", "login", "sign", "secur",
+        "auth", "verif", "2fa", "otp", "factor", "token", "login", "sign",
+    ];
+    // A9: card-style labels. "security code" is a CVV synonym, not a TOTP.
+    const CARD_TERMS: &[&str] = &[
+        "cvv",
+        "cvc",
+        "card number",
+        "card-number",
+        "cardnumber",
+        "expiry",
+        "expiration",
+        "security code",
+        "security-code",
+    ];
+    // Unambiguous OTP wording: it outranks a card term when both are present.
+    const STRONG_OTP: &[&str] = &[
+        "otp",
+        "2fa",
+        "authenticator",
+        "one-time",
+        "onetime",
+        "two-factor",
+        "twofactor",
+        "mfa",
     ];
     let hay = format!("{name} {automation_id}").to_lowercase();
+    if STRONG_OTP.iter().any(|k| hay.contains(k)) {
+        return true;
+    }
+    if CARD_TERMS.iter().any(|t| hay.contains(t)) {
+        return false;
+    }
     if KEYS.iter().any(|k| hay.contains(k)) {
         return true;
     }
@@ -496,8 +527,9 @@ pub fn otp_like(name: &str, automation_id: &str) -> bool {
         if CODE_NEIGHBORS.iter().any(|n| stripped.contains(n)) {
             return true;
         }
-        // "enter the 6-digit code" style prompts.
-        if stripped.contains("digit") || stripped.contains("6") {
+        // "enter the 6-digit code" style prompts. Only six digits qualify; a
+        // 3-4 digit CVV prompt must not.
+        if stripped.contains("6-digit") || stripped.contains("6 digit") {
             return true;
         }
     }
@@ -649,8 +681,8 @@ mod tests {
         assert!(otp_like("", "otp-input"));
         assert!(otp_like("2FA Token", ""));
         assert!(otp_like("Authenticator app code", ""));
-        assert!(otp_like("Security Code", ""));
         assert!(otp_like("6-digit passcode", ""));
+        assert!(otp_like("Enter the 6-digit code", ""));
         assert!(otp_like("One-time password", ""));
     }
 
@@ -662,6 +694,19 @@ mod tests {
         assert!(!otp_like("Password", ""));
         assert!(!otp_like("Country", ""));
         assert!(!otp_like("", ""));
+    }
+
+    #[test]
+    fn otp_matcher_rejects_card_checkout_fields() {
+        // A9: a CVV box must never receive a live TOTP.
+        assert!(!otp_like("Security code", ""));
+        assert!(!otp_like("Card security code", "cvc"));
+        assert!(!otp_like("3-digit security code", ""));
+        assert!(!otp_like("CVV", "cvv-input"));
+        assert!(!otp_like("Expiration date", "card-expiry"));
+        // An explicit OTP word outranks the card word.
+        assert!(otp_like("Security code OTP", ""));
+        assert!(otp_like("Card verification code from your authenticator", ""));
     }
 
     #[test]

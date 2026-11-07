@@ -3867,6 +3867,12 @@ export component QuickBarWindow inherits Window {
     callback qb_open_url(string);
     callback dismiss();
 
+    // A21: Rust calls this right after show(), so typing, arrows, Enter and
+    // Esc work without the user clicking a field first.
+    public function focus_search() {
+        quick_input.focus();
+    }
+
     Rectangle {
         width: parent.width;
         height: parent.height;
@@ -4013,6 +4019,11 @@ export component QuickCaptureWindow inherits Window {
     callback capture_generate();
     callback capture_cancel();
 
+    // A21: focus the first field on open; Esc/Enter work without a click.
+    public function focus_first_field() {
+        cap_title_input.focus();
+    }
+
     Rectangle {
         width: parent.width;
         height: parent.height;
@@ -4059,7 +4070,7 @@ export component QuickCaptureWindow inherits Window {
                 }
 
                 FieldLabel { text: root.ui_lang == "bn" ? "সার্ভিসের নাম" : "SERVICE TITLE"; }
-                LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; }
+                cap_title_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; }
                 FieldLabel { text: root.ui_lang == "bn" ? "ইউজারনেম / ইমেইল" : "USERNAME / EMAIL"; }
                 LineEdit { placeholder-text: root.ui_lang == "bn" ? "সম্ভব হলে স্বয়ংক্রিয়ভাবে শনাক্ত হবে" : "Detected automatically when possible"; text <=> root.cap_user; height: 36px; }
                 FieldLabel { text: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "PASSWORD"; }

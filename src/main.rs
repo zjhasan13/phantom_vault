@@ -4107,9 +4107,11 @@ fn main() -> Result<(), slint::PlatformError> {
                         let vault = lock_vault(&t_vault);
                         let travel = *t_travel.lock().unwrap();
                         qb.set_quick_query("".into());
+                        qb.set_qb_index(0);
                         qb.set_filtered_results(vault_quickbar(&vault, "", travel));
                         qb.show().ok();
                         bring_to_foreground(qb.window());
+                        qb.invoke_focus_search();
                         qb_vis.store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                 });
@@ -4941,9 +4943,11 @@ fn main() -> Result<(), slint::PlatformError> {
                                             format!("from {}", ctx.window_title.chars().take(48).collect::<String>()).into()
                                         },
                                     );
+                                    cap.set_cap_show_pass(false);
                                     cap.show().ok();
                                     #[cfg(windows)]
                                     bring_to_foreground(cap.window());
+                                    cap.invoke_focus_first_field();
                                 }
                             });
                         });
@@ -4997,9 +5001,11 @@ fn main() -> Result<(), slint::PlatformError> {
                             let travel = *travel_clone.lock().unwrap();
                             let filtered = vault_quickbar_app(&vault, &app_prefilter, travel, &app_prefilter);
                             qb.set_quick_query(app_prefilter.into());
+                            qb.set_qb_index(0);
                             qb.set_filtered_results(filtered);
                             qb.show().ok();
                             bring_to_foreground(qb.window());
+                            qb.invoke_focus_search();
                             qb_visible.store(true, std::sync::atomic::Ordering::SeqCst);
                         }
                     });
