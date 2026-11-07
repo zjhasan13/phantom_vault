@@ -3926,18 +3926,92 @@ fn vault_quickbar_app(
 }
 
 #[cfg(windows)]
-fn bring_to_foreground(window: &slint::Window) {
+fn window_hwnd(window: &slint::Window) -> Option<isize> {
     use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let wh = window.window_handle();
+    let handle = wh.window_handle().ok()?;
+    if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+        Some(win32.hwnd.get())
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn foreground_hwnd() -> Option<isize> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let h = unsafe { GetForegroundWindow() };
+    if h.is_null() {
+        None
+    } else {
+        Some(h as isize)
+    }
+}
+
+#[cfg(windows)]
+fn bring_to_foreground(window: &slint::Window) {
     use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-    let handle_wrapper = window.window_handle();
-    if let Ok(handle) = handle_wrapper.window_handle() {
-        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
-            let hwnd = win32.hwnd.get() as *mut ::core::ffi::c_void;
-            unsafe {
-                SetForegroundWindow(hwnd as _);
-            }
+    if let Some(hwnd) = window_hwnd(window) {
+        unsafe {
+            SetForegroundWindow(hwnd as _);
         }
     }
+}
+
+/// A24: apply a logical-pixel drag delta to a frameless window.
+#[cfg(windows)]
+fn drag_window_by(window: &slint::Window, dx: f32, dy: f32) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    let Some(hwnd) = window_hwnd(window) else { return };
+    let scale = window.scale_factor();
+    let dx = (dx * scale).round() as i32;
+    let dy = (dy * scale).round() as i32;
+    if dx == 0 && dy == 0 {
+        return;
+    }
+    // SAFETY: plain Win32 calls on our own HWND; failures are ignored.
+    unsafe {
+        let mut r: windows_sys::Win32::Foundation::RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd as _, &mut r) != 0 {
+            SetWindowPos(
+                hwnd as _,
+                std::ptr::null_mut(),
+                r.left + dx,
+                r.top + dy,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+}
+
+/// A23: hide an always-on-top popup as soon as it loses the foreground. The
+/// popups are frameless and stay above every app, so without this a click on
+/// another window leaves them floating. Bounded to two minutes and stops as
+/// soon as `visible` goes false (dismiss/esc/save already hid it).
+#[cfg(windows)]
+fn spawn_focus_watch(
+    own: isize,
+    visible: Arc<AtomicBool>,
+    hide: impl FnOnce() + Send + 'static,
+) {
+    thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        while std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(250));
+            if !visible.load(Ordering::SeqCst) {
+                return;
+            }
+            if foreground_hwnd() != Some(own) {
+                visible.store(false, Ordering::SeqCst);
+                let _ = slint::invoke_from_event_loop(hide);
+                return;
+            }
+        }
+    });
 }
 
 fn main() -> Result<(), slint::PlatformError> {
@@ -4141,6 +4215,21 @@ fn main() -> Result<(), slint::PlatformError> {
     quick_bar.set_ui_lang(saved_lang.into());
     let capture_window = QuickCaptureWindow::new()?;
     capture_window.set_ui_lang(saved_lang.into());
+    // A24: drag the frameless popups (deltas come from their TouchArea).
+    {
+        let drag_qb = quick_bar.as_weak();
+        quick_bar.on_drag_by(move |dx, dy| {
+            if let Some(qb) = drag_qb.upgrade() {
+                drag_window_by(qb.window(), dx, dy);
+            }
+        });
+        let drag_cap = capture_window.as_weak();
+        capture_window.on_drag_by(move |dx, dy| {
+            if let Some(c) = drag_cap.upgrade() {
+                drag_window_by(c.window(), dx, dy);
+            }
+        });
+    }
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Main-window visibility for the resource diet: background loops deep-
     // sleep while this is false (tray/minimized) or the vault is locked.
@@ -4220,6 +4309,15 @@ fn main() -> Result<(), slint::PlatformError> {
                         bring_to_foreground(qb.window());
                         qb.invoke_focus_search();
                         qb_vis.store(true, std::sync::atomic::Ordering::SeqCst);
+                        // A23: vanish when the user clicks another app.
+                        if let Some(own) = window_hwnd(qb.window()) {
+                            let qb_watch = qb.as_weak();
+                            spawn_focus_watch(own, Arc::clone(&qb_vis), move || {
+                                if let Some(q) = qb_watch.upgrade() {
+                                    q.hide().ok();
+                                }
+                            });
+                        }
                     }
                 });
             }) as Arc<dyn Fn() + Send + Sync>
@@ -5057,6 +5155,20 @@ fn main() -> Result<(), slint::PlatformError> {
                                     #[cfg(windows)]
                                     bring_to_foreground(cap.window());
                                     cap.invoke_focus_first_field();
+                                    // A23: same auto-hide as the Quick Bar.
+                                    #[cfg(windows)]
+                                    if let Some(own) = window_hwnd(cap.window()) {
+                                        let cap_watch = cap.as_weak();
+                                        spawn_focus_watch(
+                                            own,
+                                            Arc::new(AtomicBool::new(true)),
+                                            move || {
+                                                if let Some(c) = cap_watch.upgrade() {
+                                                    c.hide().ok();
+                                                }
+                                            },
+                                        );
+                                    }
                                 }
                             });
                         });
@@ -5117,6 +5229,19 @@ fn main() -> Result<(), slint::PlatformError> {
                             bring_to_foreground(qb.window());
                             qb.invoke_focus_search();
                             qb_visible.store(true, std::sync::atomic::Ordering::SeqCst);
+                            // A23: vanish when the user clicks another app.
+                            if let Some(own) = window_hwnd(qb.window()) {
+                                let qb_watch = qb.as_weak();
+                                spawn_focus_watch(
+                                    own,
+                                    Arc::clone(&qb_visible),
+                                    move || {
+                                        if let Some(q) = qb_watch.upgrade() {
+                                            q.hide().ok();
+                                        }
+                                    },
+                                );
+                            }
                         }
                     });
                 }

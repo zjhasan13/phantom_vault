@@ -3884,6 +3884,8 @@ export component QuickBarWindow inherits Window {
     callback type_selected(int, string, string, string, string);
     callback qb_open_url(string);
     callback dismiss();
+    // A24: move the frameless panel (Rust applies the delta via SetWindowPos).
+    callback drag_by(length, length);
 
     // A21: Rust calls this right after show(), so typing, arrows, Enter and
     // Esc work without the user clicking a field first.
@@ -3901,6 +3903,25 @@ export component QuickBarWindow inherits Window {
         drop-shadow-blur: 48px;
         drop-shadow-color: #4edea366;
         clip: true;
+
+        // A24: frameless panel - drag from any non-interactive area.
+        drag_touch := TouchArea {
+            property <length> lx: 0;
+            property <length> ly: 0;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    lx = self.mouse-x;
+                    ly = self.mouse-y;
+                }
+                if (event.kind == PointerEventKind.move && self.pressed) {
+                    root.drag_by(self.mouse-x - lx, self.mouse-y - ly);
+                    lx = self.mouse-x;
+                    ly = self.mouse-y;
+                    return EventResult.accept;
+                }
+                EventResult.reject
+            }
+        }
 
         FocusScope {
             key-pressed(event) => {
@@ -4039,6 +4060,8 @@ export component QuickCaptureWindow inherits Window {
     callback capture_save(string, string, string, string);
     callback capture_generate();
     callback capture_cancel();
+    // A24: move the frameless panel (Rust applies the delta via SetWindowPos).
+    callback drag_by(length, length);
 
     // A21: focus the first field on open; Esc/Enter work without a click.
     public function focus_first_field() {
@@ -4055,6 +4078,25 @@ export component QuickCaptureWindow inherits Window {
         drop-shadow-blur: 48px;
         drop-shadow-color: #4edea366;
         clip: true;
+
+        // A24: frameless panel - drag from any non-interactive area.
+        drag_touch := TouchArea {
+            property <length> lx: 0;
+            property <length> ly: 0;
+            pointer-event(event) => {
+                if (event.kind == PointerEventKind.down) {
+                    lx = self.mouse-x;
+                    ly = self.mouse-y;
+                }
+                if (event.kind == PointerEventKind.move && self.pressed) {
+                    root.drag_by(self.mouse-x - lx, self.mouse-y - ly);
+                    lx = self.mouse-x;
+                    ly = self.mouse-y;
+                    return EventResult.accept;
+                }
+                EventResult.reject
+            }
+        }
 
         FocusScope {
             key-pressed(event) => {
