@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `6d3aac5` | Quick Bar A32: app prefilter no longer pre-types the app name into the search box |
 | `1c03520` | popups T1-T10: token scale, opaque surfaces, 5.2:1 tab contrast, brand casing, BN strings, accessible roles |
 | `b63455c` | auto-type A30/A31/A34: watcher stops on lock, decoy fills stay out of real stats, no focus steal after a fill |
 | `2b2f81b`, `be545f0` | popups A23/A24: focus-out auto-hide and a 1:1 cursor-anchored header drag |

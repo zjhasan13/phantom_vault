@@ -389,7 +389,7 @@ reproduced.
 | A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | fixed @b4ec6d0 |
 | A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | fixed @b63455c |
 | A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | fixed @b63455c |
-| A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | open |
+| A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | fixed @6d3aac5 |
 | A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` | open |
 | A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` | fixed @b63455c |
 
@@ -668,6 +668,12 @@ Test-gap claim re-checked: the listed tests exist
   the capture popup renders opaque, radius 12, 15/700 title and the new brand
   casing. Gates: tokens **21**, `cargo test` **581 / 0 / 4 ignored**, clippy
   clean.
+
+### Fix batch 11 — A32 (`6d3aac5`)
+
+- The Ctrl+Alt+A app prefilter still narrows the Quick Bar results, but the
+  search box opens **empty**; the app name is no longer pre-typed. Alt+Space is
+  unchanged.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

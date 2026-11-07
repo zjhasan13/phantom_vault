@@ -10,19 +10,19 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `1c03520` (A1-A31/A34 + T1-T10; only A32/A33 open) |
+| Branch / HEAD | `main` @ `6d3aac5` (A1-A32/A34 + T1-T10; only A33 open) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `1c03520`
+## Last code batch (2026-11-07) - `6d3aac5`
 
-Auto-type/popup A1-A31, A34, plus theme/a11y T1-T10 on the popups: token scale,
-opaque surfaces, on-primary tab contrast, brand casing, BN strings and
-accessible roles/labels. `cargo test` 581, tokens 21. Details:
-`docs/AUDIT.md` "Fix batch 1-10". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type/popup A1-A32, A34 and theme/a11y T1-T10 are done; only **A33**
+(secrets in the row model) remains. A32: the Quick Bar app prefilter no longer
+pre-types the app name into the search box. `cargo test` 581, tokens 21.
+Details: `docs/AUDIT.md` "Fix batch 1-11". Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -98,11 +98,11 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A31, A34 and T1-T10 are fixed/
+   `fixed @<hash>` when it lands. **A1-A32, A34 and T1-T10 are fixed/
    documented** (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`,
-   `d76c34c`, `1a82614`, `2b2f81b`, `be545f0`, `b63455c`, `1c03520`; +12 tests,
-   `cargo test` 581). Only **A33** (secrets in the row model) and the partial
-   **A32** remain. Statically verified on
+   `d76c34c`, `1a82614`, `2b2f81b`, `be545f0`, `b63455c`, `1c03520`,
+   `6d3aac5`; +12 tests, `cargo test` 581). Only **A33** (secrets in the row
+   model) remains. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
    screen for the remaining items; A21 capture focus and A29 were also checked
