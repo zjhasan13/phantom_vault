@@ -14,7 +14,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 |---|---|---|
 | Unlock / lock screen | ✅ | master password, EN/BN toggle, Hello/PIN states, recovery entry |
 | Onboarding | ✅ | 3 steps; recovery-shards checkbox kept inside the card (`a1ac396`) |
-| Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`) |
+| Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`), two-row grid below 1100 logical px (`a4c2bfc`) |
 | Item detail (all kinds) | ✅ | login, card, note, identity, license, SSH; history, attachments, TOTP |
 | Add / edit editor | ✅ | per-kind fields, folder, tags, favourite |
 | Password generator | ✅ | OS CSPRNG, Complex + Diceware, copy |
@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `a4c2bfc` | filter strip: 68px chips + a 5-column, two-row grid on narrow windows |
 | `4a38695` | A33: secrets removed from `CredentialView`; Quick Bar copy/type resolve by (kind, id) |
 | `6d3aac5` | Quick Bar A32: app prefilter no longer pre-types the app name into the search box |
 | `1c03520` | popups T1-T10: token scale, opaque surfaces, 5.2:1 tab contrast, brand casing, BN strings, accessible roles |

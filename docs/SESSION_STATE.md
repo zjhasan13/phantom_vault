@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `4a38695` (audit A1-A34 + T1-T10 complete) |
+| Branch / HEAD | `main` @ `a4c2bfc` (audit complete + responsive filter strip) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -91,8 +91,8 @@ Run Rust gates with `-j 1`; see "Known traps".
 3. **SSH / License editor** in the popup (currently list + copy only, `b399b06`).
 4. **Reuse hint in card/identity save prompts** (login prompt already has it,
    `b8ff022`).
-5. **Responsive filter strip**: nine chips overflow when the window is narrow;
-   consider wrapping or horizontal scroll.
+5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
+   logical px the strip becomes a two-row 5-column grid so all nine stay visible.
 6. **A26 Bengali pass**: remaining dialogs and Rust-generated status strings are
    still English (`docs/A26_BN.md`).
 7. **Manual 100% / 125% layout pass** across all screens (no automated DPI test).
