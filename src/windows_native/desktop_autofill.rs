@@ -7,7 +7,7 @@
 
 use crate::error::{Result, VaultError};
 use windows::core::BSTR;
-use windows::Win32::Foundation::HWND;
+use windows::Win32::Foundation::{HWND, RPC_E_CHANGED_MODE};
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED,
 };
@@ -29,24 +29,35 @@ pub struct DesktopContext {
     pub is_password_focused: bool,
 }
 
-struct ComGuard;
+struct ComGuard {
+    /// True only when this call initialized COM (so Drop must balance it).
+    owned: bool,
+}
 
 impl ComGuard {
     fn enter() -> Result<Self> {
-        // SAFETY: balanced with CoUninitialize in Drop, same thread.
+        // SAFETY: balanced with CoUninitialize in Drop on the same thread, and
+        // only when this call actually initialized the apartment.
         unsafe {
-            CoInitializeEx(None, COINIT_MULTITHREADED)
-                .ok()
+            let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
+            if hr == RPC_E_CHANGED_MODE {
+                // A16: already initialized in another apartment (Slint's STA
+                // UI thread). UIA works there; just don't uninitialize it.
+                return Ok(ComGuard { owned: false });
+            }
+            hr.ok()
                 .map_err(|e| VaultError::AutoType(format!("COM init failed: {e}")))?;
         }
-        Ok(ComGuard)
+        Ok(ComGuard { owned: true })
     }
 }
 
 impl Drop for ComGuard {
     fn drop(&mut self) {
-        unsafe {
-            CoUninitialize();
+        if self.owned {
+            unsafe {
+                CoUninitialize();
+            }
         }
     }
 }
@@ -478,14 +489,9 @@ fn hunt_username(auto: &IUIAutomation, focused: &IUIAutomationElement) -> String
                 if !v.is_empty() {
                     return v;
                 }
-                // Empty edit: remember name as a hint, keep scanning for value.
-                let name: String = child
-                    .CurrentName()
-                    .map(bstr_to_string)
-                    .unwrap_or_default();
-                if !name.is_empty() && name.len() < 64 {
-                    return name;
-                }
+                // A15: an empty edit's *name* is a label or placeholder
+                // ("Email address"), not a value. Keep scanning and return ""
+                // rather than saving that as the username.
             }
             child = match walker.GetNextSiblingElement(&child) {
                 Ok(n) => n,
@@ -913,5 +919,16 @@ mod tests {
         assert!(!password_label_like("shipping address"));
         assert!(!password_label_like("email"));
         assert!(!password_label_like(""));
+    }
+
+    #[test]
+    fn com_guard_can_reenter_on_the_same_thread() {
+        // A16: the guard must not leak an unbalanced CoUninitialize when the
+        // apartment is already initialized (RPC_E_CHANGED_MODE path).
+        let first = ComGuard::enter();
+        assert!(first.is_ok(), "COM init failed: {:?}", first.err().map(|e| e.to_string()));
+        drop(first);
+        let second = ComGuard::enter();
+        assert!(second.is_ok());
     }
 }

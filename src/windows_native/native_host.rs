@@ -2776,6 +2776,20 @@ pub(crate) fn fill_stats_for(id: &str) -> (u64, u64) {
     (count, last)
 }
 
+/// A17: one read of the fill sidecar for Quick Bar ordering (id -> last ts).
+pub(crate) fn last_filled_map() -> std::collections::HashMap<String, u64> {
+    let st = read_ext_stats();
+    let mut out = std::collections::HashMap::new();
+    if let Some(obj) = st.get("last_filled").and_then(|v| v.as_object()) {
+        for (k, v) in obj {
+            if let Some(ts) = v.as_u64() {
+                out.insert(k.clone(), ts);
+            }
+        }
+    }
+    out
+}
+
 /// Per-login health kind for bridge entries (local signals only — breach
 /// status needs the desktop audit and is omitted). Priority mirrors the
 /// desktop kinds(): reused > weak > stale. Pure.

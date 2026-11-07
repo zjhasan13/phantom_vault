@@ -244,6 +244,8 @@ fn type_request_for(vault: &Vault, kind: i32, id: &str) -> Option<TypeRequest> {
             apps: Vec::new(),
         }),
         // Standalone 2FA (kind 8): Fill types the FRESH live code (no Enter).
+        // A19: intentional - OTP screens usually auto-submit, while the login
+        // chain presses Enter because it just filled a login form.
         // Computed at request time so it never goes stale like a list snapshot.
         8 => vault.totp_accounts.iter().find(|a| a.id == id).map(|a| {
             let code = crate::totp_engine::generate_code_for_account(a)
@@ -292,6 +294,11 @@ fn login_type_request(
 
 /// Moat #4: hands-free 2FA chain switch (`chain_2fa.pref`).
 /// Missing file = ON (existing behavior preserved).
+///
+/// A13: the path is relative and `PHANTOM_VAULT_DIR` pins the cwd at startup,
+/// so the pref lives beside the vault. The Settings toggle
+/// ("Hands-free 2FA after auto-type") is the consent control; the missing-file
+/// default stays ON for existing users.
 fn chain_2fa_enabled() -> bool {
     std::fs::read_to_string("chain_2fa.pref")
         .map(|s| s.trim() != "0")
@@ -461,12 +468,8 @@ fn trigger_autotype(
             return;
         }
     }
-    if !quiet {
-        if let Some(ui) = main_weak.upgrade() {
-            ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
-            ui.set_notification_kind("info".into());
-        }
-    }
+    // A14: a toast on a window that is about to be minimized is never seen.
+    // The result toast (after restore) and the 2FA countdown carry the status.
     if let Some(ui) = main_weak.upgrade() {
         ui.window().set_minimized(true);
     }
@@ -527,6 +530,9 @@ fn trigger_autotype(
             // Fill audit: sidecar (popup "Last filled" + dashboard) + access log.
             windows_native::native_host::record_ext_fill(&req.item_id);
             crate::security::access_log::log_event("autotype/fill", &req.item_title);
+        } else if let Err(e) = &res {
+            // A20: aborts leave a trail too - the reason only, never the secret.
+            crate::security::access_log::log_event("autotype-abort", &e.to_string());
         }
         let stale = ok
             && req.last_changed != 0
@@ -3900,10 +3906,21 @@ fn vault_quickbar_app(
         .iter()
         .filter(|r| r.kind != 8 && (bound.is_empty() || bound.contains(&r.id.to_string())))
         .collect();
+    // A17: an unbound Quick Bar had no narrowing at all. Recent fills (then
+    // the existing title/username score) put the likely target on top.
+    let recency = if app.is_empty() {
+        windows_native::native_host::last_filled_map()
+    } else {
+        std::collections::HashMap::new()
+    };
     // Stable: equal scores keep vault order (no reshuffle surprises).
     rows.sort_by(|a, b| {
-        qb_rank_score(&q, &b.title, &b.username, b.fav)
-            .cmp(&qb_rank_score(&q, &a.title, &a.username, a.fav))
+        let ra = recency.get(a.id.as_str()).copied().unwrap_or(0);
+        let rb = recency.get(b.id.as_str()).copied().unwrap_or(0);
+        rb.cmp(&ra).then_with(|| {
+            qb_rank_score(&q, &b.title, &b.username, b.fav)
+                .cmp(&qb_rank_score(&q, &a.title, &a.username, a.fav))
+        })
     });
     ModelRc::new(VecModel::from(rows))
 }
