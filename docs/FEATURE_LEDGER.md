@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `b63455c` | auto-type A30/A31/A34: watcher stops on lock, decoy fills stay out of real stats, no focus steal after a fill |
 | `2b2f81b`, `be545f0` | popups A23/A24: focus-out auto-hide and a 1:1 cursor-anchored header drag |
 | `1a82614` | auto-type A13-A17/A19/A20: STA-safe COM, no placeholder usernames, abort logging, recent-first unbound Quick Bar |
 | `d76c34c` | auto-type A8/A11/A12: focused pair selection, control-level focus guard, verified Tab stop |

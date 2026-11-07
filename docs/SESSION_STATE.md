@@ -10,18 +10,19 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `be545f0` (auto-type A1-A24/A25-A29) |
+| Branch / HEAD | `main` @ `b63455c` (auto-type A1-A31/A34; only A32/A33 open) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `be545f0`
+## Last code batch (2026-11-07) - `b63455c`
 
-Auto-type A1-A22, A25-A29 plus popup behaviour A23/A24: focus-out auto-hide
-(with a grace + reliable raise) and a 1:1 cursor-anchored drag from a header
-strip. `cargo test` 581. Details: `docs/AUDIT.md` "Fix batch 1-8". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type/popup A1-A31, A34 (A13/A19 documented): watcher stops on lock, decoy
+fills stay out of real stats, and a successful fill no longer steals focus by
+restoring the vault. `cargo test` 581. Details: `docs/AUDIT.md`
+"Fix batch 1-9". Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -97,10 +98,11 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A24, A25-A29 are fixed/documented**
+   `fixed @<hash>` when it lands. **A1-A31, A34 are fixed/documented**
    (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`, `d76c34c`,
-   `1a82614`, `be545f0`; +12 tests, `cargo test` 581). Next: A30/A31/A33/A34,
-   then the T1-T10 token work. Statically verified on
+   `1a82614`, `2b2f81b`, `be545f0`, `b63455c`; +12 tests, `cargo test` 581).
+   Next: A33 (secrets in the row model) and A32 (partial), then the T1-T10
+   token work. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
    screen for the remaining items; A21 capture focus and A29 were also checked
@@ -109,6 +111,7 @@ Run Rust gates with `-j 1`; see "Known traps".
 ## Recently shipped (newest first, ~15 commits)
 
 ```
+b63455c fix(autotype): stop the watcher on lock, keep decoy fills out of real stats, and stop stealing focus
 be545f0 fix(ui): make popup drag 1:1 and raise popups reliably before focus-watching
 2b2f81b fix(ui): auto-hide popups on focus loss and let them be dragged
 1a82614 fix(autotype): make UIA work on the UI thread, stop inventing usernames, log aborts

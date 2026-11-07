@@ -387,11 +387,11 @@ reproduced.
 | A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | fixed @34048fb |
 | A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` | fixed @34048fb |
 | A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | fixed @b4ec6d0 |
-| A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | open |
-| A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | open |
+| A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | fixed @b63455c |
+| A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | fixed @b63455c |
 | A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | open |
 | A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` | open |
-| A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` | open |
+| A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` | fixed @b63455c |
 
 ### Theme conformance (Aegis palette, `design/tokens.json`)
 
@@ -633,6 +633,18 @@ Test-gap claim re-checked: the listed tests exist
 - Screen evidence: the capture moved from `160,160` to `280,220` for a
   `+120,+60` drag, then disappeared within a second of focusing the main window.
 - `cargo test` **581 / 0 / 4 ignored**, clippy clean, build clean.
+
+### Fix batch 9 — A30, A31, A34 (`b63455c`)
+
+- **A30** — `VAULT_UNLOCKED` mirrors `is_unlocked` for workers; the 2FA watcher
+  aborts and clears the countdown when the vault locks mid-watch.
+- **A31** — the decoy flag is captured before the worker; decoy fills no longer
+  write the fill sidecar or the fill access-log entry.
+- **A34** — a successful fill leaves the vault minimized so the target form
+  keeps focus (this is also what lets the hands-free watcher see the OTP
+  screen). Errors, stale warnings and canary alerts still restore the window.
+  Caveat: the 2FA countdown pill is not visible while minimized.
+- `cargo test` **581 / 0 / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
