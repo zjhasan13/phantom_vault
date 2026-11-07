@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `a4c2bfc` (audit complete + responsive filter strip) |
+| Branch / HEAD | `main` @ `774420a` (audit complete + filter strip + BN auto-type) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -93,8 +93,9 @@ Run Rust gates with `-j 1`; see "Known traps".
    `b8ff022`).
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
    logical px the strip becomes a two-row 5-column grid so all nine stay visible.
-6. **A26 Bengali pass**: remaining dialogs and Rust-generated status strings are
-   still English (`docs/A26_BN.md`).
+6. **A26 Bengali pass — auto-type batch done (`774420a`)**: notifications,
+   countdown pill + Cancel, and Quick Capture a11y labels follow `ui_lang`.
+   Remaining: most dialogs and the `VaultError` text inside `Auto-Type: {e}`.
 7. **Manual 100% / 125% layout pass** across all screens (no automated DPI test).
 8. **Desktop auto-type fixes — complete.** A1-A34 + T1-T10 are fixed or
    documented in `docs/AUDIT.md` §8/§9 (batches 1-12: `3b1fc92`, `6b095fc`,

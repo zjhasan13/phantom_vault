@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `774420a` | i18n: auto-type notifications, 2FA countdown + Cancel, capture a11y labels follow ui_lang |
 | `a4c2bfc` | filter strip: 68px chips + a 5-column, two-row grid on narrow windows |
 | `4a38695` | A33: secrets removed from `CredentialView`; Quick Bar copy/type resolve by (kind, id) |
 | `6d3aac5` | Quick Bar A32: app prefilter no longer pre-types the app name into the search box |
