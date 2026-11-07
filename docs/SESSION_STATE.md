@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `774420a` (audit complete + filter strip + BN auto-type) |
+| Branch / HEAD | `main` @ `da1de56` (audit + filter strip + BN + card/identity reuse hint) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -74,7 +74,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
 | `cargo test -j 1` | **581 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
-| `npm test` | **158/158 pass** |
+| `npm test` | **160/160 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
 
 Run Rust gates with `-j 1`; see "Known traps".
@@ -89,8 +89,8 @@ Run Rust gates with `-j 1`; see "Known traps".
 2. **HUD 3.0 full 640px dual-column** — only the hero card slice is shipped
    (`25008cc`, `09059bb`).
 3. **SSH / License editor** in the popup (currently list + copy only, `b399b06`).
-4. **Reuse hint in card/identity save prompts** (login prompt already has it,
-   `b8ff022`).
+4. **Reuse hint in card/identity save prompts — done (`da1de56`)**: an "also in
+   N other item(s)" chip when the PAN / email is already stored elsewhere.
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
    logical px the strip becomes a two-row 5-column grid so all nine stay visible.
 6. **A26 Bengali pass — auto-type batch done (`774420a`)**: notifications,
