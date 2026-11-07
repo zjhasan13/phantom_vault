@@ -10,19 +10,20 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `b4ec6d0` (auto-type A1–A9/A21/A22/A29; docs on top) |
+| Branch / HEAD | `main` @ `1cf999a` (auto-type A1-A10/A18/A21/A22/A29) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `b4ec6d0`
+## Last code batch (2026-11-07) - `1cf999a`
 
-Auto-type A1-A7 (fail-closed gate, password-focus guard, four-stop card fill,
-multi-line refusal, target frozen after the minimize settle, username rollback)
-plus A9 matcher, A21 popup focus, A22 Quick Bar index reset and A29 capture
-mask reset. `cargo test` 578. Details: `docs/AUDIT.md` "Fix batch 1/2/3". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type A1-A10 (+A18, A21, A22, A29): fail-closed gate, password-focus guard,
+four-stop card fill, multi-line refusal, target frozen after the minimize
+settle, username rollback, card-CVV matcher fix, verified UIA writes, popup
+focus/reset, and a cancellable 30 s 2FA watcher with a countdown pill.
+`cargo test` 579. Details: `docs/AUDIT.md` "Fix batch 1-4". Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -71,7 +72,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 |---|---|
 | `cargo check -j 1` | `CHECK=0` |
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
-| `cargo test -j 1` | **578 passed, 0 failed, 4 ignored** |
+| `cargo test -j 1` | **579 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
 | `npm test` | **158/158 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
@@ -98,10 +99,10 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A7, A9 (matcher), A18, A21, A22, A29
-   are fixed** (`3b1fc92`, `6b095fc`, `b4ec6d0`; +9 tests, `cargo test` 578).
-   Next: A5 (verify the write landed) and A10 (watcher focus/cancel), then the
-   rest of the UI batch A23-A28/A30-A34. Statically verified on
+   `fixed @<hash>` when it lands. **A1-A10, A18, A21, A22, A29 are fixed**
+   (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`; +10 tests, `cargo test` 579).
+   Next: notifications A25-A28, then focus/pair A8/A11/A12, then
+   A23/A24/A30-A34 and the T1-T10 token work. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
    screen for the remaining items; A21 capture focus and A29 were also checked
@@ -110,6 +111,7 @@ Run Rust gates with `-j 1`; see "Known traps".
 ## Recently shipped (newest first, ~15 commits)
 
 ```
+1cf999a fix(autotype): verify UIA writes and make the 2FA watcher cancellable
 b4ec6d0 fix(autotype): reject card CVV as OTP, focus the quick windows and reset their state
 6b095fc fix(autotype): freeze the target after the minimize settles and keep the typed username
 3b1fc92 fix(autotype): fail closed on missing context, password focus, multi-line and card stops

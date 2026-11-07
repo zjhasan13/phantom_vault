@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `1cf999a` | auto-type A5/A10: UIA writes verified with keystroke fallback; cancellable 30 s 2FA watcher with countdown + focus guard |
 | `b4ec6d0` | auto-type A9/A21/A22/A29: card CVV rejected as OTP; Quick Bar + Quick Capture focus on open; Quick Bar index and capture mask reset |
 | `6b095fc` | auto-type A6–A7: target frozen after the minimize settle; typed username restored on a failed password write |
 | `3b1fc92` | auto-type A1–A4: fail-closed context gate, password-focus guard, four-stop card fill, multi-line (note/SSH) refusal |

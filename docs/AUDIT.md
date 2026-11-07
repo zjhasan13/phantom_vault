@@ -299,7 +299,7 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 | A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. | fixed @3b1fc92 |
 | A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. | fixed @3b1fc92 |
 | A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. | fixed @3b1fc92 |
-| A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. | open |
+| A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. | fixed @1cf999a |
 
 ### P1 — reliability and false positives
 
@@ -308,8 +308,8 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 | A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | fixed @6b095fc |
 | A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | fixed @6b095fc |
 | A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | open |
-| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | fixed @b4ec6d0 (matcher; focus gate = A10) |
-| A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | open |
+| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | fixed @1cf999a (matcher b4ec6d0) |
+| A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | fixed @1cf999a |
 | A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. | open |
 | A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. | open |
 
@@ -550,6 +550,24 @@ Test-gap claim re-checked: the listed tests exist
   reopen. The Quick Bar hotkeys did not register on the test machine, so A21's
   Quick Bar half and A22 are compile/check verified only.
 - `cargo test` **578 passed / 0 failed / 4 ignored**, clippy clean.
+
+### Fix batch 4 — A5, A10 (`1cf999a`)
+
+- **A5** — `set_focused_value` re-reads the value after `SetValue`; an ignored
+  write returns false so the caller falls back to keystrokes. Password boxes are
+  exempt (masked/withheld value). `fill_login_pair` verifies both writes and
+  restores the previous pair on a mismatch; an unreadable pattern keeps
+  trust-on-write so a secret is never typed twice.
+- **A10** — the watcher publishes a 30 s countdown
+  (`chain_2fa_active`/`chain_2fa_secs`) and obeys a shared cancel flag; a pill
+  in the main window shows "2FA auto-fill in Ns" with Cancel. `otp_screen_visible`
+  now requires the OTP control (or an ancestor within four levels) to be
+  focused, and the watcher re-checks focus after the 300 ms settle before typing.
+- **A9** is now fully fixed (matcher here, focus gate in this batch).
+- Not reproduced end-to-end: the countdown/cancel pill and the focus guard need
+  a live OTP flow (login submit -> OTP screen).
+- **A30** (watcher outlives a lock) is still open.
+- `cargo test` **579 passed / 0 failed / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
