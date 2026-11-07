@@ -307,11 +307,11 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 |---|---|---|---|---|
 | A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | fixed @6b095fc |
 | A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | fixed @6b095fc |
-| A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | open |
+| A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | fixed @d76c34c |
 | A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | fixed @1cf999a (matcher b4ec6d0) |
 | A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | fixed @1cf999a |
-| A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. | open |
-| A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. | open |
+| A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. | fixed @d76c34c |
+| A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. | fixed @d76c34c |
 
 ### P2 — polish, privacy, diagnostics
 
@@ -585,6 +585,21 @@ Test-gap claim re-checked: the listed tests exist
 - Not screen-verified: these states need a honeytoken item and a bound-app
   mismatch; the demo vault has neither. `cargo test` **579 / 0 / 4 ignored**,
   clippy clean.
+
+### Fix batch 6 — A8, A11, A12 (`d76c34c`)
+
+- **A8** — `pick_login_pair` requires focus inside one of the form's Edit
+  controls and picks the nearest password at/after it (or the nearest before).
+  No Edit focus = no pair, so a login/signup page is not filled from page order.
+  Unit tests cover the no-focus and second-signup-block cases.
+- **A11** — `FocusGuard` captures the focused UIA element and checks it on every
+  keystroke (control-level, not just HWND); the lock is re-captured after the
+  intentional Tab. UIA failure keeps the old window-only behaviour.
+- **A12** — after Tab, the password is only written when the control reports
+  IsPassword or its label/id says password/secret (PIN matched on word
+  boundaries). Otherwise the fill aborts.
+- FocusGuard is runtime-only/compile-verified; A8 and the label heuristic have
+  unit tests. `cargo test` **580 / 0 / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
