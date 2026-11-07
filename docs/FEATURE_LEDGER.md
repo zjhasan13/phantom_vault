@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `1a82614` | auto-type A13-A17/A19/A20: STA-safe COM, no placeholder usernames, abort logging, recent-first unbound Quick Bar |
 | `d76c34c` | auto-type A8/A11/A12: focused pair selection, control-level focus guard, verified Tab stop |
 | `34048fb` | auto-type A25-A28: tone-aware toasts, sticky errors, canary alert preserved, Quick Bar block reasons |
 | `1cf999a` | auto-type A5/A10: UIA writes verified with keystroke fallback; cancellable 30 s 2FA watcher with countdown + focus guard |

@@ -317,14 +317,14 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 
 | ID | Defect | Location | Note | Status |
 |---|---|---|---|---|
-| A13 | `chain_2fa.pref` is read from the current working directory and defaults to ON | `main.rs:295` | Relative path is a project-wide convention, but TOTP auto-type is opt-out, not per-fill consent. | open |
-| A14 | "focus the target field…" is set on a window that is being minimized, so the user never sees it | `main.rs:365-366` | Use a tray balloon / toast. | open |
-| A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. | open |
-| A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. | open |
-| A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. | open |
+| A13 | `chain_2fa.pref` is read from the current working directory and defaults to ON | `main.rs:295` | Relative path is a project-wide convention, but TOTP auto-type is opt-out, not per-fill consent. | documented @1a82614 |
+| A14 | "focus the target field…" is set on a window that is being minimized, so the user never sees it | `main.rs:365-366` | Use a tray balloon / toast. | fixed @1a82614 |
+| A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. | fixed @1a82614 |
+| A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. | fixed @1a82614 |
+| A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. | fixed @1a82614 |
 | A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. | fixed @3b1fc92 (via A3) |
-| A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. | open |
-| A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. | open |
+| A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. | documented @1a82614 |
+| A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. | fixed @1a82614 |
 
 ### UX improvements (ranked by impact)
 
@@ -600,6 +600,26 @@ Test-gap claim re-checked: the listed tests exist
   boundaries). Otherwise the fill aborts.
 - FocusGuard is runtime-only/compile-verified; A8 and the label heuristic have
   unit tests. `cargo test` **580 / 0 / 4 ignored**, clippy clean.
+
+### Fix batch 7 — A13-A17, A19, A20 (`1a82614`)
+
+- **A16** — `ComGuard` tolerates `RPC_E_CHANGED_MODE` (Slint's STA UI thread)
+  and only calls `CoUninitialize` when it initialized the apartment. Without
+  this, the A1 gate could fail-closed on every bound item.
+- **A15** — `hunt_username` no longer returns an empty edit's label/placeholder
+  as the username.
+- **A14** — the "vault minimized" toast is gone: it was set on a window that
+  was already minimizing and was never visible.
+- **A20** — failed/aborted fills write an `autotype-abort` access-log entry with
+  the reason only.
+- **A17** — an unbound Quick Bar orders recent fills first, then the existing
+  title/username score, instead of vault page order.
+- **A13** (documented) — the Settings toggle is the consent control and
+  `chain_2fa.pref` is relative to the cwd pinned by `PHANTOM_VAULT_DIR`;
+  missing file still means ON.
+- **A19** (documented) — standalone TOTP types without Enter on purpose; the
+  login chain submits because it just filled a login form.
+- `cargo test` **581 / 0 / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

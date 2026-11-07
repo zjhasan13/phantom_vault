@@ -10,18 +10,19 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `d76c34c` (auto-type A1-A12/A18/A21/A22/A25-A29) |
+| Branch / HEAD | `main` @ `1a82614` (auto-type A1-A22/A25-A29) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `d76c34c`
+## Last code batch (2026-11-07) - `1a82614`
 
-Auto-type A1-A10, A18, A21, A22, A25-A29 plus focus/pair correctness A8/A11/A12:
-focused-pair selection, control-level focus guard and a verified Tab stop.
-`cargo test` 580. Details: `docs/AUDIT.md` "Fix batch 1-6". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type A1-A12, A18, A21, A22, A25-A29 plus A13-A17/A19/A20: STA-safe COM,
+no placeholder usernames, no invisible minimize toast, abort logging, and
+recent-first unbound Quick Bar. `cargo test` 581. Details: `docs/AUDIT.md`
+"Fix batch 1-7". Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -70,7 +71,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 |---|---|
 | `cargo check -j 1` | `CHECK=0` |
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
-| `cargo test -j 1` | **580 passed, 0 failed, 4 ignored** |
+| `cargo test -j 1` | **581 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
 | `npm test` | **158/158 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
@@ -97,9 +98,9 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A12, A18, A21, A22, A25-A29 are fixed**
-   (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`, `d76c34c`; +11 tests,
-   `cargo test` 580). Next: A13-A17/A19/A20, then A23/A24/A30-A34 and the
+   `fixed @<hash>` when it lands. **A1-A22, A25-A29 are fixed/documented**
+   (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`, `d76c34c`,
+   `1a82614`; +12 tests, `cargo test` 581). Next: A23/A24/A30-A34, then the
    T1-T10 token work. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
@@ -109,6 +110,7 @@ Run Rust gates with `-j 1`; see "Known traps".
 ## Recently shipped (newest first, ~15 commits)
 
 ```
+1a82614 fix(autotype): make UIA work on the UI thread, stop inventing usernames, log aborts
 d76c34c fix(autotype): stop guessing the form, guard the focused control and verify the Tab stop
 34048fb fix(ui): give auto-type notifications a tone and keep critical alerts visible
 1cf999a fix(autotype): verify UIA writes and make the 2FA watcher cancellable
