@@ -305,8 +305,8 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 
 | ID | Defect | Location | Fix direction | Status |
 |---|---|---|---|---|
-| A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | open |
-| A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | open |
+| A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | fixed @6b095fc |
+| A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | fixed @6b095fc |
 | A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | open |
 | A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | open |
 | A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | open |
@@ -518,6 +518,21 @@ Test-gap claim re-checked: the listed tests exist
   `cargo test` **576 passed / 0 failed / 4 ignored**, clippy clean.
 - Still not reproduced against a live target app: A6/A5/A9/A10 and the UI
   items (A21–A34) remain open.
+
+### Fix batch 2 — A6–A7 (`6b095fc`)
+
+- **A6** — the foreground HWND is captured after `SETTLE_MS` in both
+  `type_sequence` and `type_fields`, so the async minimize can no longer leave
+  the vault's own window as the target. Zero HWND aborts immediately; an
+  Alt+Tab during the following 600 ms focus delay still aborts via
+  `ensure_focus`.
+- **A7** — the username box's previous value is read before the write and
+  restored when the password `SetValue` fails, instead of being blanked.
+- Not unit-covered (timing / UIA); the raw-vs-trimmed helper is pinned by
+  `bstr_restore_keeps_the_typed_username_exact`.
+  `cargo test` **577 passed / 0 failed / 4 ignored**, clippy clean.
+- Next in this series: A5 (verify the write landed), A9 (CVV/TOTP), A10
+  (watcher cancel + focus), then the A21–A34 UI batch.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

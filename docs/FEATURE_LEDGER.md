@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `6b095fc` | auto-type A6–A7: target frozen after the minimize settle; typed username restored on a failed password write |
 | `3b1fc92` | auto-type A1–A4: fail-closed context gate, password-focus guard, four-stop card fill, multi-line (note/SSH) refusal |
 | `171eb92` | four dialogs content-sized; import/export headers centered and contained |
 | `1aa3a70` | filter strip centered; Identity + License chips |

@@ -10,19 +10,19 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `3b1fc92` (auto-type A1–A4; docs commits sit on top) |
+| Branch / HEAD | `main` @ `6b095fc` (auto-type A1–A7; docs commits sit on top) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) — `3b1fc92`
+## Last code batch (2026-11-07) - `6b095fc`
 
-Auto-type A1–A4: fail-closed foreground gate for bound items, password-focus
-guard (username never lands in the password box), four-stop card fill
-(number/month/year/CVV), and refusal for multi-line notes/SSH keys. +7 tests,
-`cargo test` 576. Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type A1-A7: fail-closed foreground gate, password-focus guard, four-stop
+card fill, multi-line refusal; target HWND frozen after the minimize settle
+and the typed username restored on a failed password write (A6-A7). +8 tests,
+`cargo test` 577. Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -71,7 +71,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 |---|---|
 | `cargo check -j 1` | `CHECK=0` |
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
-| `cargo test -j 1` | **576 passed, 0 failed, 4 ignored** |
+| `cargo test -j 1` | **577 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
 | `npm test` | **158/158 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
@@ -98,10 +98,9 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A4 + A18 are fixed in `3b1fc92`** (fail-
-   closed gate, password-focus guard, four-stop card fill, multi-line refusal;
-   +7 tests, `cargo test` 576). Next: A6/A7 (one function each), then A5/A9/A10
-   (need a live target app), then the UI batch A21-A34. Statically verified on
+   `fixed @<hash>` when it lands. **A1-A7 + A18 are fixed** (`3b1fc92`,
+   `6b095fc`; +8 tests, `cargo test` 577). Next: A5/A9/A10 (need a live target
+   app), then the UI batch A21-A34. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
    screen yet; the rest of the code tree is unchanged since `171eb92`, where all
@@ -110,6 +109,7 @@ Run Rust gates with `-j 1`; see "Known traps".
 ## Recently shipped (newest first, ~15 commits)
 
 ```
+6b095fc fix(autotype): freeze the target after the minimize settles and keep the typed username
 3b1fc92 fix(autotype): fail closed on missing context, password focus, multi-line and card stops
 171eb92 style(ui): content-size the four dialogs and center their headers
 1aa3a70 style(ui): center the filter strip and add Identity/License chips
