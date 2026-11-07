@@ -421,7 +421,11 @@ fn trigger_autotype(
             &main_weak,
             &qb_weak,
             quiet,
-            "📋 Multi-line item — use Copy instead of Auto-Type.".into(),
+            crate::i18n::tr(
+                "📋 Multi-line item — use Copy instead of Auto-Type.",
+                "📋 বহু-লাইনের আইটেম — Auto-Type-এর বদলে Copy করুন।",
+            )
+            .into(),
             "warn",
         );
         return;
@@ -437,8 +441,11 @@ fn trigger_autotype(
                 &main_weak,
                 &qb_weak,
                 quiet,
-                "🛡️ Could not verify the active app — Auto-Type blocked for this bound item."
-                    .into(),
+                crate::i18n::tr(
+                    "🛡️ Could not verify the active app — Auto-Type blocked for this bound item.",
+                    "🛡️ সক্রিয় অ্যাপ যাচাই করা যায়নি — এই bound আইটেমের Auto-Type বন্ধ।",
+                )
+                .into(),
                 "warn",
             );
             return;
@@ -448,11 +455,19 @@ fn trigger_autotype(
                 .as_ref()
                 .map(|c| c.exe_name.clone())
                 .unwrap_or_default();
-            let msg = format!(
-                "🚨 App-Spoof Hazard: Suspicious executable '{}' detected (impersonating {})! Auto-type blocked for security.",
-                if exe.is_empty() { "?" } else { exe.as_str() },
-                brand
-            );
+            let msg = if crate::i18n::is_bn() {
+                format!(
+                    "🚨 অ্যাপ-স্পুফ ঝুঁকি: সন্দেহভাজন executable '{}' পাওয়া গেছে ({} impersonate করছে)! নিরাপত্তার জন্য Auto-type বন্ধ।",
+                    if exe.is_empty() { "?" } else { exe.as_str() },
+                    brand
+                )
+            } else {
+                format!(
+                    "🚨 App-Spoof Hazard: Suspicious executable '{}' detected (impersonating {})! Auto-type blocked for security.",
+                    if exe.is_empty() { "?" } else { exe.as_str() },
+                    brand
+                )
+            };
             crate::security::access_log::log_event("autotype-blocked-spoof", &exe);
             autotype_notify(&main_weak, &qb_weak, quiet, msg, "error");
             return;
@@ -462,11 +477,19 @@ fn trigger_autotype(
                 .as_ref()
                 .map(|c| c.exe_name.clone())
                 .unwrap_or_default();
-            let msg = format!(
-                "🚫 App mismatch: this item is bound to {} — active app is '{}'. Auto-type blocked.",
-                req.apps.join(", "),
-                active
-            );
+            let msg = if crate::i18n::is_bn() {
+                format!(
+                    "🚫 অ্যাপ মিলছে না: আইটেমটি {} -এ bound — সক্রিয় অ্যাপ '{}'। Auto-type বন্ধ।",
+                    req.apps.join(", "),
+                    active
+                )
+            } else {
+                format!(
+                    "🚫 App mismatch: this item is bound to {} — active app is '{}'. Auto-type blocked.",
+                    req.apps.join(", "),
+                    active
+                )
+            };
             crate::security::access_log::log_event("autotype-blocked-app", &exe);
             autotype_notify(&main_weak, &qb_weak, quiet, msg, "warn");
             return;
@@ -573,13 +596,21 @@ fn trigger_autotype(
                         match code {
                             Some(_) => {
                                 ui.set_notification_text(
-                                    "⚡ Auto-filled 2FA verification code hands-free!".into(),
+                                    crate::i18n::tr(
+                                        "⚡ Auto-filled 2FA verification code hands-free!",
+                                        "⚡ 2FA ভেরিফিকেশন কোড হ্যান্ডস-ফ্রি অটো-ফিল হয়েছে!",
+                                    )
+                                    .into(),
                                 );
                                 ui.set_notification_kind("success".into());
                             }
                             None => {
                                 ui.set_notification_text(
-                                    "⌨️ Typed — no OTP screen appeared within 30s.".into(),
+                                    crate::i18n::tr(
+                                        "⌨️ Typed — no OTP screen appeared within 30s.",
+                                        "⌨️ টাইপ হয়েছে — ৩০ সেকেন্ডে OTP স্ক্রিন আসেনি।",
+                                    )
+                                    .into(),
                                 );
                                 ui.set_notification_kind("warn".into());
                             }
@@ -608,7 +639,11 @@ fn trigger_autotype(
                     Ok(()) => {
                         if stale {
                             ui.set_notification_text(
-                                "⚠️ Auto-typed: Password is over 6 months old. Consider updating it.".into(),
+                                crate::i18n::tr(
+                                    "⚠️ Auto-typed: Password is over 6 months old. Consider updating it.",
+                                    "⚠️ Auto-typed: পাসওয়ার্ড ৬ মাসের পুরোনো। আপডেট করার কথা ভাবুন।",
+                                )
+                                .into(),
                             );
                             ui.set_notification_kind("warn".into());
                         }
@@ -4968,7 +5003,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 main_ui.set_rp_secret(g_secret.into());
                 main_ui.set_rp_error(String::new().into());
                 main_ui.set_rp_show(true);
-                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                main_ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
                 return;
             }
         }
@@ -5062,7 +5097,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 main_ui.set_rp_secret(g_secret.into());
                 main_ui.set_rp_error(String::new().into());
                 main_ui.set_rp_show(true);
-                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                main_ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
                 return;
             }
         }
@@ -5072,7 +5107,9 @@ fn main() -> Result<(), slint::PlatformError> {
         };
         let Some(req) = req else {
             if let Some(ui) = type_qb_main.upgrade() {
-                ui.set_notification_text("This item is no longer available.".into());
+                ui.set_notification_text(
+                    crate::i18n::tr("This item is no longer available.", "এই আইটেমটি আর নেই।").into(),
+                );
                 ui.set_notification_kind("warn".into());
             }
             return;
@@ -8444,7 +8481,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 main_ui.set_rp_secret(g_secret.into());
                 main_ui.set_rp_error(String::new().into());
                 main_ui.set_rp_show(true);
-                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                main_ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
                 return;
             }
         }
@@ -8527,7 +8564,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 ui.set_rp_secret(g_secret.into());
                 ui.set_rp_error(String::new().into());
                 ui.set_rp_show(true);
-                ui.set_notification_text("🔒 Master re-prompt required.".into());
+                ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
                 return;
             }
         }
@@ -15732,7 +15769,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 main_ui.set_rp_secret(g_secret.into());
                 main_ui.set_rp_error(String::new().into());
                 main_ui.set_rp_show(true);
-                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
+                main_ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
                 return;
             }
         }

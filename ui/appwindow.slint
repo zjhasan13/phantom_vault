@@ -3099,8 +3099,8 @@ export component MainWindow inherits Window {
                     // A10: visible countdown + cancel for the hands-free 2FA watcher.
                     if root.chain_2fa_active : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.secondary; height: 32px;
                         HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px;
-                            Text { text: "🔐 2FA auto-fill in " + root.chain_2fa_secs + "s"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
-                            AuraButton { label: "Cancel"; width: 90px; height: 26px; clicked => { root.cancel_chain_2fa(); } }
+                            Text { text: root.ui_lang == "bn" ? "🔐 2FA অটো-ফিল " + root.chain_2fa_secs + "s" : "🔐 2FA auto-fill in " + root.chain_2fa_secs + "s"; color: PhantomTheme.secondary; font-size: 12px; font-weight: 700; horizontal-stretch: 1; vertical-alignment: center; }
+                            AuraButton { label: root.ui_lang == "bn" ? "বাতিল" : "Cancel"; width: 90px; height: 26px; clicked => { root.cancel_chain_2fa(); } }
                         }
                     }
                     toast_timer := Timer {
@@ -4153,18 +4153,18 @@ export component QuickCaptureWindow inherits Window {
                 }
 
                 FieldLabel { text: root.ui_lang == "bn" ? "সার্ভিসের নাম" : "SERVICE TITLE"; }
-                cap_title_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; accessible-label: "Service title"; }
+                cap_title_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; accessible-label: root.ui_lang == "bn" ? "সার্ভিসের নাম" : "Service title"; }
                 FieldLabel { text: root.ui_lang == "bn" ? "ইউজারনেম / ইমেইল" : "USERNAME / EMAIL"; }
-                LineEdit { placeholder-text: root.ui_lang == "bn" ? "সম্ভব হলে স্বয়ংক্রিয়ভাবে শনাক্ত হবে" : "Detected automatically when possible"; text <=> root.cap_user; height: 36px; accessible-label: "Username or email"; }
+                LineEdit { placeholder-text: root.ui_lang == "bn" ? "সম্ভব হলে স্বয়ংক্রিয়ভাবে শনাক্ত হবে" : "Detected automatically when possible"; text <=> root.cap_user; height: 36px; accessible-label: root.ui_lang == "bn" ? "ইউজারনেম বা ইমেইল" : "Username or email"; }
                 FieldLabel { text: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "PASSWORD"; }
                 HorizontalLayout {
                     spacing: 8px;
-                    LineEdit { placeholder-text: root.ui_lang == "bn" ? "পেস্ট করুন, টাইপ করুন, বা 🎲…" : "Paste, type, or 🎲…"; input-type: root.cap_show_pass ? text : password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accessible-label: "Password"; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
+                    LineEdit { placeholder-text: root.ui_lang == "bn" ? "পেস্ট করুন, টাইপ করুন, বা 🎲…" : "Paste, type, or 🎲…"; input-type: root.cap_show_pass ? text : password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accessible-label: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "Password"; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
                     AuraButton { label: root.cap_show_pass ? "🙈" : "👁"; width: 52px; height: 36px; clicked => { root.cap_show_pass = !root.cap_show_pass; } }
                     AuraButton { label: "🎲"; width: 56px; clicked => { root.capture_generate(); } }
                 }
                 FieldLabel { text: root.ui_lang == "bn" ? "2FA সিক্রেট (ঐচ্ছিক)" : "2FA SECRET (OPTIONAL)"; }
-                LineEdit { placeholder-text: root.ui_lang == "bn" ? "2FA সেটআপ: otpauth সিক্রেট পেস্ট করুন" : "Paste otpauth secret when setting up 2FA"; text <=> root.cap_totp; height: 36px; accessible-label: "2FA secret"; }
+                LineEdit { placeholder-text: root.ui_lang == "bn" ? "2FA সেটআপ: otpauth সিক্রেট পেস্ট করুন" : "Paste otpauth secret when setting up 2FA"; text <=> root.cap_totp; height: 36px; accessible-label: root.ui_lang == "bn" ? "2FA সিক্রেট" : "2FA secret"; }
 
                 HorizontalLayout {
                     spacing: 8px;

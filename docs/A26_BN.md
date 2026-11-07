@@ -118,3 +118,15 @@ pilot, but it does not scale to full A26. When finishing the translation:
 - Manual: toggle BN on the lock screen and in Settings → restart → the choice
   persists; switch back to English.
 - No new dependency, no network.
+
+## Coverage update (2026-11-07, auto-type batch)
+
+- Auto-type notifications now localize: multi-line refusal, no-context block,
+  spoof warning (formatted), app-mismatch (formatted), "item no longer
+  available", master re-prompt, stale-password warning, hands-free 2FA success
+  and the 30 s "no OTP screen" message.
+- The 2FA countdown pill and its Cancel button, plus the Quick Capture field
+  accessibility labels, follow `ui_lang`.
+- Still English by design: `VaultError` text inside `Auto-Type: {e}` (the
+  underlying error enum is not translated), and the remaining dialogs listed
+  above.
