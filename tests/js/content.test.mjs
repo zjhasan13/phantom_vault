@@ -318,6 +318,40 @@ test("card prompt persists across navigation", async (t) => {
   assert.ok(saver(second.window), "card prompt restored after navigation");
 });
 
+test("card prompt flags a duplicate PAN", async (t) => {
+  const stored = [
+    { id: "c1", title: "Visa", number: "4111111111111111", exp_month: "12", exp_year: "2029", cvv: "999", folder: "General" },
+    { id: "c2", title: "Visa backup", number: "4111111111111111", exp_month: "11", exp_year: "2028", cvv: "888", folder: "General" },
+  ];
+  const { window } = env(t, `<form>
+    <input autocomplete="cc-number" name="cardnumber" value="4111 1111 1111 1111">
+    <input autocomplete="cc-exp" name="exp" value="12/30">
+    <input autocomplete="cc-csc" name="cvv" value="123">
+  </form>`, "https://shop.example/checkout", [], stored);
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  const root = saverRoot(window);
+  assert.ok(root, "card prompt shows");
+  assert.match(root.textContent, /also in 1 other item/i, "duplicate PAN hint");
+});
+
+test("identity prompt flags a reused email", async (t) => {
+  const stored = [
+    { id: "i1", full_name: "Alice", email: "alice@example.com", phone: "", address: "", folder: "General" },
+    { id: "i2", full_name: "Alice B", email: "alice@example.com", phone: "", address: "", folder: "General" },
+  ];
+  const { window } = env(t, `<form>
+    <input autocomplete="name" name="name" value="Alice">
+    <input autocomplete="email" name="email" value="alice@example.com">
+    <input autocomplete="tel" name="tel" value="+15550001111">
+  </form>`, "https://shop.example/account", [], [], stored);
+  submit(window, window.document.querySelector("form"));
+  await flush(150);
+  const root = saverRoot(window);
+  assert.ok(root, "identity prompt shows");
+  assert.match(root.textContent, /also in 1 other item/i, "reused email hint");
+});
+
 test("save prompt follows the BN language setting", async (t) => {
   const { window } = env(t, loginForm("alice", "pw123"), "https://example.com/login",
     [], [], [], [], { lang: "bn" });

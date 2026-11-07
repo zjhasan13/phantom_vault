@@ -3543,7 +3543,8 @@
     if (cached) {
       const existing = cached.find((k) => digitsOf(k && k.number) === pan);
       if (existing && sameCard(existing, card)) return;
-      cardSaverToast(card, !!existing);
+      const reuse = cached.filter((k) => digitsOf(k && k.number) === pan).length;
+      cardSaverToast(card, !!existing, false, reuse);
       return;
     }
     // C1 parity: warm on boot so a normal submit can prompt synchronously
@@ -3551,7 +3552,8 @@
     getCards().then((list) => {
       const existing = (list || []).find((k) => digitsOf(k && k.number) === pan);
       if (existing && sameCard(existing, card)) return;
-      cardSaverToast(card, !!existing);
+      const reuse = (list || []).filter((k) => digitsOf(k && k.number) === pan).length;
+      cardSaverToast(card, !!existing, false, reuse);
     }).catch(() => {}); // locked/bridge down: a save click would fail anyway
   }
   // Shared folder picker for the card/identity prompts (the login prompt has
@@ -3584,7 +3586,20 @@
     return { lbl: deep, sel };
   }
 
-  function cardSaverToast(card, updated, restored) {
+  // Reuse hint shared by the card/identity prompts (the login prompt has its
+  // own at-risk flags row). Amber chip, same shape as the login flags.
+  function pvReuseRow(text) {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;gap:6px;flex-wrap:wrap;margin:-4px 0 8px;";
+    const c = document.createElement("span");
+    c.textContent = text;
+    c.style.cssText = "font:700 9px 'JetBrains Mono',monospace;letter-spacing:.4px;text-transform:uppercase;" +
+      "padding:4px 6px;border-radius:5px;border:1px solid #f59e0b44;background:rgba(245,158,11,.18);color:#f59e0b;";
+    row.appendChild(c);
+    return row;
+  }
+
+  function cardSaverToast(card, updated, restored, reuse) {
     if (document.getElementById("__pv_saver")) return;
     const brand = cardBrand(card.number);
     const box = document.createElement("div");
@@ -3599,6 +3614,12 @@
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [brand || "Card", masked(card.number), card.cardholder]
       .filter(Boolean).join(" · ") + " — store it encrypted.";
+    // Reuse hint: the same PAN is already stored in N other items (the card
+    // being updated does not count).
+    const extraCards = Math.max(0, (reuse || 0) - 1);
+    const hints = extraCards > 0
+      ? pvReuseRow(pvT("also in " + extraCards + " other item(s)", "আরও " + extraCards + " আইটেমে আছে"))
+      : null;
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
     const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(card.folder);
@@ -3613,7 +3634,10 @@
     const root = shadow || box;
     const a11y = document.createElement("style");
     a11y.textContent = "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
-    root.append(a11y, t, sub, folderLbl, folderSel, row);
+    const cardParts = [a11y, t, sub];
+    if (hints) cardParts.push(hints);
+    cardParts.push(folderLbl, folderSel, row);
+    root.append(...cardParts);
     document.documentElement.append(box);
     if (!restored) {
       pvSavePendingSet({
@@ -3705,16 +3729,22 @@
     if (cached) {
       const existing = cached.find((i) => sameIdentity(i, idf));
       if (existing && !identityChanged(existing, idf)) return;
-      identitySaverToast(idf, !!existing);
+      const reuse = idf.email
+        ? cached.filter((i) => (i.email || "").toLowerCase() === idf.email.toLowerCase()).length
+        : 0;
+      identitySaverToast(idf, !!existing, false, reuse);
       return;
     }
     getIdentities().then((list) => {
       const existing = (list || []).find((i) => sameIdentity(i, idf));
       if (existing && !identityChanged(existing, idf)) return;
-      identitySaverToast(idf, !!existing);
+      const reuse = idf.email
+        ? (list || []).filter((i) => (i.email || "").toLowerCase() === idf.email.toLowerCase()).length
+        : 0;
+      identitySaverToast(idf, !!existing, false, reuse);
     }).catch(() => {}); // locked/bridge down: a save click would fail anyway
   }
-  function identitySaverToast(idf, updated, restored) {
+  function identitySaverToast(idf, updated, restored, reuse) {
     if (document.getElementById("__pv_saver")) return;
     const box = document.createElement("div");
     box.id = "__pv_saver";
@@ -3730,6 +3760,11 @@
     sub.style.cssText = "color:#86948a;font-size:11px;margin-bottom:10px;";
     sub.textContent = [idf.full_name, idf.email || idf.phone || idf.address]
       .filter(Boolean).join(" · ") + " — store it encrypted.";
+    // Reuse hint: the same email is already stored in N other identities.
+    const extraIds = Math.max(0, (reuse || 0) - 1);
+    const hints = extraIds > 0
+      ? pvReuseRow(pvT("also in " + extraIds + " other item(s)", "আরও " + extraIds + " আইটেমে আছে"))
+      : null;
     const row = document.createElement("div");
     row.style.cssText = "display:flex;gap:8px;";
     const { lbl: folderLbl, sel: folderSel } = pvFolderPicker(idf.folder);
@@ -3744,7 +3779,10 @@
     const root = shadow || box;
     const a11y = document.createElement("style");
     a11y.textContent = "*:focus-visible{outline:2px solid #4edea3;outline-offset:2px}";
-    root.append(a11y, t, sub, folderLbl, folderSel, row);
+    const idParts = [a11y, t, sub];
+    if (hints) idParts.push(hints);
+    idParts.push(folderLbl, folderSel, row);
+    root.append(...idParts);
     document.documentElement.append(box);
     if (!restored) {
       pvSavePendingSet({
