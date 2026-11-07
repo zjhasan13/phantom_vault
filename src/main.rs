@@ -3950,42 +3950,92 @@ fn foreground_hwnd() -> Option<isize> {
 
 #[cfg(windows)]
 fn bring_to_foreground(window: &slint::Window) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::SetForegroundWindow;
-    if let Some(hwnd) = window_hwnd(window) {
-        unsafe {
-            SetForegroundWindow(hwnd as _);
+    use windows_sys::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        BringWindowToTop, GetForegroundWindow, GetWindowThreadProcessId, SetForegroundWindow,
+    };
+    let Some(hwnd) = window_hwnd(window) else { return };
+    // SAFETY: plain Win32 focus calls on our own HWND; all failures ignored.
+    unsafe {
+        let fg = GetForegroundWindow();
+        let mut fg_pid = 0u32;
+        let fg_thread = GetWindowThreadProcessId(fg, &mut fg_pid);
+        let my_thread = GetCurrentThreadId();
+        let attached = AttachThreadInput(my_thread, fg_thread, 1) != 0;
+        BringWindowToTop(hwnd as _);
+        SetForegroundWindow(hwnd as _);
+        if attached {
+            AttachThreadInput(my_thread, fg_thread, 0);
         }
     }
 }
 
-/// A24: apply a logical-pixel drag delta to a frameless window.
+/// A24: 1:1 window drag. The local mouse delta shrinks as the window follows
+/// the cursor, so anchor on the absolute cursor position + window origin.
 #[cfg(windows)]
-fn drag_window_by(window: &slint::Window, dx: f32, dy: f32) {
-    use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowRect, SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-    };
+#[derive(Clone, Copy)]
+struct DragState {
+    cursor: (i32, i32),
+    origin: (i32, i32),
+}
+
+#[cfg(windows)]
+static DRAG_STATE: Mutex<Option<DragState>> = Mutex::new(None);
+
+#[cfg(windows)]
+fn cursor_pos() -> Option<(i32, i32)> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetCursorPos;
+    let mut p: windows_sys::Win32::Foundation::POINT = unsafe { std::mem::zeroed() };
+    if unsafe { GetCursorPos(&mut p) } != 0 {
+        Some((p.x, p.y))
+    } else {
+        None
+    }
+}
+
+#[cfg(windows)]
+fn drag_window_begin(window: &slint::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::GetWindowRect;
     let Some(hwnd) = window_hwnd(window) else { return };
-    let scale = window.scale_factor();
-    let dx = (dx * scale).round() as i32;
-    let dy = (dy * scale).round() as i32;
-    if dx == 0 && dy == 0 {
+    let mut r: windows_sys::Win32::Foundation::RECT = unsafe { std::mem::zeroed() };
+    if unsafe { GetWindowRect(hwnd as _, &mut r) } == 0 {
         return;
     }
-    // SAFETY: plain Win32 calls on our own HWND; failures are ignored.
-    unsafe {
-        let mut r: windows_sys::Win32::Foundation::RECT = std::mem::zeroed();
-        if GetWindowRect(hwnd as _, &mut r) != 0 {
-            SetWindowPos(
-                hwnd as _,
-                std::ptr::null_mut(),
-                r.left + dx,
-                r.top + dy,
-                0,
-                0,
-                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-            );
-        }
+    if let Some(cursor) = cursor_pos() {
+        *DRAG_STATE.lock().unwrap() = Some(DragState {
+            cursor,
+            origin: (r.left, r.top),
+        });
     }
+}
+
+#[cfg(windows)]
+fn drag_window_update(window: &slint::Window) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    };
+    let Some(state) = *DRAG_STATE.lock().unwrap() else { return };
+    let Some(hwnd) = window_hwnd(window) else { return };
+    let Some(cursor) = cursor_pos() else { return };
+    let x = state.origin.0 + (cursor.0 - state.cursor.0);
+    let y = state.origin.1 + (cursor.1 - state.cursor.1);
+    // SAFETY: plain Win32 move of our own HWND.
+    unsafe {
+        SetWindowPos(
+            hwnd as _,
+            std::ptr::null_mut(),
+            x,
+            y,
+            0,
+            0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+        );
+    }
+}
+
+#[cfg(windows)]
+fn drag_window_end() {
+    *DRAG_STATE.lock().unwrap() = None;
 }
 
 /// A23: hide an always-on-top popup as soon as it loses the foreground. The
@@ -3999,17 +4049,28 @@ fn spawn_focus_watch(
     hide: impl FnOnce() + Send + 'static,
 ) {
     thread::spawn(move || {
-        let deadline = std::time::Instant::now() + Duration::from_secs(120);
+        let started = std::time::Instant::now();
+        let mut seen = false;
+        let deadline = started + Duration::from_secs(120);
         while std::time::Instant::now() < deadline {
             thread::sleep(Duration::from_millis(250));
             if !visible.load(Ordering::SeqCst) {
                 return;
             }
-            if foreground_hwnd() != Some(own) {
-                visible.store(false, Ordering::SeqCst);
-                let _ = slint::invoke_from_event_loop(hide);
-                return;
+            let fg = foreground_hwnd();
+            if fg == Some(own) {
+                seen = true;
+                continue;
             }
+            // Grace: SetForegroundWindow can be delayed by the OS. Only enforce
+            // the hide once the popup has actually held the foreground (or the
+            // grace expired), so a slow raise cannot hide it instantly.
+            if !seen && started.elapsed() < Duration::from_secs(2) {
+                continue;
+            }
+            visible.store(false, Ordering::SeqCst);
+            let _ = slint::invoke_from_event_loop(hide);
+            return;
         }
     });
 }
@@ -4215,20 +4276,35 @@ fn main() -> Result<(), slint::PlatformError> {
     quick_bar.set_ui_lang(saved_lang.into());
     let capture_window = QuickCaptureWindow::new()?;
     capture_window.set_ui_lang(saved_lang.into());
-    // A24: drag the frameless popups (deltas come from their TouchArea).
+    // A24: drag the frameless popups 1:1 with the absolute cursor.
     {
         let drag_qb = quick_bar.as_weak();
-        quick_bar.on_drag_by(move |dx, dy| {
+        quick_bar.on_drag_start(move || {
             if let Some(qb) = drag_qb.upgrade() {
-                drag_window_by(qb.window(), dx, dy);
+                drag_window_begin(qb.window());
             }
         });
+        let drag_qb_u = quick_bar.as_weak();
+        quick_bar.on_drag_update(move || {
+            if let Some(qb) = drag_qb_u.upgrade() {
+                drag_window_update(qb.window());
+            }
+        });
+        quick_bar.on_drag_end(drag_window_end);
+
         let drag_cap = capture_window.as_weak();
-        capture_window.on_drag_by(move |dx, dy| {
+        capture_window.on_drag_start(move || {
             if let Some(c) = drag_cap.upgrade() {
-                drag_window_by(c.window(), dx, dy);
+                drag_window_begin(c.window());
             }
         });
+        let drag_cap_u = capture_window.as_weak();
+        capture_window.on_drag_update(move || {
+            if let Some(c) = drag_cap_u.upgrade() {
+                drag_window_update(c.window());
+            }
+        });
+        capture_window.on_drag_end(drag_window_end);
     }
     let quickbar_visible = Arc::new(std::sync::atomic::AtomicBool::new(false));
     // Main-window visibility for the resource diet: background loops deep-
