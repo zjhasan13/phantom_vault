@@ -3184,7 +3184,6 @@ fn push_item(
         kind,
         title: title.into(),
         username: user.into(),
-        password: secret.into(),
         meta: meta.into(),
         url: url.into(),
         notes: notes.into(),
@@ -4927,45 +4926,15 @@ fn main() -> Result<(), slint::PlatformError> {
     let qb_weak_select = quick_bar.as_weak();
     let main_weak_for_copy = main_window.as_weak();
     let qb_visible_select = Arc::clone(&quickbar_visible);
-    let ct_select = Arc::clone(&clipboard_timeout_secs);
-    let activity_select = Arc::clone(&last_activity);
-    let vault_arc_select = Arc::clone(&active_vault);
-    quick_bar.on_item_selected(move |kind, id, password| {
+    quick_bar.on_item_selected(move |kind, id| {
         if let Some(qb) = qb_weak_select.upgrade() {
             qb.hide().ok();
         }
         qb_visible_select.store(false, std::sync::atomic::Ordering::SeqCst);
-        // Reprompt gate: armed logins detour through the MainWindow modal
-        // (rp_action 1 = copy) instead of copying straight from QuickBar.
+        // A33: the row no longer carries the secret. `quick_copy` resolves it
+        // by (kind, id) behind the same reprompt/canary gate as the main list.
         if let Some(main_ui) = main_weak_for_copy.upgrade() {
-            let gated = {
-                let v = lock_vault(&vault_arc_select);
-                reprompt_gate(&v, kind, id.as_str())
-            };
-            if let Some((g_user, g_secret)) = gated {
-                main_ui.set_rp_action(1);
-                main_ui.set_rp_kind(1);
-                main_ui.set_rp_id(id.as_str().into());
-                main_ui.set_rp_user(g_user.into());
-                main_ui.set_rp_secret(g_secret.into());
-                main_ui.set_rp_error(String::new().into());
-                main_ui.set_rp_show(true);
-                main_ui.set_notification_text("🔒 Master re-prompt required.".into());
-                return;
-            }
-        }
-        // Phase 20: masked copy (Win+V excluded) with guarded auto-clear.
-        if let Some(main_ui) = main_weak_for_copy.upgrade() {
-            if let Ok(mut t) = activity_select.lock() {
-                *t = std::time::Instant::now();
-            }
-            let secs = ct_select.load(std::sync::atomic::Ordering::SeqCst);
-            secure_copy_with_feedback(
-                main_ui.as_weak(),
-                password.as_str().to_string(),
-                &format!("📋 Password copied! (Masked from Win+V, auto-clearing in {secs}s)"),
-                secs,
-            );
+            main_ui.invoke_quick_copy(kind, id);
         }
     });
 
@@ -5058,9 +5027,18 @@ fn main() -> Result<(), slint::PlatformError> {
     let type_qb_vis = Arc::clone(&quickbar_visible);
     let type_qb_vault = Arc::clone(&active_vault);
     let type_qb_uvis = Arc::clone(&ui_visible);
-    quick_bar.on_type_selected(move |kind, id, username, password, totp| {
-        let canary =
-            check_canary_trip(&type_qb_vault, password.as_str(), "autotype-quickbar");
+    quick_bar.on_type_selected(move |kind, id| {
+        // A33: the row carries no secret; resolve it by (kind, id) for the
+        // honeytoken check, then build the whole request from the vault.
+        let canary_secret = {
+            let v = lock_vault(&type_qb_vault);
+            v.credentials
+                .iter()
+                .find(|c| c.id == id.as_str())
+                .map(|c| c.password.clone())
+                .unwrap_or_default()
+        };
+        let canary = check_canary_trip(&type_qb_vault, &canary_secret, "autotype-quickbar");
         if let Some(title) = &canary {
             if let Some(ui) = type_qb_main.upgrade() {
                 ui.set_notification_text(
@@ -5088,23 +5066,23 @@ fn main() -> Result<(), slint::PlatformError> {
                 return;
             }
         }
+        let req = {
+            let v = lock_vault(&type_qb_vault);
+            type_request_for(&v, kind, id.as_str())
+        };
+        let Some(req) = req else {
+            if let Some(ui) = type_qb_main.upgrade() {
+                ui.set_notification_text("This item is no longer available.".into());
+                ui.set_notification_kind("warn".into());
+            }
+            return;
+        };
         trigger_autotype(
             type_qb_main.clone(),
             type_qb_self.clone(),
             Arc::clone(&type_qb_vis),
             Arc::clone(&type_qb_uvis),
-            {
-                let v = lock_vault(&type_qb_vault);
-                type_request_for(&v, kind, id.as_str()).unwrap_or_else(|| {
-                    login_type_request(
-                        &v,
-                        id.as_str(),
-                        username.as_str(),
-                        password.as_str(),
-                        totp.as_str(),
-                    )
-                })
-            },
+            req,
             canary.is_some(),
         );
     });
@@ -8565,6 +8543,17 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                         .map(|(c, _)| (c, format!("⏱️ TOTP code copied! (auto-clearing in {secs}s)")))
                         .ok()
                 }),
+                // A33: the row model no longer carries these secrets; resolve
+                // them here so a Quick Bar click still copies license/note/
+                // identity/SSH values.
+                2 => v.licenses.iter().find(|l| l.id == id && l.deleted_at.is_none())
+                    .map(|l| (l.license_key.clone(), format!("📋 License key copied! (auto-clearing in {secs}s)"))),
+                3 => v.notes.iter().find(|n| n.id == id && n.deleted_at.is_none())
+                    .map(|n| (n.content.clone(), format!("📋 Note copied! (auto-clearing in {secs}s)"))),
+                5 => v.identities.iter().find(|i| i.id == id && i.deleted_at.is_none())
+                    .map(|i| (i.nid_or_passport.clone(), format!("📋 ID number copied! (auto-clearing in {secs}s)"))),
+                6 => v.ssh_keys.iter().find(|s| s.id == id && s.deleted_at.is_none())
+                    .map(|s| (s.private_key.clone(), format!("📋 SSH key copied! (auto-clearing in {secs}s)"))),
                 _ => None,
             }
         };
@@ -17431,7 +17420,8 @@ mod grid_tests {
         let all = vault_to_items(&v, &FilterState::default());
         let rows: Vec<_> = all.iter().filter(|r| r.kind == 8).collect();
         assert_eq!(rows.len(), 2);
-        assert!(rows.iter().all(|r| r.password.as_str().is_empty() && r.totp.as_str().is_empty()));
+        // A33: the row struct has no secret field at all; only TOTP stays empty.
+        assert!(rows.iter().all(|r| r.totp.as_str().is_empty()));
         assert!(rows.iter().all(|r| r.title.as_str() == "Google"));
         // Favorites: only the pinned one survives.
         let favs = vault_to_items(&v, &FilterState { fav_only: true, ..Default::default() });

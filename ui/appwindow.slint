@@ -23,7 +23,6 @@ struct CredentialView {
     kind: int,
     title: string,
     username: string,
-    password: string,
     meta: string,
     url: string,
     notes: string,
@@ -3885,9 +3884,9 @@ export component QuickBarWindow inherits Window {
     callback query_changed(string);
     // kind+id ride along so Rust can enforce the master-reprompt gate
     // (password strings alone cannot identify the item).
-    callback item_selected(int, string, string);
+    callback item_selected(int, string);
     callback copy_totp_selected(int, string);
-    callback type_selected(int, string, string, string, string);
+    callback type_selected(int, string);
     callback qb_open_url(string);
     callback dismiss();
     // A24: move the frameless panel (Rust anchors on the absolute cursor).
@@ -3965,7 +3964,7 @@ export component QuickBarWindow inherits Window {
                         root.query_changed(text);
                         if root.filtered_results.length > 0 {
                             root.qb_index = Math.min(root.qb_index, root.filtered_results.length - 1);
-                            root.item_selected(root.filtered_results[root.qb_index].kind, root.filtered_results[root.qb_index].id, root.filtered_results[root.qb_index].password);
+                            root.item_selected(root.filtered_results[root.qb_index].kind, root.filtered_results[root.qb_index].id);
                         }
                     }
                 }
@@ -3985,7 +3984,7 @@ export component QuickBarWindow inherits Window {
                             // T10: name each row for screen readers.
                             accessible-role: list-item;
                             accessible-label: item.title;
-                            row_touch := TouchArea { mouse-cursor: pointer; clicked => { root.item_selected(item.kind, item.id, item.password); } }
+                            row_touch := TouchArea { mouse-cursor: pointer; clicked => { root.item_selected(item.kind, item.id); } }
                             HorizontalLayout {
                                 padding: 8px;
                                 spacing: 8px;
@@ -4013,11 +4012,11 @@ export component QuickBarWindow inherits Window {
                                         spacing: 6px;
                                         alignment: center;
                                         if row_touch.has-hover || idx == root.qb_index : HorizontalLayout { spacing: 6px; alignment: center;
-                                        if item.kind == 1 : AuraButton { label: root.ui_lang == "bn" ? "⌨️ টাইপ" : "⌨️ Type"; width: 88px; clicked => { root.type_selected(item.kind, item.id, item.username, item.password, item.totp); } }
+                                        if item.kind == 1 : AuraButton { label: root.ui_lang == "bn" ? "⌨️ টাইপ" : "⌨️ Type"; width: 88px; clicked => { root.type_selected(item.kind, item.id); } }
                                         if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
                                         if item.url != "" : AuraButton { label: "🌐"; width: 44px; clicked => { root.qb_open_url(item.url); } }
                                         }
-                                        AuraButton { label: root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"; width: 88px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
+                                        AuraButton { label: root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"; width: 88px; clicked => { root.item_selected(item.kind, item.id); } }
                                     }
                                 }
                             }
