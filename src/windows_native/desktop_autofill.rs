@@ -318,6 +318,18 @@ pub fn set_focused_value(value: &str) -> bool {
     }
 }
 
+/// A2: is the focused control a password box? Read-only; false on any UIA
+/// failure so the caller can fall back to the old keystroke path.
+pub fn focused_is_password() -> bool {
+    let Ok(_com) = ComGuard::enter() else { return false; };
+    let Ok(auto) = automation() else { return false; };
+    // SAFETY: read-only focused-element query.
+    unsafe {
+        let Ok(el) = auto.GetFocusedElement() else { return false; };
+        is_password(&el)
+    }
+}
+
 /// Hunt a neighboring non-password Edit and read its value (the username).
 fn hunt_username(auto: &IUIAutomation, focused: &IUIAutomationElement) -> String {
     // SAFETY: walker navigation; every step is fallible and degrades to "".

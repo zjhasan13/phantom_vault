@@ -157,7 +157,7 @@ fn tokio_rt() -> Option<tokio::runtime::Runtime> {
 /// hands-free. Secrets ride zeroizing wrappers and die with the thread.
 ///
 /// Unified auto-type request: logins type user{TAB}pass{ENTER} (golden path),
-/// cards type number{TAB}MM/YY{TAB}CVV, identities type
+/// cards type number{TAB}month{TAB}year{TAB}CVV, identities type
 /// name{TAB}email{TAB}phone{TAB}address (no submit). `last_changed == 0`
 /// means "unknown" and skips the stale nudge (only logins track rotation).
 struct TypeRequest {
@@ -311,6 +311,52 @@ fn app_binding_matches(apps: &[String], exe: &str, app_name: &str) -> bool {
     })
 }
 
+/// A1: pre-flight outcome for Auto-Type. Pure so the fail-open regression can
+/// be pinned by a unit test.
+#[derive(Debug, PartialEq, Eq)]
+enum AutotypeGate {
+    Allow,
+    /// COM/UIA failed. Unbound web items keep the old behaviour; a bound item
+    /// must never type without proving the foreground app.
+    BlockNoContext,
+    BlockSpoof(&'static str),
+    BlockApp(String),
+}
+
+/// A1: decide whether Auto-Type may proceed. `None` = `inspect_active_context`
+/// failed. Bound items fail closed; unbound items still type (their contract is
+/// "type into whatever is focused", e.g. the browser fallback).
+fn autotype_gate(
+    apps: &[String],
+    ctx: Option<&windows_native::desktop_autofill::DesktopContext>,
+) -> AutotypeGate {
+    let Some(ctx) = ctx else {
+        return if apps.is_empty() {
+            AutotypeGate::Allow
+        } else {
+            AutotypeGate::BlockNoContext
+        };
+    };
+    if let Some(brand) = windows_native::desktop_autofill::executable_spoof_brand(&ctx.exe_name) {
+        return AutotypeGate::BlockSpoof(brand);
+    }
+    if !apps.is_empty() && !app_binding_matches(apps, &ctx.exe_name, &ctx.app_name) {
+        let active = if ctx.app_name.trim().is_empty() {
+            ctx.exe_name.clone()
+        } else {
+            ctx.app_name.clone()
+        };
+        return AutotypeGate::BlockApp(active);
+    }
+    AutotypeGate::Allow
+}
+
+/// A4: notes (3) and SSH keys (6) are multi-line secrets. Typing them would
+/// flatten the content, so the UI must offer Copy instead.
+fn autotype_kind_allowed(kind: i32) -> bool {
+    kind != 3 && kind != 6
+}
+
 fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
@@ -321,18 +367,47 @@ fn trigger_autotype(
     use windows_native::autotype::{
         type_card, type_fields, type_identity, type_sequence, type_sequence_paired,
     };
-    // Spoof guard FIRST (before minimizing — minimizing changes foreground).
-    // A typosquat/leet executable refuses the keystrokes entirely.
-    if let Ok(ctx) = windows_native::desktop_autofill::inspect_active_context() {
-        if let Some(brand) =
-            windows_native::desktop_autofill::executable_spoof_brand(&ctx.exe_name)
-        {
+    // A4: notes / SSH keys are multi-line. Keystrokes would flatten them, so
+    // refuse and let the UI offer Copy instead.
+    if !autotype_kind_allowed(req.kind) {
+        crate::security::access_log::log_event("autotype-blocked-multiline", &req.item_title);
+        let _ = slint::invoke_from_event_loop(move || {
+            if let Some(ui) = main_weak.upgrade() {
+                ui.set_notification_text(
+                    "📋 Multi-line item — use Copy instead of Auto-Type.".into(),
+                );
+            }
+        });
+        return;
+    }
+    // Spoof + app-binding gate. A1: a bound item must not type when the
+    // foreground app cannot be inspected; that used to fail open.
+    let ctx = windows_native::desktop_autofill::inspect_active_context().ok();
+    match autotype_gate(&req.apps, ctx.as_ref()) {
+        AutotypeGate::Allow => {}
+        AutotypeGate::BlockNoContext => {
+            crate::security::access_log::log_event("autotype-blocked-nocontext", "");
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = main_weak.upgrade() {
+                    ui.set_notification_text(
+                        "🛡️ Could not verify the active app — Auto-Type blocked for this bound item."
+                            .into(),
+                    );
+                }
+            });
+            return;
+        }
+        AutotypeGate::BlockSpoof(brand) => {
+            let exe = ctx
+                .as_ref()
+                .map(|c| c.exe_name.clone())
+                .unwrap_or_default();
             let msg = format!(
                 "🚨 App-Spoof Hazard: Suspicious executable '{}' detected (impersonating {})! Auto-type blocked for security.",
-                if ctx.exe_name.is_empty() { "?" } else { &ctx.exe_name },
+                if exe.is_empty() { "?" } else { exe.as_str() },
                 brand
             );
-            crate::security::access_log::log_event("autotype-blocked-spoof", &ctx.exe_name);
+            crate::security::access_log::log_event("autotype-blocked-spoof", &exe);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = main_weak.upgrade() {
                     ui.set_notification_text(msg.into());
@@ -340,19 +415,17 @@ fn trigger_autotype(
             });
             return;
         }
-        // P2: app-bound items only type into their own app. Without this a
-        // Discord password could be typed into Notepad (or a lookalike app the
-        // user Alt+Tabbed into). Web items carry an empty list and are exempt.
-        if !req.apps.is_empty()
-            && !app_binding_matches(&req.apps, &ctx.exe_name, &ctx.app_name)
-        {
-            let active = if ctx.app_name.trim().is_empty() { ctx.exe_name.as_str() } else { ctx.app_name.as_str() };
+        AutotypeGate::BlockApp(active) => {
+            let exe = ctx
+                .as_ref()
+                .map(|c| c.exe_name.clone())
+                .unwrap_or_default();
             let msg = format!(
                 "🚫 App mismatch: this item is bound to {} — active app is '{}'. Auto-type blocked.",
                 req.apps.join(", "),
                 active
             );
-            crate::security::access_log::log_event("autotype-blocked-app", &ctx.exe_name);
+            crate::security::access_log::log_event("autotype-blocked-app", &exe);
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = main_weak.upgrade() {
                     ui.set_notification_text(msg.into());
@@ -8006,8 +8079,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         );
     });
 
-    // Bitwarden-parity: type ANY item kind by (kind, id) — cards type
-    // number{TAB}MM/YY{TAB}CVV, identities type name{TAB}email{TAB}phone{TAB}address.
+    // Bitwarden-parity: type ANY item kind by (kind, id) - cards type
+    // number{TAB}month{TAB}year{TAB}CVV, identities type name{TAB}email{TAB}phone{TAB}address.
     let type_item_main = main_window.as_weak();
     let type_item_qb = quick_bar.as_weak();
     let type_item_vis = Arc::clone(&quickbar_visible);
@@ -16057,6 +16130,61 @@ mod grid_tests {
             app_binding_matches(&[], "notepad", "Notepad"),
             "web items (no binding) type anywhere"
         );
+    }
+
+    fn test_ctx(app: &str, exe: &str) -> windows_native::desktop_autofill::DesktopContext {
+        windows_native::desktop_autofill::DesktopContext {
+            app_name: app.into(),
+            exe_name: exe.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn autotype_gate_fails_closed_for_bound_items_without_context() {
+        // A1: COM/UIA failure must not skip the app-binding check.
+        let apps = vec!["discord".to_string()];
+        assert_eq!(autotype_gate(&apps, None), AutotypeGate::BlockNoContext);
+        // Unbound items keep the old "type into whatever is focused" contract.
+        assert_eq!(autotype_gate(&[], None), AutotypeGate::Allow);
+    }
+
+    #[test]
+    fn autotype_gate_blocks_spoofed_executables() {
+        let without_binding: Vec<String> = Vec::new();
+        let spoof = test_ctx("Chrome", "chr0me");
+        assert_eq!(
+            autotype_gate(&without_binding, Some(&spoof)),
+            AutotypeGate::BlockSpoof("Chrome")
+        );
+    }
+
+    #[test]
+    fn autotype_gate_blocks_wrong_app_and_allows_bound_match() {
+        let apps = vec!["discord".to_string()];
+        let wrong = test_ctx("Notepad", "notepad");
+        assert_eq!(
+            autotype_gate(&apps, Some(&wrong)),
+            AutotypeGate::BlockApp("Notepad".into())
+        );
+        let right = test_ctx("Discord", "discord");
+        assert_eq!(autotype_gate(&apps, Some(&right)), AutotypeGate::Allow);
+        // Empty pretty name falls back to the executable stem.
+        let empty = test_ctx("", "notepad");
+        assert_eq!(
+            autotype_gate(&apps, Some(&empty)),
+            AutotypeGate::BlockApp("notepad".into())
+        );
+    }
+
+    #[test]
+    fn autotype_refuses_multiline_item_kinds() {
+        // A4: notes + SSH keys must go through Copy, never keystrokes.
+        assert!(!autotype_kind_allowed(3), "notes are multi-line");
+        assert!(!autotype_kind_allowed(6), "SSH keys are multi-line");
+        for kind in [1, 2, 4, 5, 8] {
+            assert!(autotype_kind_allowed(kind), "kind {kind} must stay typable");
+        }
     }
 
     #[test]

@@ -171,14 +171,24 @@ pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
     Ok(())
 }
 
-/// Payment-card checkout fill: number{TAB}MM/YY{TAB}CVV (no submit).
+/// A3/A18: pure card checkout order — `number{TAB}month{TAB}year{TAB}CVV`
+/// (4 Tab stops, matching `main.rs`'s `TypeRequest`). A missing half of the
+/// expiry stays empty instead of becoming the malformed `"/2030"` / `"01/"`.
+fn card_fields<'a>(number: &'a str, exp_month: &'a str, exp_year: &'a str, cvv: &'a str) -> [&'a str; 4] {
+    [number.trim(), exp_month.trim(), exp_year.trim(), cvv.trim()]
+}
+
+/// Payment-card checkout fill: number{TAB}month{TAB}year{TAB}CVV (no submit).
 pub fn type_card(number: &str, exp_month: &str, exp_year: &str, cvv: &str) -> Result<()> {
-    let exp = if exp_month.trim().is_empty() && exp_year.trim().is_empty() {
-        String::new()
-    } else {
-        format!("{}/{}", exp_month.trim(), exp_year.trim())
-    };
-    type_fields(&[number, &exp, cvv], false)
+    let fields = card_fields(number, exp_month, exp_year, cvv);
+    type_fields(&fields, false)
+}
+
+/// A2: try UIA pair-fill when the caller opted in (app-bound items) or when the
+/// focused control is the password box itself. In the latter case the username
+/// must never be typed first, so a pair failure aborts instead of mis-filling.
+fn should_try_pair(pair_fill: bool, password_focused: bool) -> bool {
+    pair_fill || password_focused
 }
 
 /// Identity/address fill: name{TAB}email{TAB}phone{TAB}address (no submit).
@@ -298,14 +308,27 @@ fn type_sequence_inner(username: &str, password: &str, pair_fill: bool) -> Resul
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     ensure_focus(target)?;
     let mut rng = OsRng;
+    // A2: if the user clicked the password box, the username must not be typed
+    // there. Try the UIA pair even for unbound items; if the pair is not
+    // available, fail closed instead of mis-filling.
+    let password_focused = crate::windows_native::desktop_autofill::focused_is_password();
     // 1b. UIA pair-fill: both fields located + written before Enter, so apps
     // with a broken/wrapping Tab order still fill correctly. Any failure
-    // (read-only password box, no visible pair) falls through to typing.
-    if pair_fill && crate::windows_native::desktop_autofill::fill_login_pair(username, password) {
+    // (read-only password box, no visible pair) falls through to typing -
+    // except when a password box is focused (abort below).
+    if should_try_pair(pair_fill, password_focused)
+        && crate::windows_native::desktop_autofill::fill_login_pair(username, password)
+    {
         crate::security::access_log::log_event("autotype/uia-pair", "login");
         ensure_focus(target)?;
         press_vk(VK_RETURN, &mut rng)?;
         return Ok(());
+    }
+    if password_focused {
+        return Err(VaultError::AutoType(
+            "password field is focused - focus the username field or bind this item to the app"
+                .into(),
+        ));
     }
     // 2. Username: UIA SetValue when writable, else char by char (verified
     // UTF-16 units, no translation).
@@ -429,5 +452,38 @@ mod tests {
                 assert_eq!(d.Anonymous.ki.wScan, unit, "unit {unit:#X} mangled");
             }
         }
+    }
+
+    #[test]
+    fn card_fields_keep_four_checkout_stops() {
+        // A3: number / month / year / CVV, matching main.rs's TypeRequest.
+        assert_eq!(
+            card_fields("4111 1111", "01", "2030", "123"),
+            ["4111 1111", "01", "2030", "123"]
+        );
+        // Values are trimmed for the field, not merged.
+        assert_eq!(
+            card_fields(" 4111 ", " 01 ", " 2030 ", " 123 "),
+            ["4111", "01", "2030", "123"]
+        );
+    }
+
+    #[test]
+    fn card_fields_never_emit_malformed_partial_expiry() {
+        // A18: a missing half stays empty (skip the box) instead of "/2030".
+        assert_eq!(card_fields("4111", "", "2030", "123")[1], "");
+        assert_eq!(card_fields("4111", "01", "", "123")[2], "");
+        // Both empty still leaves a Tab stop before the CVV.
+        let f = card_fields("4111", "", "", "123");
+        assert_eq!((f[1], f[2]), ("", ""));
+    }
+
+    #[test]
+    fn password_focus_forces_pair_attempt() {
+        // A2: a focused password box must never receive the username.
+        assert!(should_try_pair(false, true));
+        assert!(should_try_pair(true, false));
+        assert!(should_try_pair(true, true));
+        assert!(!should_try_pair(false, false));
     }
 }
