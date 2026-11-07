@@ -432,6 +432,76 @@ policy (`docs/UI_TOKENS.md:62-71`), and the popups reuse `AuraButton`,
 6. Then the visual-scale sweep (T1, T2, T3), brand casing and the four English
    strings (T8, T9).
 
+### Verification pass (2026-11-07)
+
+Read-only re-check of every citation in §8/§9 against HEAD `0bf187a`. Only docs
+changed since the audit (`git diff --stat de7e189..HEAD` → `docs/AUDIT.md`,
+`docs/HANDOFF.md`, `docs/SESSION_STATE.md`), so `src/` and `ui/` are the same
+tree the audit read. **No runtime reproduction yet; no gates were needed for
+this pass.**
+
+**Result: 33 of 34 A-items confirmed, 1 partial, 0 wrong, 0 stale line numbers;
+T1–T10 confirmed.**
+
+Confirmed exactly as written (spot-check evidence):
+
+| Item | Evidence that settles it |
+|---|---|
+| A1 | `main.rs:326` `if let Ok(ctx) = inspect_active_context()` wraps both the spoof and binding checks; `Err` falls through to typing |
+| A2 | `autotype.rs:313` writes the username to the focused control; pair-fill is only reached for non-empty `apps` (`main.rs:402-406`); `is_password_focused` has no reader in the type path (`main.rs:4427`, `:4863` only) |
+| A3 | `autotype.rs:175-182` builds `number{TAB}MM/YY{TAB}CVV` (3 stops) while `main.rs:209` calls for 4 |
+| A4 | `autotype.rs:65` drops every control char (`\n`, `\t`); notes/SSH are single-field requests (`main.rs:199-208`, `:235-244`) |
+| A5 | `desktop_autofill.rs:264-273` returns `true` on `SetValue().is_ok()`; the value is never re-read |
+| A7 | `desktop_autofill.rs:269` `up.SetValue("")` on password failure |
+| A8 | `desktop_autofill.rs:166-179` falls back to first password; focus guard only when focus is inside an Edit (`:254-258`) |
+| A9 | `desktop_autofill.rs:459-460` treat `securitycode`/`security-code` as OTP keys; `:528` accepts password edits |
+| A10 | `main.rs:483-505` has no cancel/lock check; `autotype.rs:261` captures the foreground at typing time |
+| A11 | `autotype.rs:248-255` compares HWND only |
+| A12 | `autotype.rs:322-335` sends one Tab and types the password with no post-Tab check |
+| A13 | `main.rs:295` reads `chain_2fa.pref` relative to cwd; missing file = ON |
+| A15 | `desktop_autofill.rs:352-359` returns the control name when the value is empty |
+| A16 | four `ComGuard::enter()` call sites; `Err` makes `set_focused_value` return false (`:234`, `:297`) |
+| A17 | `main.rs:3739` keeps all rows when `bound.is_empty()` |
+| A18 | `autotype.rs:176-180` `format!("{}/{}")` even when one half is empty |
+| A19 | `main.rs:254` standalone TOTP `press_enter: false`; login chain always submits (`autotype.rs:337`) |
+| A20 | access log writes on success (`main.rs:424`), spoof (`:335`), block (`:355`) — not on aborts |
+| A25 | Slint `:618` `changed notification_text => notification_kind = "info"` |
+| A26 | Slint `:3078` `Timer { interval: 4s; … }` |
+| A27 | canary text set at `main.rs:4690`, then overwritten by `:365` and `:469` |
+| A29 | no `set_cap_show_pass` anywhere in `src/`; `cap_show_pass` survives reopen |
+| A31 | no decoy guard before `trigger_autotype` (`main.rs:8000`, `:8059`), unlike capture-save (`:4955`) |
+| A33 | `main.rs:3538` passes `&c.password` into `CredentialView.password`; the "never carries secrets" comment is at `:8103-8105` |
+| A34 | `main.rs:459-460` restores and shows the main window right after typing |
+
+Partial:
+
+- **A32** — true for **Ctrl+Alt+A** only. `main.rs:4886` pre-fills `app_prefilter`
+  for the auto-type entry; the Alt+Space branch passes `String::new()` (`:4890`).
+
+Confirmed but runtime-dependent (static order proves the window, not the timing):
+
+- **A6** — `set_minimized(true)` (`main.rs:366`) is followed immediately by
+  `thread::spawn` (`:374`), and the worker captures `foreground_token()` at
+  `autotype.rs:295`. Whether the minimize has settled before that line runs
+  cannot be decided statically.
+- **A5 / A9 / A10 / A21–A30 / A34** — the code paths are proven, but the user
+  impact (React inputs ignoring `SetValue`, a CVV box receiving a TOTP, the
+  popups being keyboard-dead) needs a live target app and a screen recording.
+
+Theme verdict correction:
+
+- The §9 verdict "no colour is off-palette" holds for the two popups: their only
+  hex literals are `#060e20f2` and `#4edea366` (both tokens + alpha).
+- **But the toast info background `#101834` (`ui/appwindow.slint:3077`) is not in
+  `design/tokens.json`** (palette has `canvas #0b1326`). It is a raw literal that
+  T4 misses; add it to the token set or map it to an existing surface.
+
+Test-gap claim re-checked: the listed tests exist
+(`sanitize_strips_control_chars`, `sequence_layout_is_user_tab_pass_enter`,
+`tabbed_sequence_chains_fields_with_tabs`, `uia_setvalue_policy_requires_enabled_writable_edit`,
+`uia_login_pair_uses_focus_and_edit_order`, `otp_matcher_hits`,
+`spoof_guard_catches_typosquats`, …) and none of them pins A1/A2/A3/A4/A5.
+
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
 - New native document `phantomvault-backup` v1: the full `Vault` (logins,

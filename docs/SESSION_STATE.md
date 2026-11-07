@@ -93,8 +93,11 @@ Run Rust gates with `-j 1`; see "Known traps".
    T1-T10). The `Status` column there is authoritative: mark a row
    `fixed @<hash>` when it lands. Start with A1-A4 (fail-open guard,
    password-focused field, card 3-vs-4 Tab stops, multi-line SSH/note typing);
-   all four are small and unit-testable. Static analysis only so far: nothing was
-   reproduced on screen, and no gate has run on this tree.
+   all four are small and unit-testable. **Verified statically on 2026-11-07**
+   (see §9 "Verification pass"): 33/34 A-items confirmed, A32 partial
+   (Ctrl+Alt+A only), all T1-T10 confirmed, one extra off-token toast literal
+   `#101834`. Nothing reproduced on screen yet. The code tree is unchanged since
+   `171eb92` (only docs moved), where all four gates were green.
 
 ## Recently shipped (newest first, ~15 commits)
 
