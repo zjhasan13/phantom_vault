@@ -382,10 +382,10 @@ reproduced.
 | A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) | fixed @b4ec6d0 |
 | A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` | open |
 | A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` | open |
-| A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` | open |
-| A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` | open |
-| A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | open |
-| A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` | open |
+| A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` | fixed @34048fb |
+| A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` | fixed @34048fb |
+| A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | fixed @34048fb |
+| A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` | fixed @34048fb |
 | A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | fixed @b4ec6d0 |
 | A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | open |
 | A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | open |
@@ -568,6 +568,23 @@ Test-gap claim re-checked: the listed tests exist
   a live OTP flow (login submit -> OTP screen).
 - **A30** (watcher outlives a lock) is still open.
 - `cargo test` **579 passed / 0 failed / 4 ignored**, clippy clean.
+
+### Fix batch 5 — A25-A28 (`34048fb`)
+
+- **A25** — auto-type outcomes set `notification_kind`: block/mismatch/
+  multi-line = warn, spoof/abort = error, success = success. The banner is no
+  longer forced to the neutral info tint.
+- **A26** — the toast timer keeps warnings for 10 s and leaves errors until the
+  user dismisses them; info/success still clear after 4 s.
+- **A27** — the three auto-type entry points pass `quiet` when the honeytoken
+  tripped, so the canary banner is not overwritten by the "minimized" or result
+  toasts. Typing still proceeds (the tripwire is logged).
+- **A28** — block/abort reasons are mirrored to a Quick Bar `qb_status` line
+  (cleared on open and on query edits), so a refused type explains itself where
+  the user is looking.
+- Not screen-verified: these states need a honeytoken item and a bound-app
+  mismatch; the demo vault has neither. `cargo test` **579 / 0 / 4 ignored**,
+  clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

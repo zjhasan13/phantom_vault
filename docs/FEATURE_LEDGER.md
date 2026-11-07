@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `34048fb` | auto-type A25-A28: tone-aware toasts, sticky errors, canary alert preserved, Quick Bar block reasons |
 | `1cf999a` | auto-type A5/A10: UIA writes verified with keystroke fallback; cancellable 30 s 2FA watcher with countdown + focus guard |
 | `b4ec6d0` | auto-type A9/A21/A22/A29: card CVV rejected as OTP; Quick Bar + Quick Capture focus on open; Quick Bar index and capture mask reset |
 | `6b095fc` | auto-type A6–A7: target frozen after the minimize settle; typed username restored on a failed password write |

@@ -10,20 +10,19 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `1cf999a` (auto-type A1-A10/A18/A21/A22/A29) |
+| Branch / HEAD | `main` @ `34048fb` (auto-type A1-A10/A18/A21/A22/A25-A29) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `1cf999a`
+## Last code batch (2026-11-07) - `34048fb`
 
-Auto-type A1-A10 (+A18, A21, A22, A29): fail-closed gate, password-focus guard,
-four-stop card fill, multi-line refusal, target frozen after the minimize
-settle, username rollback, card-CVV matcher fix, verified UIA writes, popup
-focus/reset, and a cancellable 30 s 2FA watcher with a countdown pill.
-`cargo test` 579. Details: `docs/AUDIT.md` "Fix batch 1-4". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+Auto-type A1-A10 (+A18, A21, A22, A29) plus notification semantics A25-A28:
+tone-aware toasts, sticky errors, a canary alert that survives the result, and
+Quick Bar block reasons. `cargo test` 579. Details: `docs/AUDIT.md`
+"Fix batch 1-5". Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -99,10 +98,10 @@ Run Rust gates with `-j 1`; see "Known traps".
 8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
    `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
    T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A10, A18, A21, A22, A29 are fixed**
-   (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`; +10 tests, `cargo test` 579).
-   Next: notifications A25-A28, then focus/pair A8/A11/A12, then
-   A23/A24/A30-A34 and the T1-T10 token work. Statically verified on
+   `fixed @<hash>` when it lands. **A1-A10, A18, A21, A22, A25-A29 are fixed**
+   (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`; +10 tests,
+   `cargo test` 579). Next: focus/pair A8/A11/A12, then A23/A24/A30-A34 and the
+   T1-T10 token work. Statically verified on
    2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
    confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
    screen for the remaining items; A21 capture focus and A29 were also checked
@@ -111,6 +110,7 @@ Run Rust gates with `-j 1`; see "Known traps".
 ## Recently shipped (newest first, ~15 commits)
 
 ```
+34048fb fix(ui): give auto-type notifications a tone and keep critical alerts visible
 1cf999a fix(autotype): verify UIA writes and make the 2FA watcher cancellable
 b4ec6d0 fix(autotype): reject card CVV as OTP, focus the quick windows and reset their state
 6b095fc fix(autotype): freeze the target after the minimize settles and keep the typed username
