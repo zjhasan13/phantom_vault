@@ -295,10 +295,10 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 
 | ID | Defect | Location | Fix direction | Status |
 |---|---|---|---|---|
-| A1 | Both guards are fail-open: `if let Ok(ctx) = inspect_active_context()` skips the spoof **and** app-binding checks when COM/UIA fails, then typing proceeds | `main.rs:326`, `:346` | For app-bound items, inspection failure must abort and log (`autotype-blocked-nocontext`). | open |
-| A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. | open |
-| A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. | open |
-| A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. | open |
+| A1 | Both guards are fail-open: `if let Ok(ctx) = inspect_active_context()` skips the spoof **and** app-binding checks when COM/UIA fails, then typing proceeds | `main.rs:326`, `:346` | For app-bound items, inspection failure must abort and log (`autotype-blocked-nocontext`). | fixed @3b1fc92 |
+| A2 | The focused password box is never handled. Username is written to the focused control first (`SetValue`, else keystrokes), so clicking the password field sends the username into it; Tab then puts the password in the next control | `autotype.rs:313`, `:329`; `is_password_focused` is computed at `desktop_autofill.rs:568` but never read by the type path; pair-fill is app-bound only (`main.rs:402`) | Detect a password-focused control and require pair-fill or hunt the username field first. | fixed @3b1fc92 |
+| A3 | Card fill contradicts its own contract: `main.rs:209` says separate MM / YY boxes (4 Tab stops), but `type_card` collapses them into one `MM/YY` field (3 stops) | `main.rs:381`, `autotype.rs:175-182` | Type `number{TAB}month{TAB}year{TAB}cvv`, or keep both modes and pick from the focused control. | fixed @3b1fc92 |
+| A4 | Multi-line items are typed as one line: SSH keys (kind 6) and notes (kind 3) pass through `sanitize_field`, which strips `\n` and `\t` | `main.rs:235-244`, `:199-208`; `autotype.rs:65` | Refuse auto-type for kinds 3/6 and offer copy instead. | fixed @3b1fc92 |
 | A5 | UIA fill reports success on `SetValue Ok` alone. React/Electron controlled inputs ignore the write, no keystroke fallback runs, and the user is told the fill worked | `desktop_autofill.rs:264-273`; `autotype.rs:304-309` | Re-read the value pattern and compare; fall back to keystrokes when unchanged. | open |
 
 ### P1 — reliability and false positives
@@ -322,7 +322,7 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 | A15 | `hunt_username` returns the control's *name* when its value is empty, so a placeholder like "Email address" can be saved as the username | `desktop_autofill.rs:352-359` | Prefer empty over a placeholder; filter known placeholder strings. | open |
 | A16 | `ComGuard::enter()` runs per call; on an STA thread `RPC_E_CHANGED_MODE` makes UIA fill silently no-op | `desktop_autofill.rs:296` | Initialize COM once per worker. | open |
 | A17 | Quick Bar in an unbound app lists the whole vault, with no app-relevant narrowing | `main.rs:3706-3718` | Show bound items first, then recent, then the rest. | open |
-| A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. | open |
+| A18 | Partial expiry produces `"/2030"` (empty month) or `"01/"` (empty year) | `autotype.rs:176-180` | Skip the field instead of emitting a malformed date. | fixed @3b1fc92 (via A3) |
 | A19 | Standalone TOTP (kind 8) types without Enter while the login chain always submits | `main.rs:254` | Pick one behaviour, or expose a toggle. | open |
 | A20 | Aborted/failed types leave no access-log entry; only spoof and app-block events are logged | `main.rs:335`, `:355`, `:424` | Log `autotype-abort` with the reason, never the secret. | open |
 
@@ -501,6 +501,23 @@ Test-gap claim re-checked: the listed tests exist
 `tabbed_sequence_chains_fields_with_tabs`, `uia_setvalue_policy_requires_enabled_writable_edit`,
 `uia_login_pair_uses_focus_and_edit_order`, `otp_matcher_hits`,
 `spoof_guard_catches_typosquats`, …) and none of them pins A1/A2/A3/A4/A5.
+
+### Fix batch 1 — A1–A4 (`3b1fc92`)
+
+- **A1** — `autotype_gate()` returns `BlockNoContext` for bound items when
+  `inspect_active_context` fails; unbound items are unchanged.
+- **A2** — `focused_is_password()` + pair-first policy: a focused password box
+  never receives the username; the fill aborts if the UIA pair is unavailable.
+- **A3 / A18** — card fill is four stops (`number{TAB}month{TAB}year{TAB}CVV`);
+  a partial expiry stays empty instead of becoming `/2030`. Trade-off:
+  combined `MM/YY` checkout fields need a future mode.
+- **A4** — kinds 3 (note) and 6 (SSH) are refused with a Copy suggestion and an
+  `autotype-blocked-multiline` log entry.
+- Tests +7 (`autotype_gate_*`, `autotype_refuses_multiline_item_kinds`,
+  `card_fields_*`, `password_focus_forces_pair_attempt`):
+  `cargo test` **576 passed / 0 failed / 4 ignored**, clippy clean.
+- Still not reproduced against a live target app: A6/A5/A9/A10 and the UI
+  items (A21–A34) remain open.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
