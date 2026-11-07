@@ -5316,8 +5316,10 @@ fn main() -> Result<(), slint::PlatformError> {
                         if let Some(qb) = qb_weak.upgrade() {
                             let vault = lock_vault(&vault_clone);
                             let travel = *travel_clone.lock().unwrap();
-                            let filtered = vault_quickbar_app(&vault, &app_prefilter, travel, &app_prefilter);
-                            qb.set_quick_query(app_prefilter.into());
+                            // A32: the app prefilter narrows the list but is not
+                            // typed into the search box (the user had to clear it).
+                            let filtered = vault_quickbar_app(&vault, "", travel, &app_prefilter);
+                            qb.set_quick_query("".into());
                             qb.set_qb_index(0);
                             qb.set_qb_status("".into());
                             qb.set_filtered_results(filtered);
