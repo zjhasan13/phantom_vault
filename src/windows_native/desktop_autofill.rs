@@ -57,12 +57,14 @@ fn automation() -> Result<IUIAutomation> {
         .map_err(|e| VaultError::AutoType(format!("UIA create failed: {e}")))
 }
 
-fn bstr_to_string(b: BSTR) -> String {
+fn bstr_to_string_raw(b: BSTR) -> String {
     String::from_utf16_lossy(unsafe {
         std::slice::from_raw_parts(b.as_ptr(), b.len())
     })
-    .trim()
-    .to_string()
+}
+
+fn bstr_to_string(b: BSTR) -> String {
+    bstr_to_string_raw(b).trim().to_string()
 }
 
 fn foreground_window() -> Option<HWND> {
@@ -260,13 +262,21 @@ pub fn fill_login_pair(username: &str, password: &str) -> bool {
     else {
         return false;
     };
+    // A7: preserve whatever the user already typed in the username box. A
+    // failed password write used to blank it, destroying a typed email.
+    let prev_user = unsafe {
+        up.CurrentValue()
+            .map(bstr_to_string_raw)
+            .unwrap_or_default()
+    };
     // SAFETY: both patterns were validated as writable above.
     unsafe {
         if up.SetValue(&BSTR::from(user.as_str())).is_err() {
             return false;
         }
         if pp.SetValue(&BSTR::from(pass.as_str())).is_err() {
-            let _ = up.SetValue(&BSTR::from("")); // never leave a half-filled pair
+            // Never leave a half-filled pair, and never destroy the old value.
+            let _ = up.SetValue(&BSTR::from(prev_user.as_str()));
             return false;
         }
     }
@@ -679,5 +689,14 @@ mod tests {
         // Helper processes that merely contain a brand are NOT flagged.
         assert_eq!(executable_spoof_brand("steamwebhelper"), None);
         assert_eq!(executable_spoof_brand("chrome_updater"), None);
+    }
+
+    #[test]
+    fn bstr_restore_keeps_the_typed_username_exact() {
+        // A7: the rollback value must preserve whitespace the user typed,
+        // while the display/compare helper still trims.
+        let typed = BSTR::from("  user@example.com  ");
+        assert_eq!(bstr_to_string_raw(typed.clone()), "  user@example.com  ");
+        assert_eq!(bstr_to_string(typed), "user@example.com");
     }
 }

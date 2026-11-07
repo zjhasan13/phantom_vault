@@ -137,8 +137,13 @@ pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
     if fields.iter().all(|f| sanitize_field(f).is_empty()) {
         return Err(VaultError::AutoType("nothing to type".into()));
     }
-    let expected = foreground_token();
+    // A6: let the minimize land before freezing the target; capturing first
+    // can still see the vault's own HWND and abort 1.4 s later.
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
+    let expected = foreground_token();
+    if expected == 0 {
+        return Err(VaultError::AutoType("no foreground window - aborted".into()));
+    }
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     ensure_focus(expected)?;
     let mut rng = OsRng;
@@ -301,10 +306,14 @@ fn type_sequence_inner(username: &str, password: &str, pair_fill: bool) -> Resul
     if sanitize_field(password).is_empty() {
         return Err(VaultError::AutoType("nothing to type".into()));
     }
-    // C9: capture BEFORE the unguarded sleeps; Alt+Tab during settle aborts.
-    let target = foreground_token();
-    // 1. DWM minimize-animation settle, then the original focus delay.
+    // A6: let the minimize land BEFORE freezing the target. Capturing first
+    // could still see the vault's own HWND, then abort 1.4 s later.
     std::thread::sleep(Duration::from_millis(SETTLE_MS));
+    let target = foreground_token();
+    if target == 0 {
+        return Err(VaultError::AutoType("no foreground window - aborted".into()));
+    }
+    // 1. Original focus delay; Alt+Tab during it still aborts (focus check).
     std::thread::sleep(Duration::from_millis(FOCUS_DELAY_MS));
     ensure_focus(target)?;
     let mut rng = OsRng;
