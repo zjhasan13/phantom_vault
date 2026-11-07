@@ -2866,20 +2866,32 @@ export component MainWindow inherits Window {
                 }
             }
             // P0: filter strip + select action bar span both panes.
-            Rectangle { height: 44px; background: PhantomTheme.surface-low; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
-                VerticalLayout { alignment: center; padding-left: 14px; padding-right: 14px;
+            // Responsive: < 1100px window uses a 2-row 5-column grid (9 chips).
+            Rectangle { height: root.width < 1100px ? 80px : 44px; background: PhantomTheme.surface-low; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.border;
+                if root.width >= 1100px : VerticalLayout { alignment: center; padding-left: 14px; padding-right: 14px;
                     HorizontalLayout { spacing: 4px;
-                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.sort_mode == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.sort_mode = 1; root.recent_changed(true); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-                        AuraButton { label: "Identity"; primary: root.type_filter == 5; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-                        AuraButton { label: "License"; primary: root.type_filter == 2; width: 76px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.sort_mode == 1; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.sort_mode = 1; root.recent_changed(true); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        AuraButton { label: "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        AuraButton { label: "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
+                }
+                if root.width < 1100px : GridLayout { padding: 8px; spacing: 4px;
+                        AuraButton { row: 0; col: 0; label: root.ui_lang == "bn" ? "সব" : "All"; primary: root.type_filter == 0 && !root.show_fav_only; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(false); } }
+                        AuraButton { row: 0; col: 1; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; primary: root.show_fav_only; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 0; root.type_filter_changed(0); root.fav_filter_changed(true); } }
+                        AuraButton { row: 0; col: 2; label: root.ui_lang == "bn" ? "সাম্প্রতিক" : "Recent"; primary: root.sort_mode == 1; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.show_fav_only = false; root.sort_mode = 1; root.recent_changed(true); } }
+                        AuraButton { row: 0; col: 3; label: root.ui_lang == "bn" ? "লগইন" : "Login"; primary: root.type_filter == 1; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
+                        AuraButton { row: 0; col: 4; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 0; label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 1; label: "SSH"; primary: root.type_filter == 6; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 2; label: "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 3; label: "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
                 }
             }
             HorizontalLayout {
