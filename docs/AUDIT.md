@@ -401,16 +401,16 @@ casing and one contrast pair.
 
 | ID | Drift | Evidence | Token value | Status |
 |---|---|---|---|---|
-| T1 | Off-scale spacing: 18px padding, 10px and 6px gaps | `ui/appwindow.slint:3899`, `:4041`, `:3903`, `:3968` | `spacing` = 4 / 8 / 12 / 20 / 32 | open |
-| T2 | Off-scale radius: 18px window, 10px tiles | `:3874`, `:4020`, `:3907`, `:3956` | `radius` = 2 / 4 / 6 / 8 / 12 / pill | open |
-| T3 | Off-scale type: 14px/800 headers, 11px captions, 9px chips | `:3914`, `:3915`, `:4056`, `:235` | `typography` = 15 / 13 / 12 / 10 | open |
-| T4 | Alpha tints are raw hex, not tokens: `#060e20f2`, `#4edea366`, `#4edea333`, `#ffb4ab1a`, `#ffb4ab55` | `:3873`, `:3878`, `:4019`, `:4024`, `:199`, `:195`, `:197` | no alpha scale exists; `UI_TOKENS.md:24,89` already lists this as remaining debt | open |
-| T5 | Active `GatewayTab` uses white on `primary-container` = **2.55:1**, below AA 4.5 (and below AA-large 3.0). `on-primary` gives 5.2:1 | `:245` | `on_primary` = `#003824` | open |
-| T6 | Popup background is 95% opaque (`#060e20f2`) over an arbitrary wallpaper, so `text-dim` contrast is backdrop-dependent (6.35:1 on the token surface, lower on a bright desktop) | `:3873`, `:4019` | `surface_lowest` = `#060e20` | open |
-| T7 | Magic `y: 2px` / `y: 0px` inside layout rows instead of a centred `VerticalLayout` | `:3971-3975`, `:3077` | AGENTS.md §6 layout pattern | open |
-| T8 | Brand casing: "Phantom Quick Bar" / "PhantomVault Quick Bar" vs the two-word all-caps rule; the main window follows it | `:3914`, `:3852`, `:4000` | AGENTS.md §1 | open |
-| T9 | i18n gaps inside otherwise localized windows: "hits", the search placeholder, the footer hint and "Type" stay English | `:3918`, `:3922`, `:3985`, `:3971` | A26 | open |
-| T10 | Zero accessibility properties in the whole UI file (`accessible-role` / `accessible-label` = 0 matches), so both popups are unnamed to screen readers | whole file | — | open |
+| T1 | Off-scale spacing: 18px padding, 10px and 6px gaps | `ui/appwindow.slint:3899`, `:4041`, `:3903`, `:3968` | `spacing` = 4 / 8 / 12 / 20 / 32 | fixed @1c03520 |
+| T2 | Off-scale radius: 18px window, 10px tiles | `:3874`, `:4020`, `:3907`, `:3956` | `radius` = 2 / 4 / 6 / 8 / 12 / pill | fixed @1c03520 |
+| T3 | Off-scale type: 14px/800 headers, 11px captions, 9px chips | `:3914`, `:3915`, `:4056`, `:235` | `typography` = 15 / 13 / 12 / 10 | fixed @1c03520 |
+| T4 | Alpha tints are raw hex, not tokens: `#060e20f2`, `#4edea366`, `#4edea333`, `#ffb4ab1a`, `#ffb4ab55` | `:3873`, `:3878`, `:4019`, `:4024`, `:199`, `:195`, `:197` | no alpha scale exists; `UI_TOKENS.md:24,89` already lists this as remaining debt | fixed @1c03520 |
+| T5 | Active `GatewayTab` uses white on `primary-container` = **2.55:1**, below AA 4.5 (and below AA-large 3.0). `on-primary` gives 5.2:1 | `:245` | `on_primary` = `#003824` | fixed @1c03520 |
+| T6 | Popup background is 95% opaque (`#060e20f2`) over an arbitrary wallpaper, so `text-dim` contrast is backdrop-dependent (6.35:1 on the token surface, lower on a bright desktop) | `:3873`, `:4019` | `surface_lowest` = `#060e20` | fixed @1c03520 |
+| T7 | Magic `y: 2px` / `y: 0px` inside layout rows instead of a centred `VerticalLayout` | `:3971-3975`, `:3077` | AGENTS.md §6 layout pattern | fixed @1c03520 |
+| T8 | Brand casing: "Phantom Quick Bar" / "PhantomVault Quick Bar" vs the two-word all-caps rule; the main window follows it | `:3914`, `:3852`, `:4000` | AGENTS.md §1 | fixed @1c03520 |
+| T9 | i18n gaps inside otherwise localized windows: "hits", the search placeholder, the footer hint and "Type" stay English | `:3918`, `:3922`, `:3985`, `:3971` | A26 | fixed @1c03520 |
+| T10 | Zero accessibility properties in the whole UI file (`accessible-role` / `accessible-label` = 0 matches), so both popups are unnamed to screen readers | whole file | — | fixed @1c03520 |
 
 Not defects: emoji icons in the popups are explicitly allowed by the icon
 policy (`docs/UI_TOKENS.md:62-71`), and the popups reuse `AuraButton`,
@@ -645,6 +645,29 @@ Test-gap claim re-checked: the listed tests exist
   screen). Errors, stale warnings and canary alerts still restore the window.
   Caveat: the 2FA countdown pill is not visible while minimized.
 - `cargo test` **581 / 0 / 4 ignored**, clippy clean.
+
+### Fix batch 10 — T1-T10 (`1c03520`)
+
+- **T1/T2** — popup padding 18→20, header gaps 10→8, window radius 18→12,
+  tile/icon radius 10→8, row padding/spacing 10→8.
+- **T3** — popup headers 14/800→15/700, captions 11→12, `MonoChip` 9→10.
+- **T4** — the audited raw tints use `PhantomTheme.<token>.with-alpha(...)`; the
+  off-token toast background `#101834` maps to `surface-low`.
+- **T5** — active `GatewayTab` uses `on-primary` (5.20:1) instead of white
+  (2.54:1).
+- **T6** — popup backgrounds are opaque `surface-lowest`, so contrast no longer
+  depends on the desktop behind them.
+- **T7** — the toast button's `y: 0` and the Quick Bar row buttons' `y: 2` are
+  gone; the cluster is centered with a `VerticalLayout`.
+- **T8** — "PHANTOM VAULT · QUICK BAR" and the window titles.
+- **T9** — BN for the hit count, search placeholder, footer hint and Type
+  button.
+- **T10** — `accessible-role`/`label` on `AuraButton`, `GatewayTab`, both popup
+  roots, the result list + rows and the capture fields.
+- Scope: the audited surfaces (Quick Bar, Quick Capture, toast). Screen check:
+  the capture popup renders opaque, radius 12, 15/700 title and the new brand
+  casing. Gates: tokens **21**, `cargo test` **581 / 0 / 4 ignored**, clippy
+  clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
