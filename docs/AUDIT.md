@@ -308,7 +308,7 @@ citations, not as verified behaviour. Baseline at audit time: `main` @
 | A6 | Focus-token race: `set_minimized(true)` is requested, the worker starts immediately, and `foreground_token()` can still capture the vault's own HWND; 1.4 s later `ensure_focus` aborts | `main.rs:366`, `:374`; `autotype.rs:295` | Capture the token after the minimize settle, or resolve the target HWND before minimizing. | fixed @6b095fc |
 | A7 | A failed password `SetValue` reverts the username field to `""`, destroying an email the user had already typed | `desktop_autofill.rs:269` | Save the previous value and restore it on failure. | fixed @6b095fc |
 | A8 | `pick_login_pair` falls back to the first password in tree order when focus is not inside an Edit, and the focus guard only applies in the focused-Edit case; login+signup pages can fill the wrong form | `desktop_autofill.rs:166-179`, `:254-258` | Require an in-pair focus, or an explicit form-container match. | open |
-| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | open |
+| A9 | TOTP false positive: `"securitycode"` / `"security-code"` are OTP keys and password fields are accepted, so a card "Security code" (CVV) box can receive the live TOTP | `desktop_autofill.rs:459`, `:528` | Drop card-style keys, require an auth neighbour word, and only type when the OTP field is focused. | fixed @b4ec6d0 (matcher; focus gate = A10) |
 | A10 | The 30 s 2FA watcher has no cancel and no countdown, and `type_text_raw` captures the foreground at typing time, so a focus change sends the code (with Enter) elsewhere | `main.rs:483-505`; `autotype.rs:260-272` | Visible countdown pill with cancel; abort unless the OTP field is focused. | open |
 | A11 | The focus guard compares HWND only. Focus can move to another control inside the same window (autocomplete, "show password", confirm-password) without aborting | `autotype.rs:248-255` | Also compare the focused element's UIA runtime id. | open |
 | A12 | The keystroke fallback assumes exactly one Tab between username and password | `autotype.rs:322-335` | Verify the post-Tab control is a password Edit before typing; abort otherwise. | open |
@@ -378,15 +378,15 @@ reproduced.
 
 | ID | Defect | Location | Status |
 |---|---|---|---|
-| A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` | open |
-| A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) | open |
+| A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` | fixed @b4ec6d0 |
+| A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) | fixed @b4ec6d0 |
 | A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` | open |
 | A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` | open |
 | A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` | open |
 | A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` | open |
 | A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | open |
 | A28 | A blocked auto-type (spoof or app mismatch) only sets a notification on the hidden main window and leaves the Quick Bar open with no message, so the user sees nothing happen | `main.rs:335-341`, `:355-361` | open |
-| A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | open |
+| A29 | `cap_show_pass` is never reset when the capture window opens, so a previous "show password" state can expose the next captured secret while it is typed | `ui/appwindow.slint:4008`; `main.rs:4853-4871` | fixed @b4ec6d0 |
 | A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | open |
 | A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | open |
 | A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | open |
@@ -533,6 +533,23 @@ Test-gap claim re-checked: the listed tests exist
   `cargo test` **577 passed / 0 failed / 4 ignored**, clippy clean.
 - Next in this series: A5 (verify the write landed), A9 (CVV/TOTP), A10
   (watcher cancel + focus), then the A21–A34 UI batch.
+
+### Fix batch 3 — A9, A21, A22, A29 (`b4ec6d0`)
+
+- **A9 (matcher)** — `otp_like` rejects card labels (CVV/CVC, card number,
+  expiry, "security code") before the generic `code` heuristic; only a
+  six-digit prompt passes the digit fallback. Explicit OTP/2FA/authenticator
+  wording still wins. The "type only when the OTP field is focused" half is
+  **A10**, still open.
+- **A21** — new `public function focus_search()` / `focus_first_field()` called
+  from Rust right after `show()`, for the Quick Bar and Quick Capture.
+- **A22** — `qb_index` is reset to 0 in both Quick Bar open paths.
+- **A29** — `cap_show_pass` is reset to false on every capture open.
+- Screen evidence: the capture title is focused on open (typing `zz` with no
+  click landed in it) and the eye toggles 1F441 -> 1F648 -> 1F441 across
+  reopen. The Quick Bar hotkeys did not register on the test machine, so A21's
+  Quick Bar half and A22 are compile/check verified only.
+- `cargo test` **578 passed / 0 failed / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

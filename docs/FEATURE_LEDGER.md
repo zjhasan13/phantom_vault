@@ -86,6 +86,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `b4ec6d0` | auto-type A9/A21/A22/A29: card CVV rejected as OTP; Quick Bar + Quick Capture focus on open; Quick Bar index and capture mask reset |
 | `6b095fc` | auto-type A6–A7: target frozen after the minimize settle; typed username restored on a failed password write |
 | `3b1fc92` | auto-type A1–A4: fail-closed context gate, password-focus guard, four-stop card fill, multi-line (note/SSH) refusal |
 | `171eb92` | four dialogs content-sized; import/export headers centered and contained |
