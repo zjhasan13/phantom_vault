@@ -184,6 +184,9 @@ component AuraButton inherits Rectangle {
     in-out property <string> label;
     in-out property <bool> primary: false;
     in-out property <bool> danger: false;
+    // T10: expose the label to screen readers (the label Text is not focusable).
+    accessible-role: button;
+    accessible-label: root.label;
     // Disabled state is VISIBLE, not just inert: a silently-ignored click on
     // a control the user can still see reads as a broken app. Defaults to true
     // so every existing call site is unchanged.
@@ -192,11 +195,11 @@ component AuraButton inherits Rectangle {
     height: 38px;
     border-radius: 10px;
     opacity: root.enabled ? 1.0 : 0.38;
-    background: root.primary ? PhantomTheme.primary : (root.danger ? #ffb4ab1a : PhantomTheme.surface);
+    background: root.primary ? PhantomTheme.primary : (root.danger ? PhantomTheme.error.with-alpha(0.10) : PhantomTheme.surface);
     border-width: 1px;
-    border-color: root.primary ? PhantomTheme.primary-container : (root.danger ? #ffb4ab55 : PhantomTheme.border);
+    border-color: root.primary ? PhantomTheme.primary-container : (root.danger ? PhantomTheme.error.with-alpha(0.33) : PhantomTheme.border);
     drop-shadow-blur: root.primary ? 18px : 0px;
-    drop-shadow-color: #4edea333;
+    drop-shadow-color: PhantomTheme.primary.with-alpha(0.20);
     area := TouchArea {
         enabled: root.enabled;
         mouse-cursor: root.enabled ? pointer : default;
@@ -229,10 +232,10 @@ component MonoChip inherits Rectangle {
     in-out property <bool> outlined: true;
     height: 22px;
     border-radius: 6px;
-    background: #ffffff08;
+    background: PhantomTheme.text.with-alpha(0.03);
     border-width: root.outlined ? 1px : 0px;
-    border-color: #ffffff14;
-    HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: root.label; color: root.tone; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; } }
+    border-color: PhantomTheme.text.with-alpha(0.08);
+    HorizontalLayout { padding-left: 8px; padding-right: 8px; Text { text: root.label; color: root.tone; font-size: 10px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; } }
 }
 
 component GatewayTab inherits Rectangle {
@@ -242,7 +245,10 @@ component GatewayTab inherits Rectangle {
     height: 34px;
     border-radius: 8px;
     background: root.active ? PhantomTheme.primary-container : transparent;
-    Text { text: root.label; color: root.active ? #ffffff : PhantomTheme.text-dim; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
+    // T10: name the tab; T5: on-primary gives 5.2:1 (white was 2.54:1).
+    accessible-role: button;
+    accessible-label: root.label;
+    Text { text: root.label; color: root.active ? PhantomTheme.on-primary : PhantomTheme.text-dim; font-size: 12px; font-weight: 600; horizontal-alignment: center; vertical-alignment: center; }
     TouchArea { mouse-cursor: pointer; clicked => { root.clicked(); } }
 }
 
@@ -1383,7 +1389,7 @@ export component MainWindow inherits Window {
                         Rectangle { width: 46px; height: 50px;
                             Rectangle { x: 3px; y: 4px; width: 40px; height: 44px; border-radius: 20px; background: #10b98114; }
                             Path { x: 0; y: 0; width: 46px; height: 50px; viewbox-width: 46; viewbox-height: 50; commands: "M 23 2 L 44 9 L 44 26 C 44 37 35 45 23 48 C 11 45 2 37 2 26 L 2 9 Z"; fill: #0b1326; stroke: @linear-gradient(135deg, #4edea3 0%, #4cd7f6 55%, #c0c1ff 100%); stroke-width: 2px; }
-                            Path { x: 10px; y: 11px; width: 26px; height: 28px; viewbox-width: 26; viewbox-height: 28; commands: "M 13 1 L 24 6 L 24 14 C 24 20 19 24 13 26 C 7 24 2 20 2 14 L 2 6 Z"; fill: #131b2e; stroke: #4edea366; stroke-width: 1px; }
+                            Path { x: 10px; y: 11px; width: 26px; height: 28px; viewbox-width: 26; viewbox-height: 28; commands: "M 13 1 L 24 6 L 24 14 C 24 20 19 24 13 26 C 7 24 2 20 2 14 L 2 6 Z"; fill: #131b2e; stroke: PhantomTheme.primary.with-alpha(0.4); stroke-width: 1px; }
                             Path { x: 17px; y: 17px; width: 12px; height: 16px; viewbox-width: 12; viewbox-height: 16; commands: "M 6 1 C 8 1 9.5 2.5 9.5 4.5 C 9.5 6 8.5 7 7.5 7.5 L 8.5 12 L 3.5 12 L 4.5 7.5 C 3.5 7 2.5 6 2.5 4.5 C 2.5 2.5 4 1 6 1 Z"; fill: #4edea3; }
                         }
                         Text { text: "PHANTOM"; color: #ffffff; font-size: 36px; font-weight: 900; letter-spacing: -0.5px; vertical-alignment: center; }
@@ -1411,7 +1417,7 @@ export component MainWindow inherits Window {
                                 Rectangle { height: 1px; background: #ffffff10; }
                                 Rectangle { height: 8px; }
                                 // auth mode tabs
-                                Rectangle { height: 36px; border-radius: 12px; background: #060e20; border-width: 1px; border-color: #ffffff08;
+                                Rectangle { height: 36px; border-radius: 12px; background: #060e20; border-width: 1px; border-color: PhantomTheme.text.with-alpha(0.03);
                                     HorizontalLayout { padding: 4px; spacing: 4px;
                                         GatewayTab { label: root.ui_lang == "bn" ? "🔑  মাস্টার পাস" : "🔑  Master Pass"; active: root.unlock_tab == 0; horizontal-stretch: 1; clicked => { root.unlock_tab = 0; root.show_pin_pad = false; root.show_recover = false; root.unlock_error_message = ""; } }
                                         GatewayTab { label: root.pin_available ? (root.ui_lang == "bn" ? "🔒  পিন" : "🔒  PIN") : (root.ui_lang == "bn" ? "🔒  পিন · অফ" : "🔒  PIN · OFF"); active: root.unlock_tab == 1; horizontal-stretch: 1; clicked => { if root.pin_available { root.unlock_tab = 1; root.show_pin_pad = true; root.show_recover = false; root.pin_error = ""; } else { root.unlock_tab = 0; root.unlock_error_message = root.ui_lang == "bn" ? "আগে সেটিংসে অ্যাপ পিন চালু করুন।" : "Enable an App PIN in Settings first."; } } }
@@ -1436,7 +1442,7 @@ export component MainWindow inherits Window {
                                         Text { text: root.ui_lang == "bn" ? "লোকাল-ওনলি · কোনো অ্যাকাউন্ট নেই" : "LOCAL-ONLY · NO ACCOUNT"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; letter-spacing: 0.5px; vertical-alignment: center; }
                                     }
                                     Rectangle { height: 4px; }
-                                    Rectangle { height: 36px; border-radius: 10px; background: #0b1326; border-width: 1px; border-color: #ffffff14;
+                                    Rectangle { height: 36px; border-radius: 10px; background: #0b1326; border-width: 1px; border-color: PhantomTheme.text.with-alpha(0.08);
                                         HorizontalLayout { padding-left: 12px; padding-right: 8px; spacing: 10px;
                                             Text { text: "▣"; color: PhantomTheme.text-dim; font-size: 14px; vertical-alignment: center; }
                                             Text { text: root.vault_label; color: PhantomTheme.text; font-size: 13px; font-family: "JetBrains Mono"; horizontal-stretch: 1; overflow: elide; vertical-alignment: center; }
@@ -1480,7 +1486,7 @@ export component MainWindow inherits Window {
                                         PrimaryGradientAction { glyph: "🔓"; label: root.unlock_busy ? (root.ui_lang == "bn" ? "ডিক্রিপ্ট হচ্ছে…" : "Decrypting vault…") : (root.ui_lang == "bn" ? "ভল্ট খুলুন ও সাইন ইন" : "Unlock Enclave & Sign In"); enabled: !root.unlock_busy; shortcut: "↵ Enter"; clicked => { root.unlock_busy = true; root.unlock_requested(password_input.text); } }
                                         VerticalLayout { spacing: 0px;
                                             Rectangle { height: 6px; }
-                                            Rectangle { height: 34px; border-radius: 10px; background: PhantomTheme.surface; border-width: 1px; border-color: root.hello_available ? #ffffff10 : #ffffff08;
+                                            Rectangle { height: 34px; border-radius: 10px; background: PhantomTheme.surface; border-width: 1px; border-color: root.hello_available ? #ffffff10 : PhantomTheme.text.with-alpha(0.03);
                                                 HorizontalLayout { alignment: center; spacing: 8px;
                                                     Text { text: "●"; color: root.hello_available ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 9px; vertical-alignment: center; }
                                                     Text { text: root.hello_available ? (root.ui_lang == "bn" ? "Windows Hello দিয়ে খুলুন" : "Unlock with Windows Hello") : (root.ui_lang == "bn" ? "Windows Hello এনরোল নেই · পাসফ্রেজ ব্যবহার করুন" : "Windows Hello not enrolled · use the passphrase"); color: root.hello_available ? PhantomTheme.text-muted : PhantomTheme.text-dim; font-size: 12px; font-family: "JetBrains Mono"; vertical-alignment: center; }
@@ -1511,7 +1517,7 @@ export component MainWindow inherits Window {
                                         }
                                         PrimaryGradientAction { label: root.ui_lang == "bn" ? "পুনর্গঠন ও খুলুন" : "Rebuild & Unlock"; enabled: root.recover_1 != "" && root.recover_2 != "" && root.recover_3 != ""; clicked => { root.recover_with_shards(root.recover_1, root.recover_2, root.recover_3); } }
                                     }
-                                    if root.integrity_warning != "" : Rectangle { height: 38px; border-radius: 8px; background: #ffb4ab12; border-width: 1px; border-color: #ffb4ab55;
+                                    if root.integrity_warning != "" : Rectangle { height: 38px; border-radius: 8px; background: #ffb4ab12; border-width: 1px; border-color: PhantomTheme.error.with-alpha(0.33);
                                         HorizontalLayout { padding: 7px; spacing: 8px;
                                             Text { text: "⚠"; color: PhantomTheme.error; font-size: 13px; vertical-alignment: center; }
                                             Text { text: root.integrity_warning; color: PhantomTheme.error; font-size: 11px; font-weight: 600; horizontal-stretch: 1; wrap: word-wrap; vertical-alignment: center; }
@@ -1754,8 +1760,8 @@ export component MainWindow inherits Window {
                         if !root.sidebar_collapsed && root.filter_folders.length > 1 : Text { text: root.ui_lang == "bn" ? "ফোল্ডার" : "FOLDERS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                         for f in root.filter_folders : NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e2c7}"; label: f; active: root.active_nav == 0 && root.folder_filter == f; tapped => { root.active_nav = 0; root.folder_filter = f; root.folder_filter_changed(f); } }
                         if !root.sidebar_collapsed : LineEdit { placeholder-text: "+ New folder…"; text <=> root.new_folder_name; height: 28px; accepted(text) => { root.add_folder_requested(text); } }
-                        if root.is_travel_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ ট্রাভেল মোড চালু" : "⚠ TRAVEL MODE ON"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
-                        if root.offline_mode : Rectangle { height: 26px; border-radius: 6px; background: #f59e0b1a; Text { text: root.ui_lang == "bn" ? "⚠ অফলাইন" : "⚠ OFFLINE · NO NETWORK"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
+                        if root.is_travel_mode : Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.warning.with-alpha(0.10); Text { text: root.ui_lang == "bn" ? "⚠ ট্রাভেল মোড চালু" : "⚠ TRAVEL MODE ON"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
+                        if root.offline_mode : Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.warning.with-alpha(0.10); Text { text: root.ui_lang == "bn" ? "⚠ অফলাইন" : "⚠ OFFLINE · NO NETWORK"; color: PhantomTheme.warning; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; horizontal-alignment: center; vertical-alignment: center; } }
                     }
                 }
                 Rectangle { height: 1px; background: PhantomTheme.border; }
@@ -1881,7 +1887,7 @@ export component MainWindow inherits Window {
                         if root.passkeys.length == 0 : Text { text: "No passkeys yet — register one above."; color: PhantomTheme.text-dim; font-size: 12px; horizontal-alignment: center; }
                         if root.passkeys_trash.length > 0 : VerticalLayout { spacing: 8px;
                             Text { text: "🗑️ Passkey Trash (shredded after 30 days)"; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; }
-                            for pk in root.passkeys_trash : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: #ffb4ab55; height: 64px;
+                            for pk in root.passkeys_trash : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.error.with-alpha(0.33); height: 64px;
                                 HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between;
                                     VerticalLayout { spacing: 1px; Text { text: "🔑 " + pk.rp + " • " + pk.user; color: PhantomTheme.text-muted; font-size: 13px; font-weight: 700; overflow: elide; } Text { text: pk.meta; color: PhantomTheme.text-dim; font-size: 11px; overflow: elide; } }
                                     HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "♻️ Restore"; width: 110px; height: 32px; clicked => { root.restore_passkey(pk.id); } } AuraButton { label: root.confirm_delete_pk_id == pk.id ? "Sure? Shred" : "🔥 Shred"; width: root.confirm_delete_pk_id == pk.id ? 110px : 72px; height: 32px; danger: true; clicked => { if root.confirm_delete_pk_id == pk.id { root.confirm_delete_pk_id = ""; root.delete_passkey(pk.id); } else { root.confirm_delete_pk_id = pk.id; } } } }
@@ -1953,7 +1959,7 @@ export component MainWindow inherits Window {
                                 }
                                 AuraButton { label: "NEXT"; width: 84px; height: 34px; enabled: root.ga_page_at + 1 < root.ga_page_total; clicked => { root.ga_export_page(1); } }
                             }
-                            if root.ga_warn != "" : Rectangle { height: 36px; background: #f59e0b1a; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.warning;
+                            if root.ga_warn != "" : Rectangle { height: 36px; background: PhantomTheme.warning.with-alpha(0.10); border-radius: 8px; border-width: 1px; border-color: PhantomTheme.warning;
                                 HorizontalLayout { padding-left: 10px; padding-right: 10px; Text { text: root.ga_warn; color: PhantomTheme.warning; font-size: 10px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } }
                             }
                             Rectangle { vertical-stretch: 1; }
@@ -2893,7 +2899,7 @@ export component MainWindow inherits Window {
                         return reject;
                     }
                 VerticalLayout { padding: 14px; spacing: 10px;
-                    if root.show_shard_nudge : Rectangle { background: #f59e0b1a; border-radius: 10px; border-width: 1px; border-color: PhantomTheme.warning; VerticalLayout { padding: 10px; spacing: 6px;
+                    if root.show_shard_nudge : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 10px; border-width: 1px; border-color: PhantomTheme.warning; VerticalLayout { padding: 10px; spacing: 6px;
                         Text { text: "📄 Print your recovery sheet?"; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
                         Text { text: "Lose your password without shards = vault gone forever. Find it later under Settings → Recovery."; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout { spacing: 6px; alignment: center;
@@ -2945,7 +2951,7 @@ export component MainWindow inherits Window {
                         }
                     }
                     col2_scroll := ScrollView { vertical-stretch: 1; VerticalLayout { spacing: 8px; padding-bottom: root.selected_count > 0 ? 96px : 0px;
-                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (cred.sel ? #4edea31a : (touch.has-hover ? PhantomTheme.surface : transparent)); border-radius: 6px; height: 76px;
+                        for cred in root.credentials : Rectangle { background: root.d_id == cred.id ? PhantomTheme.surface-highest : (cred.sel ? PhantomTheme.success.with-alpha(0.10) : (touch.has-hover ? PhantomTheme.surface : transparent)); border-radius: 6px; height: 76px;
                             touch := TouchArea { mouse-cursor: pointer; clicked => { root.open_detail(cred.id); }
                                 pointer-event(event) => {
                                     if (event.kind == PointerEventKind.down && event.button == PointerEventButton.right && cred.kind == 1) {
@@ -3078,7 +3084,7 @@ export component MainWindow inherits Window {
                             AuraButton { label: "Cancel"; width: 120px; height: 38px; clicked => { root.cancel_form(); } }
                         }
                     }}
-                    if root.notification_text != "" : Rectangle { background: root.notification_kind == "success" ? #4edea31a : (root.notification_kind == "error" ? #ffb4ab1a : (root.notification_kind == "warn" ? #f59e0b1a : #101834)); border-radius: 8px; border-width: 1px; border-color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.border)); height: 32px; HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px; Text { text: root.notification_text; color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.secondary)); font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "✕"; width: 36px; height: 32px; y: 0px; clicked => { root.notification_text = ""; root.notification_kind = "info"; } } }
+                    if root.notification_text != "" : Rectangle { background: root.notification_kind == "success" ? PhantomTheme.success.with-alpha(0.10) : (root.notification_kind == "error" ? PhantomTheme.error.with-alpha(0.10) : (root.notification_kind == "warn" ? PhantomTheme.warning.with-alpha(0.10) : PhantomTheme.surface-low)); border-radius: 8px; border-width: 1px; border-color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.border)); height: 32px; HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px; Text { text: root.notification_text; color: root.notification_kind == "success" ? PhantomTheme.success : (root.notification_kind == "error" ? PhantomTheme.error : (root.notification_kind == "warn" ? PhantomTheme.warning : PhantomTheme.secondary)); font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } AuraButton { label: "✕"; width: 36px; height: 32px; clicked => { root.notification_text = ""; root.notification_kind = "info"; } } }
                     // A10: visible countdown + cancel for the hands-free 2FA watcher.
                     if root.chain_2fa_active : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.secondary; height: 32px;
                         HorizontalLayout { padding-left: 12px; padding-right: 4px; spacing: 8px;
@@ -3092,7 +3098,7 @@ export component MainWindow inherits Window {
                         running: root.notification_text != "" && root.notification_kind != "error";
                         triggered => { root.notification_text = ""; root.notification_kind = "info"; }
                     } }
-                    if root.is_travel_mode : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL MODE"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
+                    if root.is_travel_mode : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL MODE"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
                     // SELECTED ITEM DETAIL
                     // Peep pad stays instantiated (detail rows bind
                     // peep_hold_col.pressed) but visible:false collapses it
@@ -3166,7 +3172,7 @@ export component MainWindow inherits Window {
                             } }
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "CREDENTIAL AGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
                         }
-                        if root.d_trashed : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                        if root.d_trashed : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
                         if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                         // Two-column credential grid (Aegis inspector).
                         if root.d_kind != 8 : HorizontalLayout { spacing: 10px;
@@ -3434,7 +3440,7 @@ export component MainWindow inherits Window {
                         width: 46px;
                         height: 46px;
                         border-radius: 23px;
-                        background: #f59e0b1a;
+                        background: PhantomTheme.warning.with-alpha(0.10);
                         border-width: 1.5px;
                         border-color: PhantomTheme.warning;
                         Text { text: "🔒"; font-size: 20px; horizontal-alignment: center; vertical-alignment: center; }
@@ -3865,7 +3871,7 @@ export component QuickBarWindow inherits Window {
     width: 640px;
     height: 380px;
     background: transparent;
-    title: "PhantomVault Quick Bar";
+    title: "PHANTOM VAULT — QUICK BAR";
     // A26: mirrors MainWindow.ui_lang.
     in-out property <string> ui_lang: "en";
 
@@ -3898,13 +3904,15 @@ export component QuickBarWindow inherits Window {
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #060e20f2;
-        border-radius: 18px;
+        background: PhantomTheme.surface-lowest;
+        border-radius: 12px;
         border-color: PhantomTheme.primary;
         border-width: 1.5px;
         drop-shadow-blur: 48px;
-        drop-shadow-color: #4edea366;
+        drop-shadow-color: PhantomTheme.primary.with-alpha(0.4);
         clip: true;
+        accessible-role: groupbox;
+        accessible-label: "PHANTOM VAULT Quick Bar";
 
         FocusScope {
             key-pressed(event) => {
@@ -3924,30 +3932,31 @@ export component QuickBarWindow inherits Window {
             }
 
             VerticalLayout {
-                padding: 18px;
+                padding: 20px;
                 spacing: 12px;
 
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 8px;
                     Rectangle {
                         width: 36px;
                         height: 36px;
-                        border-radius: 10px;
+                        border-radius: 8px;
                         background: PhantomTheme.primary;
                         Text { text: "⚡"; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     VerticalLayout {
                         alignment: center;
                         spacing: 0px;
-                        Text { text: "Phantom Quick Bar"; color: PhantomTheme.text; font-size: 14px; font-weight: 800; }
-                        Text { text: root.ui_lang == "bn" ? "Alt+Space • সাথে সাথে কপি" : "Alt+Space  •  instant copy"; color: PhantomTheme.text-dim; font-size: 11px; }
+                        Text { text: "PHANTOM VAULT · QUICK BAR"; color: PhantomTheme.text; font-size: 15px; font-weight: 700; }
+                        Text { text: root.ui_lang == "bn" ? "Alt+Space • সাথে সাথে কপি" : "Alt+Space  •  instant copy"; color: PhantomTheme.text-dim; font-size: 12px; }
                     }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.filtered_results.length + " hits"; color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; }
+                    Text { text: root.filtered_results.length + (root.ui_lang == "bn" ? " টি" : " hits"); color: PhantomTheme.text-dim; font-size: 12px; vertical-alignment: center; }
                 }
 
                 quick_input := LineEdit {
-                    placeholder-text: "Type to filter — ↑↓ pick, Enter copies…";
+                    placeholder-text: root.ui_lang == "bn" ? "ফিল্টার করতে টাইপ করুন — ↑↓ বাছাই, Enter কপি…" : "Type to filter — ↑↓ pick, Enter copies…";
+                    accessible-label: root.ui_lang == "bn" ? "ভল্ট খুঁজুন" : "Search vault items";
                     text <=> root.quick_query;
                     height: 44px;
                     font-size: 15px;
@@ -3963,6 +3972,8 @@ export component QuickBarWindow inherits Window {
 
                 ScrollView {
                     vertical-stretch: 1;
+                    accessible-role: list;
+                    accessible-label: "Quick Bar results";
                     VerticalLayout {
                         spacing: 8px;
                         for item[idx] in root.filtered_results : Rectangle {
@@ -3971,17 +3982,20 @@ export component QuickBarWindow inherits Window {
                             border-width: idx == root.qb_index ? 2px : 1px;
                             border-color: idx == root.qb_index ? PhantomTheme.secondary : PhantomTheme.border;
                             height: 62px;
+                            // T10: name each row for screen readers.
+                            accessible-role: list-item;
+                            accessible-label: item.title;
                             row_touch := TouchArea { mouse-cursor: pointer; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                             HorizontalLayout {
-                                padding: 10px;
-                                spacing: 10px;
+                                padding: 8px;
+                                spacing: 8px;
                                 alignment: space-between;
                                 HorizontalLayout {
-                                    spacing: 10px;
+                                    spacing: 8px;
                                     Rectangle {
                                         width: 40px;
                                         height: 40px;
-                                        border-radius: 10px;
+                                        border-radius: 8px;
                                         background: PhantomTheme.surface-high;
                                         Text { text: item.kind == 1 ? "🔑" : (item.kind == 2 ? "📜" : (item.kind == 3 ? "📝" : (item.kind == 4 ? "💳" : (item.kind == 5 ? "🪪" : (item.kind == 8 ? "⏱️" : "🖥️"))))); font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
                                     }
@@ -3989,18 +4003,22 @@ export component QuickBarWindow inherits Window {
                                         alignment: center;
                                         spacing: 1px;
                                         Text { text: item.title; color: PhantomTheme.text; font-size: 13px; font-weight: 700; overflow: elide; }
-                                        Text { text: item.username; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; }
+                                        Text { text: item.username; color: PhantomTheme.text-muted; font-size: 12px; overflow: elide; }
                                     }
                                 }
-                                HorizontalLayout {
-                                    spacing: 6px;
+                                // T7: center the cluster with a layout, not y:2px.
+                                VerticalLayout {
                                     alignment: center;
-                                    if row_touch.has-hover || idx == root.qb_index : HorizontalLayout { spacing: 6px; alignment: center;
-                                    if item.kind == 1 : AuraButton { label: "⌨️ Type"; width: 88px; y: 2px; clicked => { root.type_selected(item.kind, item.id, item.username, item.password, item.totp); } }
-                                    if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; y: 2px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
-                                    if item.url != "" : AuraButton { label: "🌐"; width: 44px; y: 2px; clicked => { root.qb_open_url(item.url); } }
+                                    HorizontalLayout {
+                                        spacing: 6px;
+                                        alignment: center;
+                                        if row_touch.has-hover || idx == root.qb_index : HorizontalLayout { spacing: 6px; alignment: center;
+                                        if item.kind == 1 : AuraButton { label: root.ui_lang == "bn" ? "⌨️ টাইপ" : "⌨️ Type"; width: 88px; clicked => { root.type_selected(item.kind, item.id, item.username, item.password, item.totp); } }
+                                        if item.totp != "" : AuraButton { label: "⏱️"; width: 44px; clicked => { root.copy_totp_selected(item.kind, item.id); } }
+                                        if item.url != "" : AuraButton { label: "🌐"; width: 44px; clicked => { root.qb_open_url(item.url); } }
+                                        }
+                                        AuraButton { label: root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"; width: 88px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                                     }
-                                    AuraButton { label: root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"; width: 88px; y: 2px; clicked => { root.item_selected(item.kind, item.id, item.password); } }
                                 }
                             }
                         }
@@ -4009,11 +4027,11 @@ export component QuickBarWindow inherits Window {
                 }
 
                 // A28: why a type/copy did not happen (block, mismatch, abort).
-                if root.qb_status != "" : Text { text: root.qb_status; color: PhantomTheme.warning; font-size: 11px; font-weight: 700; horizontal-alignment: center; overflow: elide; }
+                if root.qb_status != "" : Text { text: root.qb_status; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; overflow: elide; }
 
                 HorizontalLayout {
                     alignment: space-between;
-                    Text { text: "↑↓: pick  •  Enter: copy highlighted  •  🌐: open site  •  Esc: dismiss"; color: PhantomTheme.text-muted; font-size: 11px; vertical-alignment: center; }
+                    Text { text: root.ui_lang == "bn" ? "↑↓: বাছাই  •  Enter: হাইলাইট কপি  •  🌐: সাইট খুলুন  •  Esc: বন্ধ" : "↑↓: pick  •  Enter: copy highlighted  •  🌐: open site  •  Esc: dismiss"; color: PhantomTheme.text-muted; font-size: 12px; vertical-alignment: center; }
                     AuraButton { label: root.ui_lang == "bn" ? "✕ বন্ধ করুন" : "✕ Dismiss"; width: 110px; height: 32px; clicked => { root.dismiss(); } }
                 }
             }
@@ -4051,7 +4069,7 @@ export component QuickCaptureWindow inherits Window {
     width: 520px;
     height: 430px;
     background: transparent;
-    title: "PhantomVault Quick Capture";
+    title: "PHANTOM VAULT — QUICK CAPTURE";
 
     in-out property <string> cap_title;
     in-out property <string> cap_user;
@@ -4079,13 +4097,15 @@ export component QuickCaptureWindow inherits Window {
     Rectangle {
         width: parent.width;
         height: parent.height;
-        background: #060e20f2;
-        border-radius: 18px;
+        background: PhantomTheme.surface-lowest;
+        border-radius: 12px;
         border-color: PhantomTheme.primary;
         border-width: 1.5px;
         drop-shadow-blur: 48px;
-        drop-shadow-color: #4edea366;
+        drop-shadow-color: PhantomTheme.primary.with-alpha(0.4);
         clip: true;
+        accessible-role: groupbox;
+        accessible-label: "PHANTOM VAULT Quick Capture";
 
         FocusScope {
             key-pressed(event) => {
@@ -4101,39 +4121,39 @@ export component QuickCaptureWindow inherits Window {
             }
 
             VerticalLayout {
-                padding: 18px;
-                spacing: 10px;
+                padding: 20px;
+                spacing: 8px;
 
                 HorizontalLayout {
-                    spacing: 10px;
+                    spacing: 8px;
                     Rectangle {
                         width: 36px;
                         height: 36px;
-                        border-radius: 10px;
+                        border-radius: 8px;
                         background: PhantomTheme.primary;
                         Text { text: "⚡"; font-size: 17px; horizontal-alignment: center; vertical-alignment: center; }
                     }
                     VerticalLayout {
                         alignment: center;
                         spacing: 0px;
-                        Text { text: root.ui_lang == "bn" ? "কুইক ক্যাপচার লগইন" : "Quick Capture Login"; color: PhantomTheme.text; font-size: 14px; font-weight: 800; }
-                        Text { text: root.cap_hint == "" ? "Alt+S grabbed this app" : root.cap_hint; color: PhantomTheme.text-dim; font-size: 11px; }
+                        Text { text: root.ui_lang == "bn" ? "কুইক ক্যাপচার লগইন" : "Quick Capture Login"; color: PhantomTheme.text; font-size: 15px; font-weight: 700; }
+                        Text { text: root.cap_hint == "" ? "Alt+S grabbed this app" : root.cap_hint; color: PhantomTheme.text-dim; font-size: 12px; }
                     }
                 }
 
                 FieldLabel { text: root.ui_lang == "bn" ? "সার্ভিসের নাম" : "SERVICE TITLE"; }
-                cap_title_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; }
+                cap_title_input := LineEdit { placeholder-text: root.ui_lang == "bn" ? "যেমন Discord" : "e.g. Discord"; text <=> root.cap_title; height: 36px; accessible-label: "Service title"; }
                 FieldLabel { text: root.ui_lang == "bn" ? "ইউজারনেম / ইমেইল" : "USERNAME / EMAIL"; }
-                LineEdit { placeholder-text: root.ui_lang == "bn" ? "সম্ভব হলে স্বয়ংক্রিয়ভাবে শনাক্ত হবে" : "Detected automatically when possible"; text <=> root.cap_user; height: 36px; }
+                LineEdit { placeholder-text: root.ui_lang == "bn" ? "সম্ভব হলে স্বয়ংক্রিয়ভাবে শনাক্ত হবে" : "Detected automatically when possible"; text <=> root.cap_user; height: 36px; accessible-label: "Username or email"; }
                 FieldLabel { text: root.ui_lang == "bn" ? "পাসওয়ার্ড" : "PASSWORD"; }
                 HorizontalLayout {
                     spacing: 8px;
-                    LineEdit { placeholder-text: root.ui_lang == "bn" ? "পেস্ট করুন, টাইপ করুন, বা 🎲…" : "Paste, type, or 🎲…"; input-type: root.cap_show_pass ? text : password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
+                    LineEdit { placeholder-text: root.ui_lang == "bn" ? "পেস্ট করুন, টাইপ করুন, বা 🎲…" : "Paste, type, or 🎲…"; input-type: root.cap_show_pass ? text : password; text <=> root.cap_pass; height: 36px; horizontal-stretch: 1; accessible-label: "Password"; accepted(text) => { root.capture_save(root.cap_title, root.cap_user, text, root.cap_totp); } }
                     AuraButton { label: root.cap_show_pass ? "🙈" : "👁"; width: 52px; height: 36px; clicked => { root.cap_show_pass = !root.cap_show_pass; } }
                     AuraButton { label: "🎲"; width: 56px; clicked => { root.capture_generate(); } }
                 }
                 FieldLabel { text: root.ui_lang == "bn" ? "2FA সিক্রেট (ঐচ্ছিক)" : "2FA SECRET (OPTIONAL)"; }
-                LineEdit { placeholder-text: root.ui_lang == "bn" ? "2FA সেটআপ: otpauth সিক্রেট পেস্ট করুন" : "Paste otpauth secret when setting up 2FA"; text <=> root.cap_totp; height: 36px; }
+                LineEdit { placeholder-text: root.ui_lang == "bn" ? "2FA সেটআপ: otpauth সিক্রেট পেস্ট করুন" : "Paste otpauth secret when setting up 2FA"; text <=> root.cap_totp; height: 36px; accessible-label: "2FA secret"; }
 
                 HorizontalLayout {
                     spacing: 8px;
