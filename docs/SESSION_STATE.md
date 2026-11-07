@@ -86,9 +86,16 @@ Run Rust gates with `-j 1`; see "Known traps".
    extension, then walk: Continue-as fill, HUD hero, save prompt (reload / folder
    / notes / BN), offline cache + Windows Hello. The installed 0.4.0 build cannot
    talk to the 0.4.1 extension (bridge refuses), so this is blocked on install.
-2. **HUD 3.0 full 640px dual-column** — only the hero card slice is shipped
-   (`25008cc`, `09059bb`).
-3. **SSH / License editor** in the popup (currently list + copy only, `b399b06`).
+2. **HUD 3.0 (640px dual-column) — DECLINED (user, 2026-11-07).** Keep HUD 2.0's
+   list → separate detail page: a 420px popup gives the item full width, and the
+   list→detail pattern matches Bitwarden's own extension. Do not build the
+   dual-column layout.
+3. **Extension item view + edit (HUD 2.0) — real gap.** There is no read-only
+   item view; `openItemEditor` jumps straight into an edit form, and the editor
+   only maps login/note/card/identity (`popup.js:1280`). The HUD/Autofill
+   surface has no per-item view/edit. Add a read-only detail page with an Edit
+   button, then extend the editor to SSH + License (currently list + copy only,
+   `b399b06`).
 4. **Reuse hint in card/identity save prompts — done (`da1de56`)**: an "also in
    N other item(s)" chip when the PAN / email is already stored elsewhere.
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100

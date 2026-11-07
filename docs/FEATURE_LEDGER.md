@@ -44,7 +44,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |
 | Badge qualification | ✅ | no badge on newsletter/contact/identity fields (`fbe7881`, `7bca1b6`) |
 | Popup list | ✅ | all kinds, folders, search, health badges |
-| Popup editor | ✅ | create/update/delete for all kinds; notes/cards/identities (`b5d9e04`) |
+| Popup editor | ◐ | create/update/delete for login/note/card/identity only (`popup.js:1280`); **no read-only view** — the editor opens directly; SSH/License have no editor |
 | HUD 3.0 hero card | ◐ | hero slice shipped (`25008cc`, `09059bb`); full 640px dual-column not built |
 | Generator in popup | ✅ | same honest generator |
 | SSH keys + licenses | ◐ | list + copy (`b399b06`); no editor yet |
@@ -72,6 +72,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 
 | Not present | Why |
 |---|---|
+| HUD 3.0 dual-column popup (640px) | Declined by the user (2026-11-07). Keep HUD 2.0's list → separate detail page; the 420px popup gives the item full width and matches Bitwarden's extension. |
 | Organizations / collections | Vault model is single-user; there is nothing to pick. Do not add org pickers to save prompts. |
 | Cloud sync account / vendor lock-in | Local-first by design; GitHub/P2P/QR are user-owned transports. |
 | Fake security chips ("AES-256-GCM", "quantum-immune", "0M leak", "0 ms") | Dishonest. The extension explicitly does not reproduce the mockup's enclave/quantum chips (`popup.js:2336`, `popup.html:207`). |
