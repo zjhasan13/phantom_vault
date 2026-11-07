@@ -365,12 +365,39 @@ fn autotype_kind_allowed(kind: i32) -> bool {
     kind != 3 && kind != 6
 }
 
+/// A25/A28: one auto-type notification, with a semantic kind and a copy on the
+/// Quick Bar so a block is visible where the user is looking. `quiet` keeps an
+/// existing alert (e.g. the canary banner) from being overwritten.
+fn autotype_notify(
+    main_weak: &slint::Weak<MainWindow>,
+    qb_weak: &slint::Weak<QuickBarWindow>,
+    quiet: bool,
+    text: String,
+    kind: &str,
+) {
+    if let Some(qb) = qb_weak.upgrade() {
+        qb.set_qb_status(text.clone().into());
+    }
+    if quiet {
+        return;
+    }
+    let ui = main_weak.clone();
+    let k = kind.to_string();
+    let _ = slint::invoke_from_event_loop(move || {
+        if let Some(ui) = ui.upgrade() {
+            ui.set_notification_text(text.into());
+            ui.set_notification_kind(k.into());
+        }
+    });
+}
+
 fn trigger_autotype(
     main_weak: slint::Weak<MainWindow>,
     qb_weak: slint::Weak<QuickBarWindow>,
     qb_visible: Arc<std::sync::atomic::AtomicBool>,
     ui_visible: Arc<std::sync::atomic::AtomicBool>,
     req: TypeRequest,
+    quiet: bool,
 ) {
     use windows_native::autotype::{
         type_card, type_fields, type_identity, type_sequence, type_sequence_paired,
@@ -379,13 +406,13 @@ fn trigger_autotype(
     // refuse and let the UI offer Copy instead.
     if !autotype_kind_allowed(req.kind) {
         crate::security::access_log::log_event("autotype-blocked-multiline", &req.item_title);
-        let _ = slint::invoke_from_event_loop(move || {
-            if let Some(ui) = main_weak.upgrade() {
-                ui.set_notification_text(
-                    "📋 Multi-line item — use Copy instead of Auto-Type.".into(),
-                );
-            }
-        });
+        autotype_notify(
+            &main_weak,
+            &qb_weak,
+            quiet,
+            "📋 Multi-line item — use Copy instead of Auto-Type.".into(),
+            "warn",
+        );
         return;
     }
     // Spoof + app-binding gate. A1: a bound item must not type when the
@@ -395,14 +422,14 @@ fn trigger_autotype(
         AutotypeGate::Allow => {}
         AutotypeGate::BlockNoContext => {
             crate::security::access_log::log_event("autotype-blocked-nocontext", "");
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = main_weak.upgrade() {
-                    ui.set_notification_text(
-                        "🛡️ Could not verify the active app — Auto-Type blocked for this bound item."
-                            .into(),
-                    );
-                }
-            });
+            autotype_notify(
+                &main_weak,
+                &qb_weak,
+                quiet,
+                "🛡️ Could not verify the active app — Auto-Type blocked for this bound item."
+                    .into(),
+                "warn",
+            );
             return;
         }
         AutotypeGate::BlockSpoof(brand) => {
@@ -416,11 +443,7 @@ fn trigger_autotype(
                 brand
             );
             crate::security::access_log::log_event("autotype-blocked-spoof", &exe);
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = main_weak.upgrade() {
-                    ui.set_notification_text(msg.into());
-                }
-            });
+            autotype_notify(&main_weak, &qb_weak, quiet, msg, "error");
             return;
         }
         AutotypeGate::BlockApp(active) => {
@@ -434,16 +457,17 @@ fn trigger_autotype(
                 active
             );
             crate::security::access_log::log_event("autotype-blocked-app", &exe);
-            let _ = slint::invoke_from_event_loop(move || {
-                if let Some(ui) = main_weak.upgrade() {
-                    ui.set_notification_text(msg.into());
-                }
-            });
+            autotype_notify(&main_weak, &qb_weak, quiet, msg, "warn");
             return;
         }
     }
+    if !quiet {
+        if let Some(ui) = main_weak.upgrade() {
+            ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
+            ui.set_notification_kind("info".into());
+        }
+    }
     if let Some(ui) = main_weak.upgrade() {
-        ui.set_notification_text("⌨️ vault minimized — focus the target field…".into());
         ui.window().set_minimized(true);
     }
     // Resource diet: loops deep-sleep while the main window is down.
@@ -526,12 +550,18 @@ fn trigger_autotype(
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         match code {
-                            Some(_) => ui.set_notification_text(
-                                "⚡ Auto-filled 2FA verification code hands-free!".into(),
-                            ),
-                            None => ui.set_notification_text(
-                                "⌨️ Typed — no OTP screen appeared within 30s.".into(),
-                            ),
+                            Some(_) => {
+                                ui.set_notification_text(
+                                    "⚡ Auto-filled 2FA verification code hands-free!".into(),
+                                );
+                                ui.set_notification_kind("success".into());
+                            }
+                            None => {
+                                ui.set_notification_text(
+                                    "⌨️ Typed — no OTP screen appeared within 30s.".into(),
+                                );
+                                ui.set_notification_kind("warn".into());
+                            }
                         }
                     }
                 });
@@ -543,19 +573,28 @@ fn trigger_autotype(
                 ui.window().set_minimized(false);
                 ui.show().ok();
                 ui_visible.store(true, std::sync::atomic::Ordering::SeqCst);
+                // A27: a canary alert must survive the auto-type result.
+                if quiet {
+                    return;
+                }
                 match &res {
                     Ok(()) => {
                         if stale {
                             ui.set_notification_text(
                                 "⚠️ Auto-typed: Password is over 6 months old. Consider updating it.".into(),
                             );
+                            ui.set_notification_kind("warn".into());
                         } else if chain_handle.is_none() {
                             ui.set_notification_text(
                                 "⌨️ Typed — clipboard never touched.".into(),
                             );
+                            ui.set_notification_kind("success".into());
                         }
                     }
-                    Err(e) => ui.set_notification_text(format!("⚠️ Auto-Type: {e}").into()),
+                    Err(e) => {
+                        ui.set_notification_text(format!("⚠️ Auto-Type: {e}").into());
+                        ui.set_notification_kind("error".into());
+                    }
                 }
             }
         });
@@ -4158,6 +4197,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         let travel = *t_travel.lock().unwrap();
                         qb.set_quick_query("".into());
                         qb.set_qb_index(0);
+                        qb.set_qb_status("".into());
                         qb.set_filtered_results(vault_quickbar(&vault, "", travel));
                         qb.show().ok();
                         bring_to_foreground(qb.window());
@@ -4808,13 +4848,14 @@ fn main() -> Result<(), slint::PlatformError> {
     let type_qb_vault = Arc::clone(&active_vault);
     let type_qb_uvis = Arc::clone(&ui_visible);
     quick_bar.on_type_selected(move |kind, id, username, password, totp| {
-        if let Some(title) =
-            check_canary_trip(&type_qb_vault, password.as_str(), "autotype-quickbar")
-        {
+        let canary =
+            check_canary_trip(&type_qb_vault, password.as_str(), "autotype-quickbar");
+        if let Some(title) = &canary {
             if let Some(ui) = type_qb_main.upgrade() {
                 ui.set_notification_text(
                     format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
                 );
+                ui.set_notification_kind("error".into());
             }
         }
         // Reprompt gate: armed logins detour through the MainWindow modal
@@ -4853,6 +4894,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     )
                 })
             },
+            canary.is_some(),
         );
     });
 
@@ -5052,6 +5094,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             let filtered = vault_quickbar_app(&vault, &app_prefilter, travel, &app_prefilter);
                             qb.set_quick_query(app_prefilter.into());
                             qb.set_qb_index(0);
+                            qb.set_qb_status("".into());
                             qb.set_filtered_results(filtered);
                             qb.show().ok();
                             bring_to_foreground(qb.window());
@@ -8084,13 +8127,13 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     let type_main_uvis = Arc::clone(&ui_visible);
     let type_main_vault = Arc::clone(&active_vault);
     main_window.on_type_credential_requested(move |username, password, totp| {
-        if let Some(title) =
-            check_canary_trip(&type_main_vault, password.as_str(), "autotype-list")
-        {
+        let canary = check_canary_trip(&type_main_vault, password.as_str(), "autotype-list");
+        if let Some(title) = &canary {
             if let Some(ui) = type_main.upgrade() {
                 ui.set_notification_text(
                     format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
                 );
+                ui.set_notification_kind("error".into());
             }
         }
         // Legacy login path (no id): metadata unknown, audit still records
@@ -8132,6 +8175,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             Arc::clone(&type_main_vis),
             Arc::clone(&type_main_uvis),
             req,
+            canary.is_some(),
         );
     });
 
@@ -8160,11 +8204,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             .iter()
             .filter(|f| !f.trim().is_empty())
             .find_map(|f| check_canary_trip(&type_item_vault, f, "autotype-item"));
-        if let Some(title) = tripped {
+        if let Some(title) = &tripped {
             if let Some(ui) = type_item_main.upgrade() {
                 ui.set_notification_text(
                     format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
                 );
+                ui.set_notification_kind("error".into());
             }
         }
         // Reprompt gate: armed items detour through the modal (rp_action 2).
@@ -8191,6 +8236,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             Arc::clone(&type_item_vis),
             Arc::clone(&type_item_uvis),
             req,
+            tripped.is_some(),
         );
     });
 
@@ -11784,6 +11830,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             &totp,
                         )
                     },
+                    false,
                 );
             }
             3 => {
@@ -15469,6 +15516,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let v = lock_vault(&pill_vault);
                 login_type_request(&v, &qid, &user, &pass, &totp)
             },
+            false,
         );
     });
     // Wire-up #5: real secret-leak scan via native folder picker + worker.

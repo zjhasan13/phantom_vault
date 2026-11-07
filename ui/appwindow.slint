@@ -3086,7 +3086,12 @@ export component MainWindow inherits Window {
                             AuraButton { label: "Cancel"; width: 90px; height: 26px; clicked => { root.cancel_chain_2fa(); } }
                         }
                     }
-                    toast_timer := Timer { interval: 4s; running: root.notification_text != ""; triggered => { root.notification_text = ""; root.notification_kind = "info"; } } }
+                    toast_timer := Timer {
+                        // A26: warnings linger, errors stay until dismissed.
+                        interval: root.notification_kind == "warn" ? 10s : 4s;
+                        running: root.notification_text != "" && root.notification_kind != "error";
+                        triggered => { root.notification_text = ""; root.notification_kind = "info"; }
+                    } }
                     if root.is_travel_mode : Rectangle { background: #f59e0b1a; border-radius: 8px; height: 28px; Text { text: "✈️ TRAVEL MODE"; color: PhantomTheme.warning; font-size: 11px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } }
                     // SELECTED ITEM DETAIL
                     // Peep pad stays instantiated (detail rows bind
@@ -3868,6 +3873,8 @@ export component QuickBarWindow inherits Window {
     in-out property <[CredentialView]> filtered_results;
     // Keyboard pick: ↑↓ move, Enter copies the highlighted hit (default 0).
     in-out property <int> qb_index: 0;
+    // A28: block/abort reason shown where the user is looking.
+    in-out property <string> qb_status: "";
 
     callback query_changed(string);
     // kind+id ride along so Rust can enforce the master-reprompt gate
@@ -3940,7 +3947,7 @@ export component QuickBarWindow inherits Window {
                     text <=> root.quick_query;
                     height: 44px;
                     font-size: 15px;
-                    edited(text) => { root.qb_index = 0; root.query_changed(text); }
+                    edited(text) => { root.qb_index = 0; root.qb_status = ""; root.query_changed(text); }
                     accepted(text) => {
                         root.query_changed(text);
                         if root.filtered_results.length > 0 {
@@ -3996,6 +4003,9 @@ export component QuickBarWindow inherits Window {
                         if root.filtered_results.length == 0 : Text { text: root.ui_lang == "bn" ? "কিছু মেলেনি — Esc, তারপর ভল্টে + New।" : "No matches — Esc, then + New in the vault."; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; }
                     }
                 }
+
+                // A28: why a type/copy did not happen (block, mismatch, abort).
+                if root.qb_status != "" : Text { text: root.qb_status; color: PhantomTheme.warning; font-size: 11px; font-weight: 700; horizontal-alignment: center; overflow: elide; }
 
                 HorizontalLayout {
                     alignment: space-between;
