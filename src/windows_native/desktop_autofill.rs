@@ -163,20 +163,27 @@ fn uia_value_allowed(is_edit: bool, enabled: bool, read_only: bool) -> bool {
 
 /// P5: choose the username/password edit pair from an ordered (top-to-bottom)
 /// list of `(is_password, is_focused)` descriptors. Focus disambiguates
-/// multi-field forms; falls back to the first password and the nearest edit
-/// above it. Pure — unit tested.
+/// multi-field forms; the password is the nearest one at/after the focused
+/// field (or the nearest one before it). Pure - unit tested.
+///
+/// A8: without an Edit focus we no longer guess from page order - that filled
+/// the login form while the user was on a signup form. Pair-fill now requires
+/// the focused control to be part of the pair.
 fn pick_login_pair(edits: &[(bool, bool)]) -> Option<(usize, usize)> {
-    let focus = edits.iter().position(|e| e.1);
-    // A focused password wins; otherwise the first password in tree order.
-    let pass = focus
-        .filter(|&f| edits[f].0)
-        .or_else(|| edits.iter().position(|e| e.0))?;
+    let focus = edits.iter().position(|e| e.1)?;
+    let pass = if edits[focus].0 {
+        focus
+    } else {
+        (focus..edits.len())
+            .find(|&i| edits[i].0)
+            .or_else(|| (0..focus).rev().find(|&i| edits[i].0))?
+    };
     // Username = nearest non-password Edit ABOVE the password (tree order),
-    // else the first Edit anywhere (password-above layouts).
+    // else the next one below it (password-above layouts).
     let user = (0..pass)
         .rev()
         .find(|&i| !edits[i].0)
-        .or_else(|| edits.iter().position(|e| !e.0))?;
+        .or_else(|| (pass + 1..edits.len()).find(|&i| !edits[i].0))?;
     if user == pass { None } else { Some((user, pass)) }
 }
 
@@ -368,6 +375,75 @@ pub fn focused_is_password() -> bool {
     unsafe {
         let Ok(el) = auto.GetFocusedElement() else { return false; };
         is_password(&el)
+    }
+}
+
+/// A12: does a field label/id look like a password/secret input?
+fn password_label_like(hay: &str) -> bool {
+    hay.contains("pass")
+        || hay.contains("secret")
+        || hay.split(|c: char| !c.is_alphanumeric())
+            .any(|w| w == "pin")
+}
+
+/// A12: post-Tab check before the password is written. Returns true when the
+/// control reports IsPassword *or* its label/id says password/pin/secret. UIA
+/// failure returns true (cannot tell -> keep the historical behaviour).
+pub fn focused_looks_like_password() -> bool {
+    let Ok(_com) = ComGuard::enter() else { return true; };
+    let Ok(auto) = automation() else { return true; };
+    // SAFETY: read-only focused-element query.
+    unsafe {
+        let Ok(el) = auto.GetFocusedElement() else { return true; };
+        if is_password(&el) {
+            return true;
+        }
+        let name = el.CurrentName().map(bstr_to_string).unwrap_or_default();
+        let aid = el
+            .CurrentAutomationId()
+            .map(bstr_to_string)
+            .unwrap_or_default();
+        password_label_like(&format!("{name} {aid}").to_lowercase())
+    }
+}
+
+/// A11: element-level focus guard for mid-type checks. Holds COM initialized
+/// for its lifetime; `still_focused` compares the *control*, not just the
+/// window, so focus moving to a "show password" button or a confirm field
+/// aborts instead of typing the secret there.
+pub struct FocusGuard {
+    _com: ComGuard,
+    auto: IUIAutomation,
+    target: IUIAutomationElement,
+}
+
+impl FocusGuard {
+    /// Capture the currently focused control. `None` means UIA is unavailable
+    /// and the caller keeps the window-only guard.
+    pub fn capture() -> Option<Self> {
+        let com = ComGuard::enter().ok()?;
+        let auto = automation().ok()?;
+        // SAFETY: read-only focused-element query.
+        let target = unsafe { auto.GetFocusedElement().ok()? };
+        Some(Self {
+            _com: com,
+            auto,
+            target,
+        })
+    }
+
+    /// False only when a *different* control is focused. A UIA failure returns
+    /// true (cannot tell -> do not abort).
+    pub fn still_focused(&self) -> bool {
+        // SAFETY: read-only comparison; failures degrade to "still focused".
+        unsafe {
+            self.auto
+                .GetFocusedElement()
+                .ok()
+                .and_then(|cur| self.auto.CompareElements(&cur, &self.target).ok())
+                .map(|b| b.as_bool())
+                .unwrap_or(true)
+        }
     }
 }
 
@@ -724,17 +800,22 @@ mod tests {
 
     #[test]
     fn uia_login_pair_uses_focus_and_edit_order() {
-        // Plain username above password, focus elsewhere.
-        assert_eq!(pick_login_pair(&[(false, false), (true, false)]), Some((0, 1)));
+        // A8: no Edit focus -> no pair (never guess between login/signup).
+        assert_eq!(pick_login_pair(&[(false, false), (true, false)]), None);
         // Focus on the username / on the password.
         assert_eq!(pick_login_pair(&[(false, true), (true, false)]), Some((0, 1)));
         assert_eq!(pick_login_pair(&[(false, false), (true, true)]), Some((0, 1)));
-        // Signup: email + two passwords, focus email -> first password.
+        // Signup: email + two passwords, focus email -> the first password only.
         assert_eq!(
             pick_login_pair(&[(false, true), (true, false), (true, false)]),
             Some((0, 1))
         );
-        // Unusual DOM order: password above, username below.
+        // Signup: focus the second email block -> its own password below.
+        assert_eq!(
+            pick_login_pair(&[(false, false), (true, false), (false, true), (true, false)]),
+            Some((2, 3))
+        );
+        // Unusual DOM order: password above, username below, focus password.
         assert_eq!(pick_login_pair(&[(true, true), (false, false)]), Some((1, 0)));
         // Incomplete forms never pair.
         assert_eq!(pick_login_pair(&[(false, false)]), None);
@@ -819,5 +900,18 @@ mod tests {
         assert!(!value_matches(Some("old"), "pw"));
         // A pattern that does not expose its value keeps trust-on-write.
         assert!(value_matches(None, "pw"));
+    }
+
+    #[test]
+    fn password_label_heuristic_rejects_shipping() {
+        // A12: post-Tab check must not treat "shipping" as a PIN field.
+        assert!(password_label_like("password"));
+        assert!(password_label_like("confirm passcode"));
+        assert!(password_label_like("user-pin"));
+        assert!(password_label_like("secret answer"));
+        assert!(!password_label_like("username"));
+        assert!(!password_label_like("shipping address"));
+        assert!(!password_label_like("email"));
+        assert!(!password_label_like(""));
     }
 }

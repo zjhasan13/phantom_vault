@@ -160,11 +160,13 @@ pub fn type_fields(fields: &[&str], press_enter: bool) -> Result<()> {
         // secrets never ride keystrokes. Read-only password boxes refuse and
         // fall through to the guarded Unicode typing path.
         ensure_focus(target)?;
+        let control = crate::windows_native::desktop_autofill::FocusGuard::capture();
         if crate::windows_native::desktop_autofill::set_focused_value(f) {
             continue;
         }
         for unit in field_units(f) {
             ensure_focus(target)?;
+            ensure_control_focus(&control)?;
             press_unicode(unit, &mut rng)?;
             sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
         }
@@ -263,8 +265,23 @@ fn foreground_token() -> isize {
 fn ensure_focus(target: isize) -> Result<()> {
     if foreground_token() != target {
         return Err(VaultError::AutoType(
-            "focus moved mid-type — aborted for safety".into(),
+            "focus moved mid-type - aborted for safety".into(),
         ));
+    }
+    Ok(())
+}
+
+/// A11: the window stayed foreground but the focused *control* changed (show
+/// password, confirm field, autocomplete popup). Abort before the secret lands.
+fn ensure_control_focus(
+    guard: &Option<crate::windows_native::desktop_autofill::FocusGuard>,
+) -> Result<()> {
+    if let Some(g) = guard {
+        if !g.still_focused() {
+            return Err(VaultError::AutoType(
+                "focus moved to another control - aborted for safety".into(),
+            ));
+        }
     }
     Ok(())
 }
@@ -274,9 +291,11 @@ fn ensure_focus(target: isize) -> Result<()> {
 /// C9: same focus guard as the main paths (was unguarded).
 pub fn type_text_raw(text: &str, press_enter: bool) -> Result<()> {
     let target = foreground_token();
+    let control = crate::windows_native::desktop_autofill::FocusGuard::capture();
     let mut rng = OsRng;
     for unit in field_units(text) {
         ensure_focus(target)?;
+        ensure_control_focus(&control)?;
         press_unicode(unit, &mut rng)?;
         sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
     }
@@ -342,9 +361,11 @@ fn type_sequence_inner(username: &str, password: &str, pair_fill: bool) -> Resul
     // 2. Username: UIA SetValue when writable, else char by char (verified
     // UTF-16 units, no translation).
     ensure_focus(target)?;
+    let mut control = crate::windows_native::desktop_autofill::FocusGuard::capture();
     if !crate::windows_native::desktop_autofill::set_focused_value(username) {
         for unit in field_units(username) {
             ensure_focus(target)?;
+            ensure_control_focus(&control)?;
             press_unicode(unit, &mut rng)?;
             sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
         }
@@ -356,11 +377,21 @@ fn type_sequence_inner(username: &str, password: &str, pair_fill: bool) -> Resul
     press_vk(VK_TAB, &mut rng)?;
     std::thread::sleep(Duration::from_millis(TAB_POST_MS));
     ensure_focus(target)?;
+    // A11: Tab moved focus on purpose; re-lock onto the password control.
+    control = crate::windows_native::desktop_autofill::FocusGuard::capture();
+    // A12: one Tab is an assumption. If it did not land on a password/secret
+    // field, abort instead of typing the password into the next control.
+    if !crate::windows_native::desktop_autofill::focused_looks_like_password() {
+        return Err(VaultError::AutoType(
+            "Tab did not reach a password field - aborted for safety".into(),
+        ));
+    }
     // 4. Password: UIA SetValue when writable; otherwise char by char with
     // per-char focus re-check.
     if !crate::windows_native::desktop_autofill::set_focused_value(password) {
         for unit in field_units(password) {
             ensure_focus(target)?;
+            ensure_control_focus(&control)?;
             press_unicode(unit, &mut rng)?;
             sleep_range(&mut rng, GAP_MIN_MS, GAP_MAX_MS);
         }
