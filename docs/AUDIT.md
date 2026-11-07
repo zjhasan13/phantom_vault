@@ -380,8 +380,8 @@ reproduced.
 |---|---|---|---|
 | A21 | Neither popup focuses anything on open, so typing, ↑↓, Enter and **Esc** are dead until the user clicks a field. The lock screen does this correctly (`init => { self.focus(); }`), the popups do not, and no Rust call focuses them | `ui/appwindow.slint:3921`, `:4062` vs `:1452`; `main.rs:4922-4931` | fixed @b4ec6d0 |
 | A22 | `qb_index` is never reset when the Quick Bar opens, so the highlight can be absent (index > list length) while Enter still copies the clamped last row | `ui/appwindow.slint:3859`; `main.rs:4926-4928`; only `edited` resets it (`:3926`) | fixed @b4ec6d0 |
-| A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` | open |
-| A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` | open |
+| A23 | Always-on-top popups never auto-hide: no `focus-out` handler exists anywhere in the UI file (0 matches), so clicking another app leaves a 640×380 panel floating over it | `ui/appwindow.slint:3846-3851` | fixed @be545f0 |
+| A24 | Frameless popups have no drag region and Rust never sets a position: `start-drag` = 0 matches, no `set_position`; the window lands wherever Windows puts it and cannot be moved | `ui/appwindow.slint:3847`, `:3995` | fixed @be545f0 |
 | A25 | Every `notification_text` change forces `notification_kind = "info"` (`:618`), and the auto-type paths never set a kind — so "App mismatch", "SendInput was blocked" and "focus moved mid-type" all render in the neutral cyan/info tone. Only the copy path sets a kind | `ui/appwindow.slint:618`, `:3077`; `main.rs:534`, `:544`, `:552` | fixed @34048fb |
 | A26 | The toast self-dismisses after 4 s regardless of severity, so an actionable auto-type error disappears while the user is still reading it | `ui/appwindow.slint:3078` | fixed @34048fb |
 | A27 | The canary alert is clobbered in the auto-type path: the banner is set, then the minimize message (`:365`) and the success message (`:469-471`) overwrite it while the window is minimized, so the tripwire is never seen. The copy path deliberately avoids this (`:8081-8082`) | `main.rs:4686-4694`, `:365`, `:466-472` | fixed @34048fb |
@@ -620,6 +620,19 @@ Test-gap claim re-checked: the listed tests exist
 - **A19** (documented) — standalone TOTP types without Enter on purpose; the
   login chain submits because it just filled a login form.
 - `cargo test` **581 / 0 / 4 ignored**, clippy clean.
+
+### Fix batch 8 — A23, A24 (`be545f0`)
+
+- **A23** — both always-on-top popups spawn a bounded foreground watcher that
+  hides them 250 ms after another window takes focus. A 2 s grace (and a
+  "seen foreground" flag) prevents a slow `SetForegroundWindow` from hiding the
+  popup instantly; `bring_to_foreground` now attaches to the foreground thread.
+- **A24** — the frameless popups drag 1:1 from a topmost 56 px header strip.
+  Slint reports down/move/up; Rust anchors on `GetCursorPos` + the window origin
+  and applies `SetWindowPos(... SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE)`.
+- Screen evidence: the capture moved from `160,160` to `280,220` for a
+  `+120,+60` drag, then disappeared within a second of focusing the main window.
+- `cargo test` **581 / 0 / 4 ignored**, clippy clean, build clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 
