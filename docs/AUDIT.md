@@ -390,7 +390,7 @@ reproduced.
 | A30 | The 2FA watcher outlives a lock: locking the vault during the 30 s window still types the code afterwards | `main.rs:483-505` | fixed @b63455c |
 | A31 | `record_ext_fill` also runs in decoy mode, writing decoy item ids and counters into the shared extension stats sidecar | `main.rs:423`; `native_host.rs:2758-2768` | fixed @b63455c |
 | A32 | The Quick Bar opens with the focused app name pre-typed into the search box, so the field starts with text the user did not type and must be cleared to search | `main.rs:4926` | fixed @6d3aac5 |
-| A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` | open |
+| A33 | Secrets ride the row model: `CredentialView.password` is populated for every listed item, so the Quick Bar and main list materialize all passwords in Slint memory with no zeroize. The copy path's own comment says the model "never carries secrets" | `ui/appwindow.slint:21`; `main.rs:2999` vs `:8103-8105` | fixed @4a38695 |
 | A34 | After typing, the app restores and shows the main window, stealing focus back from the login form immediately after Enter | `main.rs:459-460` | fixed @b63455c |
 
 ### Theme conformance (Aegis palette, `design/tokens.json`)
@@ -674,6 +674,19 @@ Test-gap claim re-checked: the listed tests exist
 - The Ctrl+Alt+A app prefilter still narrows the Quick Bar results, but the
   search box opens **empty**; the app name is no longer pre-typed. Alt+Space is
   unchanged.
+
+### Fix batch 12 — A33 (`4a38695`)
+
+- `CredentialView` no longer has a `password` field: the main list and Quick Bar
+  no longer materialize every secret in Slint memory.
+- Quick Bar click/Copy call `quick_copy(kind, id)`, which resolves the secret
+  behind the same reprompt/canary gate; `quick_copy` gained license/note/
+  identity/SSH arms.
+- The Quick Bar type path builds its request from the vault by id, with the
+  stale-value fallback removed (missing item = warning, never old data).
+- `HistoryView` still carries retired passwords, RAM-only, for the history copy
+  button (out of A33's scope).
+- `cargo test` **581 / 0 / 4 ignored**, clippy clean.
 
 ## Import/export upgrade: native lossless backup, row previews, merge modes, undo
 

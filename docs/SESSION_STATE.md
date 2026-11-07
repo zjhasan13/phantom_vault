@@ -10,19 +10,20 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `6d3aac5` (A1-A32/A34 + T1-T10; only A33 open) |
+| Branch / HEAD | `main` @ `4a38695` (audit A1-A34 + T1-T10 complete) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `6d3aac5`
+## Last code batch (2026-11-07) - `4a38695`
 
-Auto-type/popup A1-A32, A34 and theme/a11y T1-T10 are done; only **A33**
-(secrets in the row model) remains. A32: the Quick Bar app prefilter no longer
-pre-types the app name into the search box. `cargo test` 581, tokens 21.
-Details: `docs/AUDIT.md` "Fix batch 1-11". Details: `docs/AUDIT.md` §9 "Fix batch 1".
+The auto-type/popup audit is complete: A1-A34 + T1-T10 fixed/documented, with
+A33 landing last (secrets removed from `CredentialView`). `cargo test` 581,
+tokens 21. Details: `docs/AUDIT.md` "Fix batch 1-12". Next work is the
+non-audit queue (live 0.4.1 E2E, HUD 3.0, SSH/License editor, reuse hint,
+responsive filter strip, A26 BN, DPI pass). Details: `docs/AUDIT.md` §9 "Fix batch 1".
 
 ## Previous batch (2026-11-05) — shipped in `171eb92`
 
@@ -95,18 +96,13 @@ Run Rust gates with `-j 1`; see "Known traps".
 6. **A26 Bengali pass**: remaining dialogs and Rust-generated status strings are
    still English (`docs/A26_BN.md`).
 7. **Manual 100% / 125% layout pass** across all screens (no automated DPI test).
-8. **Desktop auto-type fixes** — 34 findings (A1-A34) and 12 UX items are queued in
-   `docs/AUDIT.md` §8 (code path) and §9 (popups, notifications, theme conformance,
-   T1-T10). The `Status` column there is authoritative: mark a row
-   `fixed @<hash>` when it lands. **A1-A32, A34 and T1-T10 are fixed/
-   documented** (`3b1fc92`, `6b095fc`, `b4ec6d0`, `1cf999a`, `34048fb`,
-   `d76c34c`, `1a82614`, `2b2f81b`, `be545f0`, `b63455c`, `1c03520`,
-   `6d3aac5`; +12 tests, `cargo test` 581). Only **A33** (secrets in the row
-   model) remains. Statically verified on
-   2026-11-07: 33/34 A-items confirmed, A32 partial (Ctrl+Alt+A only), T1-T10
-   confirmed, one extra off-token toast literal `#101834`. Nothing reproduced on
-   screen for the remaining items; A21 capture focus and A29 were also checked
-   on screen in this batch.
+8. **Desktop auto-type fixes — complete.** A1-A34 + T1-T10 are fixed or
+   documented in `docs/AUDIT.md` §8/§9 (batches 1-12: `3b1fc92`, `6b095fc`,
+   `b4ec6d0`, `1cf999a`, `34048fb`, `d76c34c`, `1a82614`, `2b2f81b`,
+   `be545f0`, `b63455c`, `1c03520`, `6d3aac5`, `4a38695`; +12 tests,
+   `cargo test` 581). The `Status` column is authoritative. Still needs a live
+   target app / person: A1/A2/A5/A9/A10/A23/A24 were verified by code inspection
+   (A21 capture focus, A29, A23 and A24 were also checked on screen).
 
 ## Recently shipped (newest first, ~15 commits)
 
