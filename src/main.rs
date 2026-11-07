@@ -312,6 +312,10 @@ fn chain_2fa_cancel_flag() -> &'static Arc<AtomicBool> {
     FLAG.get_or_init(|| Arc::new(AtomicBool::new(false)))
 }
 
+/// A30: mirrors `is_unlocked` for worker threads; the 2FA watcher must stop
+/// when the vault is locked mid-watch.
+static VAULT_UNLOCKED: AtomicBool = AtomicBool::new(false);
+
 /// P2: app binding gate for Auto-Type. Empty `apps` = unbound web item (allow).
 /// Case-insensitive match against the executable stem OR the pretty app name.
 fn app_binding_matches(apps: &[String], exe: &str, app_name: &str) -> bool {
@@ -479,6 +483,13 @@ fn trigger_autotype(
         qb.hide().ok();
     }
     qb_visible.store(false, std::sync::atomic::Ordering::SeqCst);
+    // A31: decoy fills must not write the real extension-stats sidecar (or the
+    // real access log). Capture the mode on the caller thread; the worker
+    // cannot query the UI.
+    let is_decoy = main_weak
+        .upgrade()
+        .map(|ui| ui.get_is_decoy())
+        .unwrap_or(false);
     thread::spawn(move || {
         // Even an unexpected panic mid-typing must restore the window —
         // never leave the user staring at a vanished vault.
@@ -527,12 +538,16 @@ fn trigger_autotype(
         .and_then(|r| r);
         let ok = res.is_ok();
         if ok {
-            // Fill audit: sidecar (popup "Last filled" + dashboard) + access log.
-            windows_native::native_host::record_ext_fill(&req.item_id);
-            crate::security::access_log::log_event("autotype/fill", &req.item_title);
-        } else if let Err(e) = &res {
-            // A20: aborts leave a trail too - the reason only, never the secret.
-            crate::security::access_log::log_event("autotype-abort", &e.to_string());
+            if !is_decoy {
+                // Fill audit: sidecar (popup "Last filled" + dashboard) + log.
+                windows_native::native_host::record_ext_fill(&req.item_id);
+                crate::security::access_log::log_event("autotype/fill", &req.item_title);
+            }
+        } else if !is_decoy {
+            if let Err(e) = &res {
+                // A20: aborts leave a trail too - the reason only, never the secret.
+                crate::security::access_log::log_event("autotype-abort", &e.to_string());
+            }
         }
         let stale = ok
             && req.last_changed != 0
@@ -541,7 +556,7 @@ fn trigger_autotype(
         let chained = ok && !req.totp_secret.trim().is_empty() && chain_2fa_enabled();
         // Arm the 2FA watcher BEFORE restoring UI (overlaps the app's
         // password-submit round-trip instead of serializing after it).
-        let chain_handle = chained.then(|| {
+        let _chain_handle = chained.then(|| {
             let weak = main_weak.clone();
             let watch_ui = main_weak.clone();
             let cancel = Arc::clone(chain_2fa_cancel_flag());
@@ -573,12 +588,18 @@ fn trigger_autotype(
                 });
             })
         });
+        // A34: only bring the vault back when the user needs to act (error,
+        // stale warning, or a canary alert). A successful fill leaves it
+        // minimized so the target form keeps focus - the hands-free 2FA
+        // watcher depends on that.
+        let needs_attention = quiet || res.is_err() || stale;
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = main_weak.upgrade() {
-                // Restore BEFORE touching UI so the user sees the result.
-                ui.window().set_minimized(false);
-                ui.show().ok();
-                ui_visible.store(true, std::sync::atomic::Ordering::SeqCst);
+                if needs_attention {
+                    ui.window().set_minimized(false);
+                    ui.show().ok();
+                    ui_visible.store(true, std::sync::atomic::Ordering::SeqCst);
+                }
                 // A27: a canary alert must survive the auto-type result.
                 if quiet {
                     return;
@@ -590,11 +611,6 @@ fn trigger_autotype(
                                 "⚠️ Auto-typed: Password is over 6 months old. Consider updating it.".into(),
                             );
                             ui.set_notification_kind("warn".into());
-                        } else if chain_handle.is_none() {
-                            ui.set_notification_text(
-                                "⌨️ Typed — clipboard never touched.".into(),
-                            );
-                            ui.set_notification_kind("success".into());
                         }
                     }
                     Err(e) => {
@@ -633,14 +649,14 @@ fn chain_2fa_watch(
     publish(true, 30);
     let mut remaining: i32 = 30;
     while remaining > 0 {
-        if cancel.load(Ordering::SeqCst) {
+        if cancel.load(Ordering::SeqCst) || !VAULT_UNLOCKED.load(Ordering::SeqCst) {
             publish(false, 0);
             return None;
         }
         publish(true, remaining);
         if otp_screen_visible() {
             std::thread::sleep(Duration::from_millis(300));
-            if cancel.load(Ordering::SeqCst) {
+            if cancel.load(Ordering::SeqCst) || !VAULT_UNLOCKED.load(Ordering::SeqCst) {
                 publish(false, 0);
                 return None;
             }
@@ -907,6 +923,7 @@ fn finish_factory_reset_ui(ui: &MainWindow, qb: &slint::Weak<QuickBarWindow>) {
     ui.set_fr_armed(false);
     ui.set_fr_countdown(0);
     ui.set_is_unlocked(false);
+    VAULT_UNLOCKED.store(false, Ordering::SeqCst);
     ui.set_is_decoy(false);
     ui.set_has_vault_file(false);
     ui.set_show_onboarding(true);
@@ -1142,6 +1159,7 @@ fn lock_vault_now(
             return;
         };
         ui.set_is_unlocked(false);
+        VAULT_UNLOCKED.store(false, Ordering::SeqCst);
         ui.set_status_text(status.into());
         ui.set_notification_text("🔒 Vault locked.".into());
         // Bulk-select is session state, never persisted — drop it with the
@@ -1583,6 +1601,7 @@ fn publish_unlocked_vault(
     ui.set_totp2fa_secret("".into());
     *lock_vault(vault_arc) = vault;
     ui.set_is_unlocked(true);
+    VAULT_UNLOCKED.store(true, Ordering::SeqCst);
     ui.set_show_onboarding(false);
     ui.set_has_vault_file(true);
     ui.set_is_decoy(false);
@@ -2054,6 +2073,7 @@ fn unlock_with_password(    pass: SecretString,
                         }
                         *lock_vault(&vault_arc) = decoy;
                         ui.set_is_unlocked(true);
+                        VAULT_UNLOCKED.store(true, Ordering::SeqCst);
                         ui.set_show_onboarding(false);
                         ui.set_is_decoy(true);
                         clear_share_stage();
