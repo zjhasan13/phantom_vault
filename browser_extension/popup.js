@@ -1279,7 +1279,7 @@
     return r.token;
   }
 
-  const KIND_NUM = { login: 1, note: 3, card: 4, identity: 5 };
+  const KIND_NUM = { login: 1, note: 3, card: 4, identity: 5, ssh: 6, license: 7 };
 
   async function editEntryById(id, kind = "login") {
     try {
@@ -1336,7 +1336,7 @@
     const card = document.createElement("div");
     card.className = "card";
     const h = document.createElement("h2");
-    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : "";
+    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : kind === "license" ? " · License" : kind === "ssh" ? " · SSH key" : "";
     h.textContent = (entry.title || "(untitled)") + kindLabel;
     card.append(h);
     const meta = document.createElement("div");
@@ -1413,6 +1413,14 @@
       addRow("Card number", entry.number, { secret: true });
       addRow("Expiry", [entry.exp_month, entry.exp_year].filter(Boolean).join("/"), {});
       addRow("CVV", entry.cvv, { secret: true });
+    } else if (kind === "license") {
+      addRow("App name", entry.app_name || entry.title, {});
+      addRow("License key", entry.license_key, { secret: true });
+      addRow("Expiry date", entry.expiry, {});
+    } else if (kind === "ssh") {
+      addRow("Fingerprint", entry.fingerprint, {});
+      addRow("Public key", entry.public_key, {});
+      addRow("Private key", entry.private_key, { secret: true });
     } else {
       addRow("Full name", entry.full_name, {});
       addRow("Email", entry.email, {});
@@ -1463,7 +1471,7 @@
     const card = document.createElement("div");
     card.className = "card";
     const h = document.createElement("h2");
-    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : "";
+    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : kind === "license" ? " · License" : kind === "ssh" ? " · SSH key" : "";
     h.textContent = (isNew ? t("ed_new") : t("ed_edit")) + kindLabel;
     card.append(h);
 
@@ -1492,6 +1500,7 @@
     let holderIn = null, numIn = null, mmIn = null, yyIn = null, cvvIn = null;
     let nameIn = null, emailIn = null, phoneIn = null, addrIn = null;
     let companyIn = null, cityIn = null, stateIn = null, zipIn = null, countryIn = null;
+    let keyIn = null, expiryIn = null, privIn = null, pubIn = null, fpIn = null;
     if (kind === "login") {
       userIn = mkField(t("ed_username"), entry && entry.username);
       passIn = mkField(t("ed_password"), entry && entry.password, "password", "new-password");
@@ -1506,6 +1515,13 @@
       mmIn = mkField("Expiry month (MM)", entry && entry.exp_month, "text", "cc-exp-month");
       yyIn = mkField("Expiry year (YY)", entry && entry.exp_year, "text", "cc-exp-year");
       cvvIn = mkField("CVV", entry && entry.cvv, "password", "cc-csc");
+    } else if (kind === "license") {
+      keyIn = mkField("License key", entry && entry.license_key, "password");
+      expiryIn = mkField("Expiry date", entry && entry.expiry);
+    } else if (kind === "ssh") {
+      privIn = mkArea("Private key", entry && entry.private_key);
+      pubIn = mkArea("Public key", entry && entry.public_key);
+      fpIn = mkField("Fingerprint", entry && entry.fingerprint);
     } else {
       nameIn = mkField("Full name", entry && entry.full_name);
       emailIn = mkField("Email", entry && entry.email, "email");
@@ -1692,6 +1708,21 @@
         payload.cvv = cvvIn.value.trim();
         if (!payload.number) { errEl.textContent = "Card number required"; return; }
         payload.title = title || "Card";
+      } else if (kind === "license") {
+        payload.app_name = title;
+        payload.license_key = keyIn.value.trim();
+        payload.expiry = expiryIn.value.trim();
+        if (!payload.app_name || !payload.license_key) {
+          errEl.textContent = "App name and license key required";
+          return;
+        }
+        payload.title = payload.app_name;
+      } else if (kind === "ssh") {
+        payload.title = title || "SSH key";
+        payload.private_key = privIn.value.trim();
+        payload.public_key = pubIn.value.trim();
+        payload.fingerprint = fpIn.value.trim();
+        if (!payload.private_key) { errEl.textContent = "Private key required"; return; }
       } else {
         payload.full_name = nameIn.value.trim();
         payload.email = emailIn.value.trim();
@@ -1760,7 +1791,7 @@
     const grid = document.createElement("div");
     grid.className = "actions";
     let first = null;
-    for (const [kind, label] of [["login", "Login"], ["note", "Note"], ["card", "Card"], ["identity", "Identity"]]) {
+    for (const [kind, label] of [["login", "Login"], ["note", "Note"], ["card", "Card"], ["identity", "Identity"], ["license", "License"], ["ssh", "SSH key"]]) {
       const b = document.createElement("button");
       b.textContent = label;
       if (kind === "login") b.className = "primary";
@@ -2931,7 +2962,7 @@
       try { await clipText((await fetchEntry(6, s.id)).private_key, priv); }
       catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     });
-    btns.append(pub, priv);
+    btns.append(viewButton(s.id, "ssh"), editButton(s.id, "ssh"), pub, priv);
     row.append(btns);
     wireKeys(row, idx, s, () => pub.click());
     rows.push(row);
@@ -2950,7 +2981,7 @@
       try { await clipText((await fetchEntry(7, l.id)).license_key, key); }
       catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     });
-    btns.append(key);
+    btns.append(viewButton(l.id, "license"), editButton(l.id, "license"), key);
     row.append(btns);
     wireKeys(row, idx, l, () => key.click());
     rows.push(row);

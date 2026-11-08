@@ -117,6 +117,19 @@ test("P1: rows open a read-only view and edit lives inside it", () => {
   assert.match(view, /openItemEditor\(entry, kind\)/, "edit opens from the view");
 });
 
+// ---- P2: SSH + License editors ----
+
+test("P2: SSH and License rows have view + edit and the editor maps both kinds", () => {
+  assert.match(SRC, /ssh: 6, license: 7/, "kind map");
+  assert.match(SRC, /viewButton\(s\.id, "ssh"\), editButton\(s\.id, "ssh"\)/, "SSH row actions");
+  assert.match(SRC, /viewButton\(l\.id, "license"\), editButton\(l\.id, "license"\)/, "license row actions");
+  assert.match(SRC, /else if \(kind === "license"\) \{[\s\S]*?License key/, "license fields");
+  assert.match(SRC, /else if \(kind === "ssh"\) \{[\s\S]*?Private key/, "SSH fields");
+  assert.match(SRC, /\["license", "License"\], \["ssh", "SSH key"\]/, "Add chooser entries");
+  assert.match(SRC, /payload\.license_key = keyIn\.value\.trim\(\)/, "license save payload");
+  assert.match(SRC, /payload\.private_key = privIn\.value\.trim\(\)/, "SSH save payload");
+});
+
 // ---- A4: clipboard auto-clear ----
 
 test("A4: popup copies through the native host before the web clipboard", () => {

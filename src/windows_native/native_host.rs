@@ -1960,7 +1960,7 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                 .unwrap_or("")
                 .trim()
                 .to_lowercase();
-            if !matches!(kind.as_str(), "note" | "card" | "identity") {
+            if !matches!(kind.as_str(), "note" | "card" | "identity" | "ssh" | "license") {
                 return no("unsupported kind");
             }
             let creating = cmd == "create_item";
@@ -1987,6 +1987,14 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     },
                     "card" => match vault.cards.iter_mut().find(|k| k.id == id && k.deleted_at.is_none()) {
                         Some(k) => { k.deleted_at = Some(now); true }
+                        None => false,
+                    },
+                    "ssh" => match vault.ssh_keys.iter_mut().find(|s| s.id == id && s.deleted_at.is_none()) {
+                        Some(s) => { s.deleted_at = Some(now); true }
+                        None => false,
+                    },
+                    "license" => match vault.licenses.iter_mut().find(|l| l.id == id && l.deleted_at.is_none()) {
+                        Some(l) => { l.deleted_at = Some(now); true }
                         None => false,
                     },
                     _ => match vault.identities.iter_mut().find(|i| i.id == id && i.deleted_at.is_none()) {
@@ -2140,6 +2148,106 @@ pub fn answer(vault: &mut Vault, unlocked: bool, req: &serde_json::Value) -> Ans
                     k.title = title;
                 }
                 k.folder = folder;
+                crate::security::access_log::log_event("bridge-update", &short_id(&id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "id": id}),
+                    persist: true,
+                };
+            }
+            // license (extension kind 7 maps to SoftwareLicense)
+            if kind == "license" {
+                let app_name = clip("app_name", 128);
+                let title = clip("title", 128);
+                let license_key = clip("license_key", 4096);
+                let expiry = clip("expiry", 32);
+                let app = if app_name.is_empty() { title } else { app_name };
+                if creating {
+                    if app.is_empty() || license_key.is_empty() {
+                        return no("app name and license key required");
+                    }
+                    let new_id = next_item_id(vault, "extl");
+                    vault.licenses.push(crate::models::SoftwareLicense {
+                        id: new_id.clone(),
+                        app_name: app,
+                        license_key,
+                        expiry_date: if expiry.is_empty() { None } else { Some(expiry) },
+                        folder,
+                        custom_fields: Vec::new(),
+                        attachments: Vec::new(),
+                        travel_safe: false,
+                        favorite: false,
+                        deleted_at: None,
+                    });
+                    crate::security::access_log::log_event("bridge-create", &short_id(&new_id));
+                    return Answer {
+                        reply: serde_json::json!({"ok": true, "id": new_id}),
+                        persist: true,
+                    };
+                }
+                let Some(l) = vault.licenses.iter_mut().find(|l| l.id == id && l.deleted_at.is_none()) else {
+                    return no("unknown id");
+                };
+                if !app.is_empty() {
+                    l.app_name = app;
+                }
+                if !license_key.is_empty() {
+                    l.license_key = license_key;
+                }
+                l.expiry_date = if expiry.is_empty() { None } else { Some(expiry) };
+                l.folder = folder;
+                crate::security::access_log::log_event("bridge-update", &short_id(&id));
+                return Answer {
+                    reply: serde_json::json!({"ok": true, "id": id}),
+                    persist: true,
+                };
+            }
+            // SSH key (extension kind 6)
+            if kind == "ssh" {
+                let title = clip("title", 128);
+                let private_key = clip("private_key", 20000);
+                let public_key = clip("public_key", 8000);
+                let fingerprint = clip("fingerprint", 128);
+                if creating {
+                    if private_key.is_empty() {
+                        return no("private key required");
+                    }
+                    let new_id = next_item_id(vault, "exts");
+                    vault.ssh_keys.push(crate::models::SshKeyItem {
+                        id: new_id.clone(),
+                        title: if title.is_empty() { String::from("SSH key") } else { title },
+                        public_key,
+                        private_key,
+                        fingerprint,
+                        folder,
+                        notes: String::from("Created via browser extension"),
+                        custom_fields: Vec::new(),
+                        attachments: Vec::new(),
+                        travel_safe: false,
+                        favorite: false,
+                        deleted_at: None,
+                    });
+                    crate::security::access_log::log_event("bridge-create", &short_id(&new_id));
+                    return Answer {
+                        reply: serde_json::json!({"ok": true, "id": new_id}),
+                        persist: true,
+                    };
+                }
+                let Some(s) = vault.ssh_keys.iter_mut().find(|s| s.id == id && s.deleted_at.is_none()) else {
+                    return no("unknown id");
+                };
+                if !title.is_empty() {
+                    s.title = title;
+                }
+                if !private_key.is_empty() {
+                    s.private_key = private_key;
+                }
+                if !public_key.is_empty() {
+                    s.public_key = public_key;
+                }
+                if !fingerprint.is_empty() {
+                    s.fingerprint = fingerprint;
+                }
+                s.folder = folder;
                 crate::security::access_log::log_event("bridge-update", &short_id(&id));
                 return Answer {
                     reply: serde_json::json!({"ok": true, "id": id}),
@@ -5195,6 +5303,61 @@ mod tests {
             "cmd": "create_item", "kind": "note", "title": "x"
         }));
         assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn generic_item_editor_writes_ssh_and_license() {
+        let mut v = vault_with_login();
+        // License: app name + key required, expiry optional, folder kept.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "license", "app_name": "Acme IDE",
+            "license_key": "AAAA-BBBB", "expiry": "2030-01-01", "folder": "Work"
+        }));
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.licenses.len(), 1);
+        assert_eq!(v.licenses[0].app_name, "Acme IDE");
+        assert_eq!(v.licenses[0].folder, "Work");
+        let lic_id = r.reply["id"].as_str().unwrap().to_string();
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "update_item", "kind": "license", "id": lic_id, "license_key": "CCCC-DDDD"
+        }));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(v.licenses[0].license_key, "CCCC-DDDD");
+        assert_eq!(v.licenses[0].app_name, "Acme IDE");
+        // Missing key is refused.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "license", "app_name": "NoKey"
+        }));
+        assert_eq!(r.reply["ok"], false);
+
+        // SSH: private key required; update keeps the public key.
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "ssh", "title": "Deploy",
+            "private_key": "-----BEGIN KEY-----", "public_key": "ssh-ed25519 AAA",
+            "fingerprint": "SHA256:abc"
+        }));
+        assert_eq!(r.reply["ok"], true, "{:?}", r.reply);
+        assert_eq!(v.ssh_keys.len(), 1);
+        assert_eq!(v.ssh_keys[0].public_key, "ssh-ed25519 AAA");
+        let ssh_id = r.reply["id"].as_str().unwrap().to_string();
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "update_item", "kind": "ssh", "id": ssh_id, "title": "Deploy v2"
+        }));
+        assert_eq!(r.reply["ok"], true);
+        assert_eq!(v.ssh_keys[0].title, "Deploy v2");
+        assert_eq!(v.ssh_keys[0].private_key, "-----BEGIN KEY-----");
+        let r = answer(&mut v, true, &serde_json::json!({
+            "cmd": "create_item", "kind": "ssh", "title": "NoKey"
+        }));
+        assert_eq!(r.reply["ok"], false);
+
+        // Both soft-delete.
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "delete_item", "kind": "license", "id": lic_id}));
+        assert_eq!(r.reply["ok"], true);
+        assert!(v.licenses[0].deleted_at.is_some());
+        let r = answer(&mut v, true, &serde_json::json!({"cmd": "delete_item", "kind": "ssh", "id": ssh_id}));
+        assert_eq!(r.reply["ok"], true);
+        assert!(v.ssh_keys[0].deleted_at.is_some());
     }
 
     #[test]
