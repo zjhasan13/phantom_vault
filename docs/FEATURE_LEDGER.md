@@ -44,7 +44,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |
 | Badge qualification | ✅ | no badge on newsletter/contact/identity fields (`fbe7881`, `7bca1b6`) |
 | Popup list | ✅ | all kinds, folders, search, health badges |
-| Popup editor | ◐ | create/update/delete for login/note/card/identity only (`popup.js:1280`); **no read-only view** — the editor opens directly; SSH/License have no editor |
+| Popup view + editor | ◐ | read-only view with Edit/Fill/Close (`0b7e0c6`); create/update/delete for login/note/card/identity only (`popup.js:1280`); SSH/License have no editor |
 | HUD 3.0 hero card | ◐ | hero slice shipped (`25008cc`, `09059bb`); full 640px dual-column not built |
 | Generator in popup | ✅ | same honest generator |
 | SSH keys + licenses | ◐ | list + copy (`b399b06`); no editor yet |
@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
 | `da1de56` | save prompts: card/identity reuse hint ("also in N other item(s)") |
 | `774420a` | i18n: auto-type notifications, 2FA countdown + Cancel, capture a11y labels follow ui_lang |
 | `a4c2bfc` | filter strip: 68px chips + a 5-column, two-row grid on narrow windows |

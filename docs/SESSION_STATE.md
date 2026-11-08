@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `da1de56` (audit + filter strip + BN + card/identity reuse hint) |
+| Branch / HEAD | `main` @ `0b7e0c6` (audit + filter strip + BN + reuse hint + item view) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -74,7 +74,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
 | `cargo test -j 1` | **581 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
-| `npm test` | **160/160 pass** |
+| `npm test` | **161/161 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
 
 Run Rust gates with `-j 1`; see "Known traps".
@@ -90,12 +90,11 @@ Run Rust gates with `-j 1`; see "Known traps".
    list → separate detail page: a 420px popup gives the item full width, and the
    list→detail pattern matches Bitwarden's own extension. Do not build the
    dual-column layout.
-3. **Extension item view + edit (HUD 2.0) — real gap.** There is no read-only
-   item view; `openItemEditor` jumps straight into an edit form, and the editor
-   only maps login/note/card/identity (`popup.js:1280`). The HUD/Autofill
-   surface has no per-item view/edit. Add a read-only detail page with an Edit
-   button, then extend the editor to SSH + License (currently list + copy only,
-   `b399b06`).
+3. **Extension item view + edit (HUD 2.0) — view done (`0b7e0c6`), editors
+   partial.** Rows now open a read-only view (masked secrets, folder, 2FA,
+   history-free) with **Edit / Fill / Close** inside it; the editor still maps
+   login/note/card/identity (`popup.js:1280`). **Remaining: SSH + License
+   editors** (list + copy only, `b399b06`).
 4. **Reuse hint in card/identity save prompts — done (`da1de56`)**: an "also in
    N other item(s)" chip when the PAN / email is already stored elsewhere.
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
