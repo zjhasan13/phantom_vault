@@ -123,6 +123,18 @@ Still English: Rust status/error strings, the `VaultError` text inside
 `Auto-Type: {e}`, and some Settings/onboarding paragraphs. The BN layout pass
 (100%/125%) is still pending.
 
+## Coverage update (2026-11-08, status batch)
+
+B2 localized the Rust-side status/notification strings we author (export,
+import, sync, scanner, PIN, health, janitor, travel mode) and added
+`VaultError::localized()` — every variant has a Bengali wrapper, and the
+Auto-Type payload strings (focus moved, no foreground window, Tab miss, nothing
+to type) are mapped explicitly. Unknown technical payloads fall through in
+English rather than a fabricated translation.
+
+Still English: dynamic `format!` statuses outside Auto-Type (their payloads are
+OS/serde text), some Settings/onboarding paragraphs, and the BN layout pass.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

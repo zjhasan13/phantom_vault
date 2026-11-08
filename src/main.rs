@@ -649,7 +649,7 @@ fn trigger_autotype(
                         }
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("⚠️ Auto-Type: {e}").into());
+                        ui.set_notification_text(format!("⚠️ Auto-Type: {}", e.localized()).into());
                         ui.set_notification_kind("error".into());
                     }
                 }
@@ -5966,7 +5966,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             *pending_done.lock().unwrap() = None;
                             ui.set_totp2fa_on(false);
                             ui.set_totp2fa_secret("".into());
-                            ui.set_notification_text("Unlock 2FA disarmed.".into());
+                            ui.set_notification_text(tr("Unlock 2FA disarmed.", "আনলক 2FA বন্ধ।").into());
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
@@ -8371,7 +8371,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         authenticator::camera_scanner::cancel_webcam_scan();
         if let Some(ui) = window_weak_cam_cancel.upgrade() {
             ui.set_show_webcam_scan(false);
-            ui.set_notification_text("Webcam scan cancelled.".into());
+            ui.set_notification_text(tr("Webcam scan cancelled.", "ওয়েবক্যাম স্ক্যান বাতিল।").into());
         }
     });
 
@@ -9603,7 +9603,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(dest) = dest else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_admin_status("Export cancelled.".into());
+                        ui.set_admin_status(tr("Export cancelled.", "এক্সপোর্ট বাতিল।").into());
                     }
                 });
                 return;
@@ -10467,7 +10467,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_ga_page_total(0);
             ui.set_ga_warn("".into());
             ui.set_ga_busy(false);
-            ui.set_ga_status("Decoy mode is read-only - export is disabled.".into());
+            ui.set_ga_status(tr("Decoy mode is read-only - export is disabled.", "ডিকয় মোড রিড-অনলি — এক্সপোর্ট বন্ধ।").into());
             ui.set_ga_show(true);
             ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
@@ -10482,7 +10482,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_ga_page_total(0);
             ui.set_ga_warn("".into());
             ui.set_ga_busy(false);
-            ui.set_ga_status("No 2FA accounts to export yet. Add one above, then try again.".into());
+            ui.set_ga_status(tr("No 2FA accounts to export yet. Add one above, then try again.", "এখনো এক্সপোর্ট করার 2FA অ্যাকাউন্ট নেই। উপরে একটা যোগ করে আবার চেষ্টা করুন।").into());
             ui.set_ga_show(true);
             return;
         }
@@ -10494,7 +10494,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_ga_page_total(0);
         ui.set_ga_warn("".into());
         ui.set_ga_busy(true);
-        ui.set_ga_status("Building migration QR from the local vault…".into());
+        ui.set_ga_status(tr("Building migration QR from the local vault…", "লোকাল ভল্ট থেকে মাইগ্রেশন QR তৈরি হচ্ছে…").into());
         ui.set_ga_show(true);
         ui.set_notification_text("⏳ Building migration QR…".into());
         let weak = ga_weak.clone();
@@ -10525,7 +10525,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                         if pages.is_empty() {
                             ui.set_ga_busy(false);
-                            ui.set_ga_status("Export failed: the QR renderer produced no pages.".into());
+                            ui.set_ga_status(tr("Export failed: the QR renderer produced no pages.", "এক্সপোর্ট ব্যর্থ: QR রেন্ডারার কোনো পেজ দেয়নি।").into());
                             ui.set_notification_text("⚠️ GA export: QR render failed.".into());
                             return;
                         }
@@ -11075,7 +11075,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(dest) = dest else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("Export cancelled.".into());
+                        ui.set_notification_text(tr("Export cancelled.", "এক্সপোর্ট বাতিল।").into());
                     }
                 });
                 return;
@@ -12172,7 +12172,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     f.travel_only = false;
                     *rp_search.lock().unwrap() = f.clone();
                     set_paged_credentials(&ui, vault_to_items(&vault, &f));
-                    ui.set_notification_text("Travel Mode OFF — full vault restored.".into());
+                    ui.set_notification_text(tr("Travel Mode OFF — full vault restored.", "ট্রাভেল মোড বন্ধ — পুরো ভল্ট ফিরে এসেছে।").into());
                 }
             }
             5 => {
@@ -12330,7 +12330,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let Some(path) = picked else {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak.upgrade() {
-                                ui.set_export_status("Export cancelled — nothing written.".into());
+                                ui.set_export_status(tr("Export cancelled — nothing written.", "এক্সপোর্ট বাতিল — কিছু লেখা হয়নি।").into());
                             }
                         });
                         return;
@@ -13028,7 +13028,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(master) = lock_master_pw(&master_arc).clone() else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_import_status("Vault not unlocked.".into());
+                        ui.set_import_status(tr("Vault not unlocked.", "ভল্ট আনলক করা নেই।").into());
                     }
                 });
                 return;
@@ -13066,8 +13066,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
                         }
                         ui.set_import_undo_available(false);
-                        ui.set_import_status("Import undone - vault restored.".into());
-                        ui.set_notification_text("Import undone (session snapshot).".into());
+                        ui.set_import_status(tr("Import undone - vault restored.", "ইমপোর্ট আনডু — ভল্ট ফিরে এসেছে।").into());
+                        ui.set_notification_text(tr("Import undone (session snapshot).", "ইমপোর্ট আনডু (সেশন স্ন্যাপশট)।").into());
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => ui.set_import_status(format!("Undo failed: {e}").into()),
@@ -13080,7 +13080,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         *pending_import_store().lock().unwrap() = None;
         if let Some(ui) = cancel_weak.upgrade() {
             ui.set_show_import_preview(false);
-            ui.set_import_status("Import cancelled — nothing merged.".into());
+            ui.set_import_status(tr("Import cancelled — nothing merged.", "ইমপোর্ট বাতিল — কিছু merge হয়নি।").into());
         }
     });
 
@@ -13134,7 +13134,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if let Some(ui) = shred_weak_no.upgrade() {
             ui.set_show_shred_source(false);
             ui.set_shred_source_path("".into());
-            ui.set_import_status("Source file kept (plaintext — guard it).".into());
+            ui.set_import_status(tr("Source file kept (plaintext — guard it).", "সোর্স ফাইল রাখা হয়েছে (প্লেইনটেক্সট — সাবধানে রাখুন)।").into());
         }
     });
 
@@ -13157,7 +13157,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(carrier) = carrier else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_sync_status("No carrier chosen.".into());
+                        ui.set_sync_status(tr("No carrier chosen.", "কোনো ক্যারিয়ার বাছা হয়নি।").into());
                     }
                 });
                 return;
@@ -13170,7 +13170,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(out) = out else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_sync_status("Save cancelled.".into());
+                        ui.set_sync_status(tr("Save cancelled.", "সেভ বাতিল।").into());
                     }
                 });
                 return;
@@ -13219,7 +13219,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(picked) = picked else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_sync_status("No image chosen.".into());
+                        ui.set_sync_status(tr("No image chosen.", "কোনো ছবি বাছা হয়নি।").into());
                     }
                 });
                 return;
@@ -14430,7 +14430,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         security::app_pin::disable(Path::new("."));
         ui.set_pin_available(false);
-        ui.set_pin_status("App PIN removed from this PC.".into());
+        ui.set_pin_status(tr("App PIN removed from this PC.", "এই PC থেকে App PIN সরানো হয়েছে।").into());
     });
     // A5: master-password rotation. Worker thread + the vault mutex held across
     // the whole rekey, so no edit can land between "serialize" and "swap".
@@ -15437,7 +15437,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let _ = security::offline_cache::set_pin_allowed(false);
         ui.set_offline_pin_on(false);
         ui.set_ext_pin_set(false);
-        ui.set_ext_pin_status("Extension PIN removed — browser is unmanaged.".into());
+        ui.set_ext_pin_status(tr("Extension PIN removed — browser is unmanaged.", "এক্সটেনশন PIN সরানো হয়েছে — ব্রাউজার এখন unmanaged।").into());
     });
     // Wire-up #3: dynamic clipboard timeout (all copy paths read the atomic).
     let ct_weak = main_window.as_weak();
@@ -15462,7 +15462,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Some(ui) = al_weak.upgrade() {
             ui.set_autolock_timeout(mins);
-            if mins == 0 { ui.set_notification_text("Auto-lock: Never".into()); } else { ui.set_notification_text(format!("Auto-lock: {mins} min").into()); }
+            if mins == 0 { ui.set_notification_text(tr("Auto-lock: Never", "অটো-লক: কখনো নয়").into()); } else { ui.set_notification_text(format!("Auto-lock: {mins} min").into()); }
         }
     });
     // Cat 8 kill-switch: one toggle silences sync + HIBP audit paths.
@@ -15571,7 +15571,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     main_window.on_refresh_ssh_status(move || {        let Some(ui) = ssh_weak.upgrade() else {
             return;
         };
-        ui.set_ssh_status("Probing…".into());
+        ui.set_ssh_status(tr("Probing…", "প্রোব করা হচ্ছে…").into());
         let weak = ssh_weak.clone();
         std::thread::spawn(move || {
             let pipe = developer::ssh_agent::pipe_name();
@@ -15809,7 +15809,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let picked = rfd::FileDialog::new().pick_folder();
         let Some(folder) = picked else {
             if let Some(ui) = sc_weak.upgrade() {
-                ui.set_notification_text("Scan cancelled.".into());
+                ui.set_notification_text(tr("Scan cancelled.", "স্ক্যান বাতিল।").into());
             }
             return;
         };
@@ -15884,7 +15884,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_health_report("Vault is empty — nothing to audit.".into());
                         ui.set_health_rows(ModelRc::new(VecModel::from(Vec::<HealthRow>::new())));
                         ui.set_show_health(true);
-                        ui.set_health_status("Vault is empty.".into());
+                        ui.set_health_status(tr("Vault is empty.", "ভল্ট খালি।").into());
                         ui.set_health_score(100);
                         ui.set_health_headline("Good Security Health".into());
                         ui.set_health_breached(0);
@@ -16011,7 +16011,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             qb.set_filtered_results(vault_quickbar(&v, "", f.travel_only));
         }
         if f.health.is_empty() {
-            ui.set_notification_text("Health filter cleared.".into());
+            ui.set_notification_text(tr("Health filter cleared.", "হেলথ ফিল্টার পরিষ্কার।").into());
         } else {
             ui.set_notification_text(
                 format!("🛡️ Showing {} flagged accounts — click again to clear.", f.health).into(),
@@ -16048,7 +16048,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 format!("🧹 {n} review candidates (unverified, never filled) — Select mode + 🗑️ Trash to sweep. Click Janitor again to close.").into(),
             );
         } else {
-            ui.set_notification_text("Janitor queue closed.".into());
+            ui.set_notification_text(tr("Janitor queue closed.", "জ্যানিটর কিউ বন্ধ।").into());
         }
     });
 
