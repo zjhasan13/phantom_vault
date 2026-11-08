@@ -102,6 +102,21 @@ test("A3: edit flow never overwrites a TOTP secret with a live code", () => {
   assert.match(SRC, /fetchEntry\(KIND_NUM\[kind\] \|\| 1, id\)/, "editor loads the full item on demand");
 });
 
+// ---- P1: read-only item view ----
+
+test("P1: rows open a read-only view and edit lives inside it", () => {
+  assert.match(SRC, /function openItemView\(entry, kind = "login"\)/, "read-only view present");
+  assert.match(SRC, /function viewButton\(id, kind = "login"\)/, "per-row view control");
+  assert.match(SRC, /viewButton\(e\.id\), editButton\(e\.id\)/, "view precedes edit");
+  assert.match(SRC, /viewButton\(c\.id, "card"\), editButton\(c\.id, "card"\)/, "cards have a view");
+  assert.match(SRC, /viewButton\(i\.id, "identity"\), editButton\(i\.id, "identity"\)/, "identities have a view");
+  assert.match(SRC, /viewButton\(n\.id, "note"\), editButton\(n\.id, "note"\)/, "notes have a view");
+  const view = SRC.slice(SRC.indexOf("function openItemView("), SRC.indexOf("function openItemEditor("));
+  assert.match(view, /addRow\(t\("ed_password"\), entry\.password, \{ secret: true/, "password masked by default");
+  assert.match(view, /t\("view_close"\)/, "close action");
+  assert.match(view, /openItemEditor\(entry, kind\)/, "edit opens from the view");
+});
+
 // ---- A4: clipboard auto-clear ----
 
 test("A4: popup copies through the native host before the web clipboard", () => {

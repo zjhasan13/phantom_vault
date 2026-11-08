@@ -102,6 +102,7 @@
       ctx_menu: "Show context menu options (Right-click)",
       auto_submit: "Automatically submit form after autofill",
       add_item: "➕ Add login", edit_item: "✏️ Edit", delete_item: "🗑️ Delete",
+      view_item: "View item", view_close: "Close",
       save_item: "💾 Save", cancel: "Cancel",
       ed_title: "Title", ed_username: "Username / email", ed_password: "Password",
       ed_url: "Website URL", ed_folder: "Folder", ed_totp: "2FA secret (optional)",
@@ -175,6 +176,7 @@
       ctx_menu: "রাইট-ক্লিক মেনু দেখাও",
       auto_submit: "অটোফিলের পর ফর্ম সাবমিট করো",
       add_item: "➕ লগইন যোগ করো", edit_item: "✏️ সম্পাদনা", delete_item: "🗑️ মুছো",
+      view_item: "আইটেম দেখুন", view_close: "বন্ধ",
       save_item: "💾 সংরক্ষণ", cancel: "বাতিল",
       ed_title: "শিরোনাম", ed_username: "ইউজারনেম / ইমেইল", ed_password: "পাসওয়ার্ড",
       ed_url: "ওয়েবসাইট URL", ed_folder: "ফোল্ডার", ed_totp: "2FA সিক্রেট (ঐচ্ছিক)",
@@ -1299,6 +1301,157 @@
       editEntryById(id, kind);
     });
     return b;
+  }
+
+  // P1: read-only detail view. The editor opens from here, so a click never
+  // drops the user straight into an editable form.
+  function viewButton(id, kind = "login") {
+    const b = document.createElement("button");
+    b.className = "viewBtn";
+    b.textContent = "\u{1F441}";
+    b.title = t("view_item");
+    b.setAttribute("aria-label", t("view_item"));
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      touchActivityPing();
+      viewEntryById(id, kind);
+    });
+    return b;
+  }
+
+  async function viewEntryById(id, kind = "login") {
+    try {
+      openItemView(await fetchEntry(KIND_NUM[kind] || 1, id), kind);
+    } catch (err) {
+      status.textContent = "⚠️ " + ((err && err.message) || err);
+    }
+  }
+
+  function openItemView(entry, kind = "login") {
+    if (!entry) return;
+    const prev = document.querySelector(".pvmodal");
+    if (prev) prev.remove();
+    const bg = document.createElement("div");
+    bg.className = "pvmodal";
+    const card = document.createElement("div");
+    card.className = "card";
+    const h = document.createElement("h2");
+    const kindLabel = kind === "note" ? " · Note" : kind === "card" ? " · Card" : kind === "identity" ? " · Identity" : "";
+    h.textContent = (entry.title || "(untitled)") + kindLabel;
+    card.append(h);
+    const meta = document.createElement("div");
+    meta.className = "hint";
+    meta.textContent = [
+      entry.folder || "",
+      entry.reprompt ? "🔒 " + t("ed_reprompt") : "",
+    ].filter(Boolean).join(" · ");
+    if (meta.textContent) card.append(meta);
+
+    const addRow = (label, value, opts = {}) => {
+      const row = document.createElement("div");
+      row.className = "viewrow";
+      const l = document.createElement("div");
+      l.className = "viewlabel";
+      l.textContent = label;
+      const v = document.createElement("div");
+      v.className = "viewvalue";
+      const real = String(value || "");
+      let hidden = !!opts.secret && !!real;
+      const dots = "\u2022".repeat(Math.max(8, Math.min(18, real.length || 10)));
+      v.textContent = hidden ? dots : (real || "\u2014");
+      row.append(l, v);
+      if (real) {
+        const btns = document.createElement("div");
+        btns.className = "viewbtns";
+        if (opts.secret) {
+          const eye = document.createElement("button");
+          eye.type = "button";
+          eye.textContent = "\u{1F441}";
+          eye.title = "Show / hide";
+          eye.addEventListener("click", () => {
+            hidden = !hidden;
+            v.textContent = hidden ? dots : real;
+            eye.textContent = hidden ? "\u{1F441}" : "\u{1F648}";
+          });
+          btns.append(eye);
+        }
+        const cp = document.createElement("button");
+        cp.type = "button";
+        cp.textContent = opts.copyLabel || t("copy");
+        cp.addEventListener("click", () => {
+          if (opts.onCopy) { opts.onCopy(cp); return; }
+          if (opts.reprompt && !window.confirm("🔒 This item is armed - copy its secret?")) return;
+          touchActivityPing();
+          clipText(real, cp);
+        });
+        btns.append(cp);
+        row.append(btns);
+      }
+      card.append(row);
+    };
+
+    if (kind === "login") {
+      addRow(t("ed_username"), entry.username, {});
+      addRow(t("ed_password"), entry.password, { secret: true, reprompt: entry.reprompt });
+      if (entry.urls && entry.urls[0]) addRow(t("ed_url"), urlText(entry.urls[0]), {});
+      if (entry.totp) {
+        addRow("2FA", "Available", {
+          copyLabel: "Copy 2FA",
+          onCopy: (btn) => {
+            if (entry.reprompt && !window.confirm("🔒 Copy the 2FA code for this item?")) return;
+            clipTotp(() => entry.totp, btn);
+          },
+        });
+      }
+    } else if (kind === "note") {
+      const body = document.createElement("div");
+      body.className = "viewnote";
+      body.textContent = entry.content || "(empty note)";
+      card.append(body);
+    } else if (kind === "card") {
+      addRow("Cardholder", entry.cardholder, {});
+      addRow("Card number", entry.number, { secret: true });
+      addRow("Expiry", [entry.exp_month, entry.exp_year].filter(Boolean).join("/"), {});
+      addRow("CVV", entry.cvv, { secret: true });
+    } else {
+      addRow("Full name", entry.full_name, {});
+      addRow("Email", entry.email, {});
+      addRow("Phone", entry.phone, {});
+      addRow("Address", entry.address, {});
+      addRow("Company", entry.company, {});
+      addRow("City", entry.city, {});
+      addRow("State / region", entry.state, {});
+      addRow("ZIP / postal code", entry.zip, {});
+      addRow("Country", entry.country, {});
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    if (kind === "login") {
+      const fill = document.createElement("button");
+      fill.textContent = t("fill");
+      fill.addEventListener("click", () => { bg.remove(); doFill(entry); });
+      actions.append(fill);
+    }
+    const closeBtn = document.createElement("button");
+    closeBtn.textContent = t("view_close");
+    const editBtn = document.createElement("button");
+    editBtn.className = "primary";
+    editBtn.textContent = "✏️ " + t("edit_item");
+    actions.append(closeBtn, editBtn);
+    card.append(actions);
+    bg.append(card);
+    document.body.append(bg);
+    const close = () => bg.remove();
+    closeBtn.addEventListener("click", close);
+    bg.addEventListener("click", (ev) => { if (ev.target === bg) close(); });
+    bg.addEventListener("keydown", (ev) => { if (ev.key === "Escape") close(); });
+    closeBtn.focus();
+    editBtn.addEventListener("click", () => {
+      bg.remove();
+      openItemEditor(entry, kind);
+    });
+    return true;
   }
 
   function openItemEditor(entry, kind = "login") {
@@ -2520,7 +2673,7 @@
     }
     // Per-row Fill+Submit: fill, then the form's own submit path.
     if (btns) {
-      btns.append(editButton(e.id));
+      btns.append(viewButton(e.id), editButton(e.id));
       const sb = document.createElement("button");
       sb.textContent = t("submit_btn");
       sb.title = "Fill + submit";
@@ -2619,7 +2772,7 @@
         cu.addEventListener("click", (ev) => { ev.stopPropagation(); touchActivityPing(); clipText(e.username, cu); });
         btns.append(cu);
       }
-      btns.append(editButton(e.id));
+      btns.append(viewButton(e.id), editButton(e.id));
       const sb = document.createElement("button");
       sb.textContent = t("submit_btn");
       sb.title = "Fill + submit";
@@ -2674,7 +2827,7 @@
     // Quick-view: masked sub + eye reveal for the full number (15s remask).
     passwordReveal(row, async () => (await fetchEntry(4, c.id)).number || "", null);
     actionButtons(row, fillOne, copyOne);
-    row.querySelector(".btns").append(editButton(c.id, "card"));
+    row.querySelector(".btns").append(viewButton(c.id, "card"), editButton(c.id, "card"));
     wireKeys(row, idx, c, fillOne);
     rows.push(row);
     return row;
@@ -2733,7 +2886,7 @@
       } catch (err) { status.textContent = "⚠️ " + (err.message || err); }
     };
     actionButtons(row, fillOne, copyOne);
-    row.querySelector(".btns").append(editButton(i.id, "identity"));
+    row.querySelector(".btns").append(viewButton(i.id, "identity"), editButton(i.id, "identity"));
     wireKeys(row, idx, i, fillOne);
     rows.push(row);
     return row;
@@ -2750,7 +2903,7 @@
     // Quick-view: eye reveal for the note body (ellipsis + 15s remask).
     passwordReveal(row, async () => (await fetchEntry(3, n.id)).content || "", null);
     actionButtons(row, copyOne, copyOne);
-    row.querySelector(".btns").append(editButton(n.id, "note"));
+    row.querySelector(".btns").append(viewButton(n.id, "note"), editButton(n.id, "note"));
     wireKeys(row, idx, n, copyOne);
     rows.push(row);
     return row;

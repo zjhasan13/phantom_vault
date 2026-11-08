@@ -245,6 +245,18 @@
       color: var(--text); font-size: 10px; padding: 3px 7px; cursor: pointer; }
     .detname { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .detsize { color: var(--faint); font-family: var(--pv-mono); font-size: 10px; }
+    /* P1: read-only item view (the editor opens from here). */
+    .viewrow { display: flex; align-items: center; gap: 8px; padding: 7px 0;
+      border-bottom: 1px solid var(--panel2); }
+    .viewlabel { flex: 0 0 96px; color: var(--faint); font-size: 9px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .5px; }
+    .viewvalue { flex: 1; min-width: 0; word-break: break-all; font-size: 12.5px; }
+    .viewbtns { display: flex; gap: 4px; flex: 0 0 auto; }
+    .viewbtns button { background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 6px; color: var(--text); font-size: 10px; padding: 3px 7px; cursor: pointer; }
+    .viewnote { white-space: pre-wrap; background: var(--panel2); border: 1px solid var(--border);
+      border-radius: 8px; padding: 8px; font-size: 12px; max-height: 180px; overflow: auto;
+      margin: 6px 0 10px; word-break: break-word; }
   </style>
 </head>
 <body>
