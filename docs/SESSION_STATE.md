@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `a486f85` (audit + extension + BN dialogs) |
+| Branch / HEAD | `main` @ `119934f` (audit + extension + BN dialogs/status) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -72,7 +72,7 @@ centered (`a1f53f8`, `0c7ce6c`).
 |---|---|
 | `cargo check -j 1` | `CHECK=0` |
 | `cargo build -j 1` | `BUILD_EXIT=0` (~5 min) |
-| `cargo test -j 1` | **582 passed, 0 failed, 4 ignored** |
+| `cargo test -j 1` | **583 passed, 0 failed, 4 ignored** |
 | `cargo clippy --all-targets -j 1 -- -D warnings` | **EXIT=0** |
 | `npm test` | **162/162 pass** |
 | `npm run test:tokens` | **21 palette values OK** |
