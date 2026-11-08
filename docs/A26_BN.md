@@ -112,6 +112,17 @@ pilot, but it does not scale to full A26. When finishing the translation:
 5. Remove the inline ternaries as each surface migrates; keep the coverage
    table and the layout checklist as the acceptance gate.
 
+## Coverage update (2026-11-07, dialog batch)
+
+B1 localized the main dialogs: import merge preview, duplicate-import choice,
+factory reset, new-PC/Hello re-enrol, attachment preview, changelog, access log,
+plaintext-source shred, and the vault health report. Mode/undo/confirm buttons in
+the import preview were already BN.
+
+Still English: Rust status/error strings, the `VaultError` text inside
+`Auto-Type: {e}`, and some Settings/onboarding paragraphs. The BN layout pass
+(100%/125%) is still pending.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

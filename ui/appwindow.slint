@@ -2078,10 +2078,10 @@ export component MainWindow inherits Window {
                 VerticalLayout { padding: 20px; spacing: 12px;
                     Text { text: root.dup_title; color: PhantomTheme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
                     Text { text: root.dup_body; color: PhantomTheme.text-muted; font-size: 12px; wrap: word-wrap; }
-                    AuraButton { label: "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
-                    Text { text: "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: root.ui_lang == "bn" ? "🆕 দুটোই রাখুন — দ্বিতীয় কার্ড যোগ হবে" : "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
+                    Text { text: root.ui_lang == "bn" ? "দুটোই রাখলে কিছুই মুছে যায় না। Replace শুধু সংরক্ষিত সিক্রেট বদলায় — কার্ডের নাম, প্রিয় ও অবস্থান অপরিবর্তিত থাকে।" : "Keep both never overwrites anything. Replace overwrites only the stored secret — the card's name, favourite and position are kept."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     AuraButton { label: root.ui_lang == "bn" ? "⚠️ বিদ্যমান কার্ডের সিক্রেট প্রতিস্থাপন" : "⚠️ Replace the existing card's secret"; height: 34px; danger: true; clicked => { root.dup_confirm_replace(); } }
-                    AuraButton { label: "Cancel — import nothing"; height: 34px; clicked => { root.dup_confirm_cancel(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "বাতিল — কিছুই ইমপোর্ট নয়" : "Cancel — import nothing"; height: 34px; clicked => { root.dup_confirm_cancel(); } }
                 }
             }
         }
@@ -2151,7 +2151,7 @@ export component MainWindow inherits Window {
                 if root.browser_detect_status != "" : Rectangle { background: PhantomTheme.surface; border-radius: 10px; min-height: 54px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; Text { text: root.browser_detect_status; color: PhantomTheme.secondary; font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.import_status != "" : Rectangle { background: PhantomTheme.surface-low; border-radius: 10px; min-height: 54px; border-width: 1px; border-color: root.import_kind == "error" ? PhantomTheme.error : (root.import_kind == "success" ? PhantomTheme.success : PhantomTheme.border); VerticalLayout { padding: 10px; Text { text: root.import_status; color: root.import_kind == "error" ? PhantomTheme.error : (root.import_kind == "success" ? PhantomTheme.success : PhantomTheme.secondary); font-size: 12px; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; } } }
                 if root.show_import_preview : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.primary; VerticalLayout { padding: 16px; spacing: 10px;
-                    FieldLabel { text: "STEP 3 - CONFIRM MERGE"; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "ধাপ ৩ — মার্জ নিশ্চিত করুন" : "STEP 3 - CONFIRM MERGE"; }
                     Text { text: root.import_preview_text; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                     ScrollView { height: 150px; VerticalLayout { spacing: 2px; for r in root.import_preview_rows : Text { text: r; color: PhantomTheme.text-muted; font-size: 11px; overflow: elide; } } }
                     HorizontalLayout { spacing: 6px; alignment: center;
@@ -2353,8 +2353,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "Check for Updates"; width: 170px; clicked => { root.check_updates(); } }
                         if root.update_tag != "" : AuraButton { label: "📋 What's New"; width: 150px; clicked => { root.show_changelog = true; } }
-                        if root.update_tag != "" && !root.update_ready : AuraButton { label: "⬇️ Download & Stage"; primary: true; width: 190px; clicked => { root.download_update(); } }
-                        if root.update_ready : AuraButton { label: "🔄 Restart to Update"; primary: true; width: 190px; clicked => { root.restart_update(); } }
+                        if root.update_tag != "" && !root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "⬇️ ডাউনলোড ও স্টেজ" : "⬇️ Download & Stage"; primary: true; width: 190px; clicked => { root.download_update(); } }
+                        if root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "🔄 আপডেটের জন্য রিস্টার্ট" : "🔄 Restart to Update"; primary: true; width: 190px; clicked => { root.restart_update(); } }
                     }
                     Text { text: root.update_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
@@ -3530,14 +3530,14 @@ export component MainWindow inherits Window {
             border-color: PhantomTheme.primary;
             clip: true;
             VerticalLayout { padding: 20px; spacing: 10px;
-                Text { text: "🎉 What's New in " + root.update_tag; color: PhantomTheme.success; font-size: 15px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: (root.ui_lang == "bn" ? "🎉 নতুন কী — " : "🎉 What's New in ") + root.update_tag; color: PhantomTheme.success; font-size: 15px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                 Rectangle { background: PhantomTheme.surface; border-radius: 8px; height: 300px; clip: true;
                     ScrollView { VerticalLayout { padding: 12px; Text { text: root.update_notes; color: PhantomTheme.text; font-size: 12px; wrap: word-wrap; } } }
                 }
                 HorizontalLayout { spacing: 8px; alignment: center;
-                    if !root.update_ready : AuraButton { label: "⬇️ Download & Stage"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.download_update(); } }
-                    if root.update_ready : AuraButton { label: "🔄 Restart to Update"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.restart_update(); } }
-                    AuraButton { label: "✕ Close"; width: 120px; height: 38px; clicked => { root.show_changelog = false; } }
+                    if !root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "⬇️ ডাউনলোড ও স্টেজ" : "⬇️ Download & Stage"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.download_update(); } }
+                    if root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "🔄 আপডেটের জন্য রিস্টার্ট" : "🔄 Restart to Update"; primary: true; width: 190px; height: 38px; clicked => { root.show_changelog = false; root.restart_update(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕ বন্ধ" : "✕ Close"; width: 120px; height: 38px; clicked => { root.show_changelog = false; } }
                 }
             }
         }
@@ -3569,11 +3569,11 @@ export component MainWindow inherits Window {
                 if root.att_preview_kind == "text" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; height: 320px; clip: true;
                     ScrollView { VerticalLayout { padding: 10px; Text { text: root.att_preview_text; color: PhantomTheme.text; font-size: 12px; wrap: word-wrap; } } }
                 }
-                if root.att_preview_kind == "other" : Text { text: "No in-app preview for this file type — export to view."; color: PhantomTheme.warning; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                if root.att_preview_kind == "other" : Text { text: root.ui_lang == "bn" ? "এই ধরনের ফাইলের in-app প্রিভিউ নেই — দেখতে Export করুন।" : "No in-app preview for this file type — export to view."; color: PhantomTheme.warning; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout { spacing: 8px; alignment: center;
-                    AuraButton { label: "💾 Export File"; width: 140px; height: 36px; clicked => { root.att_preview = false; root.download_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
-                    AuraButton { label: root.confirm_delete_att_id == root.att_preview_id ? "Sure?" : "🗑️ Delete"; width: root.confirm_delete_att_id == root.att_preview_id ? 110px : 120px; height: 36px; danger: true; clicked => { if root.confirm_delete_att_id == root.att_preview_id { root.confirm_delete_att_id = ""; root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } else { root.confirm_delete_att_id = root.att_preview_id; } } }
-                    AuraButton { label: "✕ Close Preview"; width: 150px; height: 36px; clicked => { root.att_preview = false; } }
+                    AuraButton { label: root.ui_lang == "bn" ? "💾 ফাইল এক্সপোর্ট" : "💾 Export File"; width: 140px; height: 36px; clicked => { root.att_preview = false; root.download_attachment(root.d_kind, root.d_id, root.att_preview_id); } }
+                    AuraButton { label: root.ui_lang == "bn" ? (root.confirm_delete_att_id == root.att_preview_id ? "নিশ্চিত?" : "🗑️ মুছুন") : (root.confirm_delete_att_id == root.att_preview_id ? "Sure?" : "🗑️ Delete"); width: root.confirm_delete_att_id == root.att_preview_id ? 110px : 120px; height: 36px; danger: true; clicked => { if root.confirm_delete_att_id == root.att_preview_id { root.confirm_delete_att_id = ""; root.att_preview = false; root.delete_attachment(root.d_kind, root.d_id, root.att_preview_id); } else { root.confirm_delete_att_id = root.att_preview_id; } } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕ প্রিভিউ বন্ধ" : "✕ Close Preview"; width: 150px; height: 36px; clicked => { root.att_preview = false; } }
                 }
             }
         }
@@ -3596,18 +3596,18 @@ export component MainWindow inherits Window {
             border-color: PhantomTheme.error;
             clip: true;
             VerticalLayout { padding: 20px; spacing: 10px;
-                Text { text: "🔥 Factory Reset — shred EVERYTHING?"; color: PhantomTheme.error; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
-                Text { text: "Vault file, all backup generations, decoy container, and machine seals are DoD-shredded. Recovery is IMPOSSIBLE afterwards."; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "🔥 ফ্যাক্টরি রিসেট — সবকিছু ধ্বংস করবেন?" : "🔥 Factory Reset — shred EVERYTHING?"; color: PhantomTheme.error; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "ভল্ট ফাইল, সব ব্যাকআপ, ডিকয় কন্টেইনার ও মেশিন সিল DoD পদ্ধতিতে ধ্বংস হবে। এরপর ফিরিয়ে আনা অসম্ভব।" : "Vault file, all backup generations, decoy container, and machine seals are DoD-shredded. Recovery is IMPOSSIBLE afterwards."; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.fr_preview != "" : Text { text: root.fr_preview; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
-                FieldLabel { text: "MASTER PASSWORD"; }
-                LineEdit { placeholder-text: "Confirm master password…"; input-type: password; text <=> root.fr_password; height: 40px; }
-                FieldLabel { text: "TYPE DELETE IN CAPS TO CONTINUE"; }
+                FieldLabel { text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড" : "MASTER PASSWORD"; }
+                LineEdit { placeholder-text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড নিশ্চিত করুন…" : "Confirm master password…"; input-type: password; text <=> root.fr_password; height: 40px; }
+                FieldLabel { text: root.ui_lang == "bn" ? "চালিয়ে যেতে বড় হাতের DELETE লিখুন" : "TYPE DELETE IN CAPS TO CONTINUE"; }
                 LineEdit { placeholder-text: "DELETE"; text <=> root.fr_delete_text; height: 40px; }
                 if root.fr_error != "" : Text { text: root.fr_error; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
                 if root.fr_countdown > 0 : Text { text: "💣 " + root.fr_countdown + "…"; color: PhantomTheme.error; font-size: 30px; font-weight: 900; horizontal-alignment: center; }
-                if !root.fr_armed : AuraButton { label: "⏳ Verify & Start 5s Countdown"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_arm(); } }
-                if root.fr_armed : AuraButton { label: "🔥 DELETE EVERYTHING NOW"; danger: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_confirm(); } }
-                AuraButton { label: "✕ Cancel (keep my vault)"; horizontal-stretch: 1; height: 36px; clicked => { root.factory_reset_cancel(); } }
+                if !root.fr_armed : AuraButton { label: root.ui_lang == "bn" ? "⏳ যাচাই করে ৫ সেকেন্ড কাউন্টডাউন শুরু" : "⏳ Verify & Start 5s Countdown"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_arm(); } }
+                if root.fr_armed : AuraButton { label: root.ui_lang == "bn" ? "🔥 এখনই সবকিছু মুছুন" : "🔥 DELETE EVERYTHING NOW"; danger: true; horizontal-stretch: 1; height: 40px; clicked => { root.factory_reset_confirm(); } }
+                AuraButton { label: root.ui_lang == "bn" ? "✕ বাতিল (ভল্ট রাখুন)" : "✕ Cancel (keep my vault)"; horizontal-stretch: 1; height: 36px; clicked => { root.factory_reset_cancel(); } }
             }
         }
     }
@@ -3629,11 +3629,11 @@ export component MainWindow inherits Window {
             border-color: PhantomTheme.warning;
             clip: true;
             VerticalLayout { padding: 20px; spacing: 10px;
-                Text { text: "🖥️ New PC detected"; color: PhantomTheme.warning; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
-                Text { text: root.new_device_reason == "hello-token" ? "Windows Hello credential can't be read on this PC. You unlocked with your Master Password. Re-enroll Hello for this machine?" : "This vault was bound to a different machine (normal for portable USB). You unlocked with your Master Password. Re-enroll Windows Hello for this PC?"; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "🖥️ নতুন PC শনাক্ত হয়েছে" : "🖥️ New PC detected"; color: PhantomTheme.warning; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? (root.new_device_reason == "hello-token" ? "এই PC-তে Windows Hello ক্রেডেনশিয়াল পড়া যাচ্ছে না। আপনি মাস্টার পাসওয়ার্ড দিয়ে খুলেছেন। এই মেশিনের জন্য Hello আবার চালু করবেন?" : "এই ভল্ট অন্য মেশিনে bound ছিল (পোর্টেবল USB-তে স্বাভাবিক)। আপনি মাস্টার পাসওয়ার্ড দিয়ে খুলেছেন। এই PC-র জন্য Windows Hello আবার চালু করবেন?") : (root.new_device_reason == "hello-token" ? "Windows Hello credential can't be read on this PC. You unlocked with your Master Password. Re-enroll Hello for this machine?" : "This vault was bound to a different machine (normal for portable USB). You unlocked with your Master Password. Re-enroll Windows Hello for this PC?"); color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.new_device_error != "" : Text { text: root.new_device_error; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
-                AuraButton { label: "🖐 Re-enroll Hello"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.reenroll_hello_requested(); } }
-                AuraButton { label: "Later (asks again next unlock)"; horizontal-stretch: 1; height: 36px; clicked => { root.dismiss_new_device_modal(); } }
+                AuraButton { label: root.ui_lang == "bn" ? "🖐 Hello আবার চালু করুন" : "🖐 Re-enroll Hello"; primary: true; horizontal-stretch: 1; height: 40px; clicked => { root.reenroll_hello_requested(); } }
+                AuraButton { label: root.ui_lang == "bn" ? "পরে (পরের unlock-এ আবার জিজ্ঞাসা)" : "Later (asks again next unlock)"; horizontal-stretch: 1; height: 36px; clicked => { root.dismiss_new_device_modal(); } }
             }
         }
     }
@@ -3702,7 +3702,7 @@ export component MainWindow inherits Window {
                 padding: 20px;
                 padding-bottom: 24px;
                 spacing: 12px;
-                Text { text: "🛡️  Vault Health Report"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
+                Text { text: root.ui_lang == "bn" ? "🛡️  ভল্ট হেলথ রিপোর্ট" : "🛡️  Vault Health Report"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
                 // Score + count chips (props already published by the audit).
                 HorizontalLayout { spacing: 10px; alignment: center;
                     Text { text: root.health_score + " / 100"; color: root.health_score >= 90 ? PhantomTheme.success : (root.health_score >= 70 ? PhantomTheme.warning : PhantomTheme.error); font-size: 22px; font-weight: 900; vertical-alignment: center; }
@@ -3748,7 +3748,7 @@ export component MainWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: center;
-                    AuraButton { label: "✕  Close"; width: 140px; clicked => { root.show_health = false; } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕  বন্ধ" : "✕  Close"; width: 140px; clicked => { root.show_health = false; } }
                 }
             }
         }
@@ -3777,7 +3777,7 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
-                Text { text: "📜  Access Log (tamper-evident)"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
+                Text { text: root.ui_lang == "bn" ? "📜  অ্যাক্সেস লগ (tamper-evident)" : "📜  Access Log (tamper-evident)"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
                 ScrollView {
                     vertical-stretch: 1;
                     min-height: 220px;
@@ -3785,8 +3785,8 @@ export component MainWindow inherits Window {
                 }
                 HorizontalLayout {
                     alignment: center;
-                    AuraButton { label: root.access_log_hide_bridge ? "🔇 Bridge hidden" : "🔊 Bridge shown"; width: 180px; height: 32px; clicked => { root.toggle_log_bridge(); } }
-                    AuraButton { label: "✕  Close"; width: 140px; height: 32px; clicked => { root.show_access_log = false; } }
+                    AuraButton { label: root.ui_lang == "bn" ? (root.access_log_hide_bridge ? "🔇 ব্রিজ লুকানো" : "🔊 ব্রিজ দেখানো") : (root.access_log_hide_bridge ? "🔇 Bridge hidden" : "🔊 Bridge shown"); width: 180px; height: 32px; clicked => { root.toggle_log_bridge(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "✕  বন্ধ" : "✕  Close"; width: 140px; height: 32px; clicked => { root.show_access_log = false; } }
                 }
             }
         }
@@ -3812,15 +3812,15 @@ export component MainWindow inherits Window {
             VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
-                Text { text: "🔥  Shred plaintext source?"; font-size: 16px; font-weight: 800; color: PhantomTheme.error; horizontal-alignment: center; }
-                Text { text: "The imported file still holds UNENCRYPTED passwords:"; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "🔥  প্লেইনটেক্সট সোর্স ধ্বংস করবেন?" : "🔥  Shred plaintext source?"; font-size: 16px; font-weight: 800; color: PhantomTheme.error; horizontal-alignment: center; }
+                Text { text: root.ui_lang == "bn" ? "ইমপোর্ট করা ফাইলে এখনো আনএনক্রিপ্টেড পাসওয়ার্ড আছে:" : "The imported file still holds UNENCRYPTED passwords:"; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 Text { text: root.shred_source_path; color: PhantomTheme.text; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
-                Text { text: "DoD 3-pass shred makes recovery impossible. Do it unless you need the file."; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                Text { text: root.ui_lang == "bn" ? "DoD ৩-পাস shred-এর পর ফেরানো অসম্ভব। ফাইলটা দরকার না হলে এটাই করুন।" : "DoD 3-pass shred makes recovery impossible. Do it unless you need the file."; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                 HorizontalLayout {
                     spacing: 8px;
                     alignment: center;
-                    AuraButton { label: "🔥 Shred it"; danger: true; width: 150px; clicked => { root.confirm_shred_source(); } }
-                    AuraButton { label: "Keep file"; width: 130px; clicked => { root.cancel_shred_source(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "🔥 ধ্বংস করুন" : "🔥 Shred it"; danger: true; width: 150px; clicked => { root.confirm_shred_source(); } }
+                    AuraButton { label: root.ui_lang == "bn" ? "ফাইল রাখুন" : "Keep file"; width: 130px; clicked => { root.cancel_shred_source(); } }
                 }
             }
         }
