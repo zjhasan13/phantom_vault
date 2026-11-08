@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
 | `da1de56` | save prompts: card/identity reuse hint ("also in N other item(s)") |
