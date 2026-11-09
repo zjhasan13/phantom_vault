@@ -1736,9 +1736,9 @@ export component MainWindow inherits Window {
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e73c}"; count: root.count_logins; label: root.ui_lang == "bn" ? "লগইন" : "Logins"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 1; tapped => { root.active_nav = 0; root.type_filter = 1; root.type_filter_changed(1); root.fav_filter_changed(false); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f87f}"; count: root.count_passkeys; label: root.ui_lang == "bn" ? "পাসকি" : "Passkeys"; tapped => { root.active_nav = 1; } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f562}"; count: root.count_notes; label: root.ui_lang == "bn" ? "সিকিউর নোট" : "Secure Notes"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 3; tapped => { root.active_nav = 0; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e8a1}"; count: root.count_cards; label: "Cards"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{ea67}"; count: root.count_identities; label: "Identities"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e873}"; count: root.count_licenses; label: "Licenses"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e8a1}"; count: root.count_cards; label: root.ui_lang == "bn" ? "কার্ড" : "Cards"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 4; tapped => { root.active_nav = 0; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{ea67}"; count: root.count_identities; label: root.ui_lang == "bn" ? "পরিচয়" : "Identities"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 5; tapped => { root.active_nav = 0; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e873}"; count: root.count_licenses; label: root.ui_lang == "bn" ? "লাইসেন্স" : "Licenses"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 2; tapped => { root.active_nav = 0; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{eb8e}"; count: root.count_ssh; label: root.ui_lang == "bn" ? "SSH ও API কী" : "SSH & API Keys"; active: root.active_nav == 0 && !root.show_fav_only && root.type_filter == 6; tapped => { root.active_nav = 0; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{f09a}"; label: root.ui_lang == "bn" ? "প্রিয়" : "Favorites"; active: root.active_nav == 0 && root.show_fav_only && !root.showing_trash; tapped => { root.active_nav = 0; root.type_filter = 0; root.type_filter_changed(0); root.folder_filter = "All"; root.folder_filter_changed("All"); root.fav_filter_changed(true); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e92e}"; label: root.trash_label; active: root.active_nav == 0 && root.showing_trash; tapped => { root.show_trash_view(); } }
@@ -1747,9 +1747,9 @@ export component MainWindow inherits Window {
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: root.ui_lang == "bn" ? "সিকিউরিটি অডিট" : "Security Audit"; tapped => { root.show_health = true; } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e65f}"; label: root.ui_lang == "bn" ? "পাসওয়ার্ড জেনারেটর" : "Password Generator"; active: root.active_nav == 4; tapped => { root.active_nav = 4; root.regenerate(); } }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: root.ui_lang == "bn" ? "২এফএ হাব" : "2FA Hub"; active: root.active_nav == 1; tapped => { root.active_nav = 1; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: "Recovery Kit"; active: root.active_nav == 5; tapped => { root.active_nav = 5; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: "Audit & Duress"; active: root.active_nav == 6; tapped => { root.active_nav = 6; } }
-                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: "Secure Send"; active: root.active_nav == 7; tapped => { root.active_nav = 7; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e9e0}"; label: root.ui_lang == "bn" ? "রিকভারি কিট" : "Recovery Kit"; active: root.active_nav == 5; tapped => { root.active_nav = 5; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e425}"; label: root.ui_lang == "bn" ? "অডিট ও ডিউরেস" : "Audit & Duress"; active: root.active_nav == 6; tapped => { root.active_nav = 6; } }
+                        NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: root.ui_lang == "bn" ? "সিকিউর সেন্ড" : "Secure Send"; active: root.active_nav == 7; tapped => { root.active_nav = 7; } }
                         Rectangle { height: 8px; }
                         if !root.sidebar_collapsed : Text { text: root.ui_lang == "bn" ? "ইন্টিগ্রেশন ও সিস্টেম" : "INTEGRATION & SYSTEM"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.8px; }
                         NavItem { collapsed: root.sidebar_collapsed; icon: "\u{e250}"; label: root.ui_lang == "bn" ? "এক্সটেনশন ব্রিজ" : "Extension Bridge"; active: root.active_nav == 3; tapped => { root.active_nav = 3; } }
@@ -1783,7 +1783,7 @@ export component MainWindow inherits Window {
                     }
                     AuraButton { label: "\u{e9e0}"; width: 30px; height: 30px; clicked => { root.lock_now(); } }
                 }
-                AuraButton { label: root.sidebar_collapsed ? "✈" : (root.is_travel_mode ? "✈ TRAVEL ON" : "✈ Travel: OFF"); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 28px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
+                AuraButton { label: root.sidebar_collapsed ? "✈" : (root.is_travel_mode ? (root.ui_lang == "bn" ? "✈ ট্রাভেল: চালু" : "✈ TRAVEL ON") : (root.ui_lang == "bn" ? "✈ ট্রাভেল: বন্ধ" : "✈ Travel: OFF")); primary: !root.is_travel_mode; danger: root.is_travel_mode; height: 28px; clicked => { root.set_travel_mode(!root.is_travel_mode); } }
                 if root.portable_badge != "" && !root.sidebar_collapsed : Text { text: root.portable_badge; color: PhantomTheme.success; font-size: 9px; font-family: "JetBrains Mono"; horizontal-alignment: center; }
             }
         }
@@ -2877,8 +2877,8 @@ export component MainWindow inherits Window {
                         AuraButton { label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
                         AuraButton { label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
                         AuraButton { label: "SSH"; primary: root.type_filter == 6; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-                        AuraButton { label: "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-                        AuraButton { label: "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
                         Rectangle { horizontal-stretch: 1; }
                     }
                 }
@@ -2890,8 +2890,8 @@ export component MainWindow inherits Window {
                         AuraButton { row: 0; col: 4; label: root.ui_lang == "bn" ? "কার্ড" : "Card"; primary: root.type_filter == 4; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 4; root.type_filter_changed(4); root.fav_filter_changed(false); } }
                         AuraButton { row: 1; col: 0; label: root.ui_lang == "bn" ? "নোট" : "Note"; primary: root.type_filter == 3; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 3; root.type_filter_changed(3); root.fav_filter_changed(false); } }
                         AuraButton { row: 1; col: 1; label: "SSH"; primary: root.type_filter == 6; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 6; root.type_filter_changed(6); root.fav_filter_changed(false); } }
-                        AuraButton { row: 1; col: 2; label: "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
-                        AuraButton { row: 1; col: 3; label: "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 2; label: root.ui_lang == "bn" ? "পরিচয়" : "Identity"; primary: root.type_filter == 5; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 5; root.type_filter_changed(5); root.fav_filter_changed(false); } }
+                        AuraButton { row: 1; col: 3; label: root.ui_lang == "bn" ? "লাইসেন্স" : "License"; primary: root.type_filter == 2; width: 68px; height: 30px; clicked => { root.showing_trash = false; root.type_filter = 2; root.type_filter_changed(2); root.fav_filter_changed(false); } }
                 }
             }
             HorizontalLayout {
@@ -2911,11 +2911,11 @@ export component MainWindow inherits Window {
                     }
                 VerticalLayout { padding: 14px; spacing: 10px;
                     if root.show_shard_nudge : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 10px; border-width: 1px; border-color: PhantomTheme.warning; VerticalLayout { padding: 10px; spacing: 6px;
-                        Text { text: "📄 Print your recovery sheet?"; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
-                        Text { text: "Lose your password without shards = vault gone forever. Find it later under Settings → Recovery."; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                        Text { text: root.ui_lang == "bn" ? "📄 রিকভারি শিট তৈরি করবেন?" : "📄 Print your recovery sheet?"; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; }
+                        Text { text: root.ui_lang == "bn" ? "শার্ড ছাড়া পাসওয়ার্ড হারালে ভল্ট চিরতরে চলে যাবে। পরে Settings → Recovery-তে পাবেন।" : "Lose your password without shards = vault gone forever. Find it later under Settings → Recovery."; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout { spacing: 6px; alignment: center;
-                            AuraButton { label: "📄 Generate Now"; primary: true; width: 140px; height: 32px; clicked => { root.shard_nudge_generate(); } }
-                            AuraButton { label: "Later"; width: 80px; height: 32px; clicked => { root.shard_nudge_later(); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "📄 এখনই তৈরি করুন" : "📄 Generate Now"; primary: true; width: 140px; height: 32px; clicked => { root.shard_nudge_generate(); } }
+                            AuraButton { label: root.ui_lang == "bn" ? "পরে" : "Later"; width: 80px; height: 32px; clicked => { root.shard_nudge_later(); } }
                         }
                     }}
                     if root.show_new_menu : VerticalLayout { spacing: 4px;
@@ -3010,7 +3010,7 @@ export component MainWindow inherits Window {
                             if !root.showing_trash && !root.show_fav_only && root.search_query != "" : AuraButton { label: "📥 Import Instead"; width: 170px; height: 36px; clicked => { root.active_nav = 2; } }
                         }
                         if root.total_matches_count > root.credentials.length : AuraButton { label: "⬇️ Load 50 More (" + (root.total_matches_count - root.credentials.length) + " remaining)"; horizontal-stretch: 1; height: 36px; clicked => { root.load_more_items(); } }
-                        if root.total_matches_count > 0 : Text { text: "Showing " + Math.min(root.credentials.length, root.total_matches_count) + " of " + root.total_matches_count; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; }
+                        if root.total_matches_count > 0 : Text { text: (root.ui_lang == "bn" ? "দেখানো হচ্ছে " : "Showing ") + Math.min(root.credentials.length, root.total_matches_count) + (root.ui_lang == "bn" ? " / " : " of ") + root.total_matches_count; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; }
                     }}
                 }
                 }
@@ -3155,7 +3155,11 @@ export component MainWindow inherits Window {
                             Rectangle { height: 26px; border-radius: 6px; background: PhantomTheme.surface-low;
                                 HorizontalLayout { padding-left: 8px; padding-right: 8px; spacing: 10px;
                                     Text { text: root.pq_paranoid_on ? "● ML-KEM-768 + XChaCha20" : "● XChaCha20-Poly1305 VERIFIED"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.4px; vertical-alignment: center; }
-                                    Text { text: "ARGON2ID 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; } if root.device_bound : Text { text: "DPAPI DEVICE BOUND"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                                    // B3: the proof strip is one non-wrapping row. The
+                                    // middle chips are duplicated in Settings, so drop them
+                                    // on narrow windows instead of letting the row push the
+                                    // detail pane past the window edge.
+                                    if root.width >= 1300px : Text { text: "ARGON2ID 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; } if root.device_bound && root.width >= 1300px : Text { text: "DPAPI DEVICE BOUND"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
                                     if root.d_kind == 1 && root.d_secret != "" : Text { text: "STRENGTH " + Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                 }
@@ -3297,9 +3301,9 @@ export component MainWindow inherits Window {
                     }
                     if root.d_id == "" && !root.show_add_form : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;
                         Text { text: "🛡️"; font-size: 44px; horizontal-alignment: center; }
-                        Text { text: "Select an item from the list to view details"; color: PhantomTheme.text-dim; font-size: 13px; horizontal-alignment: center; }
-                        AuraButton { label: "+ New Item"; primary: true; width: 170px; height: 36px; clicked => { root.open_new_form(1); } }
-                        AuraButton { label: "🎲 Generator"; width: 170px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } }
+                        Text { text: root.ui_lang == "bn" ? "বিস্তারিত দেখতে তালিকা থেকে একটি আইটেম বাছুন" : "Select an item from the list to view details"; color: PhantomTheme.text-dim; font-size: 13px; horizontal-alignment: center; }
+                        AuraButton { label: root.ui_lang == "bn" ? "+ নতুন আইটেম" : "+ New Item"; primary: true; width: 170px; height: 36px; clicked => { root.open_new_form(1); } }
+                        AuraButton { label: root.ui_lang == "bn" ? "🎲 জেনারেটর" : "🎲 Generator"; width: 170px; height: 36px; clicked => { root.show_generator = true; root.regenerate(); } }
                     }
                 }}
                 // Phase 26: moiré veil floats ABOVE the card content when armed.
@@ -3316,7 +3320,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout { padding-left: 14px; padding-right: 14px; spacing: 8px;
                     Text { text: "● LOCAL ENCLAVE SYNCHRONIZED"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; vertical-alignment: center; }
                     Rectangle { horizontal-stretch: 1; }
-                    Text { text: root.credentials.length + " / " + root.total_matches_count + " ITEMS"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                    Text { text: root.credentials.length + " / " + root.total_matches_count + (root.ui_lang == "bn" ? " আইটেম" : " ITEMS"); color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; }
                 }
             }
         }
@@ -3724,7 +3728,7 @@ export component MainWindow inherits Window {
                     min-height: 64px;
                     max-height: 240px;
                     VerticalLayout { spacing: 4px; padding-left: 2px; padding-right: 2px;
-                        if root.health_rows.length == 0 : Text { text: "✅ All passwords look healthy — no breaches, reuse, or weakness found."; color: PhantomTheme.success; font-size: 12px; wrap: word-wrap; }
+                        if root.health_rows.length == 0 : Text { text: root.ui_lang == "bn" ? "✅ সব পাসওয়ার্ড ঠিক আছে — কোনো লিক, পুনরাবৃত্তি বা দুর্বলতা পাওয়া যায়নি।" : "✅ All passwords look healthy - no breaches, reuse, or weakness found."; color: PhantomTheme.success; font-size: 12px; wrap: word-wrap; }
                         for row in root.health_rows : Rectangle {
                             background: row.sev == -1 ? transparent : PhantomTheme.surface-low;
                             border-radius: 8px;

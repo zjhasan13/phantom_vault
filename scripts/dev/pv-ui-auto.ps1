@@ -1,4 +1,4 @@
-#requires -Version 5.1
+﻿#requires -Version 5.1
 <#
 .SYNOPSIS
   Dev-only UI automation harness for the PhantomVault Slint desktop app.
@@ -148,6 +148,15 @@ function NormalizeWindow {
   return $true
 }
 
+function SetWindowSize([int]$w, [int]$h) {
+  # Same-process resize: never resize between reading a rect and clicking it.
+  $best = Get-AppWindow
+  if (-not $best) { return $false }
+  [PW]::ShowWindow([IntPtr]$best.H, 9) | Out-Null
+  [PW]::SetWindowPos([IntPtr]$best.H, [IntPtr]::Zero, 40, 30, $w, $h, 0x0040) | Out-Null
+  Start-Sleep -Milliseconds 600
+  return $true
+}
 function Get-UiaWindow {
   $root = [System.Windows.Automation.AutomationElement]::RootElement
   $wc = New-Object System.Windows.Automation.PropertyCondition(
@@ -252,29 +261,39 @@ function Click-Name([string]$label) {
 }
 
 function Unlock([string]$pw) {
-  NormalizeWindow | Out-Null
-  FocusApp | Out-Null
-  $w = Get-UiaWindow
-  $ec = New-Object System.Windows.Automation.PropertyCondition(
-    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
-    [System.Windows.Automation.ControlType]::Edit)
-  $ed = $null
-  foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {
-    $r = $e.Current.BoundingRectangle
-    if ($r.Width -gt 150) { $ed = $e; break }
+  # Slint only exposes the password TextEdit while it is focused, and the first
+  # launch can race window normalisation. Retry once and verify with an ASCII
+  # marker from the unlocked shell ("Generator") instead of assuming success.
+  for ($attempt = 1; $attempt -le 2; $attempt++) {
+    NormalizeWindow | Out-Null
+    FocusApp | Out-Null
+    Start-Sleep -Milliseconds 300
+    $w = Get-UiaWindow
+    if (-not $w) { continue }
+    $ec = New-Object System.Windows.Automation.PropertyCondition(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Edit)
+    $ed = $null
+    foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {
+      $r = $e.Current.BoundingRectangle
+      if ($r.Width -gt 150) { $ed = $e; break }
+    }
+    if (-not $ed) { "NO_EDIT attempt=$attempt"; continue }
+    $vp = $ed.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $vp.SetValue($pw)
+    Start-Sleep -Milliseconds 400
+    $btn = $null
+    foreach ($t in (Get-TextElements)) {
+      if ($t.Current.Name -match 'Enter') { $btn = $t; break }
+    }
+    if ($btn) { Click-Rect $btn.Current.BoundingRectangle }
+    else { [System.Windows.Forms.SendKeys]::SendWait('{ENTER}') }
+    Start-Sleep -Seconds 7
+    if (-not (FindTextRect 'VAULT SEALED')) { "UNLOCKED attempt=$attempt"; return $true }
+    "NOT_UNLOCKED attempt=$attempt"
   }
-  if (-not $ed) { "NO_EDIT"; return }
-  $vp = $ed.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
-  $vp.SetValue($pw)
-  Start-Sleep -Milliseconds 400
-  $btn = $null
-  foreach ($t in (Get-TextElements)) {
-    if ($t.Current.Name -match 'Enter') { $btn = $t; break }
-  }
-  if ($btn) { Click-Rect $btn.Current.BoundingRectangle }
-  else { [System.Windows.Forms.SendKeys]::SendWait('{ENTER}') }
-  Start-Sleep -Seconds 7
-  "UNLOCKED"
+  "UNLOCK_FAILED"
+  return $false
 }
 
 function TapLabel([string]$label, [int]$sidebarX = 200, [int]$sidebarY = 500) {
@@ -311,6 +330,18 @@ function Start-FreshApp {
   "STEP=unlock ALIVE=$(Alive)"
 }
 
+# B3: launch at a given width and dump UIA rects, so a squeezed layout can be
+# measured instead of eyeballed. Same process as the resize (see trap in AGENTS).
+function BnMeasure([string]$wh) {
+  $p = $wh -split ','
+  $lang = Join-Path $script:VaultDir "lang.pref"
+  Set-Content -Path $lang -Value "bn" -NoNewline -Encoding ascii
+  Start-FreshApp
+  SetWindowSize ([int]$p[0]) ([int]$p[1]) | Out-Null
+  Start-Sleep -Seconds 1
+  Save-Screenshot "pv-bn-measure-$($p[0]).png"
+  Dump
+}
 function VerifyAll {
   Start-FreshApp
 
@@ -353,6 +384,31 @@ function TwoSheets {
   "TWO_SHEETS_DONE ALIVE=$(Alive)"
 }
 
+# B3: Bengali layout pass. Writes lang.pref=bn before launch, then captures the
+# main list, Settings and the health dialog. Set SLINT_SCALE_FACTOR=1.25 in the
+# environment to simulate a 125% display.
+function BnScreens([string]$tag) {
+  $lang = Join-Path $script:VaultDir "lang.pref"
+  Set-Content -Path $lang -Value "bn" -NoNewline -Encoding ascii
+  Start-FreshApp
+  Save-Screenshot "pv-bn-$tag-main.png"
+  # <1100 logical px: exercises the 2-row filter grid. 1200 physical px is the
+  # declared min width (960 logical) at 125% DPI; going below it makes the
+  # 3-column shell overflow, which is expected.
+  SetWindowSize 1200 1000 | Out-Null
+  Start-Sleep -Seconds 1
+  Save-Screenshot "pv-bn-$tag-narrow.png"
+  NormalizeWindow | Out-Null
+  Start-Sleep -Milliseconds 600
+  TapLabel 'সেটিংস' | Out-Null
+  Start-Sleep -Seconds 2
+  Save-Screenshot "pv-bn-$tag-settings.png"
+  TapLabel 'সিকিউরিটি অডিট' | Out-Null
+  Start-Sleep -Seconds 2
+  Save-Screenshot "pv-bn-$tag-health.png"
+  "BN_SCREENS_DONE tag=$tag scale=$env:SLINT_SCALE_FACTOR ALIVE=$(Alive)"
+}
+
 switch ($Action) {
   "dump"      { Dump }
   "click"     { Click-Name $Arg }
@@ -375,6 +431,8 @@ switch ($Action) {
     Save-Screenshot $p[1]
   }
   "twosheets" { TwoSheets }
+  "bnscreens" { BnScreens $(if ($Arg) { $Arg } else { "100" }) }
   "verify"    { VerifyAll }
+  "bnmeasure" { BnMeasure $(if ($Arg) { $Arg } else { "1000,900" }) }
   default     { "unknown action: $Action" }
 }

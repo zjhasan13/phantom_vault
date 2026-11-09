@@ -2829,7 +2829,9 @@ fn reprompt_gate(vault: &Vault, kind: i32, id: &str) -> Option<(String, String)>
 fn set_trash_label(ui: &MainWindow, vault: &Vault) {
     let n = vault.trash_count();
     ui.set_trash_label(if n == 0 {
-        "Trash".into()
+        crate::i18n::tr("Trash", "ট্র্যাশ").into()
+    } else if crate::i18n::is_bn() {
+        format!("ট্র্যাশ ({n})").into()
     } else {
         format!("Trash ({n})").into()
     });

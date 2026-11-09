@@ -135,6 +135,62 @@ English rather than a fabricated translation.
 Still English: dynamic `format!` statuses outside Auto-Type (their payloads are
 OS/serde text), some Settings/onboarding paragraphs, and the BN layout pass.
 
+## Coverage update (2026-11-09, layout pass B3)
+
+B3 closed the remaining Bengali gaps on the main screen and did the visual pass
+the earlier batches only reasoned about.
+
+Translated in this batch: sidebar `Cards`, `Identities`, `Licenses`,
+`Recovery Kit`, `Audit & Duress`, `Secure Send` and the Trash label
+(`ট্র্যাশ`, `ট্র্যাশ (n)`); the `Identity`/`License` filter chips in both the
+single-row and the 2-row grid; the list counters (`দেখানো হচ্ছে X / Y`,
+`X / Y আইটেম`); the empty detail pane; the recovery-sheet nudge; the health
+"all good" line; and the sidebar travel toggle (`✈ ট্রাভেল: চালু/বন্ধ`).
+
+Mono brand chips (`ZERO-KNOWLEDGE`, `RAM-SAFE`, `READY`, `ENCLAVE MODE`,
+`PORTABLE`, `LOCAL-FIRST`) stay English on purpose — they are brand/mono
+labels, not prose. The Settings page and the item-detail diagnostic tiles are
+still mostly English (separate batch).
+
+### Layout QA
+
+This machine runs at **125% display scaling** (DPI 120), so every capture below
+is a 125% capture. Slint reports logical px; UIA reports physical px (divide by
+1.25 before comparing).
+
+| Capture | Result |
+|---|---|
+| 1500x940 physical = 1185x752 logical, single-row chips | chips and sidebar fit; with an item open the detail pane overflowed (see fix) |
+| 1200x1000 physical = 960x800 logical, the declared `min-width` | 2-row filter grid; sidebar, list, empty detail pane and footer all inside the window |
+| 1000x900 physical = 800 logical — **below** `min-width: 960px` | shell overflows; `+ নতুন` and the empty-state text run past the window edge |
+
+Fix found by the pass: the detail "proof strip" (`XChaCha20-Poly1305 VERIFIED`,
+`ARGON2ID 64 MiB`, `DPAPI DEVICE BOUND`, `STRENGTH n%`) is one non-wrapping row
+whose minimum width (~600 logical px) exceeded the pane and pushed it past the
+window edge, cutting the last chip. The middle two chips are now hidden below
+1300 logical px (they are duplicated in Settings).
+
+Not covered yet: the **filled** item-detail pane at 960 logical px. It was
+verified at 1185 logical (screenshot `pv-bn-detail5.png`); at the minimum width
+only the empty pane was captured. The automatic row-click in the harness keeps
+landing on the row's action icons, so this needs a manual look.
+
+The 1000-px row above is expected behaviour **below** the documented minimum
+(`min-width: 960px`), not a Bengali regression. `SetWindowPos` can bypass that
+minimum; whether a user drag is also allowed below it was not verified.
+
+### Traps
+
+- `SLINT_SCALE_FACTOR=1.25` does **not** scale rendered text in Slint 1.18
+  (`winitwindowadapter.rs` only uses it to adjust window attributes), so it
+  cannot simulate 125% in a screenshot. Use the real display scaling.
+- UIA returns physical pixels; divide by the DPI scale before comparing with
+  Slint's logical widths.
+- `Unlock` in `scripts/dev/pv-ui-auto.ps1` used to print `UNLOCKED`
+  unconditionally; it now verifies (`VAULT SEALED` gone) and retries once.
+- Resizing the window from a *separate* harness invocation can leave the app
+  window hidden from UIA. Resize inside the same run (`bnscreens`, `bnmeasure`).
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.
