@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `c7e71ac` | i18n: 15 arg `format!` templates + Rust-set defaults (`à¦¯à¦¾à¦šà¦¾à¦‡ à¦¹à¦¯à¦¼à¦¨à¦¿` / `à¦à¦–à¦¨à§‹ à¦…à¦¡à¦¿à¦Ÿ à¦¹à¦¯à¦¼à¦¨à¦¿à¥¤`) |
 | `be741cf` | i18n: Rust status/toast strings BN (138 plain + 69 `{e}` templates + 26 inline) |
 | `766f5b5` | i18n: item detail pane BN + `ago()` / password-strength helpers localized |
 | `58104f5` | i18n: Settings page BN (6 tabs, 196 strings) + `tog()` ON/OFF chips (`চালু`/`বন্ধ`) |

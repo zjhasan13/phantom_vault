@@ -10,14 +10,29 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `be741cf` (BN Rust statuses B6) |
+| Branch / HEAD | `main` @ `c7e71ac` (BN arg-templates B7) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-09) - `be741cf`
+## Last code batch (2026-11-09) - `c7e71ac`
+
+B7 = the Rust leftovers from B6. 15 `format!` templates with explicit arguments
+(17 sites) branch on `i18n::is_bn()` (Auto-Type, save/delete/restore failures,
+QR scan/parse, import numbers, download progress, page counterâ€¦). The two
+Rust-set Slint defaults are localized at startup and on language switch while
+they still hold an untouched default: `ssh_status` (`à¦¯à¦¾à¦šà¦¾à¦‡ à¦¹à¦¯à¦¼à¦¨à¦¿`) and
+`health_status`/`health_headline` (`à¦à¦–à¦¨à§‹ à¦…à¦¡à¦¿à¦Ÿ à¦¹à¦¯à¦¼à¦¨à¦¿à¥¤`).
+
+Verified on screen: Dev & API shows `à¦à¦–à¦¨à§‹ à¦…à¦¡à¦¿à¦Ÿ à¦¹à¦¯à¦¼à¦¨à¦¿à¥¤` and `à¦¯à¦¾à¦šà¦¾à¦‡ à¦¹à¦¯à¦¼à¦¨à¦¿`
+(`pv-bn-dev-defaults3.png`).
+
+A26 is now complete except: the Settings rows that overflow ~20 logical px at
+the 960 px minimum window (responsive pass), and a handful of add/edit-form
+labels. No Rust status string is knowingly left in English.
+## Previous batch (2026-11-09) - `be741cf`
 
 B6 = Bengali Rust statuses. 138 plain statuses (156 sites) go through `tr()`,
 69 `format!("â€¦{e}")` error templates localize only their text (technical
