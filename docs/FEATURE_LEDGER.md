@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `4eec7e9` | i18n: add/edit item form BN (placeholders, helper lines, URL rule, checkboxes, Save/Cancel) |
 | `d649bb8` | ui: Settings fits the 960 px minimum (tabs + padding) and 9 missed BN labels |
 | `c7e71ac` | i18n: 15 arg `format!` templates + Rust-set defaults (`à¦¯à¦¾à¦šà¦¾à¦‡ à¦¹à¦¯à¦¼à¦¨à¦¿` / `à¦à¦–à¦¨à§‹ à¦…à¦¡à¦¿à¦Ÿ à¦¹à¦¯à¦¼à¦¨à¦¿à¥¤`) |
 | `be741cf` | i18n: Rust status/toast strings BN (138 plain + 69 `{e}` templates + 26 inline) |
