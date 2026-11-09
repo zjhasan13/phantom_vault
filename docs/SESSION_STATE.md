@@ -10,14 +10,25 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `c7e71ac` (BN arg-templates B7) |
+| Branch / HEAD | `main` @ `d649bb8` (BN + Settings 960 px fit B8) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-09) - `c7e71ac`
+## Last code batch (2026-11-09) - `d649bb8`
+
+B8 = the Settings minimum-width fix plus the last nine missed Bengali labels.
+Settings content padding 22 -> 16 and tab widths re-tuned so the tab row needs
+~630 px; at 1200x1000 physical (960 logical, the declared minimum) no element
+exceeds the window edge any more (`pv-bn-set-960.png`, measured with UIA).
+Nine `label: cond ? "â€¦" : "â€¦"` strings that the B4 sweep could not see are now
+Bengali (Remove PIN, Change Master Password, Disable (portable), the backup
+warning, LAN/gist/passphrase chips, Remove Ext PIN).
+
+Remaining Bengali gaps: a handful of add/edit-form labels only.
+## Previous batch (2026-11-09) - `c7e71ac`
 
 B7 = the Rust leftovers from B6. 15 `format!` templates with explicit arguments
 (17 sites) branch on `i18n::is_bn()` (Auto-Type, save/delete/restore failures,
