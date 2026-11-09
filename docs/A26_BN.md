@@ -318,6 +318,22 @@ Password / Sure? Re-encrypt, Disable (portable) / Sure? Convert back, the
 backup-exported warning, the LAN / gist / passphrase ON-OFF chips and
 Remove Ext PIN.
 
+## Coverage update (2026-11-09, add/edit form batch B9)
+
+The add/edit form in the detail pane now follows `ui_lang`:
+
+- Placeholders: item name, tags, otpauth secret, one-time recovery codes,
+  website URI and additional website URIs.
+- Helper lines and actions: the "typed text stays" warning, the generator hint,
+  `+ Add website`, `SECRET KEYS / API TOKENS`, `+ Add Custom Field`, the form's
+  Close button and the Save / Cancel row.
+- CheckBoxes: master-password re-prompt, favourite, travel-safe.
+- The URL-rule cycle button (Auto/Base/Host/Exact/Prefix/Never) and the inline
+  "Sure?" deletes are language-aware too.
+
+Layout was untouched (the form uses the shared field widgets). Verified on
+screen: `%TEMP%\pv-bn-form.png`.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.
