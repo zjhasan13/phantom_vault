@@ -9,15 +9,29 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-05 |
-| Branch / HEAD | `main` @ `119934f` (audit + extension + BN dialogs/status) |
+| Date | 2026-11-09 |
+| Branch / HEAD | `main` @ `17c6dc9` (BN layout pass B3) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-07) - `4a38695`
+## Last code batch (2026-11-09) - `17c6dc9`
+
+B3 = Bengali layout pass. Main screen is now fully Bengali; the pass found one
+real layout bug: the item detail "proof strip" is a single non-wrapping row
+whose minimum width (~600 logical px) pushed the pane past the window edge at
+the default 1185 logical px, cutting the last chip. The two middle chips are
+hidden below 1300 logical px. Harness gained a verified `Unlock` (retry), a
+narrow capture at 960 logical px, and `bnmeasure` (UIA rect dump).
+
+Evidence: `pv-bn-100-main.png`, `pv-bn-100-narrow.png` (960 logical),
+`pv-bn-detail5.png` (1185 logical, detail open), `pv-bn-100-settings.png`,
+`pv-bn-100-health.png` in `%TEMP%`. Below `min-width: 960px` the 3-column
+shell overflows on purpose; do not "fix" screenshots taken below it.
+
+## Older batch (2026-11-07) - `4a38695`
 
 The auto-type/popup audit is complete: A1-A34 + T1-T10 fixed/documented, with
 A33 landing last (secrets removed from `CredentialView`). `cargo test` 581,
@@ -98,10 +112,15 @@ Run Rust gates with `-j 1`; see "Known traps".
    N other item(s)" chip when the PAN / email is already stored elsewhere.
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
    logical px the strip becomes a two-row 5-column grid so all nine stay visible.
-6. **A26 Bengali pass — auto-type batch done (`774420a`)**: notifications,
-   countdown pill + Cancel, and Quick Capture a11y labels follow `ui_lang`.
-   Remaining: most dialogs and the `VaultError` text inside `Auto-Type: {e}`.
-7. **Manual 100% / 125% layout pass** across all screens (no automated DPI test).
+6. **A26 Bengali pass — B3 layout pass done (`17c6dc9`).** The main screen is
+   fully Bengali now (sidebar, chips, counters, empty pane, nudge, travel
+   toggle); dialogs/status landed in `a486f85`/`119934f`. Remaining English
+   surfaces: the Settings page and the item-detail diagnostic tiles. The item
+   detail pane at 960 logical px was not captured (only at 1185).
+7. **Layout pass at 125% DPI - done for the main screen (`17c6dc9`).**
+   Still to look at manually: Settings, add/edit form, and the item detail at the
+   960 px minimum width. Note `SLINT_SCALE_FACTOR` does not scale text in Slint
+   1.18, so it cannot simulate another DPI.
 8. **Desktop auto-type fixes — complete.** A1-A34 + T1-T10 are fixed or
    documented in `docs/AUDIT.md` §8/§9 (batches 1-12: `3b1fc92`, `6b095fc`,
    `b4ec6d0`, `1cf999a`, `34048fb`, `d76c34c`, `1a82614`, `2b2f81b`,
