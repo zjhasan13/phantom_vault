@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `58104f5` | i18n: Settings page BN (6 tabs, 196 strings) + `tog()` ON/OFF chips (`চালু`/`বন্ধ`) |
 | `17c6dc9` | i18n/layout: main screen fully BN (sidebar/chips/counters/nudge/travel) + detail proof-strip fit at 1185 logical px |
 | `119934f` | i18n: Rust status toasts + `VaultError::localized()` (Auto-Type payloads mapped) |
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |

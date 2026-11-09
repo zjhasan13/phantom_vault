@@ -10,14 +10,28 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `17c6dc9` (BN layout pass B3) |
+| Branch / HEAD | `main` @ `58104f5` (BN Settings page B4) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-09) - `17c6dc9`
+## Last code batch (2026-11-09) - `58104f5`
+
+B4 = Bengali Settings page. All six tabs follow `ui_lang` (196 literals), the
+15 ON/OFF chips render as `à¦šà¦¾à¦²à§`/`à¦¬à¦¨à§à¦§` via a new `tog(on)` helper, and the
+Rust "missing credentials" + "Windows Hello unavailable" lines go through
+`tr()`. Tab widths were re-tuned for the 960 logical px minimum.
+
+Known limit: at 960 logical px a few Settings status rows still overflow ~20
+logical px (`pv-bn-set-960.png`); the tab row itself fits. Next layout task is
+stacking those rows. The long tail of Rust statuses (~250 literals) and the
+item-detail diagnostic tiles are still English.
+
+Evidence: `pv-bn-set-{sec,sync,priv,rec,bak,dev}.png` and `pv-bn-set-960.png` in
+`%TEMP%`.
+## Previous batch (2026-11-09) - `17c6dc9`
 
 B3 = Bengali layout pass. Main screen is now fully Bengali; the pass found one
 real layout bug: the item detail "proof strip" is a single non-wrapping row
@@ -112,11 +126,10 @@ Run Rust gates with `-j 1`; see "Known traps".
    N other item(s)" chip when the PAN / email is already stored elsewhere.
 5. **Responsive filter strip — done (`a4c2bfc`)**: chips are 68px; below 1100
    logical px the strip becomes a two-row 5-column grid so all nine stay visible.
-6. **A26 Bengali pass — B3 layout pass done (`17c6dc9`).** The main screen is
-   fully Bengali now (sidebar, chips, counters, empty pane, nudge, travel
-   toggle); dialogs/status landed in `a486f85`/`119934f`. Remaining English
-   surfaces: the Settings page and the item-detail diagnostic tiles. The item
-   detail pane at 960 logical px was not captured (only at 1185).
+6. **A26 Bengali pass - B4 Settings done (`58104f5`).** Main screen (B3) and all
+   six Settings tabs are Bengali. Remaining: the item-detail diagnostic tiles,
+   ~250 Rust status literals (`set_sync_status` / `set_notification_text` /
+   `format!` variants), and a few Rust-set Slint defaults.
 7. **Layout pass at 125% DPI - done for the main screen (`17c6dc9`).**
    Still to look at manually: Settings, add/edit form, and the item detail at the
    960 px minimum width. Note `SLINT_SCALE_FACTOR` does not scale text in Slint
