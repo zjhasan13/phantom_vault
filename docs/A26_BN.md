@@ -191,6 +191,40 @@ minimum; whether a user drag is also allowed below it was not verified.
 - Resizing the window from a *separate* harness invocation can leave the app
   window hidden from UIA. Resize inside the same run (`bnscreens`, `bnmeasure`).
 
+## Coverage update (2026-11-09, Settings batch B4)
+
+The Settings page now follows `ui_lang`: 196 literals across all six tabs.
+
+- Header + tab bar: `সেটিংস ও ডেভ সেন্টার`, `সিকিউরিটি`, `সিঙ্ক ও ডিভাইস`,
+  `প্রাইভেসি`, `রিকভারি`, `ব্যাকআপ`, `ডেভ ও API`. Tab widths were re-tuned so
+  the row still fits at the 960 logical px minimum window (verified on screen).
+- Security: screen/blackout, favicons, custom logos + help line, travel mode,
+  App PIN setup, master rotation copy, offline cache, container profile,
+  PQ-paranoid, Local API, shares (create/open/revoke rows), extension PIN,
+  two-factor unlock, hands-free 2FA, TOTP drift, clipboard + auto-lock chips,
+  offline kill-switch, access log, tray hint, updates.
+- Sync/Privacy/Recovery/Backups/Dev: GitHub sync fields, merge preview, per-item
+  sharing, Secure Send, business roster/OIDC, pairing, browser bridge, export
+  formats + warning, scheduled backups, paranoia/recovery, shard grants,
+  DANGER ZONE, email aliases, anti-photography, health/dev tools, scoreboard.
+- Toggle chips use a new `tog(on)` helper: `চালু` / `বন্ধ` instead of ON/OFF.
+- Rust-side: `Missing credentials…` and `Not available on this device.` go
+  through `tr()`.
+
+Kept English on purpose: mono chips (`LOCAL VAULT`, `DPAPI BOUND`), vendor and
+protocol names (`Windows Hello`, `TPM`, `OIDC`, `PAT`, `PowerShell`, `Bash`,
+`Nushell`, `Addy.io`, `SimpleLogin`, `base64`, `hex`), and the language toggle.
+
+Still English: the long tail of Rust status lines (`set_sync_status`,
+`set_notification_text`, `set_*_status(format!…)` — ~250 literals), the item
+detail diagnostic tiles, and a few Slint property defaults (`ssh_status`,
+`health_headline`) that are set by Rust.
+
+Known layout limit at the 960 logical px minimum: some Settings rows (Windows
+Hello status, App PIN chip) still run ~20 logical px past the right edge.
+`pv-bn-set-960.png` shows it; the tab row itself fits. Stacking those rows on
+narrow windows is the next layout task.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

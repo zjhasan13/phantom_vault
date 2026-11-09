@@ -236,6 +236,27 @@ function Wheel([int]$x, [int]$y, [int]$notches) {
   "WHEEL=$notches"
 }
 
+# Click a label given as decimal UTF-16 code points ("2488,2503,..."). Console
+# code pages mangle Bengali on the command line; code points survive.
+# Same as TapLabel but the label is given as code points (console-safe scroll).
+function TapCps([string]$csv) {
+  $name = -join ($csv -split ',' | ForEach-Object { [char][int]$_ })
+  $r = FindTextRect $name
+  if (-not $r) {
+    for ($i = 0; $i -lt 14 -and -not $r; $i++) { Wheel 200 500 -5; $r = FindTextRect $name }
+  }
+  if (-not $r) {
+    for ($i = 0; $i -lt 28 -and -not $r; $i++) { Wheel 200 500 5; $r = FindTextRect $name }
+  }
+  if (-not $r) { "MISS=$name"; return $false }
+  Click-Rect $r
+  "TAP=$name :: $r"
+  return $true
+}
+function Click-Cps([string]$csv) {
+  $name = -join ($csv -split ',' | ForEach-Object { [char][int]$_ })
+  return (Click-Name $name)
+}
 function Click-Name([string]$label) {
   NormalizeWindow | Out-Null
   FocusApp | Out-Null
@@ -342,6 +363,39 @@ function BnMeasure([string]$wh) {
   Save-Screenshot "pv-bn-measure-$($p[0]).png"
   Dump
 }
+# B4: capture every Settings tab in Bengali. Labels are clicked by code point
+# (see Click-Cps) because the console mangles Bengali arguments.
+function BnSettings {
+  $lang = Join-Path $script:VaultDir "lang.pref"
+  Set-Content -Path $lang -Value "bn" -NoNewline -Encoding ascii
+  Start-FreshApp
+  TapCps '2488,2503,2463,2495,2434,2488' | Out-Null
+  Start-Sleep -Seconds 2
+  $tabs = [ordered]@{
+    sec  = '2488,2495,2453,2495,2441,2480,2495,2463,2495'
+    sync = '2488,2495,2457,2509,2453,32,2451,32,2465,2495,2477,2494,2439,2488'
+    priv = '2474,2509,2480,2494,2439,2477,2503,2488,2495'
+    rec  = '2480,2495,2453,2477,2494,2480,2495'
+    bak  = '2476,2509,2479,2494,2453,2438,2474'
+    dev  = '2465,2503,2477,32,2451,32,65,80,73'
+  }
+  foreach ($k in $tabs.Keys) {
+    Click-Cps $tabs[$k] | Out-Null
+    Start-Sleep -Seconds 2
+    Save-Screenshot "pv-bn-set-$k.png"
+  }
+  # Same page at the 960-logical minimum width (tab row must still fit).
+  # NOTE: Click-Cps -> Click-Name calls NormalizeWindow, so click the tab with a
+  # raw rect read (no normalisation) after resizing.
+  SetWindowSize 1200 1000 | Out-Null
+  Start-Sleep -Seconds 1
+  $tabName = -join ('2488,2495,2453,2495,2441,2480,2495,2463,2495' -split ',' | ForEach-Object { [char][int]$_ })
+  $tr = FindTextRect $tabName
+  if ($tr) { Click-Rect $tr } else { "TAB_MISS" }
+  Start-Sleep -Seconds 1
+  Save-Screenshot "pv-bn-set-960.png"
+  "BN_SETTINGS_DONE ALIVE=$(Alive)"
+}
 function VerifyAll {
   Start-FreshApp
 
@@ -412,6 +466,7 @@ function BnScreens([string]$tag) {
 switch ($Action) {
   "dump"      { Dump }
   "click"     { Click-Name $Arg }
+  "clickcp"   { Click-Cps $Arg }
   "shot"      { Save-Screenshot $Arg }
   "unlock"    { Unlock $(if ($Arg) { $Arg } else { $script:MasterPw }) }
   "focus"     { FocusApp }
@@ -433,6 +488,7 @@ switch ($Action) {
   "twosheets" { TwoSheets }
   "bnscreens" { BnScreens $(if ($Arg) { $Arg } else { "100" }) }
   "verify"    { VerifyAll }
+  "bnsettings" { BnSettings }
   "bnmeasure" { BnMeasure $(if ($Arg) { $Arg } else { "1000,900" }) }
   default     { "unknown action: $Action" }
 }

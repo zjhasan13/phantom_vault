@@ -578,6 +578,11 @@ component GeneratorPanel inherits Rectangle {
 }
 
 export component MainWindow inherits Window {
+    // A26/B4: ON/OFF toggle chips follow the UI language.
+    pure function tog(on: bool) -> string {
+        return root.ui_lang == "bn" ? (on ? "চালু" : "বন্ধ") : (on ? "ON" : "OFF");
+    }
+
     default-font-family: "Inter";
     title: "PhantomVault - Zero-Knowledge Native Vault";
     // Explicit default size: without it the window opens at content-minimum
@@ -2172,82 +2177,82 @@ export component MainWindow inherits Window {
             settings_scroll := ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
                 Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
                     HorizontalLayout { spacing: 10px; alignment: center;
-                        Text { text: "SETTINGS & DEV CENTER"; color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
+                        Text { text: (root.ui_lang == "bn" ? "সেটিংস ও ডেভ সেন্টার" : "SETTINGS & DEV CENTER"); color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
                         MonoChip { label: "LOCAL VAULT"; tone: PhantomTheme.success; }
                         MonoChip { label: "DPAPI BOUND"; tone: PhantomTheme.secondary; }
                         Rectangle { horizontal-stretch: 1; }
                         Text { text: "v" + root.app_version; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
                     }
-                    Text { text: "Master password, Windows Hello, sync, privacy, recovery, backups and the local API - every control grouped below."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড, Windows Hello, সিঙ্ক, প্রাইভেসি, রিকভারি, ব্যাকআপ আর লোকাল API — সব কন্ট্রোল নিচে ভাগ করা আছে।" : "Master password, Windows Hello, sync, privacy, recovery, backups and the local API - every control grouped below."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "Security"; primary: root.settings_tab == 0; width: 90px; height: 30px; clicked => { root.settings_tab = 0; } }
-                        AuraButton { label: "Sync & Devices"; primary: root.settings_tab == 1; width: 124px; height: 30px; clicked => { root.settings_tab = 1; } }
-                        AuraButton { label: "Privacy"; primary: root.settings_tab == 2; width: 82px; height: 30px; clicked => { root.settings_tab = 2; } }
-                        AuraButton { label: "Recovery"; primary: root.settings_tab == 3; width: 92px; height: 30px; clicked => { root.settings_tab = 3; } }
-                        AuraButton { label: "Backups"; primary: root.settings_tab == 4; width: 86px; height: 30px; clicked => { root.settings_tab = 4; } }
-                        AuraButton { label: "Dev & API"; primary: root.settings_tab == 5; width: 94px; height: 30px; clicked => { root.settings_tab = 5; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "সিকিউরিটি" : "Security"); primary: root.settings_tab == 0; width: 102px; height: 30px; clicked => { root.settings_tab = 0; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "সিঙ্ক ও ডিভাইস" : "Sync & Devices"); primary: root.settings_tab == 1; width: 134px; height: 30px; clicked => { root.settings_tab = 1; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "প্রাইভেসি" : "Privacy"); primary: root.settings_tab == 2; width: 94px; height: 30px; clicked => { root.settings_tab = 2; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "রিকভারি" : "Recovery"); primary: root.settings_tab == 3; width: 96px; height: 30px; clicked => { root.settings_tab = 3; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "ব্যাকআপ" : "Backups"); primary: root.settings_tab == 4; width: 94px; height: 30px; clicked => { root.settings_tab = 4; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "ডেভ ও API" : "Dev & API"); primary: root.settings_tab == 5; width: 102px; height: 30px; clicked => { root.settings_tab = 5; } }
                     }
                 }
                 }
                 HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "ভাষা" : "Language"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "English"; primary: root.ui_lang == "en"; width: 100px; height: 30px; clicked => { root.set_language("en"); } } AuraButton { label: "বাংলা"; primary: root.ui_lang == "bn"; width: 100px; height: 30px; clicked => { root.set_language("bn"); } } }
                 if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Security"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Screen Blackout"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.blackout_enabled ? "ON" : "OFF"; primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Website Favicons (same-origin)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.favicons_enabled ? "ON" : "OFF"; primary: root.favicons_enabled; width: 90px; clicked => { root.set_favicons(!root.favicons_enabled); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Custom logos (per-domain override)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: "↻ Refresh"; width: 90px; clicked => { root.refresh_favicons(); } } AuraButton { label: "🧹 Clear"; width: 90px; clicked => { root.clear_custom_favicons(); } } }
-                    Text { text: "Missing an icon? Open the login → tap 🖼️ to set a logo manually, or hit Refresh. Letter = offline/uncached, or icons OFF above."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Travel Mode"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.is_travel_mode ? "ON" : "OFF"; primary: root.is_travel_mode; width: 90px; clicked => { root.set_travel_mode(!root.is_travel_mode); } } }
+                    Text { text: (root.ui_lang == "bn" ? "সিকিউরিটি" : "Security"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "স্ক্রিন ব্ল্যাকআউট" : "Screen Blackout"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.blackout_enabled); primary: root.blackout_enabled; width: 90px; clicked => { root.set_blackout(!root.blackout_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "ওয়েবসাইট ফ্যাভিকন (same-origin)" : "Website Favicons (same-origin)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.favicons_enabled); primary: root.favicons_enabled; width: 90px; clicked => { root.set_favicons(!root.favicons_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "কাস্টম লোগো (ডোমেইনভিত্তিক ওভাররাইড)" : "Custom logos (per-domain override)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: (root.ui_lang == "bn" ? "↻ রিফ্রেশ" : "↻ Refresh"); width: 90px; clicked => { root.refresh_favicons(); } } AuraButton { label: (root.ui_lang == "bn" ? "🧹 পরিষ্কার" : "🧹 Clear"); width: 90px; clicked => { root.clear_custom_favicons(); } } }
+                    Text { text: (root.ui_lang == "bn" ? "আইকন নেই? লগইন খুলে → 🖼️ চাপলে ম্যানুয়ালি লোগো বসানো যাবে, নয়তো Refresh চাপুন। অক্ষর = অফলাইন/ক্যাশে নেই, বা উপরে আইকন OFF।" : "Missing an icon? Open the login → tap 🖼️ to set a logo manually, or hit Refresh. Letter = offline/uncached, or icons OFF above."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "ট্রাভেল মোড" : "Travel Mode"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.is_travel_mode); primary: root.is_travel_mode; width: 90px; clicked => { root.set_travel_mode(!root.is_travel_mode); } } }
                     HorizontalLayout { spacing: 8px; Text { text: "Windows Hello"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.hello_status; color: PhantomTheme.text-muted; font-size: 11px; horizontal-alignment: right; vertical-alignment: center; wrap: word-wrap; } }
-                    HorizontalLayout { spacing: 8px; Text { text: "App PIN quick unlock (this PC only)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pin_available ? "SET" : "OFF"; color: root.pin_available ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "App PIN দিয়ে দ্রুত আনলক (শুধু এই PC)" : "App PIN quick unlock (this PC only)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pin_available ? "SET" : "OFF"; color: root.pin_available ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
-                        pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
-                        pin_confirm := LineEdit { placeholder-text: "Confirm PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        pin_new := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "নতুন ৪–৮ ডিজিটের PIN" : "New 4–8 digit PIN"); input-type: password; height: 36px; horizontal-stretch: 1; }
+                        pin_confirm := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "PIN নিশ্চিত করুন" : "Confirm PIN"); input-type: password; height: 36px; horizontal-stretch: 1; }
                     }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "Set PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_app_pin(pin_new.text, pin_confirm.text); pin_new.text = ""; pin_confirm.text = ""; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "PIN সেট করুন" : "Set PIN"); primary: true; width: 130px; height: 34px; clicked => { root.setup_app_pin(pin_new.text, pin_confirm.text); pin_new.text = ""; pin_confirm.text = ""; } }
                         if root.pin_available : AuraButton { label: root.confirm_pin_remove ? "Sure?" : "Remove PIN"; danger: true; width: root.confirm_pin_remove ? 110px : 130px; height: 34px; clicked => { if root.confirm_pin_remove { root.confirm_pin_remove = false; root.disable_app_pin(); } else { root.confirm_pin_remove = true; } } }
                     }
                     if root.pin_status != "" : Text { text: root.pin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A5: master-password rotation (rekey). Old backups, exports
                     // and printed shards stay on the OLD password by design.
                     FieldLabel { text: root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড পরিবর্তন" : "MASTER PASSWORD ROTATION"; }
-                    Text { text: "Re-encrypts the vault with a fresh salt. Old backups, exports and printed shards keep the OLD password. App PIN is removed after rotation."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "ভল্ট নতুন salt দিয়ে আবার এনক্রিপ্ট হয়। পুরনো ব্যাকআপ, এক্সপোর্ট ও প্রিন্ট করা শার্ডে পুরনো পাসওয়ার্ডই থাকে। রোটেশনের পর App PIN মুছে যায়।" : "Re-encrypts the vault with a fresh salt. Old backups, exports and printed shards keep the OLD password. App PIN is removed after rotation."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
-                        rekey_old := LineEdit { placeholder-text: "Current master password"; input-type: password; height: 36px; horizontal-stretch: 1; }
-                        rekey_new := LineEdit { placeholder-text: "New (8+ characters)"; input-type: password; height: 36px; horizontal-stretch: 1; }
-                        rekey_confirm := LineEdit { placeholder-text: "Confirm new"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        rekey_old := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "বর্তমান মাস্টার পাসওয়ার্ড" : "Current master password"); input-type: password; height: 36px; horizontal-stretch: 1; }
+                        rekey_new := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "নতুন (৮+ অক্ষর)" : "New (8+ characters)"); input-type: password; height: 36px; horizontal-stretch: 1; }
+                        rekey_confirm := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "নতুনটি নিশ্চিত করুন" : "Confirm new"); input-type: password; height: 36px; horizontal-stretch: 1; }
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: root.confirm_rekey ? "Sure? Re-encrypt" : "Change Master Password"; primary: !root.confirm_rekey; danger: root.confirm_rekey; width: root.confirm_rekey ? 190px : 220px; height: 34px; clicked => { if root.confirm_rekey { root.confirm_rekey = false; root.change_master_password(rekey_old.text, rekey_new.text, rekey_confirm.text); rekey_old.text = ""; rekey_new.text = ""; rekey_confirm.text = ""; } else { root.confirm_rekey = true; } } }
-                        if root.confirm_rekey : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.confirm_rekey = false; } }
+                        if root.confirm_rekey : AuraButton { label: (root.ui_lang == "bn" ? "বাতিল" : "Cancel"); width: 90px; height: 34px; clicked => { root.confirm_rekey = false; } }
                     }
                     if root.rekey_status != "" : Text { text: root.rekey_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A11: read-only snapshot for the extension, opened with
                     // Windows Hello even when the desktop app is closed.
                     FieldLabel { text: root.ui_lang == "bn" ? "অফলাইন ব্রাউজার ক্যাশ (রিড-অনলি)" : "OFFLINE BROWSER CACHE (READ-ONLY)"; }
                     Text { text: root.ui_lang == "bn" ? "শুধু লগইন। DPAPI + র‍্যান্ডম কী দিয়ে সিল করা; এক্সটেনশন পড়তে Windows Hello পাস করতে হয়, ১৫ মিনিট রাখে। ডিকয় আনলক/বন্ধ/master rotation-এ মুছে যায়।" : "Logins only. Sealed with DPAPI + a random key; the extension must pass a Windows Hello prompt to read it, and keeps it for 15 minutes. Erased on decoy unlock, disable, or master rotation."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Offline read-only cache"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_cache_on ? "ON" : "OFF"; primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Allow extension PIN unlock (weaker than Hello)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_pin_on ? "ON" : "OFF"; primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "অফলাইন রিড-অনলি ক্যাশে" : "Offline read-only cache"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.offline_cache_on); primary: root.offline_cache_on; width: 90px; clicked => { root.set_offline_cache(!root.offline_cache_on); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "এক্সটেনশন PIN আনলক চালু (Hello-র চেয়ে দুর্বল)" : "Allow extension PIN unlock (weaker than Hello)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.offline_pin_on); primary: root.offline_pin_on; width: 90px; clicked => { root.set_offline_cache_pin(!root.offline_pin_on); } } }
                     if root.offline_cache_status != "" : Text { text: root.offline_cache_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A22 Phase C: device-bound container profile. Correct
                     // password alone cannot open it — the DPAPI-sealed ML-KEM
                     // key for this Windows profile is required too.
                     FieldLabel { text: root.ui_lang == "bn" ? "পিকিউ-প্যারানোয়েড কন্টেইনার (ডিভাইস-বাউন্ড)" : "PQ-PARANOID CONTAINER (DEVICE-BOUND)"; }
                     Text { text: root.ui_lang == "bn" ? "শুধু সঠিক মাস্টার পাসওয়ার্ড এই ভল্ট খুলবে না। এই Windows প্রোফাইলের DPAPI-সিলড ML-KEM key (pq_device.dpapi)-ও লাগবে। ফাইল/প্রোফাইল হারালে স্থায়ী ডেটা ক্ষতি। Sync/P2P বন্ধ; portable ডিফল্ট। offline cache ও .pvx এখনো password-sealed।" : "Correct master password alone will NOT open this vault. This Windows profile's DPAPI-sealed ML-KEM key (pq_device.dpapi) is also required. Losing that file or this Windows profile = permanent data loss. Sync and P2P are disabled; portable remains the default. The offline cache and .pvx exports are still password-sealed copies."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Container profile"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
-                    Text { text: "Device key: " + root.pq_backend_detail; color: root.pq_backend == "tpm" ? PhantomTheme.success : PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    if root.pq_paranoid_on && root.pq_backend == "dpapi" : AuraButton { label: "Move device key to TPM"; width: 210px; height: 34px; clicked => { root.move_pq_key_to_tpm(); } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "কন্টেইনার প্রোফাইল" : "Container profile"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    Text { text: (root.ui_lang == "bn" ? "ডিভাইস কী: " : "Device key: ") + root.pq_backend_detail; color: root.pq_backend == "tpm" ? PhantomTheme.success : PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    if root.pq_paranoid_on && root.pq_backend == "dpapi" : AuraButton { label: (root.ui_lang == "bn" ? "ডিভাইস কী TPM-এ সরান" : "Move device key to TPM"); width: 210px; height: 34px; clicked => { root.move_pq_key_to_tpm(); } }
                     Text { text: root.pq_backup_ready ? "✅ A backup was exported this session." : "⚠️ Export an encrypted .pvx backup first (Importer → Encrypted (.pvx)) — required before enabling."; color: root.pq_backup_ready ? PhantomTheme.success : PhantomTheme.warning; font-size: 11px; wrap: word-wrap; }
-                    if !root.pq_paranoid_on : AuraButton { label: "Enable PQ-paranoid"; width: 190px; height: 34px; clicked => { root.convert_pq_profile(true); } }
+                    if !root.pq_paranoid_on : AuraButton { label: (root.ui_lang == "bn" ? "PQ-paranoid চালু করুন" : "Enable PQ-paranoid"); width: 190px; height: 34px; clicked => { root.convert_pq_profile(true); } }
                     if root.pq_paranoid_on : HorizontalLayout { spacing: 8px;
                         AuraButton { label: root.pq_confirm_off ? "Sure? Convert back" : "Disable (portable)"; primary: !root.pq_confirm_off; danger: root.pq_confirm_off; width: root.pq_confirm_off ? 200px : 180px; height: 34px; clicked => { if root.pq_confirm_off { root.pq_confirm_off = false; root.convert_pq_profile(false); } else { root.pq_confirm_off = true; } } }
-                        if root.pq_confirm_off : AuraButton { label: "Cancel"; width: 90px; height: 34px; clicked => { root.pq_confirm_off = false; } }
+                        if root.pq_confirm_off : AuraButton { label: (root.ui_lang == "bn" ? "বাতিল" : "Cancel"); width: 90px; height: 34px; clicked => { root.pq_confirm_off = false; } }
                     }
                     if root.pq_status != "" : Text { text: root.pq_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A23: loopback-only, read-only API for scripts (`pv` CLI).
                     FieldLabel { text: root.ui_lang == "bn" ? "লোকাল এপিআই (pv CLI)" : "LOCAL API (pv CLI)"; }
                     Text { text: root.ui_lang == "bn" ? "শুধু 127.0.0.1-এ bind করে। আপনি Allow না চাপলে স্ক্রিপ্ট কোনো সিক্রেট পড়তে পারবে না; প্রতিটি read audit-logged, token DPAPI-sealed, ২৪ ঘণ্টায় মেয়াদ শেষ, বন্ধ করলে বাতিল।" : "Binds 127.0.0.1 only. A script reads a secret only after you press Allow in this window; every read is audit-logged, the token is DPAPI-sealed, expires in 24 hours and is revoked when you turn this off."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Local API (read-only)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.api_on ? "ON" : "OFF"; primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "লোকাল API (রিড-অনলি)" : "Local API (read-only)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.api_on); primary: root.api_on; width: 90px; clicked => { root.set_api(!root.api_on); } } }
                     if root.api_status != "" : Text { text: root.api_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A20: expiring shares (Send-style). Same store/format as the CLI.
                     share_anchor := Rectangle { height: 0px; }
@@ -2256,14 +2261,14 @@ export component MainWindow inherits Window {
                     Text { text: root.ui_lang == "bn" ? "একটি লগইন শেয়ার করুন: encrypted bundle LAN (এই অ্যাপ চলাকালীন), ফাইল, বা GitHub secret gist (async) দিয়ে যায়; key শুধু link fragment-এ। LAN-এ TTL/one-view এই অ্যাপ enforce করে; gist-এ expiry best-effort। CLI: phantom_vault share ..." : "Share one login: the encrypted bundle travels over LAN (while this app serves), a file, or a secret GitHub gist (async); the key is only in the link fragment. LAN TTL/one-view are enforced by this app; gist expiry is best-effort. CLI: phantom_vault share ...."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     if root.ls_stage_count > 0 : HorizontalLayout { spacing: 6px;
                         Text { text: "📤 " + root.ls_stage_count + " selected login(s) staged — the title field is ignored."; color: PhantomTheme.secondary; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
-                        AuraButton { label: "Clear"; width: 80px; height: 30px; clicked => { root.clear_share_stage(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "পরিষ্কার" : "Clear"); width: 80px; height: 30px; clicked => { root.clear_share_stage(); } }
                     }
                     HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "Login title to share"; text <=> root.ls_title; height: 36px; horizontal-stretch: 1; enabled: root.ls_stage_count == 0; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "শেয়ার করার লগইনের নাম" : "Login title to share"); text <=> root.ls_title; height: 36px; horizontal-stretch: 1; enabled: root.ls_stage_count == 0; }
                     }
                     HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "TTL (24h)"; text <=> root.ls_ttl; width: 110px; height: 36px; }
-                        LineEdit { placeholder-text: "Views (1, 0=∞)"; text <=> root.ls_views; width: 130px; height: 36px; enabled: !root.ls_relay; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "TTL (২৪ ঘণ্টা)" : "TTL (24h)"); text <=> root.ls_ttl; width: 110px; height: 36px; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "ভিউ (১, ০=∞)" : "Views (1, 0=∞)"); text <=> root.ls_views; width: 130px; height: 36px; enabled: !root.ls_relay; }
                         AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; root.ls_relay = root.ls_serve ? false : root.ls_relay; } }
                         AuraButton { label: root.ls_relay ? "Async gist: ON" : "Async gist: OFF"; primary: root.ls_relay; width: 140px; height: 34px; clicked => { root.ls_relay = !root.ls_relay; root.ls_serve = root.ls_relay ? false : root.ls_serve; } }
                     }
@@ -2272,291 +2277,291 @@ export component MainWindow inherits Window {
                         Text { text: root.ls_relay ? "Secret gist — anyone with the link can fetch until you revoke; the link includes your GitHub login. Expiry is best-effort, not one-time." : ""; color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
                     }
                     if root.ls_pass_on : HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "Share passphrase (8+)"; input-type: password; text <=> root.ls_pass; height: 36px; horizontal-stretch: 1; }
-                        LineEdit { placeholder-text: "Confirm passphrase"; input-type: password; text <=> root.ls_pass_confirm; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "শেয়ার পাসফ্রেজ (৮+)" : "Share passphrase (8+)"); input-type: password; text <=> root.ls_pass; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "পাসফ্রেজ নিশ্চিত করুন" : "Confirm passphrase"); input-type: password; text <=> root.ls_pass_confirm; height: 36px; horizontal-stretch: 1; }
                     }
-                    AuraButton { label: "Create share"; primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_relay, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
+                    AuraButton { label: (root.ui_lang == "bn" ? "শেয়ার তৈরি করুন" : "Create share"); primary: true; width: 140px; height: 34px; clicked => { root.login_share_create(root.ls_title, root.ls_ttl, root.ls_views, root.ls_serve, root.ls_relay, root.ls_pass_on, root.ls_pass, root.ls_pass_confirm); } }
                     if root.ls_link != "" : Text { text: root.ls_link; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.ls_link != "" : Image { source: root.ls_qr; width: 150px; height: 150px; image-fit: contain; }
-                    if root.ls_link != "" : AuraButton { label: "📋 Copy link"; width: 130px; height: 30px; clicked => { root.login_share_copy(); } }
+                    if root.ls_link != "" : AuraButton { label: (root.ui_lang == "bn" ? "📋 লিংক কপি" : "📋 Copy link"); width: 130px; height: 30px; clicked => { root.login_share_copy(); } }
                     if root.ls_status != "" : Text { text: root.ls_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
-                    Text { text: "Open a share you received:"; color: PhantomTheme.text-muted; font-size: 11px; }
+                    Text { text: (root.ui_lang == "bn" ? "পাওয়া শেয়ার খুলুন:" : "Open a share you received:"); color: PhantomTheme.text-muted; font-size: 11px; }
                     LineEdit { placeholder-text: "pvshare://…"; text <=> root.ls_open_link; height: 36px; }
                     HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "…or bundle file (.pvsh)"; text <=> root.ls_open_file; height: 36px; horizontal-stretch: 1; }
-                        LineEdit { placeholder-text: "Passphrase (if required)"; input-type: password; text <=> root.ls_pass_input; width: 190px; height: 36px; }
-                        AuraButton { label: "Open"; width: 100px; height: 34px; clicked => { root.login_share_open(root.ls_open_link, root.ls_open_file, root.ls_pass_input); } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "…অথবা বান্ডল ফাইল (.pvsh)" : "…or bundle file (.pvsh)"); text <=> root.ls_open_file; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "পাসফ্রেজ (প্রয়োজন হলে)" : "Passphrase (if required)"); input-type: password; text <=> root.ls_pass_input; width: 190px; height: 36px; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "খুলুন" : "Open"); width: 100px; height: 34px; clicked => { root.login_share_open(root.ls_open_link, root.ls_open_file, root.ls_pass_input); } }
                     }
                     if root.ls_preview != "" : Text { text: root.ls_preview; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
-                    if root.ls_ready : AuraButton { label: "Add to my vault"; primary: true; width: 180px; height: 34px; clicked => { root.login_share_add(); } }
-                    if root.ls_rows.length == 0 : Text { text: "No active shares."; color: PhantomTheme.text-dim; font-size: 11px; }
-                    for s in root.ls_rows : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; Text { text: s.detail; color: PhantomTheme.text; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } AuraButton { label: "Revoke"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.login_share_revoke(s.id); } } } }
-                    AuraButton { label: "Refresh shares"; width: 140px; height: 30px; clicked => { root.login_share_refresh(); } }
+                    if root.ls_ready : AuraButton { label: (root.ui_lang == "bn" ? "আমার ভল্টে যোগ করুন" : "Add to my vault"); primary: true; width: 180px; height: 34px; clicked => { root.login_share_add(); } }
+                    if root.ls_rows.length == 0 : Text { text: (root.ui_lang == "bn" ? "কোনো সক্রিয় শেয়ার নেই।" : "No active shares."); color: PhantomTheme.text-dim; font-size: 11px; }
+                    for s in root.ls_rows : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; Text { text: s.detail; color: PhantomTheme.text; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; } AuraButton { label: (root.ui_lang == "bn" ? "প্রত্যাহার" : "Revoke"); danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.login_share_revoke(s.id); } } } }
+                    AuraButton { label: (root.ui_lang == "bn" ? "শেয়ার রিফ্রেশ" : "Refresh shares"); width: 140px; height: 30px; clicked => { root.login_share_refresh(); } }
                     FieldLabel { text: root.ui_lang == "bn" ? "অ্যাটাচমেন্ট স্টোরেজ" : "ATTACHMENT STORAGE"; }
                 }}
                 if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Inline: " + root.att_inline_count + " • Sidecar: " + root.att_sidecar_count + " — inline files are re-encrypted with every vault save; sidecars are separate (50MB max, GitHub sync supported)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "Move inline to encrypted sidecars"; width: 260px; height: 34px; clicked => { root.migrate_attachments(); } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Extension PIN (managed here, enforced in browser)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    Text { text: (root.ui_lang == "bn" ? "ইনলাইন: " : "Inline: ") + root.att_inline_count + " • Sidecar: " + root.att_sidecar_count + " — inline files are re-encrypted with every vault save; sidecars are separate (50MB max, GitHub sync supported)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "ইনলাইন ফাইল এনক্রিপ্টেড সাইডকারে সরান" : "Move inline to encrypted sidecars"); width: 330px; height: 34px; clicked => { root.migrate_attachments(); } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "এক্সটেনশন PIN (এখানে ম্যানেজ, ব্রাউজারে প্রয়োগ)" : "Extension PIN (managed here, enforced in browser)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ext_pin_set ? "SET" : "OFF"; color: root.ext_pin_set ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     HorizontalLayout { spacing: 8px;
-                        ext_pin_new := LineEdit { placeholder-text: "New 4–8 digit PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
-                        ext_pin_confirm := LineEdit { placeholder-text: "Confirm PIN"; input-type: password; height: 36px; horizontal-stretch: 1; }
+                        ext_pin_new := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "নতুন ৪–৮ ডিজিটের PIN" : "New 4–8 digit PIN"); input-type: password; height: 36px; horizontal-stretch: 1; }
+                        ext_pin_confirm := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "PIN নিশ্চিত করুন" : "Confirm PIN"); input-type: password; height: 36px; horizontal-stretch: 1; }
                     }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "Set Ext PIN"; primary: true; width: 130px; height: 34px; clicked => { root.setup_ext_pin(ext_pin_new.text, ext_pin_confirm.text); ext_pin_new.text = ""; ext_pin_confirm.text = ""; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "Ext PIN সেট করুন" : "Set Ext PIN"); primary: true; width: 130px; height: 34px; clicked => { root.setup_ext_pin(ext_pin_new.text, ext_pin_confirm.text); ext_pin_new.text = ""; ext_pin_confirm.text = ""; } }
                         if root.ext_pin_set : AuraButton { label: root.confirm_ext_pin_remove ? "Sure?" : "Remove Ext PIN"; danger: true; width: root.confirm_ext_pin_remove ? 110px : 150px; height: 34px; clicked => { if root.confirm_ext_pin_remove { root.confirm_ext_pin_remove = false; root.disable_ext_pin(); } else { root.confirm_ext_pin_remove = true; } } }
                     }
                     if root.ext_pin_status != "" : Text { text: root.ext_pin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Two-factor unlock (password + Hello)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.and_mode ? "ON" : "OFF"; primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Hands-free 2FA after auto-type"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.chain_2fa ? "ON" : "OFF"; primary: root.chain_2fa; width: 90px; clicked => { root.set_chain_2fa(!root.chain_2fa); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "দুই-ধাপ আনলক (পাসওয়ার্ড + Hello)" : "Two-factor unlock (password + Hello)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.and_mode); primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "অটো-টাইপের পরে হ্যান্ডস-ফ্রি 2FA" : "Hands-free 2FA after auto-type"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.chain_2fa); primary: root.chain_2fa; width: 90px; clicked => { root.set_chain_2fa(!root.chain_2fa); } } }
                     // Phase 27: vault-unlock TOTP gate (DEFAULT OFF).
-                    HorizontalLayout { spacing: 8px; Text { text: "Unlock 2FA (authenticator code)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.totp2fa_on ? "ARMED" : "OFF"; color: root.totp2fa_on ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
-                    if !root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Enable Unlock 2FA"; width: 200px; clicked => { root.setup_totp_unlock(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "আনলক 2FA (অথেন্টিকেটর কোড)" : "Unlock 2FA (authenticator code)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.totp2fa_on ? "ARMED" : "OFF"; color: root.totp2fa_on ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
+                    if !root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: (root.ui_lang == "bn" ? "আনলক 2FA চালু করুন" : "Enable Unlock 2FA"); width: 200px; clicked => { root.setup_totp_unlock(); } } }
                     if root.totp2fa_secret != "" : VerticalLayout {
                         spacing: 6px;
-                        Text { text: "Scan/type this secret into your authenticator app, then confirm with a live code. Shown ONCE."; color: PhantomTheme.warning; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
+                        Text { text: (root.ui_lang == "bn" ? "এই সিক্রেটটি অথেন্টিকেটর অ্যাপে স্ক্যান/টাইপ করুন, তারপর লাইভ কোড দিয়ে নিশ্চিত করুন। শুধু একবার দেখানো হচ্ছে।" : "Scan/type this secret into your authenticator app, then confirm with a live code. Shown ONCE."); color: PhantomTheme.warning; font-size: 11px; wrap: word-wrap; horizontal-alignment: center; }
                         Text { text: root.totp2fa_secret; color: PhantomTheme.secondary; font-size: 14px; font-weight: 800; horizontal-alignment: center; wrap: word-wrap; }
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: center;
-                            totp_confirm_input := LineEdit { placeholder-text: "6-digit code"; height: 38px; width: 150px; accepted(text) => { root.confirm_totp_unlock(text); } }
+                            totp_confirm_input := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "৬ ডিজিটের কোড" : "6-digit code"); height: 38px; width: 150px; accepted(text) => { root.confirm_totp_unlock(text); } }
                             AuraButton { label: root.ui_lang == "bn" ? "নিশ্চিত করুন" : "Confirm"; primary: true; width: 130px; clicked => { root.confirm_totp_unlock(totp_confirm_input.text); } }
                         }
                     }
-                    if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: "Disarm Unlock 2FA"; danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
+                    if root.totp2fa_on : HorizontalLayout { spacing: 8px; alignment: center; AuraButton { label: (root.ui_lang == "bn" ? "আনলক 2FA বন্ধ করুন" : "Disarm Unlock 2FA"); danger: true; width: 200px; clicked => { root.disable_totp_unlock(); } } }
                     FieldLabel { text: root.ui_lang == "bn" ? "2FA ক্লক অফসেট" : "2FA CLOCK OFFSET"; }
-                    Text { text: "If codes are rejected but look right, this PC's clock is off. Shift all codes by a few seconds — stored locally, never uploaded."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "কোড ঠিক দেখাচ্ছে কিন্তু গ্রহণ হচ্ছে না? এই PC-র ঘড়ি মিলছে না। সব কোড কয়েক সেকেন্ড শিফট করুন — শুধু লোকালি রাখা হয়, কোথাও আপলোড হয় না।" : "If codes are rejected but look right, this PC's clock is off. Shift all codes by a few seconds — stored locally, never uploaded."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
-                        LineEdit { placeholder-text: "seconds (e.g. 45 or -30)"; text <=> root.totp_offset_text; width: 170px; height: 34px; accepted(text) => { root.set_totp_offset(text); } }
-                        AuraButton { label: "Apply"; primary: true; width: 78px; height: 34px; clicked => { root.set_totp_offset(root.totp_offset_text); } }
-                        AuraButton { label: "Reset"; width: 78px; height: 34px; clicked => { root.reset_totp_offset(); } } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "সেকেন্ড (যেমন ৪৫ বা -৩০)" : "seconds (e.g. 45 or -30)"); text <=> root.totp_offset_text; width: 170px; height: 34px; accepted(text) => { root.set_totp_offset(text); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "প্রয়োগ" : "Apply"); primary: true; width: 78px; height: 34px; clicked => { root.set_totp_offset(root.totp_offset_text); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "রিসেট" : "Reset"); width: 78px; height: 34px; clicked => { root.reset_totp_offset(); } } }
                     if root.totp_offset_status != "" : Text { text: root.totp_offset_status; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     FieldLabel { text: root.ui_lang == "bn" ? "ক্লিপবোর্ড অটো-ক্লিয়ার" : "CLIPBOARD AUTO-CLEAR"; }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "10s"; primary: root.clipboard_timeout == 10; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(10); } }
-                        AuraButton { label: "15s"; primary: root.clipboard_timeout == 15; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(15); } }
-                        AuraButton { label: "30s"; primary: root.clipboard_timeout == 30; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(30); } }
-                        AuraButton { label: "60s"; primary: root.clipboard_timeout == 60; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(60); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "১০ সে" : "10s"); primary: root.clipboard_timeout == 10; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(10); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "১৫ সে" : "15s"); primary: root.clipboard_timeout == 15; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(15); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "৩০ সে" : "30s"); primary: root.clipboard_timeout == 30; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(30); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "৬০ সে" : "60s"); primary: root.clipboard_timeout == 60; width: 64px; height: 30px; clicked => { root.set_clipboard_timeout(60); } }
                     }
                     FieldLabel { text: root.ui_lang == "bn" ? "অটো-লক" : "AUTO-LOCK"; }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "1m"; primary: root.autolock_timeout == 1; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(1); } }
-                        AuraButton { label: "5m"; primary: root.autolock_timeout == 5; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(5); } }
-                        AuraButton { label: "15m"; primary: root.autolock_timeout == 15; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(15); } }
-                        AuraButton { label: "Never"; primary: root.autolock_timeout == 0; width: 76px; height: 30px; clicked => { root.set_autolock_timeout(0); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "১ মি" : "1m"); primary: root.autolock_timeout == 1; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(1); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "৫ মি" : "5m"); primary: root.autolock_timeout == 5; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(5); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "১৫ মি" : "15m"); primary: root.autolock_timeout == 15; width: 64px; height: 30px; clicked => { root.set_autolock_timeout(15); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "কখনো নয়" : "Never"); primary: root.autolock_timeout == 0; width: 76px; height: 30px; clicked => { root.set_autolock_timeout(0); } }
                     }
-                    HorizontalLayout { spacing: 8px; Text { text: "Offline kill-switch (no network)"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "📜  Access Log"; width: 180px; clicked => { root.view_access_log(); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Close button minimizes to tray"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tray_minimize ? "ON" : "OFF"; primary: root.tray_minimize; width: 90px; clicked => { root.set_tray_minimize(!root.tray_minimize); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "অফলাইন কিল-সুইচ (নেটওয়ার্ক নেই)" : "Offline kill-switch (no network)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "📜  অ্যাক্সেস লগ" : "📜  Access Log"); width: 180px; clicked => { root.view_access_log(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "বন্ধ বাটনে ট্রেতে মিনিমাইজ হয়" : "Close button minimizes to tray"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.tray_minimize); primary: root.tray_minimize; width: 90px; clicked => { root.set_tray_minimize(!root.tray_minimize); } } }
                     FieldLabel { text: root.ui_lang == "bn" ? "অ্যাপ আপডেট (গিটহাব রিলিজ)" : "APP UPDATES (GITHUB RELEASES)"; }
                     Text { text: root.update_tag == "" ? "Current: v" + root.app_version : "🎉 New Update Available: " + root.update_tag; color: root.update_tag == "" ? PhantomTheme.text-muted : PhantomTheme.success; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "Check for Updates"; width: 170px; clicked => { root.check_updates(); } }
-                        if root.update_tag != "" : AuraButton { label: "📋 What's New"; width: 150px; clicked => { root.show_changelog = true; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "আপডেট দেখুন" : "Check for Updates"); width: 170px; clicked => { root.check_updates(); } }
+                        if root.update_tag != "" : AuraButton { label: (root.ui_lang == "bn" ? "📋 নতুন কী" : "📋 What's New"); width: 150px; clicked => { root.show_changelog = true; } }
                         if root.update_tag != "" && !root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "⬇️ ডাউনলোড ও স্টেজ" : "⬇️ Download & Stage"; primary: true; width: 190px; clicked => { root.download_update(); } }
                         if root.update_ready : AuraButton { label: root.ui_lang == "bn" ? "🔄 আপডেটের জন্য রিস্টার্ট" : "🔄 Restart to Update"; primary: true; width: 190px; clicked => { root.restart_update(); } }
                     }
                     Text { text: root.update_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 0 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "📱 Bluetooth Proximity Auto-Lock"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Locks the vault when your paired phone/watch walks away (passive BLE scan, 4s heartbeat)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Enable proximity lock"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.prox_enabled ? "ON" : "OFF"; primary: root.prox_enabled; width: 90px; clicked => { root.set_prox_enabled(!root.prox_enabled); } } }
-                    LineEdit { placeholder-text: "Target Bluetooth device name (e.g. Galaxy S24)"; text <=> root.prox_device; height: 36px; accepted(text) => { root.save_prox_device(text); } }
+                    Text { text: (root.ui_lang == "bn" ? "📱 ব্লুটুথ প্রক্সিমিটি অটো-লক" : "📱 Bluetooth Proximity Auto-Lock"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "পেয়ার করা ফোন/ঘড়ি দূরে গেলে ভল্ট লক হয় (প্যাসিভ BLE স্ক্যান, ৪ সেকেন্ড হার্টবিট)।" : "Locks the vault when your paired phone/watch walks away (passive BLE scan, 4s heartbeat)."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "প্রক্সিমিটি লক চালু" : "Enable proximity lock"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.prox_enabled); primary: root.prox_enabled; width: 90px; clicked => { root.set_prox_enabled(!root.prox_enabled); } } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "টার্গেট ব্লুটুথ ডিভাইসের নাম (যেমন Galaxy S24)" : "Target Bluetooth device name (e.g. Galaxy S24)"); text <=> root.prox_device; height: 36px; accepted(text) => { root.save_prox_device(text); } }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "Close"; primary: root.prox_sensitivity == 0; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(0); } }
-                        AuraButton { label: "Medium"; primary: root.prox_sensitivity == 1; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(1); } }
-                        AuraButton { label: "Far"; primary: root.prox_sensitivity == 2; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(2); } }
-                        AuraButton { label: "Save device"; primary: true; width: 110px; height: 30px; clicked => { root.save_prox_device(root.prox_device); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "বন্ধ" : "Close"); primary: root.prox_sensitivity == 0; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(0); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "মাঝারি" : "Medium"); primary: root.prox_sensitivity == 1; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(1); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "দূর" : "Far"); primary: root.prox_sensitivity == 2; width: 76px; height: 30px; clicked => { root.set_prox_sensitivity(2); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "ডিভাইস সেভ করুন" : "Save device"); primary: true; width: 110px; height: 30px; clicked => { root.save_prox_device(root.prox_device); } }
                     }
                     Text { text: root.prox_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "গিটহাব সিঙ্ক" : "GitHub Sync"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    LineEdit { placeholder-text: "Owner (github username)"; text <=> root.sync_owner; height: 36px; }
-                    LineEdit { placeholder-text: "Repo (private vault repo)"; text <=> root.sync_repo; height: 36px; }
-                    LineEdit { placeholder-text: "PAT (classic token, repo scope)"; input-type: password; text <=> root.sync_token_input; height: 36px; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "Connect"; primary: true; width: 120px; clicked => { root.save_sync_config(root.sync_owner, root.sync_repo, root.sync_token_input); } } AuraButton { label: "Sync Now"; width: 120px; clicked => { root.sync_now(); } } }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "👁 Merge Preview"; width: 150px; clicked => { root.merge_preview_remote(); } } AuraButton { label: "✅ Apply Merge"; primary: true; width: 150px; clicked => { root.merge_apply(); } } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "মালিক (GitHub ইউজারনেম)" : "Owner (github username)"); text <=> root.sync_owner; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "রিপো (প্রাইভেট ভল্ট রিপো)" : "Repo (private vault repo)"); text <=> root.sync_repo; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "PAT (ক্লাসিক টোকেন, repo স্কোপ)" : "PAT (classic token, repo scope)"); input-type: password; text <=> root.sync_token_input; height: 36px; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "কানেক্ট" : "Connect"); primary: true; width: 120px; clicked => { root.save_sync_config(root.sync_owner, root.sync_repo, root.sync_token_input); } } AuraButton { label: (root.ui_lang == "bn" ? "এখনই সিঙ্ক" : "Sync Now"); width: 120px; clicked => { root.sync_now(); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "👁 মার্জ প্রিভিউ" : "👁 Merge Preview"); width: 150px; clicked => { root.merge_preview_remote(); } } AuraButton { label: (root.ui_lang == "bn" ? "✅ মার্জ প্রয়োগ" : "✅ Apply Merge"); primary: true; width: 150px; clicked => { root.merge_apply(); } } }
                     Text { text: root.sync_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.merge_status != "" : Text { text: root.merge_status; color: PhantomTheme.primary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "🔗 Per-Item Sharing (logins)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Grant one login to one grantee key. Revoking marks the grant — then ROTATE the item password (issued copies cannot be un-issued)."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Login item ID (from vault list)"; text <=> root.share_item_id; height: 36px; }
-                    LineEdit { placeholder-text: "Grantee public key (base64)"; text <=> root.share_pubkey; height: 36px; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🔗 Grant + Seal Envelope"; primary: true; width: 220px; clicked => { root.share_grant_login(root.share_item_id, root.share_pubkey); } } }
-                    LineEdit { placeholder-text: "Grant ID (64 hex, to revoke)"; text <=> root.share_grant_id; height: 36px; }
-                    AuraButton { label: "🚫 Revoke Grant"; width: 200px; clicked => { root.share_revoke(root.share_grant_id); } }
-                    LineEdit { placeholder-text: "Grantee private key (base64, to open)"; text <=> root.share_priv; height: 36px; }
-                    LineEdit { placeholder-text: "Envelope (base64, pasted)"; text <=> root.share_env; height: 36px; }
-                    AuraButton { label: "🔓 Open Envelope"; width: 200px; clicked => { root.share_open_envelope(root.share_priv, root.share_env); } }
+                    Text { text: (root.ui_lang == "bn" ? "🔗 আইটেমভিত্তিক শেয়ারিং (লগইন)" : "🔗 Per-Item Sharing (logins)"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "একটি লগইন একটি গ্র্যান্টি key-কে দিন। প্রত্যাহার করলে গ্র্যান্ট শুধু চিহ্নিত হয় — তাই আইটেমের পাসওয়ার্ড ROTATE করুন (দিয়ে দেওয়া কপি ফেরানো যায় না)।" : "Grant one login to one grantee key. Revoking marks the grant — then ROTATE the item password (issued copies cannot be un-issued)."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "লগইন আইটেম ID (ভল্ট তালিকা থেকে)" : "Login item ID (from vault list)"); text <=> root.share_item_id; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্টির পাবলিক কী (base64)" : "Grantee public key (base64)"); text <=> root.share_pubkey; height: 36px; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🔗 গ্র্যান্ট + সিলড এনভেলপ" : "🔗 Grant + Seal Envelope"); primary: true; width: 220px; clicked => { root.share_grant_login(root.share_item_id, root.share_pubkey); } } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্ট ID (৬৪ hex, প্রত্যাহারের জন্য)" : "Grant ID (64 hex, to revoke)"); text <=> root.share_grant_id; height: 36px; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🚫 গ্র্যান্ট প্রত্যাহার" : "🚫 Revoke Grant"); width: 200px; clicked => { root.share_revoke(root.share_grant_id); } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্টির প্রাইভেট কী (base64, খুলতে)" : "Grantee private key (base64, to open)"); text <=> root.share_priv; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "এনভেলপ (base64, পেস্ট করা)" : "Envelope (base64, pasted)"); text <=> root.share_env; height: 36px; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🔓 এনভেলপ খুলুন" : "🔓 Open Envelope"); width: 200px; clicked => { root.share_open_envelope(root.share_priv, root.share_env); } }
                     Text { text: root.share_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.share_output != "" : Text { text: root.share_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "✉️ Secure Send (expiring, one-view)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Sealed note on the relay, key only in the link-code. Reading deletes it (one view); expiry kills it unread. Relay sees ciphertext + expiry only."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Secret note to send (16KB max)"; text <=> root.send_note_input; height: 36px; }
+                    Text { text: (root.ui_lang == "bn" ? "✉️ সিকিউর সেন্ড (মেয়াদসীমা, এক-ভিউ)" : "✉️ Secure Send (expiring, one-view)"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "রিলেতে সিল করা নোট, কী শুধু লিংক-কোডে। পড়লেই মুছে যায় (এক ভিউ); মেয়াদ শেষে না-পড়া অবস্থাতেই ধ্বংস হয়। রিলে শুধু সাইফারটেক্সট ও মেয়াদ দেখে।" : "Sealed note on the relay, key only in the link-code. Reading deletes it (one view); expiry kills it unread. Relay sees ciphertext + expiry only."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "পাঠানোর গোপন নোট (সর্বোচ্চ ১৬KB)" : "Secret note to send (16KB max)"); text <=> root.send_note_input; height: 36px; }
                     HorizontalLayout { spacing: 8px;
-                        LineEdit { placeholder-text: "TTL minutes (5..43200)"; text <=> root.send_ttl_input; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "✉️ Seal + Publish"; primary: true; width: 180px; clicked => { root.send_create(root.send_note_input, root.send_ttl_input); } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "TTL মিনিট (৫..৪৩২০০)" : "TTL minutes (5..43200)"); text <=> root.send_ttl_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "✉️ সিল + প্রকাশ" : "✉️ Seal + Publish"); primary: true; width: 180px; clicked => { root.send_create(root.send_note_input, root.send_ttl_input); } }
                     }
-                    LineEdit { placeholder-text: "Link-code (base64 key, to read)"; text <=> root.send_code_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "লিংক-কোড (base64 কী, পড়তে)" : "Link-code (base64 key, to read)"); text <=> root.send_code_input; height: 36px; }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "📥 Read + Burn"; width: 180px; clicked => { root.send_open(root.send_code_input); } }
-                        AuraButton { label: "📋 Read Pasted"; width: 180px; clicked => { root.send_open_pasted(root.send_packet_input, root.send_key_input); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "📥 পড়ে ধ্বংস করুন" : "📥 Read + Burn"); width: 180px; clicked => { root.send_open(root.send_code_input); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "📋 পেস্ট করা পড়ুন" : "📋 Read Pasted"); width: 180px; clicked => { root.send_open_pasted(root.send_packet_input, root.send_key_input); } }
                     }
-                    LineEdit { placeholder-text: "Packet (base64, offline paste)"; text <=> root.send_packet_input; height: 36px; }
-                    LineEdit { placeholder-text: "Key (base64, offline paste)"; text <=> root.send_key_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "প্যাকেট (base64, অফলাইন পেস্ট)" : "Packet (base64, offline paste)"); text <=> root.send_packet_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "কী (base64, অফলাইন পেস্ট)" : "Key (base64, offline paste)"); text <=> root.send_key_input; height: 36px; }
                     Text { text: root.send_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.send_output != "" : Text { text: root.send_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "🏢 Business: Members, OIDC, Audit Export"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Roster is machine-local (never synced). Deprovision flips the member off and auto-revokes their key-bound share grants."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Paste member CSV: email[,name[,grantee_fp]] per line"; text <=> root.admin_csv_input; height: 72px; }
-                    AuraButton { label: "👥 Import Members"; width: 200px; clicked => { root.admin_import_members(root.admin_csv_input); } }
+                    Text { text: (root.ui_lang == "bn" ? "🏢 বিজনেস: মেম্বার, OIDC, অডিট এক্সপোর্ট" : "🏢 Business: Members, OIDC, Audit Export"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "রোস্টার শুধু এই মেশিনে থাকে (কখনো সিঙ্ক হয় না)। Deprovision করলে মেম্বার বন্ধ হয় এবং তার key-bound শেয়ার গ্র্যান্ট স্বয়ংক্রিয়ভাবে প্রত্যাহার হয়।" : "Roster is machine-local (never synced). Deprovision flips the member off and auto-revokes their key-bound share grants."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "মেম্বার CSV পেস্ট করুন: প্রতি লাইনে email[,name[,grantee_fp]]" : "Paste member CSV: email[,name[,grantee_fp]] per line"); text <=> root.admin_csv_input; height: 72px; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "👥 মেম্বার ইমপোর্ট" : "👥 Import Members"); width: 200px; clicked => { root.admin_import_members(root.admin_csv_input); } }
                     HorizontalLayout { spacing: 8px;
-                        LineEdit { placeholder-text: "Member email"; text <=> root.admin_email_input; height: 36px; horizontal-stretch: 1; }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "মেম্বারের ইমেইল" : "Member email"); text <=> root.admin_email_input; height: 36px; horizontal-stretch: 1; }
                         AuraButton { label: "🚫 Deprovision"; width: 180px; clicked => { root.admin_deprovision(root.admin_email_input); } }
                     }
-                    LineEdit { placeholder-text: "OIDC issuer (https://…)"; text <=> root.admin_issuer_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "OIDC ইস্যুয়ার (https://…)" : "OIDC issuer (https://…)"); text <=> root.admin_issuer_input; height: 36px; }
                     HorizontalLayout { spacing: 8px;
-                        LineEdit { placeholder-text: "Access token (verified via userinfo)"; text <=> root.admin_token_input; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "✓ Verify Email"; width: 180px; clicked => { root.admin_oidc_verify(root.admin_issuer_input, root.admin_token_input); } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "অ্যাক্সেস টোকেন (userinfo দিয়ে যাচাই)" : "Access token (verified via userinfo)"); text <=> root.admin_token_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "✓ ইমেইল যাচাই" : "✓ Verify Email"); width: 180px; clicked => { root.admin_oidc_verify(root.admin_issuer_input, root.admin_token_input); } }
                     }
                     HorizontalLayout { spacing: 8px;
-                        LineEdit { placeholder-text: "Grantee key fp (hex, to bind)"; text <=> root.admin_fp_input; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "🔗 Bind Key"; width: 180px; clicked => { root.admin_bind_key(root.admin_email_input, root.admin_fp_input); } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্টি key fp (hex, bind করতে)" : "Grantee key fp (hex, to bind)"); text <=> root.admin_fp_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "🔗 কী bind করুন" : "🔗 Bind Key"); width: 180px; clicked => { root.admin_bind_key(root.admin_email_input, root.admin_fp_input); } }
                     }
-                    AuraButton { label: "📜 Export Audit Log"; width: 200px; clicked => { root.admin_export_audit(); } }
+                    AuraButton { label: (root.ui_lang == "bn" ? "📜 অডিট লগ এক্সপোর্ট" : "📜 Export Audit Log"); width: 200px; clicked => { root.admin_export_audit(); } }
                     Text { text: root.admin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.admin_output != "" : Text { text: root.admin_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📶 লোকাল ওয়াই-ফাই P2P সিঙ্ক (অফলাইন)" : "📶 LOCAL WI-FI P2P SYNC (OFFLINE)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "শুধু সাইফারটেক্সট — কী কখনো এই ডিভাইস ছাড়ে না। নতুন ভল্ট জেতে; একই বয়সে দ্বিমত হলে লোকালটাই থাকে ও রিপোর্ট হয়।" : "Ciphertext only — keys never leave this device. Newer vault wins; same-age divergence keeps local and reports."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.ui_lang == "bn" ? "👨‍👩‍👧 পারিবারিক সিঙ্ক: একই Wi-Fi + একবারের pairing code — ফোন/PC সিঙ্কে থাকে।" : "👨‍👩‍👧 Family sync: same Wi-Fi + one-time pairing code — phones and PCs stay in sync."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "লোকাল ওয়াই-ফাই ডিসকভারি চালু" : "Enable Local Wi-Fi Discovery"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.p2p_enabled ? "ON" : "OFF"; primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "পেয়ারিং কোড (এই ডিভাইস)" : "Pairing code (this device)"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: PhantomTheme.secondary; font-size: 14px; font-weight: 800; } AuraButton { label: "⟳ New code"; width: 110px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "লোকাল ওয়াই-ফাই ডিসকভারি চালু" : "Enable Local Wi-Fi Discovery"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.p2p_enabled); primary: root.p2p_enabled; width: 90px; clicked => { root.set_p2p(!root.p2p_enabled); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? "পেয়ারিং কোড (এই ডিভাইস)" : "Pairing code (this device)"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; } Text { text: root.p2p_pin == "" ? "—" : root.p2p_pin; color: PhantomTheme.secondary; font-size: 14px; font-weight: 800; } AuraButton { label: (root.ui_lang == "bn" ? "⟳ নতুন কোড" : "⟳ New code"); width: 110px; height: 30px; clicked => { root.regen_p2p_pin(); } } }
                     if root.p2p_pin != "" : Image { source: root.p2p_qr; width: 132px; height: 132px; image-fit: contain; }
-                    Text { text: "First sync: type the other device's pairing code below. The code is single-use and never leaves the LAN."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: root.ui_lang == "bn" ? "📡 ল্যান পিয়ার স্ক্যান" : "📡 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } LineEdit { placeholder-text: "Pairing code from the other device"; text <=> root.p2p_peer_pin; height: 36px; horizontal-stretch: 1; } }
-                    for peer in root.p2p_peers : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: PhantomTheme.text; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: PhantomTheme.text-dim; font-size: 11px; overflow: elide; } } AuraButton { label: root.confirm_sync_ip == peer.ip ? "Sure?" : "Sync Now"; width: root.confirm_sync_ip == peer.ip ? 90px : 110px; height: 30px; y: 7px; clicked => { if root.confirm_sync_ip == peer.ip { root.confirm_sync_ip = ""; root.sync_peer(peer.ip, root.p2p_peer_pin); } else { root.confirm_sync_ip = peer.ip; } } } } }
+                    Text { text: (root.ui_lang == "bn" ? "প্রথম সিঙ্ক: অন্য ডিভাইসের পেয়ারিং কোড নিচে লিখুন। কোডটি একবারই ব্যবহারযোগ্য এবং LAN ছাড়ে না।" : "First sync: type the other device's pairing code below. The code is single-use and never leaves the LAN."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: root.ui_lang == "bn" ? "📡 ল্যান পিয়ার স্ক্যান" : "📡 Scan LAN Peers"; width: 200px; clicked => { root.scan_p2p(); } } LineEdit { placeholder-text: (root.ui_lang == "bn" ? "অন্য ডিভাইসের পেয়ারিং কোড" : "Pairing code from the other device"); text <=> root.p2p_peer_pin; height: 36px; horizontal-stretch: 1; } }
+                    for peer in root.p2p_peers : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 44px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "💻 " + peer.name + " (" + peer.ip + ")"; color: PhantomTheme.text; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: peer.detail; color: PhantomTheme.text-dim; font-size: 11px; overflow: elide; } } AuraButton { label: root.confirm_sync_ip == peer.ip ? "Sure?" : (root.ui_lang == "bn" ? "এখনই সিঙ্ক" : "Sync Now"); width: root.confirm_sync_ip == peer.ip ? 90px : 110px; height: 30px; y: 7px; clicked => { if root.confirm_sync_ip == peer.ip { root.confirm_sync_ip = ""; root.sync_peer(peer.ip, root.p2p_peer_pin); } else { root.confirm_sync_ip = peer.ip; } } } } }
                     FieldLabel { text: root.ui_lang == "bn" ? "পেয়ার করা ডিভাইস" : "PAIRED DEVICES"; }
-                    if root.p2p_paired.length == 0 : Text { text: "None yet — the first successful sync pairs the devices."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    if root.p2p_paired.length == 0 : Text { text: (root.ui_lang == "bn" ? "এখনো কিছু নেই — প্রথম সফল সিঙ্কেই ডিভাইস পেয়ার হয়।" : "None yet — the first successful sync pairs the devices."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     for pp in root.p2p_paired : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 40px; HorizontalLayout { padding-left: 12px; padding-right: 6px; spacing: 8px; VerticalLayout { spacing: 0px; horizontal-stretch: 1; alignment: center; Text { text: "🔗 " + pp.name; color: PhantomTheme.text; font-size: 12px; font-weight: 700; overflow: elide; } Text { text: pp.detail; color: PhantomTheme.text-dim; font-size: 10px; overflow: elide; } } AuraButton { label: root.ui_lang == "bn" ? "ভুলে যান" : "Forget"; danger: true; width: 90px; height: 28px; y: 6px; clicked => { root.forget_p2p_peer(pp.key); } } } }
                     Text { text: root.p2p_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
-                    if root.p2p_last_sync != "" : Text { text: "✅ Last sync: " + root.p2p_last_sync; color: PhantomTheme.success; font-size: 11px; wrap: word-wrap; }
+                    if root.p2p_last_sync != "" : Text { text: (root.ui_lang == "bn" ? "✅ শেষ সিঙ্ক: " : "✅ Last sync: ") + root.p2p_last_sync; color: PhantomTheme.success; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 1 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Browser Bridge (headless)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    LineEdit { placeholder-text: "Extension ID (32 chars, e.g. abcdefgh…)"; text <=> root.ext_host_id; height: 36px; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🌐 Install Browser Extension Host"; primary: true; width: 280px; clicked => { root.install_browser_host(root.ext_host_id); } } }
-                    Text { text: "Firefox: install dist/firefox/ via about:debugging, then lock our add-on ID below (same pinned ID as the Firefox manifest)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🦊 Install Firefox Host"; width: 280px; clicked => { root.install_firefox_host(); } } }
+                    Text { text: (root.ui_lang == "bn" ? "ব্রাউজার ব্রিজ (হেডলেস)" : "Browser Bridge (headless)"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "আপনার এক্সটেনশন ID পেস্ট করুন (chrome://extensions → Developer mode), তারপর ইনস্টল করুন। ID টি allowed_origins-এ লক হয়ে যায় — অন্য কোনো এক্সটেনশন ভল্টে পৌঁছাতে পারবে না।" : "Paste your extension ID (chrome://extensions → Developer mode), then install. The ID is locked into allowed_origins — no other extension can reach the vault."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "এক্সটেনশন ID (৩২ অক্ষর, যেমন abcdefgh…)" : "Extension ID (32 chars, e.g. abcdefgh…)"); text <=> root.ext_host_id; height: 36px; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🌐 ব্রাউজার এক্সটেনশন হোস্ট ইনস্টল" : "🌐 Install Browser Extension Host"); primary: true; width: 280px; clicked => { root.install_browser_host(root.ext_host_id); } } }
+                    Text { text: (root.ui_lang == "bn" ? "Firefox: about:debugging দিয়ে dist/firefox/ ইনস্টল করুন, তারপর নিচে আমাদের add-on ID লক করুন (Firefox ম্যানিফেস্টের একই পিন করা ID)।" : "Firefox: install dist/firefox/ via about:debugging, then lock our add-on ID below (same pinned ID as the Firefox manifest)."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🦊 Firefox হোস্ট ইনস্টল" : "🦊 Install Firefox Host"); width: 280px; clicked => { root.install_firefox_host(); } } }
                     Text { text: root.bridge_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 4 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📤 ভল্ট এক্সপোর্ট (জিরো ভেন্ডর লক-ইন)" : "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Plaintext files hit your disk — master-password verified, save dialog is the consent point. .pvx/KDBX are encrypted with the separate password you enter. Shred plaintext after moving it."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "📄 Export Bitwarden JSON"; primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: "📊 Export CSV"; width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: "Encrypted (.pvx)"; width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: "Full CSV (all kinds)"; width: 170px; clicked => { root.export_vault(4); } } }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "🗝️ Export KeePass KDBX"; width: 230px; clicked => { root.export_vault(5); } } }
-                    Text { text: "JSON keeps everything (TOTP, history, custom fields). CSV keeps basics only."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "প্লেইনটেক্সট ফাইল সোজা ডিস্কে লেখা হয় — মাস্টার পাসওয়ার্ড যাচাই হয়, সেভ ডায়ালগই সম্মতির জায়গা। .pvx/KDBX আপনার দেওয়া আলাদা পাসওয়ার্ড দিয়ে এনক্রিপ্ট হয়। সরানোর পর প্লেইনটেক্সট shred করুন।" : "Plaintext files hit your disk — master-password verified, save dialog is the consent point. .pvx/KDBX are encrypted with the separate password you enter. Shred plaintext after moving it."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "📄 Bitwarden JSON এক্সপোর্ট" : "📄 Export Bitwarden JSON"); primary: true; width: 230px; clicked => { root.export_vault(1); } } AuraButton { label: (root.ui_lang == "bn" ? "📊 CSV এক্সপোর্ট" : "📊 Export CSV"); width: 170px; clicked => { root.export_vault(2); } } AuraButton { label: (root.ui_lang == "bn" ? "এনক্রিপ্টেড (.pvx)" : "Encrypted (.pvx)"); width: 150px; clicked => { root.export_vault(3); } } AuraButton { label: (root.ui_lang == "bn" ? "সম্পূর্ণ CSV (সব ধরন)" : "Full CSV (all kinds)"); width: 170px; clicked => { root.export_vault(4); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🗝️ KeePass KDBX এক্সপোর্ট" : "🗝️ Export KeePass KDBX"); width: 230px; clicked => { root.export_vault(5); } } }
+                    Text { text: (root.ui_lang == "bn" ? "JSON-এ সব থাকে (TOTP, হিস্ট্রি, কাস্টম ফিল্ড)। CSV-তে শুধু মৌলিক তথ্য থাকে।" : "JSON keeps everything (TOTP, history, custom fields). CSV keeps basics only."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.export_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 4 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "💾 SCHEDULED BACKUPS (CIPHERTEXT)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Snapshots are encrypted blobs — safe anywhere. Oldest pruned with a 3-pass shred past retention."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: "Automatic backups"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.backup_enabled ? "ON" : "OFF"; primary: root.backup_enabled; width: 90px; clicked => { root.set_backup_enabled(!root.backup_enabled); } } }
+                    Text { text: (root.ui_lang == "bn" ? "💾 নির্ধারিত ব্যাকআপ (সাইফারটেক্সট)" : "💾 SCHEDULED BACKUPS (CIPHERTEXT)"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "স্ন্যাপশট এনক্রিপ্টেড ব্লব — যেকোনো জায়গায় নিরাপদ। রিটেনশনের পরে পুরনোটি ৩-পাস shred দিয়ে মুছে ফেলা হয়।" : "Snapshots are encrypted blobs — safe anywhere. Oldest pruned with a 3-pass shred past retention."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "স্বয়ংক্রিয় ব্যাকআপ" : "Automatic backups"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.backup_enabled); primary: root.backup_enabled; width: 90px; clicked => { root.set_backup_enabled(!root.backup_enabled); } } }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "Daily"; primary: root.backup_interval == 1; width: 80px; height: 30px; clicked => { root.set_backup_interval(1); } }
-                        AuraButton { label: "Weekly"; primary: root.backup_interval == 7; width: 80px; height: 30px; clicked => { root.set_backup_interval(7); } }
-                        AuraButton { label: "Monthly"; primary: root.backup_interval == 30; width: 80px; height: 30px; clicked => { root.set_backup_interval(30); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "দৈনিক" : "Daily"); primary: root.backup_interval == 1; width: 80px; height: 30px; clicked => { root.set_backup_interval(1); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "সাপ্তাহিক" : "Weekly"); primary: root.backup_interval == 7; width: 80px; height: 30px; clicked => { root.set_backup_interval(7); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "মাসিক" : "Monthly"); primary: root.backup_interval == 30; width: 80px; height: 30px; clicked => { root.set_backup_interval(30); } }
                     }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: "📁 Browse"; width: 110px; height: 30px; clicked => { root.browse_backup_dir(); } }
-                        AuraButton { label: "💾 Back Up Now"; width: 140px; height: 30px; clicked => { root.backup_now(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "📁 ব্রাউজ" : "📁 Browse"); width: 110px; height: 30px; clicked => { root.browse_backup_dir(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "💾 এখনই ব্যাকআপ" : "💾 Back Up Now"); width: 140px; height: 30px; clicked => { root.backup_now(); } }
                     }
                     Text { text: root.backup_dir; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     Text { text: root.backup_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 3 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Paranoia & Recovery"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "প্যারানোইয়া ও রিকভারি" : "Paranoia & Recovery"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     // PR-3: persistent backup badge — survives nudge dismissal.
-                    if !root.recovery_backed_up : Text { text: "⚠️ Not Backed Up — export your Recovery Sheet PDF"; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; wrap: word-wrap; }
-                    if root.recovery_backed_up : Text { text: "✅ Recovery Sheet exported"; color: PhantomTheme.success; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "🖨️ Export Printable PDF Recovery Sheet"; primary: true; height: 40px; clicked => { root.export_recovery_sheet(); } }
+                    if !root.recovery_backed_up : Text { text: (root.ui_lang == "bn" ? "⚠️ ব্যাকআপ নেই — আপনার Recovery Sheet PDF এক্সপোর্ট করুন" : "⚠️ Not Backed Up — export your Recovery Sheet PDF"); color: PhantomTheme.warning; font-size: 12px; font-weight: 800; wrap: word-wrap; }
+                    if root.recovery_backed_up : Text { text: (root.ui_lang == "bn" ? "✅ Recovery Sheet এক্সপোর্ট হয়েছে" : "✅ Recovery Sheet exported"); color: PhantomTheme.success; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🖨️ প্রিন্টযোগ্য PDF Recovery Sheet এক্সপোর্ট" : "🖨️ Export Printable PDF Recovery Sheet"); primary: true; height: 40px; clicked => { root.export_recovery_sheet(); } }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "Hide in PNG"; width: 200px; clicked => { root.stego_hide(); } }
-                        AuraButton { label: "Restore PNG"; width: 200px; clicked => { root.stego_restore(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "PNG-তে লুকান" : "Hide in PNG"); width: 200px; clicked => { root.stego_hide(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "PNG থেকে ফেরান" : "Restore PNG"); width: 200px; clicked => { root.stego_restore(); } }
                     }
                     FieldLabel { text: root.ui_lang == "bn" ? "ডিউরেস পাসওয়ার্ড (ডিকয় ভল্ট)" : "DURESS PASSWORD (DECOY VAULT)"; }
                     LineEdit {
-                        placeholder-text: "Enter Duress Password (8+ chars)...";
+                        placeholder-text: (root.ui_lang == "bn" ? "ডিউরেস পাসওয়ার্ড দিন (৮+ অক্ষর)..." : "Enter Duress Password (8+ chars)...");
                         text <=> root.duress_input;
                         input-type: password;
                         height: 36px;
                         accepted(text) => { root.set_duress_password(text); }
                     }
-                    AuraButton { label: "🕊️  Arm Decoy"; width: 200px; clicked => { root.set_duress_password(root.duress_input); } }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🕊️  ডিকয় সক্রিয়" : "🕊️  Arm Decoy"); width: 200px; clicked => { root.set_duress_password(root.duress_input); } }
                     FieldLabel { text: root.ui_lang == "bn" ? "হানিটোকেন (ক্যানারি ট্র্যাপ)" : "HONEYTOKENS (CANARY TRAP)"; }
-                    Text { text: root.canary_count > 0 ? "🐤 " + root.canary_count + " planted — touch one and the alarm fires" : "No honeytokens yet — plant one and never touch it yourself"; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "🐤 Plant Honeytoken"; width: 200px; clicked => { root.plant_canary(); } }
+                    Text { text: root.ui_lang == "bn" ? (root.canary_count > 0 ? "🐤 " + root.canary_count + " বসানো — একটা ছুঁলেই অ্যালার্ম বাজবে" : "এখনো হানিটোকেন নেই — একটা বসান, নিজে কখনো ছোঁবেন না") : (root.canary_count > 0 ? "🐤 " + root.canary_count + " planted — touch one and the alarm fires" : "No honeytokens yet — plant one and never touch it yourself"); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🐤 হানিটোকেন বসান" : "🐤 Plant Honeytoken"); width: 200px; clicked => { root.plant_canary(); } }
                     FieldLabel { text: root.ui_lang == "bn" ? "ইমার্জেন্সি টাইমড গ্রান্ট" : "EMERGENCY TIMED GRANT"; }
-                    Text { text: "Grantee request → grantor approve → wait → sealed envelope. Takeover = the normal lock-screen shard recovery."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "🔑 New Grantee Keypair"; width: 220px; clicked => { root.emg_new_keypair(); } }
-                    LineEdit { placeholder-text: "Grantee public key (base64, from grantee)"; text <=> root.emg_pubkey_input; height: 36px; }
+                    Text { text: (root.ui_lang == "bn" ? "গ্র্যান্টি অনুরোধ → গ্র্যান্টর অনুমোদন → অপেক্ষা → সিলড এনভেলপ। টেকওভার = স্বাভাবিক লক-স্ক্রিন শার্ড রিকভারি।" : "Grantee request → grantor approve → wait → sealed envelope. Takeover = the normal lock-screen shard recovery."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🔑 নতুন গ্র্যান্টি কীপেয়ার" : "🔑 New Grantee Keypair"); width: 220px; clicked => { root.emg_new_keypair(); } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্টির পাবলিক কী (base64, গ্র্যান্টির কাছ থেকে)" : "Grantee public key (base64, from grantee)"); text <=> root.emg_pubkey_input; height: 36px; }
                     HorizontalLayout { spacing: 8px;
-                        LineEdit { placeholder-text: "Wait hours (1..720)"; text <=> root.emg_wait_input; height: 36px; horizontal-stretch: 1; }
-                        AuraButton { label: "📤 Approve + Publish"; width: 200px; clicked => { root.emg_publish_request(root.emg_pubkey_input, root.emg_wait_input); } }
+                        LineEdit { placeholder-text: (root.ui_lang == "bn" ? "অপেক্ষার ঘণ্টা (১..৭২০)" : "Wait hours (1..720)"); text <=> root.emg_wait_input; height: 36px; horizontal-stretch: 1; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "📤 অনুমোদন + প্রকাশ" : "📤 Approve + Publish"); width: 200px; clicked => { root.emg_publish_request(root.emg_pubkey_input, root.emg_wait_input); } }
                     }
-                    LineEdit { placeholder-text: "Grant ID (64 hex)"; text <=> root.emg_grant_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্ট ID (৬৪ hex)" : "Grant ID (64 hex)"); text <=> root.emg_grant_input; height: 36px; }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "🔓 Release Envelope"; width: 200px; clicked => { root.emg_release_envelope(root.emg_grant_input); } }
-                        AuraButton { label: "📥 Fetch Envelope"; width: 200px; clicked => { root.emg_fetch_envelope(root.emg_grant_input); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "🔓 এনভেলপ ছাড়ুন" : "🔓 Release Envelope"); width: 200px; clicked => { root.emg_release_envelope(root.emg_grant_input); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "📥 এনভেলপ আনুন" : "📥 Fetch Envelope"); width: 200px; clicked => { root.emg_fetch_envelope(root.emg_grant_input); } }
                     }
-                    LineEdit { placeholder-text: "Grantee private key (base64, to open)"; text <=> root.emg_priv_input; height: 36px; }
-                    LineEdit { placeholder-text: "Envelope (base64, pasted or fetched)"; text <=> root.emg_env_input; height: 36px; }
-                    AuraButton { label: "🔓 Open Envelope → Show Shards"; width: 280px; clicked => { root.emg_open_envelope(root.emg_priv_input, root.emg_env_input); } }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "গ্র্যান্টির প্রাইভেট কী (base64, খুলতে)" : "Grantee private key (base64, to open)"); text <=> root.emg_priv_input; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "এনভেলপ (base64, পেস্ট করা বা আনা)" : "Envelope (base64, pasted or fetched)"); text <=> root.emg_env_input; height: 36px; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🔓 এনভেলপ খুলুন → শার্ড দেখান" : "🔓 Open Envelope → Show Shards"); width: 280px; clicked => { root.emg_open_envelope(root.emg_priv_input, root.emg_env_input); } }
                     Text { text: root.emg_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     if root.emg_output != "" : Text { text: root.emg_output; color: PhantomTheme.text; font-size: 11px; wrap: word-wrap; }
                 }}
                 Rectangle { background: #2a0f1a; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.error; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "🔥 DANGER ZONE"; color: PhantomTheme.error; font-size: 12px; font-weight: 800; }
-                    Text { text: "Factory reset shreds the vault, all backups, and machine seals (DoD 3-pass), then restarts onboarding. Triple-gated: password + DELETE + 5s countdown."; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
-                    Text { text: "Tip: Ctrl+Shift+Alt+Q wipes RAM and exits instantly (panic-nuke)."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    AuraButton { label: "🔥 Factory Reset Vault"; danger: true; width: 220px; height: 38px; clicked => { root.factory_reset_start(); } }
+                    Text { text: (root.ui_lang == "bn" ? "🔥 বিপদ অঞ্চল" : "🔥 DANGER ZONE"); color: PhantomTheme.error; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "ফ্যাক্টরি রিসেট ভল্ট, সব ব্যাকআপ ও মেশিন সিল (DoD ৩-পাস) ধ্বংস করে, তারপর onboarding আবার শুরু হয়। তিন ধাপ: পাসওয়ার্ড + DELETE + ৫ সেকেন্ড কাউন্টডাউন।" : "Factory reset shreds the vault, all backups, and machine seals (DoD 3-pass), then restarts onboarding. Triple-gated: password + DELETE + 5s countdown."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "টিপ: Ctrl+Shift+Alt+Q সঙ্গে সঙ্গে RAM মুছে অ্যাপ বন্ধ করে (প্যানিক-নিউক)।" : "Tip: Ctrl+Shift+Alt+Q wipes RAM and exits instantly (panic-nuke)."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    AuraButton { label: (root.ui_lang == "bn" ? "🔥 ভল্ট ফ্যাক্টরি রিসেট" : "🔥 Factory Reset Vault"); danger: true; width: 220px; height: 38px; clicked => { root.factory_reset_start(); } }
                 }}
                 if root.settings_tab == 2 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Email Aliases (Addy.io / SimpleLogin)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "ইমেইল অ্যালিয়াস (Addy.io / SimpleLogin)" : "Email Aliases (Addy.io / SimpleLogin)"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 6px;
                         AuraButton { label: "Addy.io"; primary: root.alias_provider == 0; horizontal-stretch: 1; clicked => { root.alias_provider = 0; } }
                         AuraButton { label: "SimpleLogin"; primary: root.alias_provider == 1; horizontal-stretch: 1; clicked => { root.alias_provider = 1; } }
                     }
-                    LineEdit { placeholder-text: "Addy domain (Addy.io only)"; text <=> root.alias_domain; height: 36px; }
-                    LineEdit { placeholder-text: "API token (DPAPI-sealed)"; input-type: root.show_alias_token ? text : password; text <=> root.alias_token; height: 36px; horizontal-stretch: 1; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "Addy ডোমেইন (শুধু Addy.io)" : "Addy domain (Addy.io only)"); text <=> root.alias_domain; height: 36px; }
+                    LineEdit { placeholder-text: (root.ui_lang == "bn" ? "API টোকেন (DPAPI-সিলড)" : "API token (DPAPI-sealed)"); input-type: root.show_alias_token ? text : password; text <=> root.alias_token; height: 36px; horizontal-stretch: 1; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: root.show_alias_token ? "🙈" : "👁"; width: 52px; height: 36px; clicked => { root.show_alias_token = !root.show_alias_token; } }
-                        AuraButton { label: "Save Alias Config"; primary: true; width: 180px; clicked => { root.save_alias_config(root.alias_provider, root.alias_domain, root.alias_token); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "অ্যালিয়াস কনফিগ সেভ" : "Save Alias Config"); primary: true; width: 180px; clicked => { root.save_alias_config(root.alias_provider, root.alias_domain, root.alias_token); } }
                     }
                 }}
                 if root.settings_tab == 2 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "📷 ANTI-PHOTOGRAPHY & LENS GUARD"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
-                    Text { text: "Optical defense against external phone cameras and shoulder-surfers."; color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; Text { text: root.peep_hole_mode || root.moire_guard_active ? "🟢 Guard Active" : "⚪ Inactive (Normal Display)"; color: root.peep_hole_mode || root.moire_guard_active ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Hold-to-Reveal Ephemeral Mode"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.peep_hole_mode ? "ON" : "OFF"; primary: root.peep_hole_mode; width: 90px; clicked => { root.set_peep_mode(!root.peep_hole_mode); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Moiré Optical Lens Jammer"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.moire_guard_active ? "ON" : "OFF"; primary: root.moire_guard_active; width: 90px; clicked => { root.set_moire(!root.moire_guard_active); } } }
+                    Text { text: (root.ui_lang == "bn" ? "📷 অ্যান্টি-ফটোগ্রাফি ও লেন্স গার্ড" : "📷 ANTI-PHOTOGRAPHY & LENS GUARD"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "বাইরের ফোন ক্যামেরা ও কাঁধ-উঁকি দেওয়া থেকে অপটিক্যাল সুরক্ষা।" : "Optical defense against external phone cameras and shoulder-surfers."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; Text { text: root.ui_lang == "bn" ? (root.peep_hole_mode || root.moire_guard_active ? "🛡️ গার্ড সক্রিয়" : "⭕ নিষ্ক্রিয় (স্বাভাবিক ডিসপ্লে)") : (root.peep_hole_mode || root.moire_guard_active ? "🟢 Guard Active" : "⚪ Inactive (Normal Display)"); color: root.peep_hole_mode || root.moire_guard_active ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 12px; font-weight: 800; vertical-alignment: center; horizontal-stretch: 1; } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "চেপে ধরে দেখার ক্ষণস্থায়ী মোড" : "Hold-to-Reveal Ephemeral Mode"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.peep_hole_mode); primary: root.peep_hole_mode; width: 90px; clicked => { root.set_peep_mode(!root.peep_hole_mode); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "মোয়ারে অপটিক্যাল লেন্স জ্যামার" : "Moiré Optical Lens Jammer"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.moire_guard_active); primary: root.moire_guard_active; width: 90px; clicked => { root.set_moire(!root.moire_guard_active); } } }
                 }}
                 if root.settings_tab == 5 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "Health & Dev"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "হেলথ ও ডেভ" : "Health & Dev"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     Text { text: root.health_status; color: PhantomTheme.secondary; font-size: 12px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: "Scan Secrets"; width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: "Audit Vault"; width: 160px; clicked => { root.audit_vault(); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "SSH Agent"; color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: PhantomTheme.text-muted; font-size: 11px; vertical-alignment: center; } if root.ssh_agent_running : AuraButton { label: "Stop"; danger: true; width: 90px; clicked => { root.stop_ssh_agent(); } } if !root.ssh_agent_running : AuraButton { label: "Start"; primary: true; width: 90px; clicked => { root.start_ssh_agent(); } } AuraButton { label: "Refresh"; width: 90px; clicked => { root.refresh_ssh_status(); } } }
-                    HorizontalLayout { spacing: 8px; Text { text: "Offline audit (no network)"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_audit ? "ON" : "OFF"; primary: root.offline_audit; width: 90px; clicked => { root.offline_audit = !root.offline_audit; } } }
-                    Text { text: "Shell completion (copy, then paste in your shell profile)"; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "সিক্রেট স্ক্যান" : "Scan Secrets"); width: 160px; clicked => { root.scan_secrets(); } } AuraButton { label: (root.ui_lang == "bn" ? "ভল্ট অডিট" : "Audit Vault"); width: 160px; clicked => { root.audit_vault(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "SSH এজেন্ট" : "SSH Agent"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.ssh_status; color: PhantomTheme.text-muted; font-size: 11px; vertical-alignment: center; } if root.ssh_agent_running : AuraButton { label: (root.ui_lang == "bn" ? "থামান" : "Stop"); danger: true; width: 90px; clicked => { root.stop_ssh_agent(); } } if !root.ssh_agent_running : AuraButton { label: (root.ui_lang == "bn" ? "চালু" : "Start"); primary: true; width: 90px; clicked => { root.start_ssh_agent(); } } AuraButton { label: (root.ui_lang == "bn" ? "রিফ্রেশ" : "Refresh"); width: 90px; clicked => { root.refresh_ssh_status(); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "অফলাইন অডিট (নেটওয়ার্ক নেই)" : "Offline audit (no network)"); color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.offline_audit); primary: root.offline_audit; width: 90px; clicked => { root.offline_audit = !root.offline_audit; } } }
+                    Text { text: (root.ui_lang == "bn" ? "শেল কমপ্লিশন (কপি করে শেল প্রোফাইলে পেস্ট করুন)" : "Shell completion (copy, then paste in your shell profile)"); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "⧉ PowerShell"; width: 140px; height: 32px; clicked => { root.copy_shell_complete("powershell"); } }
                         AuraButton { label: "⧉ Bash"; width: 110px; height: 32px; clicked => { root.copy_shell_complete("bash"); } }
@@ -2564,29 +2569,29 @@ export component MainWindow inherits Window {
                     }
                 }}
                 if root.settings_tab == 5 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
-                    Text { text: "🛡️ SECURITY SCOREBOARD"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
+                    Text { text: (root.ui_lang == "bn" ? "🛡️ সিকিউরিটি স্কোরবোর্ড" : "🛡️ SECURITY SCOREBOARD"); color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }
                     HorizontalLayout { spacing: 12px; alignment: space-between;
                         VerticalLayout { spacing: 2px;
                             Text { text: root.health_score + " / 100"; color: root.health_score >= 90 ? PhantomTheme.success : (root.health_score >= 70 ? PhantomTheme.warning : PhantomTheme.error); font-size: 26px; font-weight: 900; }
                             Text { text: root.health_headline; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                         }
-                        AuraButton { label: "🛡️ Re-Scan Vault"; primary: true; width: 170px; clicked => { root.audit_vault(); } }
-                        AuraButton { label: "🧹 Janitor"; primary: root.janitor_active; width: 130px; clicked => { root.open_janitor(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "🛡️ ভল্ট আবার স্ক্যান" : "🛡️ Re-Scan Vault"); primary: true; width: 170px; clicked => { root.audit_vault(); } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "🧹 জ্যানিটর" : "🧹 Janitor"); primary: root.janitor_active; width: 130px; clicked => { root.open_janitor(); } }
                     }
-                    Text { text: "🔴 breached  🟡 weak  ♻️ reused  🕰️ stale  ✅ verified"; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
+                    Text { text: (root.ui_lang == "bn" ? "🔴 ফাঁস  🟡 দুর্বল  ♻️ পুনরাবৃত্ত  🕰️ পুরনো  ✅ যাচাইকৃত" : "🔴 breached  🟡 weak  ♻️ reused  🕰️ stale  ✅ verified"); color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: "🚨 " + root.health_breached; primary: root.health_filter == "breached"; width: 110px; clicked => { root.filter_health("breached"); } }
                         AuraButton { label: "🔁 " + root.health_reused; primary: root.health_filter == "reused"; width: 110px; clicked => { root.filter_health("reused"); } }
                         AuraButton { label: "⚠️ " + root.health_weak; primary: root.health_filter == "weak"; width: 110px; clicked => { root.filter_health("weak"); } }
                         AuraButton { label: "🕰️ " + root.health_stale; primary: root.health_filter == "stale"; width: 110px; clicked => { root.filter_health("stale"); } }
                     }
-                    if root.health_filter != "" : AuraButton { label: "✕ Clear health filter"; height: 32px; clicked => { root.filter_health(""); } }
+                    if root.health_filter != "" : AuraButton { label: (root.ui_lang == "bn" ? "✕ হেলথ ফিল্টার পরিষ্কার" : "✕ Clear health filter"); height: 32px; clicked => { root.filter_health(""); } }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: "🔁 Rotate all reused"; width: 200px; clicked => { root.rotate_reused(); } }
-                        Text { text: "Unique passwords vault-side. Still update each ON ITS WEBSITE."; color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+                        AuraButton { label: (root.ui_lang == "bn" ? "🔁 সব পুনরাবৃত্ত রোটেট" : "🔁 Rotate all reused"); width: 200px; clicked => { root.rotate_reused(); } }
+                        Text { text: (root.ui_lang == "bn" ? "ভল্টের ভেতরে ইউনিক পাসওয়ার্ড। তবু প্রতিটি ওয়েবসাইটেও আলাদা করে বদলাতে হবে।" : "Unique passwords vault-side. Still update each ON ITS WEBSITE."); color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
                     }
                     HorizontalLayout { spacing: 8px;
-                        Text { text: "🛡️ 2FA Coverage"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; width: 120px; }
+                        Text { text: (root.ui_lang == "bn" ? "🛡️ 2FA কভারেজ" : "🛡️ 2FA Coverage"); color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; width: 120px; }
                         Rectangle { background: PhantomTheme.surface-high; border-radius: 6px; height: 12px; horizontal-stretch: 1; clip: true;
                             Rectangle { background: PhantomTheme.success; border-radius: 6px; height: 12px; width: parent.width * root.health_coverage / 100; }
                         }

@@ -1381,7 +1381,7 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
             return;
         }
         let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-            report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+            report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into());
             return;
         };
         let Ok(blob) = std::fs::read(VAULT_FILE) else {
@@ -5713,7 +5713,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let status = if available {
             "Available — unlock once with password to enroll Hello.".to_string()
         } else {
-            "Not available on this device.".to_string()
+            crate::i18n::tr("Not available on this device.", "এই ডিভাইসে নেই।").to_string()
         };
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = hello_weak.upgrade() {
@@ -8874,7 +8874,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             };
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into());
                 return;
             };
             let mut token = token;
@@ -9254,7 +9254,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into(), String::new());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into(), String::new());
                 return;
             };
             let mut token = token;
@@ -9312,7 +9312,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into(), String::new());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into(), String::new());
                 return;
             };
             let mut token = token;
@@ -12543,7 +12543,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into());
                 return;
             };
             let mut token = token;
@@ -12618,7 +12618,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into());
                 return;
             };
             let mut token = token;
@@ -12686,7 +12686,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
             let Ok((cfg, token)) = sync::github_sync::load_credentials() else {
-                report("⚠️ Missing credentials. Paste token and click Connect first.".into());
+                report(tr("⚠️ Missing credentials. Paste token and click Connect first.", "⚠️ লগইন তথ্য নেই। আগে টোকেন পেস্ট করে Connect চাপুন।").into());
                 return;
             };
             let mut token = token;
