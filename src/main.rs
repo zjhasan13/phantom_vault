@@ -749,7 +749,7 @@ fn secure_copy_with_feedback(
     if text.is_empty() {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_ok.upgrade() {
-                ui.set_notification_text("⚠️ Nothing safe to copy.".into());
+                ui.set_notification_text(tr("⚠️ Nothing safe to copy.", "⚠️ কপি করার মতো নিরাপদ কিছু নেই।").into());
                 ui.set_notification_kind("warn".into());
             }
         });
@@ -759,7 +759,7 @@ fn secure_copy_with_feedback(
     match windows_native::clipboard::copy_sensitive(&text, secs, move || {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak_clear.upgrade() {
-                ui.set_notification_text("🧹 Clipboard auto-cleared for security!".into());
+                ui.set_notification_text(tr("🧹 Clipboard auto-cleared for security!", "🧹 নিরাপত্তার জন্য ক্লিপবোর্ড স্বয়ংক্রিয়ভাবে মুছে দেওয়া হয়েছে!").into());
                 ui.set_notification_kind("info".into());
             }
         });
@@ -787,7 +787,7 @@ fn secure_copy_with_feedback(
                     }
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak_fb_clear.upgrade() {
-                            ui.set_notification_text("🧹 Clipboard auto-cleared for security!".into());
+                            ui.set_notification_text(tr("🧹 Clipboard auto-cleared for security!", "🧹 নিরাপত্তার জন্য ক্লিপবোর্ড স্বয়ংক্রিয়ভাবে মুছে দেওয়া হয়েছে!").into());
                         }
                     });
                 });
@@ -909,16 +909,16 @@ fn mark_recovery_exported() {
 /// Needs an unlocked master; decoy vaults have no recovery sheet.
 fn generate_shards_into(ui: &MainWindow, master_arc: &Arc<Mutex<Option<SecretString>>>) {
     if ui.get_is_decoy() {
-        ui.set_sync_status("⛔ Decoy mode has no recovery sheet.".into());
+        ui.set_sync_status(tr("⛔ Decoy mode has no recovery sheet.", "⛔ ডিকয় মোডে রিকভারি শিট নেই।").into());
         return;
     }
     let master_opt = lock_master_pw(master_arc).clone();
     let Some(master_pw) = master_opt else {
-        ui.set_sync_status("⚠️ Vault not unlocked.".into());
+        ui.set_sync_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
         return;
     };
     if master_pw.expose_secret().len() > security::shamir::WORD_SECRET_MAX {
-        ui.set_sync_status("⚠️ Master password over 64 bytes — shorten it to print shards.".into());
+        ui.set_sync_status(tr("⚠️ Master password over 64 bytes — shorten it to print shards.", "⚠️ মাস্টার পাসওয়ার্ড ৬৪ বাইটের বেশি — শার্ড প্রিন্ট করতে ছোট করুন।").into());
         return;
     }
     match security::shamir::Shamir::split(master_pw.expose_secret()) {
@@ -929,7 +929,7 @@ fn generate_shards_into(ui: &MainWindow, master_arc: &Arc<Mutex<Option<SecretStr
             ui.set_shard_4(sheets[3].clone().into());
             ui.set_shard_5(sheets[4].clone().into());
             ui.set_show_shards(true);
-            ui.set_sync_status("📄 Sheet ready — print on paper, then Hide.".into());
+            ui.set_sync_status(tr("📄 Sheet ready — print on paper, then Hide.", "📄 শিট তৈরি — কাগজে প্রিন্ট করুন, তারপর লুকান।").into());
         }
         Err(e) => {
             ui.set_sync_status(format!("⚠️ {e}").into());
@@ -1196,7 +1196,7 @@ fn lock_vault_now(
         ui.set_is_unlocked(false);
         VAULT_UNLOCKED.store(false, Ordering::SeqCst);
         ui.set_status_text(status.into());
-        ui.set_notification_text("🔒 Vault locked.".into());
+        ui.set_notification_text(tr("🔒 Vault locked.", "🔒 ভল্ট লক হয়েছে।").into());
         // Bulk-select is session state, never persisted — drop it with the
         // secret-holding models so a stale check can't survive re-unlock.
         selection_registry().lock().unwrap_or_else(|p| p.into_inner()).clear();
@@ -1283,7 +1283,7 @@ fn lock_vault_now(
         // SSH agent dies with unlock (stop_agent above) — the button must
         // read Stopped and the status returns to the probe ground truth.
         ui.set_ssh_agent_running(false);
-        ui.set_ssh_status("○ Stopped".into());
+        ui.set_ssh_status(tr("○ Stopped", "○ বন্ধ").into());
     });
 }
 
@@ -1410,7 +1410,7 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
         )) {
             use zeroize::Zeroize;
             token.zeroize();
-            report(format!("⚠️ Attachments: {e}"));
+            report(format!("{}{e}", crate::i18n::tr("⚠️ Attachments: ", "⚠️ অ্যাটাচমেন্ট: ")));
             return;
         }
         let res = rt.block_on(sync::github_sync::push_remote(
@@ -1433,7 +1433,7 @@ fn trigger_sync_push(main_weak: slint::Weak<MainWindow>) {
                         security::access_log::log_event("sync", "push ok");
                     }
                     Err(e) => {
-                        ui.set_sync_status(format!("⚠️ Sync: {e}").into());
+                        ui.set_sync_status(format!("{}{e}", crate::i18n::tr("⚠️ Sync: ", "⚠️ সিঙ্ক: ")).into());
                     }
                 }
             }
@@ -1467,7 +1467,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
         let weak = main_weak.clone();
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
-                ui.set_sync_status("📴 Offline mode — startup pull skipped.".into());
+                ui.set_sync_status(tr("📴 Offline mode — startup pull skipped.", "📴 অফলাইন মোড — শুরুর সিঙ্ক বাদ।").into());
             }
         });
         return;
@@ -1505,7 +1505,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             let w = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = w.upgrade() {
-                    ui.set_sync_status(format!("⚠️ Attachments: {e}").into());
+                    ui.set_sync_status(format!("{}{e}", crate::i18n::tr("⚠️ Attachments: ", "⚠️ অ্যাটাচমেন্ট: ")).into());
                 }
             });
             return;
@@ -1517,7 +1517,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             let w = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = w.upgrade() {
-                    ui.set_sync_status("⚠️ Remote vault empty — refusing to adopt.".into());
+                    ui.set_sync_status(tr("⚠️ Remote vault empty — refusing to adopt.", "⚠️ রিমোট ভল্ট খালি — গ্রহণ করা হলো না।").into());
                 }
             });
             return;
@@ -1528,7 +1528,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             let w = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = w.upgrade() {
-                    ui.set_sync_status("⛔ PQ-paranoid vault — sync is disabled.".into());
+                    ui.set_sync_status(tr("⛔ PQ-paranoid vault — sync is disabled.", "⛔ PQ-paranoid ভল্ট — সিঙ্ক বন্ধ।").into());
                 }
             });
             return;
@@ -1551,7 +1551,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
                 sync::github_sync::store_head_sha(&sha);
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = main_weak.upgrade() {
-                        ui.set_sync_status("⬇️ Vault restored from private repo.".into());
+                        ui.set_sync_status(tr("⬇️ Vault restored from private repo.", "⬇️ প্রাইভেট রিপো থেকে ভল্ট ফিরে এসেছে।").into());
                     }
                 });
             }
@@ -1687,7 +1687,7 @@ fn publish_unlocked_vault(
     }
     if purged_n > 0 {
         ui.set_notification_text(
-            format!("🗑️ {purged_n} expired trash items shredded.").into(),
+            if crate::i18n::is_bn() { format!("🗑️ {purged_n}টি মেয়াদোত্তীর্ণ ট্র্যাশ আইটেম ধ্বংস হয়েছে।") } else { format!("🗑️ {purged_n} expired trash items shredded.") }.into(),
         );
     }
     security::access_log::log_event("unlock", "password ok");
@@ -1847,7 +1847,7 @@ fn unlock_with_password(    pass: SecretString,
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_status_text(
-                        format!("⏳ Too many attempts — retrying in {wait}s…").into(),
+                        if crate::i18n::is_bn() { format!("⏳ অনেকবার চেষ্টা হয়েছে — {wait} সে পরে আবার…") } else { format!("⏳ Too many attempts — retrying in {wait}s…") }.into(),
                     );
                 }
             });
@@ -4500,7 +4500,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 eprintln!("⚠️ Tray unavailable ({e}) — close-to-tray falls back to exit.");
                 // Console is invisible in release builds: mirror into the
                 // access log so the user can SEE why X exits (Access Log viewer).
-                security::access_log::log_event("tray", &format!("boot failed: {e}"));
+                security::access_log::log_event("tray", &format!("{}{e}", crate::i18n::tr("boot failed: ", "বুট ব্যর্থ: ")));
                 false
             }
         }
@@ -4541,7 +4541,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 // access log is the only witness of which close path ran.
                 security::access_log::log_event("tray", "minimize accepted");
                 if let Some(ui) = w.upgrade() {
-                    ui.set_notification_text("📥 Minimized to tray — right-click the tray icon to restore.".into());
+                    ui.set_notification_text(tr("📥 Minimized to tray — right-click the tray icon to restore.", "📥 ট্রেতে মিনিমাইজ — ফিরাতে ট্রে আইকনে ডান-ক্লিক করুন।").into());
                     ui.window().set_minimized(true);
                     // KeepWindowShown alone leaves a taskbar button; SW_HIDE
                     // removes it so only the tray icon remains (restore uses
@@ -4609,7 +4609,7 @@ fn main() -> Result<(), slint::PlatformError> {
             windows_native::proximity_lock::sensitivity_for_threshold(cfg.rssi_threshold),
         );
         if !cfg.enabled {
-            main_window.set_prox_status("⚪ Proximity Inactive".into());
+            main_window.set_prox_status(tr("⚪ Proximity Inactive", "⚪ প্রক্সিমিটি নিষ্ক্রিয়").into());
         }
     }
 
@@ -4704,7 +4704,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(
-                                format!("⏳ Auto-lock in ~{secs}s — interact to stay awake.").into(),
+                                if crate::i18n::is_bn() { format!("⏳ ~{secs} সে পরে অটো-লক — সক্রিয় থাকতে ইন্টারঅ্যাক্ট করুন।") } else { format!("⏳ Auto-lock in ~{secs}s — interact to stay awake.") }.into(),
                             );
                         }
                     });
@@ -5036,7 +5036,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 }
             };
             let Some(code) = code else {
-                main_ui.set_notification_text("⚠️ No live TOTP code for this item.".into());
+                main_ui.set_notification_text(tr("⚠️ No live TOTP code for this item.", "⚠️ এই আইটেমের জন্য লাইভ TOTP কোড নেই।").into());
                 return;
             };
             let secs = ct_totp.load(std::sync::atomic::Ordering::SeqCst);
@@ -5079,7 +5079,7 @@ fn main() -> Result<(), slint::PlatformError> {
         if let Some(title) = &canary {
             if let Some(ui) = type_qb_main.upgrade() {
                 ui.set_notification_text(
-                    format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
+                    if crate::i18n::is_bn() { format!("🚨 ক্যানারি ট্রিপ: '{title}' — লগ হয়েছে!") } else { format!("🚨 CANARY TRIPPED: '{title}' — logged!") }.into(),
                 );
                 ui.set_notification_kind("error".into());
             }
@@ -5474,7 +5474,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Capture save failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Capture save failed: ", "❌ ক্যাপচার সেভ ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -5604,7 +5604,7 @@ fn main() -> Result<(), slint::PlatformError> {
         let token = zeroize::Zeroizing::new(token.as_str().trim().to_string());
         if owner.is_empty() || repo.is_empty() || token.is_empty() {
             ui.set_ob_gh_busy(false);
-            ui.set_ob_gh_status("⚠️ Owner, repo and PAT are required.".into());
+            ui.set_ob_gh_status(tr("⚠️ Owner, repo and PAT are required.", "⚠️ Owner, repo ও PAT লাগবে।").into());
             return;
         }
         if std::path::Path::new(VAULT_FILE).exists() {
@@ -5614,7 +5614,7 @@ fn main() -> Result<(), slint::PlatformError> {
             );
             return;
         }
-        ui.set_ob_gh_status("⏳ Downloading the encrypted vault…".into());
+        ui.set_ob_gh_status(tr("⏳ Downloading the encrypted vault…", "⏳ এনক্রিপ্টেড ভল্ট ডাউনলোড হচ্ছে…").into());
         let weak = restore_weak.clone();
         std::thread::spawn(move || {
             let fail = |msg: String| {
@@ -5655,14 +5655,14 @@ fn main() -> Result<(), slint::PlatformError> {
                         let tmp = format!("{VAULT_FILE}.restore.tmp");
                         if let Err(e) = std::fs::write(&tmp, &blob) {
                             ui.set_ob_gh_busy(false);
-                            ui.set_ob_gh_status(format!("⚠️ Could not write the vault: {e}").into());
+                            ui.set_ob_gh_status(format!("{}{e}", crate::i18n::tr("⚠️ Could not write the vault: ", "⚠️ ভল্ট লেখা গেল না: ")).into());
                             return;
                         }
                         if let Err(e) = std::fs::rename(&tmp, VAULT_FILE) {
                             let _ = std::fs::remove_file(&tmp);
                             ui.set_ob_gh_busy(false);
                             ui.set_ob_gh_status(
-                                format!("⚠️ Could not install the vault: {e}").into(),
+                                format!("{}{e}", crate::i18n::tr("⚠️ Could not install the vault: ", "⚠️ ভল্ট ইনস্টল করা গেল না: ")).into(),
                             );
                             return;
                         }
@@ -5688,7 +5688,7 @@ fn main() -> Result<(), slint::PlatformError> {
                     }
                     Err(e) => {
                         ui.set_ob_gh_busy(false);
-                        ui.set_ob_gh_status(format!("⚠️ Restore failed: {e}").into());
+                        ui.set_ob_gh_status(format!("{}{e}", crate::i18n::tr("⚠️ Restore failed: ", "⚠️ রিস্টোর ব্যর্থ: ")).into());
                     }
                 }
             });
@@ -5853,7 +5853,7 @@ fn main() -> Result<(), slint::PlatformError> {
         };
         let pending = confirm_pending.lock().unwrap().clone();
         let Some(secret) = pending else {
-            ui.set_notification_text("⚠️ Press Enable first.".into());
+            ui.set_notification_text(tr("⚠️ Press Enable first.", "⚠️ আগে Enable চাপুন।").into());
             return;
         };
         let probe = TotpAccount {
@@ -5880,12 +5880,12 @@ fn main() -> Result<(), slint::PlatformError> {
             })
             .unwrap_or(false);
         if !ok {
-            ui.set_notification_text("❌ Code doesn't match — check the secret + clock.".into());
+            ui.set_notification_text(tr("❌ Code doesn't match — check the secret + clock.", "❌ কোড মিলছে না — সিক্রেট ও ঘড়ি দেখুন।").into());
             return;
         }
         let master_opt = lock_master_pw(&confirm_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("⚠️ Vault not unlocked.".into());
+            ui.set_notification_text(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
         let weak = confirm_weak.clone();
@@ -5917,7 +5917,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Enable failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Enable failed: ", "❌ চালু করা ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -5940,7 +5940,7 @@ fn main() -> Result<(), slint::PlatformError> {
         }
         let master_opt = lock_master_pw(&disable_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_notification_text("⚠️ Vault not unlocked.".into());
+            ui.set_notification_text(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
         let weak = disable_weak.clone();
@@ -5972,7 +5972,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Disarm failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Disarm failed: ", "❌ বন্ধ করা ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -6319,10 +6319,10 @@ fn main() -> Result<(), slint::PlatformError> {
             if !valid {
                 if let Some(ui) = window_weak_add.upgrade() {
                     if kind_name.is_empty() {
-                        ui.set_notification_text("⚠️ Unknown item type!".into());
+                        ui.set_notification_text(tr("⚠️ Unknown item type!", "⚠️ অজানা আইটেম ধরন!").into());
                     } else {
                         ui.set_notification_text(
-                            format!("⚠️ {kind_name} needs a title + key fields!").into(),
+                            if crate::i18n::is_bn() { format!("⚠️ {kind_name}-এ শিরোনাম ও মূল ফিল্ড লাগবে!") } else { format!("⚠️ {kind_name} needs a title + key fields!") }.into(),
                         );
                     }
                 }
@@ -6345,7 +6345,7 @@ fn main() -> Result<(), slint::PlatformError> {
             }
 
             if let Some(ui) = window_weak_add.upgrade() {
-                ui.set_notification_text("⏳ Encrypting to disk (Argon2id)…".into());
+                ui.set_notification_text(tr("⏳ Encrypting to disk (Argon2id)…", "⏳ ডিস্কে এনক্রিপ্ট হচ্ছে (Argon2id)…").into());
             }
 
             let weak = window_weak_add.clone();
@@ -6550,7 +6550,7 @@ fn main() -> Result<(), slint::PlatformError> {
                                             let _ = slint::invoke_from_event_loop(move || {
                                                 if let Some(ui) = w2.upgrade() {
                                                     ui.set_notification_text(
-                                                        format!("🚨 Saved, but this password appeared in {n} breaches — consider rotating it.").into(),
+                                                        if crate::i18n::is_bn() { format!("🚨 সেভ হয়েছে, তবে এই পাসওয়ার্ড {n}টি ফাঁসে দেখা গেছে — বদলানোর কথা ভাবুন।") } else { format!("🚨 Saved, but this password appeared in {n} breaches — consider rotating it.") }.into(),
                                                     );
                                                 }
                                             });
@@ -6603,7 +6603,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_notification_text("⏳ Deleting…".into());
+            ui.set_notification_text(tr("⏳ Deleting…", "⏳ মুছে ফেলা হচ্ছে…").into());
         }
         let id = id.as_str().to_string();
         let weak = window_weak_del.clone();
@@ -6678,10 +6678,10 @@ fn main() -> Result<(), slint::PlatformError> {
                             qb.set_filtered_results(vault_quickbar(&vault_snapshot, "", search_clone.lock().unwrap().travel_only));
                         }
                         if permanent {
-                            ui.set_notification_text("🔥 Item permanently shredded.".into());
+                            ui.set_notification_text(tr("🔥 Item permanently shredded.", "🔥 আইটেম স্থায়ীভাবে ধ্বংস হয়েছে।").into());
                             security::access_log::log_event("delete", "permanent");
                         } else {
-                            ui.set_notification_text("🗑️ Moved to Trash (restorable 30 days).".into());
+                            ui.set_notification_text(tr("🗑️ Moved to Trash (restorable 30 days).", "🗑️ ট্র্যাশে সরানো হলো (৩০ দিন ফেরানো যাবে)।").into());
                             security::access_log::log_event("delete", "trash");
                         }
                         ui.set_show_detail(false);
@@ -6755,7 +6755,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         }
                         // Reopen the detail on the restored item (banner gone).
                         ui.set_d_trashed(false);
-                        ui.set_notification_text("♻️ Restored to active vault.".into());
+                        ui.set_notification_text(tr("♻️ Restored to active vault.", "♻️ সক্রিয় ভল্টে ফিরে এসেছে।").into());
                         security::access_log::log_event("restore", "trash");
                         trigger_sync_push(ui.as_weak());
                     }
@@ -6812,7 +6812,7 @@ fn main() -> Result<(), slint::PlatformError> {
                 ""
             };
             ui.set_fr_preview(
-                format!("⚠️ Will shred: {items} items, {gens} backup generations{decoy}.").into(),
+                if crate::i18n::is_bn() { format!("⚠️ ধ্বংস হবে: {items}টি আইটেম, {gens}টি ব্যাকআপ জেনারেশন{decoy}।") } else { format!("⚠️ Will shred: {items} items, {gens} backup generations{decoy}.") }.into(),
             );
         }
         ui.set_show_factory_reset(true);
@@ -7070,7 +7070,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         ui.set_show_detail(false);
                         ui.set_d_id(String::new().into());
                         ui.set_notification_text(
-                            format!("🔥 Emptied Trash — {n} items shredded.").into(),
+                            if crate::i18n::is_bn() { format!("🔥 ট্র্যাশ খালি — {n}টি আইটেম ধ্বংস হয়েছে।") } else { format!("🔥 Emptied Trash — {n} items shredded.") }.into(),
                         );
                         security::access_log::log_event("trash", "emptied");
                         trigger_sync_push(ui.as_weak());
@@ -7367,7 +7367,7 @@ fn main() -> Result<(), slint::PlatformError> {
             return;
         }
         if kind != 1 {
-            ui.set_notification_text("⚠️ Only logins can be marked verified.".into());
+            ui.set_notification_text(tr("⚠️ Only logins can be marked verified.", "⚠️ শুধু লগইন যাচাইকৃত করা যায়।").into());
             return;
         }
         let master_opt = lock_master_pw(&ver_master).clone();
@@ -7570,7 +7570,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Bulk {verb} failed: {e}").into());
+                        ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ বাল্ক {verb} ব্যর্থ: {e}") } else { format!("❌ Bulk {verb} failed: {e}") }.into());
                     }
                 }
             });
@@ -7636,7 +7636,7 @@ fn main() -> Result<(), slint::PlatformError> {
             let dest = folder.as_str().trim().to_string();
             if dest.is_empty() || dest == "All" {
                 if let Some(ui) = weak.upgrade() {
-                    ui.set_notification_text("⚠️ Pick a destination folder first.".into());
+                    ui.set_notification_text(tr("⚠️ Pick a destination folder first.", "⚠️ আগে গন্তব্য ফোল্ডার বাছুন।").into());
                 }
                 return;
             }
@@ -7858,8 +7858,8 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Import save failed: {e}").into());
-                            ui.set_import_2fa_status(format!("❌ Save failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Import save failed: ", "❌ ইমপোর্ট সেভ ব্যর্থ: ")).into());
+                            ui.set_import_2fa_status(format!("{}{e}", crate::i18n::tr("❌ Save failed: ", "❌ সেভ ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -7880,12 +7880,12 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         let input = url_text.as_str().trim().to_string();
         if input.is_empty() {
             if let Some(ui) = window_weak_url.upgrade() {
-                ui.set_notification_text("⚠️ Paste a migration URL first".into());
+                ui.set_notification_text(tr("⚠️ Paste a migration URL first", "⚠️ আগে মাইগ্রেশন URL পেস্ট করুন").into());
             }
             return;
         }
         if let Some(ui) = window_weak_url.upgrade() {
-            ui.set_notification_text("⏳ Decoding & encrypting 2FA…".into());
+            ui.set_notification_text(tr("⏳ Decoding & encrypting 2FA…", "⏳ 2FA ডিকোড ও এনক্রিপ্ট হচ্ছে…").into());
         }
         let weak = window_weak_url.clone();
         // Universal pipeline: multi-line URIs + 2FAS/Aegis/Steam/andOTP/FreeOTP JSON.
@@ -7903,7 +7903,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             }
             Err(e) => {
                 if let Some(ui) = window_weak_url.upgrade() {
-                    ui.set_notification_text(format!("❌ Import failed: {e}").into());
+                    ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Import failed: ", "❌ ইমপোর্ট ব্যর্থ: ")).into());
                     ui.set_import_2fa_status(format!("❌ {e}").into());
                 }
             }
@@ -7945,7 +7945,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(e) => {
-                    let msg = format!("❌ Cannot read file: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("❌ Cannot read file: ", "❌ ফাইল পড়া যাচ্ছে না: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_import_2fa_status(msg.into());
@@ -7970,7 +7970,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_import_2fa_status(format!("❌ {e}").into());
-                            ui.set_notification_text(format!("❌ 2FA import failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ 2FA import failed: ", "❌ 2FA ইমপোর্ট ব্যর্থ: ")).into());
                         }
                     });
                 }
@@ -7989,7 +7989,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_notification_text("⏳ Scanning clipboard QR…".into());
+            ui.set_notification_text(tr("⏳ Scanning clipboard QR…", "⏳ ক্লিপবোর্ডের QR স্ক্যান হচ্ছে…").into());
         }
         let weak = window_weak_qr.clone();
         let vault_clone = Arc::clone(&vault_arc_qr);
@@ -8358,7 +8358,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         if let Some(ui) = pick_weak.upgrade() {
             ui.set_webcam_cam_current(wanted.into());
             ui.set_webcam_hint(String::new().into());
-            ui.set_notification_text("📷 Switched camera — point the QR…".into());
+            ui.set_notification_text(tr("📷 Switched camera — point the QR…", "📷 ক্যামেরা বদলানো হলো — QR দেখান…").into());
         }
         spawn_webcam_worker(
             pick_weak.clone(),
@@ -8388,7 +8388,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         if let Some(title) = &canary {
             if let Some(ui) = type_main.upgrade() {
                 ui.set_notification_text(
-                    format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
+                    if crate::i18n::is_bn() { format!("🚨 ক্যানারি ট্রিপ: '{title}' — লগ হয়েছে!") } else { format!("🚨 CANARY TRIPPED: '{title}' — logged!") }.into(),
                 );
                 ui.set_notification_kind("error".into());
             }
@@ -8450,7 +8450,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         };
         let Some(req) = req else {
             if let Some(ui) = type_item_main.upgrade() {
-                ui.set_notification_text("⚠️ Item not found (or in Trash) — cannot type.".into());
+                ui.set_notification_text(tr("⚠️ Item not found (or in Trash) — cannot type.", "⚠️ আইটেম পাওয়া যায়নি (বা ট্র্যাশে) — টাইপ করা যাবে না।").into());
             }
             return;
         };
@@ -8464,7 +8464,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         if let Some(title) = &tripped {
             if let Some(ui) = type_item_main.upgrade() {
                 ui.set_notification_text(
-                    format!("🚨 CANARY TRIPPED: '{title}' — logged!").into(),
+                    if crate::i18n::is_bn() { format!("🚨 ক্যানারি ট্রিপ: '{title}' — লগ হয়েছে!") } else { format!("🚨 CANARY TRIPPED: '{title}' — logged!") }.into(),
                 );
                 ui.set_notification_kind("error".into());
             }
@@ -8597,7 +8597,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             }
         };
         let Some((text, copied_msg)) = found else {
-            ui.set_notification_text("⚠️ Quick copy not available for this item.".into());
+            ui.set_notification_text(tr("⚠️ Quick copy not available for this item.", "⚠️ এই আইটেমের জন্য দ্রুত কপি নেই।").into());
             return;
         };
         let copied_msg = match check_canary_trip(&qc_vault, text.as_str(), "copy") {
@@ -8618,11 +8618,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let target = url.trim().to_string();
     let lower = target.to_lowercase();
     if !(lower.starts_with("http://") || lower.starts_with("https://")) {
-        ui.set_notification_text("⚠️ Only http(s) links can be launched.".into());
+        ui.set_notification_text(tr("⚠️ Only http(s) links can be launched.", "⚠️ শুধু http(s) লিংক খোলা যায়।").into());
         return;
     }
     if target.len() > 2048 || target.chars().any(|c| c.is_control()) {
-        ui.set_notification_text("⚠️ Link looks malformed — not launched.".into());
+        ui.set_notification_text(tr("⚠️ Link looks malformed — not launched.", "⚠️ লিংকটি ত্রুটিপূর্ণ — খোলা হলো না।").into());
         return;
     }
     match std::process::Command::new("cmd")
@@ -8630,11 +8630,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         .spawn()
     {
         Ok(_) => {
-            ui.set_notification_text("↗ Opened in browser.".into());
+            ui.set_notification_text(tr("↗ Opened in browser.", "↗ ব্রাউজারে খোলা হয়েছে।").into());
             security::access_log::log_event("open-url", "website");
         }
         Err(e) => {
-            ui.set_notification_text(format!("⚠️ Could not open link: {e}").into());
+            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Could not open link: ", "⚠️ লিংক খোলা গেল না: ")).into());
         }
     }
 }
@@ -8662,7 +8662,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .map(|c| primary_url(&c.urls));
         match url {
             Some(u) if !u.is_empty() => launch_url(&ui, &u),
-            _ => ui.set_notification_text("⚠️ No saved website for this item.".into()),
+            _ => ui.set_notification_text(tr("⚠️ No saved website for this item.", "⚠️ এই আইটেমের জন্য সংরক্ষিত ওয়েবসাইট নেই।").into()),
         }
     });
 
@@ -8722,7 +8722,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             // Login form open: fill its password field
             ui.set_new_kind(1);
             ui.set_f_b(pwd.into());
-            ui.set_notification_text("✅ Generated password filled into form!".into());
+            ui.set_notification_text(tr("✅ Generated password filled into form!", "✅ তৈরি পাসওয়ার্ড ফর্মে বসানো হয়েছে!").into());
         } else {
             // Standalone use: masked copy with guarded auto-clear
             let secs = ct_gen.load(std::sync::atomic::Ordering::SeqCst);
@@ -8786,7 +8786,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let repo = repo.as_str().trim().to_string();
         let token_in = token.as_str().trim().to_string();
         if owner.is_empty() || repo.is_empty() {
-            ui.set_sync_status("⚠️ Owner and repo are required.".into());
+            ui.set_sync_status(tr("⚠️ Owner and repo are required.", "⚠️ Owner ও repo লাগবে।").into());
             return;
         }
         if let Err(e) = sync::github_sync::save_repo(&owner, &repo) {
@@ -8799,7 +8799,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 return;
             }
         } else if !sync::github_sync::is_configured() {
-            ui.set_sync_status("⚠️ Paste a token once — it is DPAPI-sealed on save.".into());
+            ui.set_sync_status(tr("⚠️ Paste a token once — it is DPAPI-sealed on save.", "⚠️ একবার টোকেন পেস্ট করুন — সেভে DPAPI-সিল হয়ে যায়।").into());
             return;
         }
         ui.set_sync_token_input("".into());
@@ -8809,7 +8809,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         } else {
             " (ciphertext only, direct)."
         };
-        ui.set_sync_status(format!("✅ Connected to {owner}/{repo}{via}").into());
+        ui.set_sync_status(if crate::i18n::is_bn() { format!("✅ {owner}/{repo}-এ কানেক্ট হয়েছে{via}") } else { format!("✅ Connected to {owner}/{repo}{via}") }.into());
         trigger_sync_push(ui.as_weak());
     });
 
@@ -8826,7 +8826,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             );
             return;
         }
-        ui.set_sync_status("⏳ Syncing…".into());
+        ui.set_sync_status(tr("⏳ Syncing…", "⏳ সিঙ্ক হচ্ছে…").into());
         trigger_sync_push(ui.as_weak());
     });
 
@@ -8851,7 +8851,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             );
             return;
         }
-        ui.set_merge_status("⏳ Fetching remote vault…".into());
+        ui.set_merge_status(tr("⏳ Fetching remote vault…", "⏳ রিমোট ভল্ট আনা হচ্ছে…").into());
         let weak = merge_weak.clone();
         let vault_clone = Arc::clone(&merge_vault);
         let master_clone = Arc::clone(&merge_master);
@@ -8895,7 +8895,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 Err(e) => {
                     use zeroize::Zeroize;
                     token.zeroize();
-                    report(format!("⚠️ Fetch: {e}"));
+                    report(format!("{}{e}", crate::i18n::tr("⚠️ Fetch: ", "⚠️ আনা: ")));
                     return;
                 }
             };
@@ -8909,7 +8909,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             )) {
                 use zeroize::Zeroize;
                 token.zeroize();
-                report(format!("⚠️ Attachments: {e}"));
+                report(format!("{}{e}", crate::i18n::tr("⚠️ Attachments: ", "⚠️ অ্যাটাচমেন্ট: ")));
                 return;
             }
             use zeroize::Zeroize;
@@ -8918,7 +8918,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 match sync::crdt_merge::decrypt_blob_to_envelope(&master, &blob) {
                     Ok(v) => v,
                     Err(e) => {
-                        report(format!("⚠️ Remote unreadable: {e}"));
+                        report(format!("{}{e}", crate::i18n::tr("⚠️ Remote unreadable: ", "⚠️ রিমোট পড়া যাচ্ছে না: ")));
                         return;
                     }
                 };
@@ -8938,7 +8938,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let rep = match sync::crdt_merge::merge_vaults(&local, &remote_vault) {
                 Ok(r) => r,
                 Err(e) => {
-                    report(format!("⚠️ Merge: {e}"));
+                    report(format!("{}{e}", crate::i18n::tr("⚠️ Merge: ", "⚠️ মার্জ: ")));
                     return;
                 }
             };
@@ -8990,7 +8990,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let master_opt = lock_master_pw(&apply_master).clone();
         let Some(master_pw) = master_opt else {
             if let Some(ui) = apply_weak.upgrade() {
-                ui.set_merge_status("⚠️ Vault not unlocked.".into());
+                ui.set_merge_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             }
             *pending_merge_store().lock().unwrap() = Some(staged);
             return;
@@ -9027,11 +9027,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                     }
                     ui.set_merge_status(msg.into());
-                    ui.set_notification_text("🔀 Remote merged.".into());
+                    ui.set_notification_text(tr("🔀 Remote merged.", "🔀 রিমোট মার্জ হয়েছে।").into());
                     security::access_log::log_event("sync", "merge applied");
                     trigger_sync_push(ui.as_weak());
                 }
-                Err(e) => ui.set_merge_status(format!("⚠️ Merge blocked: {e}").into()),
+                Err(e) => ui.set_merge_status(format!("{}{e}", crate::i18n::tr("⚠️ Merge blocked: ", "⚠️ মার্জ আটকানো হলো: ")).into()),
             }
         }
     });
@@ -9052,10 +9052,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&share_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_share_status("⚠️ Vault not unlocked.".into());
+            ui.set_share_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
-        ui.set_share_status("⏳ Sealing envelope…".into());
+        ui.set_share_status(tr("⏳ Sealing envelope…", "⏳ এনভেলপ সিল হচ্ছে…").into());
         let iid = item_id.to_string();
         let pk = pubkey_b64.to_string();
         let weak = share_weak.clone();
@@ -9113,7 +9113,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     security::access_log::log_event("share", "grant sealed");
                     done(status, output);
                 }
-                Err(e) => done(format!("⚠️ Grant refused: {e}"), String::new()),
+                Err(e) => done(format!("{}{e}", crate::i18n::tr("⚠️ Grant refused: ", "⚠️ গ্র্যান্ট প্রত্যাখ্যাত: ")), String::new()),
             }
         });
     });
@@ -9132,7 +9132,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&revoke_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_share_status("⚠️ Vault not unlocked.".into());
+            ui.set_share_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
         let gid = grant_id.to_string();
@@ -9170,7 +9170,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 }
                 Err(e) => {
                     *vault = snapshot;
-                    done(format!("⚠️ Revoke blocked: {e}"));
+                    done(format!("{}{e}", crate::i18n::tr("⚠️ Revoke blocked: ", "⚠️ প্রত্যাহার আটকানো হলো: ")));
                 }
             }
         });
@@ -9215,10 +9215,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         match res {
             Ok(text) => {
                 ui.set_share_output(text.into());
-                ui.set_share_status("✅ Opened.".into());
+                ui.set_share_status(tr("✅ Opened.", "✅ খোলা হয়েছে।").into());
                 security::access_log::log_event("share", "envelope opened");
             }
-            Err(e) => ui.set_share_status(format!("⚠️ Open refused: {e}").into()),
+            Err(e) => ui.set_share_status(format!("{}{e}", crate::i18n::tr("⚠️ Open refused: ", "⚠️ খোলা প্রত্যাখ্যাত: ")).into()),
         }
     });
 
@@ -9235,7 +9235,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_send_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_send_status("⏳ Sealing + publishing…".into());
+        ui.set_send_status(tr("⏳ Sealing + publishing…", "⏳ সিল ও প্রকাশ হচ্ছে…").into());
         let text = note.to_string();
         let ttl_raw = ttl_minutes_raw.to_string();
         let weak = send_weak.clone();
@@ -9274,7 +9274,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     format!("LINK-CODE (send this):\n{code}\n\nPacket ID:\n{id}"),
                 ))
             };
-            let (status, output) = run().unwrap_or_else(|e| (format!("⚠️ Send refused: {e}"), String::new()));
+            let (status, output) = run().unwrap_or_else(|e| (format!("{}{e}", crate::i18n::tr("⚠️ Send refused: ", "⚠️ পাঠানো প্রত্যাখ্যাত: ")), String::new()));
             use zeroize::Zeroize;
             token.zeroize();
             if status.starts_with("✅") {
@@ -9294,7 +9294,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_send_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_send_status("⏳ Fetching + opening…".into());
+        ui.set_send_status(tr("⏳ Fetching + opening…", "⏳ আনা ও খোলা হচ্ছে…").into());
         let code = linkcode.to_string();
         let weak = read_weak.clone();
         std::thread::spawn(move || {
@@ -9346,16 +9346,16 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let (status, output) = match run() {
                 Ok((note, _id, true)) => {
                     security::access_log::log_event("send", "read + burned");
-                    ("🔥 Read + burned (one view spent).".to_string(), format!("NOTE:\n{note}"))
+                    ("🔥 Read + burned (one view spent).".to_string(), if crate::i18n::is_bn() { format!("নোট:\n{note}") } else { format!("NOTE:\n{note}") })
                 }
                 Ok((note, _id, false)) => {
                     security::access_log::log_event("send", "read, burn FAILED");
                     (
                         "⚠️ Read OK but BURN FAILED — tell the sender to delete it manually.".to_string(),
-                        format!("NOTE:\n{note}"),
+                        if crate::i18n::is_bn() { format!("নোট:\n{note}") } else { format!("NOTE:\n{note}") },
                     )
                 }
-                Err(e) => (format!("⚠️ Open refused: {e}"), String::new()),
+                Err(e) => (format!("{}{e}", crate::i18n::tr("⚠️ Open refused: ", "⚠️ খোলা প্রত্যাখ্যাত: ")), String::new()),
             };
             use zeroize::Zeroize;
             token.zeroize();
@@ -9382,11 +9382,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         })();
         match res {
             Ok(note) => {
-                ui.set_send_output(format!("NOTE:\n{note}").into());
-                ui.set_send_status("✅ Opened (pasted packet — relay untouched).".into());
+                ui.set_send_output(if crate::i18n::is_bn() { format!("নোট:\n{note}") } else { format!("NOTE:\n{note}") }.into());
+                ui.set_send_status(tr("✅ Opened (pasted packet — relay untouched).", "✅ খোলা হয়েছে (পেস্ট করা প্যাকেট — রিলে অপরিবর্তিত)।").into());
                 security::access_log::log_event("send", "pasted open");
             }
-            Err(e) => ui.set_send_status(format!("⚠️ Open refused: {e}").into()),
+            Err(e) => ui.set_send_status(format!("{}{e}", crate::i18n::tr("⚠️ Open refused: ", "⚠️ খোলা প্রত্যাখ্যাত: ")).into()),
         }
     });
 
@@ -9420,7 +9420,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 );
                 security::access_log::log_event("admin", "members imported");
             }
-            Err(e) => ui.set_admin_status(format!("⚠️ Roster blocked: {e}").into()),
+            Err(e) => ui.set_admin_status(format!("{}{e}", crate::i18n::tr("⚠️ Roster blocked: ", "⚠️ রোস্টার আটকানো হলো: ")).into()),
         }
     });
     let deprov_weak = main_window.as_weak();
@@ -9436,10 +9436,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&deprov_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_admin_status("⚠️ Vault not unlocked.".into());
+            ui.set_admin_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
-        ui.set_admin_status("⏳ Deprovisioning…".into());
+        ui.set_admin_status(tr("⏳ Deprovisioning…", "⏳ Deprovision হচ্ছে…").into());
         let addr = email.to_string();
         let weak = deprov_weak.clone();
         let vault_clone = Arc::clone(&deprov_vault);
@@ -9490,7 +9490,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                         r
                     });
-                    done(format!("⚠️ Deprovision blocked: {e}"));
+                    done(format!("{}{e}", crate::i18n::tr("⚠️ Deprovision blocked: ", "⚠️ Deprovision আটকানো হলো: ")));
                 }
             }
         });
@@ -9507,7 +9507,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_admin_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_admin_status("⏳ Verifying with provider…".into());
+        ui.set_admin_status(tr("⏳ Verifying with provider…", "⏳ প্রোভাইডারের সাথে যাচাই হচ্ছে…").into());
         let iss = issuer.to_string();
         let tok = token.to_string();
         let weak = oidc_weak.clone();
@@ -9537,7 +9537,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         format!("Verified email (paste into the roster CSV):\n{email}"),
                     );
                 }
-                Err(e) => done(format!("⚠️ Verify refused: {e}"), String::new()),
+                Err(e) => done(format!("{}{e}", crate::i18n::tr("⚠️ Verify refused: ", "⚠️ যাচাই প্রত্যাখ্যাত: ")), String::new()),
             }
         });
     });
@@ -9556,7 +9556,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let want = email.to_string();
         let fp_norm = fp.to_string().trim().to_lowercase();
         if fp_norm.len() != 64 || !fp_norm.chars().all(|c| c.is_ascii_hexdigit()) {
-            ui.set_admin_status("⚠️ Fingerprint must be 64 hex chars.".into());
+            ui.set_admin_status(tr("⚠️ Fingerprint must be 64 hex chars.", "⚠️ ফিঙ্গারপ্রিন্ট ৬৪ hex অক্ষরের হতে হবে।").into());
             return;
         }
         let mut found = false;
@@ -9567,15 +9567,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
             }
         }
         if !found {
-            ui.set_admin_status("⚠️ No such member — import first.".into());
+            ui.set_admin_status(tr("⚠️ No such member — import first.", "⚠️ এমন মেম্বার নেই — আগে ইমপোর্ট করুন।").into());
             return;
         }
         match security::admin::save_members(&roster) {
             Ok(()) => {
-                ui.set_admin_status("🔗 Key bound to member.".into());
+                ui.set_admin_status(tr("🔗 Key bound to member.", "🔗 কী মেম্বারের সাথে bind হলো।").into());
                 security::access_log::log_event("admin", "member key bound");
             }
-            Err(e) => ui.set_admin_status(format!("⚠️ Bind blocked: {e}").into()),
+            Err(e) => ui.set_admin_status(format!("{}{e}", crate::i18n::tr("⚠️ Bind blocked: ", "⚠️ bind আটকানো হলো: ")).into()),
         }
     });
     // Audit export: chain-verified JSON (entries + validity flag) to a
@@ -9591,10 +9591,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         if lock_master_pw(&audit_master).as_ref().is_none() {
-            ui.set_admin_status("⚠️ Vault not unlocked.".into());
+            ui.set_admin_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         }
-        ui.set_admin_status("⏳ Pick export path…".into());
+        ui.set_admin_status(tr("⏳ Pick export path…", "⏳ এক্সপোর্ট পাথ বাছুন…").into());
         let weak = audit_weak.clone();
         std::thread::spawn(move || {
             let dest = rfd::FileDialog::new()
@@ -9612,7 +9612,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             };
             let res = (|| -> Result<String, String> {
                 let bytes = security::admin::export_audit()?;
-                std::fs::write(&dest, &bytes).map_err(|e| format!("write failed: {e}"))?;
+                std::fs::write(&dest, &bytes).map_err(|e| format!("{}{e}", crate::i18n::tr("write failed: ", "লেখা ব্যর্থ: ")))?;
                 Ok(format!("📜 Audit exported ({} bytes).", bytes.len()))
             })();
             let _ = slint::invoke_from_event_loop(move || {
@@ -9622,7 +9622,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             ui.set_admin_status(msg.into());
                             security::access_log::log_event("admin", "audit exported");
                         }
-                        Err(e) => ui.set_admin_status(format!("⚠️ Export blocked: {e}").into()),
+                        Err(e) => ui.set_admin_status(format!("{}{e}", crate::i18n::tr("⚠️ Export blocked: ", "⚠️ এক্সপোর্ট আটকানো হলো: ")).into()),
                     }
                 }
             });
@@ -9891,7 +9891,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_p2p_last_sync(
                             format!("{ip} · {:02}:{:02} UTC", (now_s / 3600) % 24, (now_s / 60) % 60).into(),
                         );
-                        ui.set_notification_text("📡 LAN sync complete.".into());
+                        ui.set_notification_text(tr("📡 LAN sync complete.", "📡 LAN সিঙ্ক সম্পন্ন।").into());
                     }
                     Err(e) => ui.set_p2p_status(e.into()),
                 }
@@ -9908,7 +9908,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = upd_weak.upgrade() else {
             return;
         };
-        ui.set_update_status("⏳ Checking GitHub releases…".into());
+        ui.set_update_status(tr("⏳ Checking GitHub releases…", "⏳ GitHub রিলিজ দেখা হচ্ছে…").into());
         let weak = upd_weak.clone();
         let info_arc = Arc::clone(&upd_info0);
         std::thread::spawn(move || {
@@ -9918,7 +9918,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 };
                 match res {
-                    Err(e) => ui.set_update_status(format!("⚠️ Update check failed: {e}").into()),
+                    Err(e) => ui.set_update_status(format!("{}{e}", crate::i18n::tr("⚠️ Update check failed: ", "⚠️ আপডেট যাচাই ব্যর্থ: ")).into()),
                     Ok(None) => {
                         ui.set_update_tag(String::new().into());
                         ui.set_update_ready(false);
@@ -9954,7 +9954,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let info = dl_info.lock().ok().and_then(|g| g.clone());
         let Some(info) = info else {
-            ui.set_update_status("⚠️ Check for updates first.".into());
+            ui.set_update_status(tr("⚠️ Check for updates first.", "⚠️ আগে আপডেট দেখুন।").into());
             return;
         };
         ui.set_update_status(format!("⏳ Downloading {}…", info.asset_name).into());
@@ -9970,13 +9970,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     return;
                 };
                 match res {
-                    Err(e) => ui.set_update_status(format!("⚠️ Update failed: {e}").into()),
+                    Err(e) => ui.set_update_status(format!("{}{e}", crate::i18n::tr("⚠️ Update failed: ", "⚠️ আপডেট ব্যর্থ: ")).into()),
                     Ok(bat) => {
                         if let Ok(mut g) = bat_arc.lock() {
                             *g = Some(bat);
                         }
                         ui.set_update_ready(true);
-                        ui.set_update_status("✅ Staged! Click “Restart to Update” — the app swaps itself after exit.".into());
+                        ui.set_update_status(tr("✅ Staged! Click “Restart to Update” — the app swaps itself after exit.", "✅ স্টেজ হয়েছে! “Restart to Update” চাপুন — বন্ধ হলে অ্যাপ নিজেই বদলে যাবে।").into());
                         security::access_log::log_event("update", &format!("staged {}", info.tag));
                     }
                 }
@@ -9989,7 +9989,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let bat = rt_bat.lock().ok().and_then(|g| g.clone());
         let Some(bat) = bat else {
             if let Some(ui) = rt_weak.upgrade() {
-                ui.set_update_status("⚠️ Download an update first.".into());
+                ui.set_update_status(tr("⚠️ Download an update first.", "⚠️ আগে আপডেট ডাউনলোড করুন।").into());
             }
             return;
         };
@@ -10011,11 +10011,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         // L5: Chrome/Edge/Brave IDs are 32 lowercase chars — reject
         // `*`/short/prefixed paste before it becomes a wildcard manifest.
         if !(id.len() == 32 && id.bytes().all(|b| b.is_ascii_lowercase())) {
-            ui.set_bridge_status("⚠️ Extension ID must be 32 lowercase letters (chrome://extensions → Developer mode).".into());
+            ui.set_bridge_status(tr("⚠️ Extension ID must be 32 lowercase letters (chrome://extensions → Developer mode).", "⚠️ এক্সটেনশন ID ৩২টি ছোট হাতের অক্ষর হতে হবে (chrome://extensions → Developer mode)।").into());
             return;
         }
         let origin = format!("chrome-extension://{id}/");
-        ui.set_bridge_status("⏳ Installing browser extension host…".into());
+        ui.set_bridge_status(tr("⏳ Installing browser extension host…", "⏳ ব্রাউজার এক্সটেনশন হোস্ট ইনস্টল হচ্ছে…").into());
         let weak = host_weak.clone();
         std::thread::spawn(move || {
             // Registry writes are milliseconds; kept off-thread for uniformity.
@@ -10027,7 +10027,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_bridge_status(match res {
                         Ok(path) => format!("🌐 Host installed → {path} (locked to {origin}). Reload the extension and retry.").into(),
-                        Err(e) => format!("⚠️ Host install failed: {e}").into(),
+                        Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Host install failed: ", "⚠️ হোস্ট ইনস্টল ব্যর্থ: ")).into(),
                     });
                 }
             });
@@ -10041,7 +10041,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let Some(ui) = ffhost_weak.upgrade() else {
             return;
         };
-        ui.set_bridge_status("🦊 Installing Firefox extension host…".into());
+        ui.set_bridge_status(tr("🦊 Installing Firefox extension host…", "🦊 Firefox এক্সটেনশন হোস্ট ইনস্টল হচ্ছে…").into());
         let weak = ffhost_weak.clone();
         std::thread::spawn(move || {
             let res = windows_native::native_host::register_firefox_host(
@@ -10054,7 +10054,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_bridge_status(match res {
                         Ok(path) => format!("✅ Firefox host installed — {path} (locked to {}). Load dist/firefox/ via about:debugging.", windows_native::native_host::FIREFOX_ADDON_ID).into(),
-                        Err(e) => format!("⚠️ Firefox host install failed: {e}").into(),
+                        Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Firefox host install failed: ", "⚠️ Firefox হোস্ট ইনস্টল ব্যর্থ: ")).into(),
                     });
                 }
             });
@@ -10081,11 +10081,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_alias_provider(provider_int);
                 ui.set_alias_domain(domain.as_str().into());
                 ui.set_alias_token("".into());
-                ui.set_notification_text("🎭 Alias provider saved (token sealed).".into());
+                ui.set_notification_text(tr("🎭 Alias provider saved (token sealed).", "🎭 অ্যালিয়াস প্রোভাইডার সেভ হয়েছে (টোকেন সিলড)।").into());
                 security::access_log::log_event("alias", "config saved");
             }
             Err(e) => {
-                ui.set_notification_text(format!("⚠️ Alias save failed: {e}").into());
+                ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Alias save failed: ", "⚠️ অ্যালিয়াস সেভ ব্যর্থ: ")).into());
             }
         }
     });
@@ -10099,13 +10099,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_notification_text("🎭 Requesting alias…".into());
+        ui.set_notification_text(tr("🎭 Requesting alias…", "🎭 অ্যালিয়াস চাওয়া হচ্ছে…").into());
         let weak = alias_gen_weak.clone();
         std::thread::spawn(move || {
             let (provider, domain, token) = match core::email_alias::load_config() {
                 Ok(c) => c,
                 Err(e) => {
-                    let msg = format!("⚠️ Alias not configured: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("⚠️ Alias not configured: ", "⚠️ অ্যালিয়াস কনফিগার করা নেই: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -10117,7 +10117,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(rt) = tokio_rt() else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ Could not start network runtime.".into());
+                        ui.set_notification_text(tr("⚠️ Could not start network runtime.", "⚠️ নেটওয়ার্ক রানটাইম চালু হলো না।").into());
                     }
                 });
                 return;
@@ -10145,11 +10145,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     match res {
                         Ok(email) => {
                             ui.set_f_a(email.into());
-                            ui.set_notification_text("🎭 Alias generated into username.".into());
+                            ui.set_notification_text(tr("🎭 Alias generated into username.", "🎭 অ্যালিয়াস ইউজারনেমে বসানো হয়েছে।").into());
                             security::access_log::log_event("alias", "generated");
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("⚠️ Alias failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Alias failed: ", "⚠️ অ্যালিয়াস ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -10192,7 +10192,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&plant_master).clone();
         let Some(master_pw) = master_opt else {
-            ui.set_sync_status("⚠️ Vault not unlocked.".into());
+            ui.set_sync_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
         let weak = plant_weak.clone();
@@ -10233,10 +10233,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             qb.set_filtered_results(vault_quickbar(&vault, "", search_clone.lock().unwrap().travel_only));
                         }
                         ui.set_sync_status(
-                            format!("🐤 Honeytoken '{title}' planted — never touch it yourself.").into(),
+                            if crate::i18n::is_bn() { format!("🐤 হানিটোকেন '{title}' বসানো হয়েছে — নিজে কখনো ছোঁবেন না।") } else { format!("🐤 Honeytoken '{title}' planted — never touch it yourself.") }.into(),
                         );
                     } else {
-                        ui.set_sync_status("⚠️ Canary save failed.".into());
+                        ui.set_sync_status(tr("⚠️ Canary save failed.", "⚠️ ক্যানারি সেভ ব্যর্থ।").into());
                     }
                 }
             });
@@ -10258,11 +10258,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let rp_id = rp.as_str().trim().to_lowercase();
         let user_name = user.as_str().trim().to_string();
         if rp_id.is_empty() || user_name.is_empty() {
-            ui.set_notification_text("⚠️ Relying party + username required.".into());
+            ui.set_notification_text(tr("⚠️ Relying party + username required.", "⚠️ Relying party + ইউজারনেম লাগবে।").into());
             return;
         }
         if rp_id.contains(char::is_whitespace) || !rp_id.contains('.') {
-            ui.set_notification_text("⚠️ rp_id must look like a domain (e.g. github.com).".into());
+            ui.set_notification_text(tr("⚠️ rp_id must look like a domain (e.g. github.com).", "⚠️ rp_id ডোমেইনের মতো হতে হবে (যেমন github.com)।").into());
             return;
         }
         let master_opt = lock_master_pw(&pk_reg_master).clone();
@@ -10270,7 +10270,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
-        ui.set_notification_text("⏳ Generating Ed25519 passkey…".into());
+        ui.set_notification_text(tr("⏳ Generating Ed25519 passkey…", "⏳ Ed25519 পাসকি তৈরি হচ্ছে…").into());
         let weak = pk_reg_weak.clone();
         let vault_clone = Arc::clone(&pk_reg_vault);
         std::thread::spawn(move || {
@@ -10298,12 +10298,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_pk_rp("".into());
                         ui.set_pk_user("".into());
                         ui.set_notification_text(
-                            format!("🔑 Passkey registered for '{title}'.").into(),
+                            if crate::i18n::is_bn() { format!("🔑 '{title}'-এর জন্য পাসকি রেজিস্টার হয়েছে।") } else { format!("🔑 Passkey registered for '{title}'.") }.into(),
                         );
                         security::access_log::log_event("passkey", "register");
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Register failed: {e}").into());
+                        ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Register failed: ", "❌ রেজিস্টার ব্যর্থ: ")).into());
                     }
                 }
             });
@@ -10366,7 +10366,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
                         set_trash_label(&ui, &v);
                         if permanent {
-                            ui.set_notification_text("🔥 Passkey permanently shredded.".into());
+                            ui.set_notification_text(tr("🔥 Passkey permanently shredded.", "🔥 পাসকি স্থায়ীভাবে ধ্বংস হয়েছে।").into());
                             security::access_log::log_event("passkey", "delete");
                         } else {
                             ui.set_notification_text(
@@ -10498,7 +10498,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ui.set_ga_busy(true);
         ui.set_ga_status(tr("Building migration QR from the local vault…", "লোকাল ভল্ট থেকে মাইগ্রেশন QR তৈরি হচ্ছে…").into());
         ui.set_ga_show(true);
-        ui.set_notification_text("⏳ Building migration QR…".into());
+        ui.set_notification_text(tr("⏳ Building migration QR…", "⏳ মাইগ্রেশন QR তৈরি হচ্ছে…").into());
         let weak = ga_weak.clone();
         let pages_arc = Arc::clone(&ga_pages0);
         let idx_arc = Arc::clone(&ga_idx0);
@@ -10513,8 +10513,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 match built {
                     Err(e) => {
                         ui.set_ga_busy(false);
-                        ui.set_ga_status(format!("Export failed: {e}").into());
-                        ui.set_notification_text(format!("⚠️ GA export: {e}").into());
+                        ui.set_ga_status(format!("{}{e}", crate::i18n::tr("Export failed: ", "এক্সপোর্ট ব্যর্থ: ")).into());
+                        ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ GA export: ", "⚠️ GA এক্সপোর্ট: ")).into());
                     }
                     Ok((uris, skipped, lossy)) => {
                         let mut pages = Vec::new();
@@ -10528,7 +10528,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         if pages.is_empty() {
                             ui.set_ga_busy(false);
                             ui.set_ga_status(tr("Export failed: the QR renderer produced no pages.", "এক্সপোর্ট ব্যর্থ: QR রেন্ডারার কোনো পেজ দেয়নি।").into());
-                            ui.set_notification_text("⚠️ GA export: QR render failed.".into());
+                            ui.set_notification_text(tr("⚠️ GA export: QR render failed.", "⚠️ GA এক্সপোর্ট: QR তৈরি ব্যর্থ।").into());
                             return;
                         }
                         let mut skipped_all = skipped;
@@ -10546,7 +10546,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             ga_show_page(&ui, &g, 0);
                         }
                         security::access_log::log_event("export", "ga-qr");
-                        ui.set_notification_text("📲 Scan the QR with Google Authenticator.".into());
+                        ui.set_notification_text(tr("📲 Scan the QR with Google Authenticator.", "📲 Google Authenticator দিয়ে QR স্ক্যান করুন।").into());
                         return;
                     }
                 }
@@ -10685,7 +10685,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_passkeys(rebuild_passkeys(&v, f.fav_only));
                         ui.set_passkeys_trash(rebuild_trashed_passkeys(&v));
                         set_trash_label(&ui, &v);
-                        ui.set_notification_text("♻️ Passkey restored to the hub.".into());
+                        ui.set_notification_text(tr("♻️ Passkey restored to the hub.", "♻️ পাসকি হাবে ফিরে এসেছে।").into());
                         security::access_log::log_event("passkey", "restore");
                         trigger_sync_push(ui.as_weak());
                     }
@@ -10806,7 +10806,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some((code, remaining)) = fresh else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ Could not generate a code for that card.".into());
+                        ui.set_notification_text(tr("⚠️ Could not generate a code for that card.", "⚠️ ওই কার্ডের কোড তৈরি করা গেল না।").into());
                     }
                 });
                 return;
@@ -10937,11 +10937,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_auth_accounts(rebuild_auth_list(&vault));
                 ui.set_auth_rows(rebuild_auth_rows(&vault, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
                 drop(vault);
-                ui.set_notification_text(format!("✅ Imported {imported} 2FA account(s).").into());
+                ui.set_notification_text(if crate::i18n::is_bn() { format!("✅ {imported}টি 2FA অ্যাকাউন্ট ইমপোর্ট হয়েছে।") } else { format!("✅ Imported {imported} 2FA account(s).") }.into());
                 trigger_sync_push(ui.as_weak());
             }
             Err(e) => {
-                ui.set_notification_text(format!("⚠️ Import failed: {e}").into());
+                ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Import failed: ", "⚠️ ইমপোর্ট ব্যর্থ: ")).into());
             }
         }
     });
@@ -10959,7 +10959,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let _ = pending_twofa_store().lock().unwrap_or_else(|p| p.into_inner()).take();
         if let Some(ui) = dup_cancel_ui.upgrade() {
             ui.set_show_dup_confirm(false);
-            ui.set_notification_text("🚫 Import cancelled — nothing was added.".into());
+            ui.set_notification_text(tr("🚫 Import cancelled — nothing was added.", "🚫 ইমপোর্ট বাতিল — কিছু যোগ হয়নি।").into());
         }
     });
 
@@ -11034,7 +11034,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let vault = lock_vault(&pk_copy_vault);
         let Some(found) = vault.passkeys.iter().find(|p| p.id == id.as_str()) else {
-            ui.set_notification_text("⚠️ Passkey not found.".into());
+            ui.set_notification_text(tr("⚠️ Passkey not found.", "⚠️ পাসকি পাওয়া যায়নি।").into());
             return;
         };
         use base64::Engine as _;
@@ -11065,7 +11065,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_notification_text(tr("❌ Vault not unlocked!", "❌ ভল্ট আনলক করা নেই!").into());
             return;
         };
-        ui.set_notification_text("🖨️ Choose where to save the recovery sheet…".into());
+        ui.set_notification_text(tr("🖨️ Choose where to save the recovery sheet…", "🖨️ রিকভারি শিট কোথায় সেভ করবেন বাছুন…").into());
         let weak = sheet_weak.clone();
         std::thread::spawn(move || {
             // Native dialog blocks this worker only — UI stays responsive.
@@ -11086,7 +11086,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let sheets = match security::shamir::Shamir::split(master_pw.expose_secret()) {
                 Ok(s) => s,
                 Err(e) => {
-                    let msg = format!("❌ Sheet failed: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("❌ Sheet failed: ", "❌ শিট ব্যর্থ: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -11109,7 +11109,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                     ui.set_notification_text(match res {
                         Ok(()) => "🖨️ Recovery sheet saved — print + store fireproof.".into(),
-                        Err(e) => format!("❌ Sheet failed: {e}").into(),
+                        Err(e) => format!("{}{e}", crate::i18n::tr("❌ Sheet failed: ", "❌ শিট ব্যর্থ: ")).into(),
                     });
                 }
             });
@@ -11216,7 +11216,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         Ok(v) => {
                             sync_folders_to_ui(&v, &ui);
                             ui.set_new_folder_name("".into());
-                            ui.set_notification_text("📁 Folder created.".into());
+                            ui.set_notification_text(tr("📁 Folder created.", "📁 ফোল্ডার তৈরি হয়েছে।").into());
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
@@ -11238,16 +11238,16 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let name = name.as_str().trim().to_string();
         let value = value.as_str().to_string();
         if name.is_empty() || name.len() > 64 {
-            ui.set_notification_text("⚠️ Field needs a short label!".into());
+            ui.set_notification_text(tr("⚠️ Field needs a short label!", "⚠️ ফিল্ডের ছোট লেবেল লাগবে!").into());
             return;
         }
         let mut pending = cf_pending.lock().unwrap();
         if pending.len() >= 24 {
-            ui.set_notification_text("⚠️ Max 24 custom fields.".into());
+            ui.set_notification_text(tr("⚠️ Max 24 custom fields.", "⚠️ সর্বোচ্চ ২৪টি কাস্টম ফিল্ড।").into());
             return;
         }
         if pending.iter().any(|f| f.name == name) {
-            ui.set_notification_text("⚠️ Field label already used.".into());
+            ui.set_notification_text(tr("⚠️ Field label already used.", "⚠️ লেবেলটি আগেই ব্যবহৃত।").into());
             return;
         }
         // Linked fields mirror a live item field — value is only ever
@@ -11256,7 +11256,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             match value.as_str() {
                 "username" | "password" => value,
                 _ => {
-                    ui.set_notification_text("⚠️ Pick Username or Password target.".into());
+                    ui.set_notification_text(tr("⚠️ Pick Username or Password target.", "⚠️ Username বা Password টার্গেট বাছুন।").into());
                     return;
                 }
             }
@@ -11305,7 +11305,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let mut rows = f_urls_vec(&ui);
         if rows.len() >= 10 {
-            ui.set_notification_text("⚠️ Max 10 websites.".into());
+            ui.set_notification_text(tr("⚠️ Max 10 websites.", "⚠️ সর্বোচ্চ ১০টি ওয়েবসাইট।").into());
             return;
         }
         rows.push("".into());
@@ -11854,7 +11854,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let Some(pw) = pw else { return; };
         if !net_allowed() {
-            ui.set_notification_text("📴 Offline — breach check skipped.".into());
+            ui.set_notification_text(tr("📴 Offline — breach check skipped.", "📴 অফলাইন — ফাঁস যাচাই বাদ।").into());
             return;
         }
         ui.set_d_breach_busy(true);
@@ -12195,7 +12195,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     ui.set_notification_text(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                     return;
                 }
-                ui.set_export_status("⚠️ Plaintext export — pick a destination…".into());
+                ui.set_export_status(tr("⚠️ Plaintext export — pick a destination…", "⚠️ প্লেইনটেক্সট এক্সপোর্ট — গন্তব্য বাছুন…").into());
                 let weak = rp_main.clone();
                 let vault_clone = Arc::clone(&rp_del_vault);
                 let export_backup =
@@ -12364,7 +12364,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                         ui.set_pq_backup_ready(true);
                                     }
                                     ui.set_export_status(
-                                        format!("✅ Exported {summary} → {path_str}. Shred it after moving!")
+                                        if crate::i18n::is_bn() { format!("✅ {summary} → {path_str} এক্সপোর্ট হয়েছে। সরানোর পর shred করুন!") } else { format!("✅ Exported {summary} → {path_str}. Shred it after moving!") }
                                             .into(),
                                     );
                                     ui.set_notification_text(
@@ -12394,7 +12394,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                     security::access_log::log_event("export", "file");
                                 }
                                 Err(e) => {
-                                    ui.set_export_status(format!("❌ Export failed: {e}").into());
+                                    ui.set_export_status(format!("{}{e}", crate::i18n::tr("❌ Export failed: ", "❌ এক্সপোর্ট ব্যর্থ: ")).into());
                                 }
                             }
                         }
@@ -12425,10 +12425,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if security::shamir::Shamir::check_drill(ui.get_shard_1().as_str(), w2.as_str(), w4.as_str()) {
             mark_recovery_exported();
             ui.set_recovery_backed_up(true);
-            ui.set_drill_status("✅ Drill passed — paper copy verified.".into());
+            ui.set_drill_status(tr("✅ Drill passed — paper copy verified.", "✅ ড্রিল পাস — কাগজের কপি যাচাই হয়েছে।").into());
             security::access_log::log_event("export", "recovery-drill ok");
         } else {
-            ui.set_drill_status("❌ No match — copy words #2 and #4 exactly.".into());
+            ui.set_drill_status(tr("❌ No match — copy words #2 and #4 exactly.", "❌ মিলছে না — #২ ও #৪ শব্দ হুবহু লিখুন।").into());
         }
     });
     // Post-setup nudge actions: Generate runs the same split core (marks the
@@ -12523,7 +12523,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             )
             .into(),
         );
-        ui.set_emg_status("🔑 Grantee keypair created in RAM only.".into());
+        ui.set_emg_status(tr("🔑 Grantee keypair created in RAM only.", "🔑 গ্র্যান্টি কীপেয়ার শুধু RAM-এ তৈরি।").into());
         security::access_log::log_event("emergency", "keypair created");
     });
     // Grantor: approve a pasted grantee public key + publish request+approval.
@@ -12536,7 +12536,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_emg_status("⏳ Publishing grant request…".into());
+        ui.set_emg_status(tr("⏳ Publishing grant request…", "⏳ গ্র্যান্ট অনুরোধ প্রকাশ হচ্ছে…").into());
         let pk = pubkey_b64.to_string();
         let wh = wait_hours_raw.to_string();
         let weak = emgpub_weak.clone();
@@ -12587,7 +12587,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ))
             };
             use zeroize::Zeroize;
-            let msg = run().unwrap_or_else(|e| format!("⚠️ Grant refused: {e}"));
+            let msg = run().unwrap_or_else(|e| format!("{}{e}", crate::i18n::tr("⚠️ Grant refused: ", "⚠️ গ্র্যান্ট প্রত্যাখ্যাত: ")));
             token.zeroize();
             if msg.starts_with("✅") {
                 security::access_log::log_event("emergency", "request published");
@@ -12609,10 +12609,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let master_opt = lock_master_pw(&emgrel_master).clone();
         let Some(master) = master_opt else {
-            ui.set_emg_status("⚠️ Vault not unlocked.".into());
+            ui.set_emg_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
             return;
         };
-        ui.set_emg_status("⏳ Sealing envelope…".into());
+        ui.set_emg_status(tr("⏳ Sealing envelope…", "⏳ এনভেলপ সিল হচ্ছে…").into());
         let gid = grant_id.to_string();
         let weak = emgrel_weak.clone();
         std::thread::spawn(move || {
@@ -12661,7 +12661,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     .map_err(|e| e.to_string())?;
                 Ok("✅ Envelope released + published. Grantee: Fetch Envelope → Open → shard recovery.".to_string())
             };
-            let msg = run().unwrap_or_else(|e| format!("⚠️ Release refused: {e}"));
+            let msg = run().unwrap_or_else(|e| format!("{}{e}", crate::i18n::tr("⚠️ Release refused: ", "⚠️ রিলিজ প্রত্যাখ্যাত: ")));
             use zeroize::Zeroize;
             token.zeroize();
             if msg.starts_with("✅") {
@@ -12680,7 +12680,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_emg_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
             return;
         }
-        ui.set_emg_status("⏳ Fetching envelope…".into());
+        ui.set_emg_status(tr("⏳ Fetching envelope…", "⏳ এনভেলপ আনা হচ্ছে…").into());
         let gid = grant_id.to_string();
         let weak = emgfetch_weak.clone();
         std::thread::spawn(move || {
@@ -12723,12 +12723,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_emg_env_input(b64.into());
-                            ui.set_emg_status("📥 Envelope fetched — paste your private key, then Open.".into());
+                            ui.set_emg_status(tr("📥 Envelope fetched — paste your private key, then Open.", "📥 এনভেলপ আনা হয়েছে — প্রাইভেট কী পেস্ট করে Open চাপুন।").into());
                         }
                     });
                 }
                 Ok(None) => report("⚠️ No envelope yet — grant not mature or not released.".into()),
-                Err(e) => report(format!("⚠️ Relay: {e}")),
+                Err(e) => report(format!("{}{e}", crate::i18n::tr("⚠️ Relay: ", "⚠️ রিলে: "))),
             }
         });
     });
@@ -12762,10 +12762,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
         match res {
             Ok(text) => {
                 ui.set_emg_output(text.into());
-                ui.set_emg_status("✅ Opened. Store the shards like paper — then shred this view.".into());
+                ui.set_emg_status(tr("✅ Opened. Store the shards like paper — then shred this view.", "✅ খোলা হয়েছে। শার্ড কাগজের মতো রাখুন — তারপর এই ভিউ ধ্বংস করুন।").into());
                 security::access_log::log_event("emergency", "envelope opened");
             }
-            Err(e) => ui.set_emg_status(format!("⚠️ Open refused: {e}").into()),
+            Err(e) => ui.set_emg_status(format!("{}{e}", crate::i18n::tr("⚠️ Open refused: ", "⚠️ খোলা প্রত্যাখ্যাত: ")).into()),
         }
     });
 
@@ -12812,7 +12812,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(master_pw) = master_opt else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_import_status("⚠️ Vault not unlocked.".into());
+                        ui.set_import_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
                     }
                 });
                 return;
@@ -12866,7 +12866,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_import_backup_pass("".into());
                     }
                     Err(e) => {
-                        ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
+                        ui.set_import_status(format!("{}{e}", crate::i18n::tr("⚠️ Import blocked: ", "⚠️ ইমপোর্ট আটকানো হলো: ")).into());
                         ui.set_import_kind("error".into());
                     }
                 }
@@ -12894,7 +12894,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         );
         if let Some(ui) = confirm_weak.upgrade() {
             ui.set_show_import_preview(false);
-            ui.set_import_status("⏳ Merging…".into());
+            ui.set_import_status(tr("⏳ Merging…", "⏳ মার্জ হচ্ছে…").into());
         }
         let weak = confirm_weak.clone();
         let vault_clone = Arc::clone(&confirm_vault);
@@ -12908,7 +12908,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_show_import_preview(true);
-                        ui.set_import_status("⚠️ Vault not unlocked.".into());
+                        ui.set_import_status(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
                     }
                 });
                 return;
@@ -12980,7 +12980,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         trigger_favicon_prefetch(imp_fav_vc, imp_fav_sc, imp_fav_w);
                     }
                     Err(e) => {
-                        ui.set_import_status(format!("⚠️ Import blocked: {e}").into());
+                        ui.set_import_status(format!("{}{e}", crate::i18n::tr("⚠️ Import blocked: ", "⚠️ ইমপোর্ট আটকানো হলো: ")).into());
                         ui.set_import_kind("error".into());
                     }
                 }
@@ -13083,7 +13083,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_notification_text(tr("Import undone (session snapshot).", "ইমপোর্ট আনডু (সেশন স্ন্যাপশট)।").into());
                         trigger_sync_push(ui.as_weak());
                     }
-                    Err(e) => ui.set_import_status(format!("Undo failed: {e}").into()),
+                    Err(e) => ui.set_import_status(format!("{}{e}", crate::i18n::tr("Undo failed: ", "আনডু ব্যর্থ: ")).into()),
                 }
             });
         });
@@ -13125,7 +13125,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if target.trim().is_empty() {
             return;
         }
-        ui.set_import_status("🔥 Shredding plaintext source…".into());
+        ui.set_import_status(tr("🔥 Shredding plaintext source…", "🔥 প্লেইনটেক্সট সোর্স ধ্বংস হচ্ছে…").into());
         let weak = shred_weak_yes.clone();
         std::thread::spawn(move || {
             let res = security::shredder::shred_file(std::path::Path::new(&target));
@@ -13136,7 +13136,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if let Some(ui) = weak.upgrade() {
                     ui.set_import_status(match res {
                         Ok(()) => "🔥 Source shredded — no plaintext remains.".into(),
-                        Err(e) => format!("⚠️ Shred failed: {e}").into(),
+                        Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Shred failed: ", "⚠️ shred ব্যর্থ: ")).into(),
                     });
                 }
             });
@@ -13159,7 +13159,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_sync_status("⏳ Pick a carrier PNG…".into());
+            ui.set_sync_status(tr("⏳ Pick a carrier PNG…", "⏳ ক্যারিয়ার PNG বাছুন…").into());
         }
         let weak = stego_weak.clone();
         std::thread::spawn(move || {
@@ -13191,7 +13191,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let payload = match std::fs::read(VAULT_FILE) {
                 Ok(b) => b,
                 Err(e) => {
-                    let msg = format!("⚠️ Cannot read vault: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("⚠️ Cannot read vault: ", "⚠️ ভল্ট পড়া যাচ্ছে না: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_sync_status(msg.into());
@@ -13221,7 +13221,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 ui.set_sync_status(tr("⛔ Decoy mode is read-only.", "⛔ ডিকয় মোড রিড-অনলি।").into());
                 return;
             }
-            ui.set_sync_status("⏳ Pick a concealed PNG…".into());
+            ui.set_sync_status(tr("⏳ Pick a concealed PNG…", "⏳ লুকানো PNG বাছুন…").into());
         }
         let weak = stegor_weak.clone();
         std::thread::spawn(move || {
@@ -13265,7 +13265,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 "🔓 Vault restored from image. Previous kept as .bak.enc.".into(),
                             );
                         }
-                        Err(e) => ui.set_sync_status(format!("⚠️ Adopt failed: {e}").into()),
+                        Err(e) => ui.set_sync_status(format!("{}{e}", crate::i18n::tr("⚠️ Adopt failed: ", "⚠️ গ্রহণ ব্যর্থ: ")).into()),
                     }
                 }
             });
@@ -13303,7 +13303,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         f.travel_only = true;
         *travel_search.lock().unwrap() = f.clone();
         set_paged_credentials(&ui, vault_to_items(&vault, &f));
-        ui.set_notification_text("✈️ TRAVEL MODE ACTIVE — only travel-safe items shown.".into());
+        ui.set_notification_text(tr("✈️ TRAVEL MODE ACTIVE — only travel-safe items shown.", "✈️ ট্রাভেল মোড চালু — শুধু ট্রাভেল-সেফ আইটেম দেখানো হচ্ছে।").into());
     });
 
     // --- Attachments: pick / download / delete (logins + licenses) ---
@@ -13345,7 +13345,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let file_size = match std::fs::metadata(&path) {
                 Ok(m) => m.len(),
                 Err(e) => {
-                    let msg = format!("⚠️ Cannot stat file: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("⚠️ Cannot stat file: ", "⚠️ ফাইলের তথ্য পড়া যাচ্ছে না: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -13357,7 +13357,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             if file_size > models::MAX_SIDECAR_ATTACHMENT_BYTES as u64 {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ File exceeds 50MB.".into());
+                        ui.set_notification_text(tr("⚠️ File exceeds 50MB.", "⚠️ ফাইল ৫০MB-এর বেশি।").into());
                     }
                 });
                 return;
@@ -13369,7 +13369,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 match std::fs::read(&path) {
                     Ok(b) => b,
                     Err(e) => {
-                        let msg = format!("⚠️ Cannot read file: {e}");
+                        let msg = format!("{}{e}", crate::i18n::tr("⚠️ Cannot read file: ", "⚠️ ফাইল পড়া যাচ্ছে না: "));
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak.upgrade() {
                                 ui.set_notification_text(msg.into());
@@ -13382,7 +13382,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             if !use_sidecar && bytes.len() > models::MAX_ATTACHMENT_BYTES {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ File changed size while reading; retry.".into());
+                        ui.set_notification_text(tr("⚠️ File changed size while reading; retry.", "⚠️ পড়ার সময় ফাইলের আকার বদলেছে; আবার চেষ্টা করুন।").into());
                     }
                 });
                 return;
@@ -13425,7 +13425,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if list.len() >= 10 {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_notification_text("⚠️ Max 10 attachments per item.".into());
+                            ui.set_notification_text(tr("⚠️ Max 10 attachments per item.", "⚠️ প্রতি আইটেমে সর্বোচ্চ ১০টি অ্যাটাচমেন্ট।").into());
                         }
                     });
                     return;
@@ -13441,7 +13441,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = weak.upgrade() {
                                     ui.set_notification_text(
-                                        format!("⚠️ Attachment folder: {e}").into(),
+                                        format!("{}{e}", crate::i18n::tr("⚠️ Attachment folder: ", "⚠️ অ্যাটাচমেন্ট ফোল্ডার: ")).into(),
                                     );
                                 }
                             });
@@ -13454,7 +13454,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = weak.upgrade() {
                                     ui.set_notification_text(
-                                        format!("⚠️ Cannot open file: {e}").into(),
+                                        format!("{}{e}", crate::i18n::tr("⚠️ Cannot open file: ", "⚠️ ফাইল খোলা যাচ্ছে না: ")).into(),
                                     );
                                 }
                             });
@@ -13536,12 +13536,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             );
                             trigger_sync_push(ui.as_weak());
                         } else {
-                            ui.set_notification_text("📎 File sealed into vault.".into());
+                            ui.set_notification_text(tr("📎 File sealed into vault.", "📎 ফাইল ভল্টে সিল হলো।").into());
                             trigger_sync_push(ui.as_weak());
                         }
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Attach failed: {e}").into());
+                        ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Attach failed: ", "❌ অ্যাটাচ করা ব্যর্থ: ")).into());
                     }
                 }
             });
@@ -13565,7 +13565,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 .map(|a| a.filename.clone())
         };
         let Some(filename) = filename else {
-            ui.set_notification_text("⚠️ Attachment not found.".into());
+            ui.set_notification_text(tr("⚠️ Attachment not found.", "⚠️ অ্যাটাচমেন্ট পাওয়া যায়নি।").into());
             return;
         };
         let weak = dl_weak.clone();
@@ -13599,7 +13599,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         let _ = slint::invoke_from_event_loop(move || {
                             if let Some(ui) = weak.upgrade() {
                                 ui.set_notification_text(
-                                    format!("⚠️ Export failed: {e}").into(),
+                                    format!("{}{e}", crate::i18n::tr("⚠️ Export failed: ", "⚠️ এক্সপোর্ট ব্যর্থ: ")).into(),
                                 );
                             }
                         });
@@ -13620,7 +13620,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             Ok(()) => Ok(n),
                             Err(e) => {
                                 let _ = std::fs::remove_file(&tmp);
-                                Err(format!("rename: {e}"))
+                                Err(format!("{}{e}", crate::i18n::tr("rename: ", "নাম বদল: ")))
                             }
                         }
                     }
@@ -13635,7 +13635,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     security::access_log::log_event("export", "attachment");
                     format!("💾 Exported '{}' ({}).", filename, human_bytes(n as usize))
                 }
-                Err(e) => format!("⚠️ Export failed: {e}"),
+                Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Export failed: ", "⚠️ এক্সপোর্ট ব্যর্থ: ")),
             };
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
@@ -13658,7 +13658,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .into_iter()
             .find(|a| a.id == att_id.as_str())
         else {
-            ui.set_notification_text("⚠️ Attachment not found.".into());
+            ui.set_notification_text(tr("⚠️ Attachment not found.", "⚠️ অ্যাটাচমেন্ট পাওয়া যায়নি।").into());
             return;
         };
         let filename = att.filename.clone();
@@ -13812,11 +13812,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             crate::attachment_store::attachment_counts(&v);
                         ui.set_att_inline_count(att_inline as i32);
                         ui.set_att_sidecar_count(att_side as i32);
-                        ui.set_notification_text("🗑️ Attachment deleted.".into());
+                        ui.set_notification_text(tr("🗑️ Attachment deleted.", "🗑️ অ্যাটাচমেন্ট মোছা হয়েছে।").into());
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Delete failed: {e}").into());
+                        ui.set_notification_text(format!("{}{e}", crate::i18n::tr("❌ Delete failed: ", "❌ মুছে ফেলা ব্যর্থ: ")).into());
                     }
                 }
             });
@@ -13838,13 +13838,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let weak = mig_weak.clone();
         let vault_clone = Arc::clone(&mig_vault);
         let master_clone = Arc::clone(&mig_master);
-        ui.set_notification_text("⏳ Moving inline attachments to sidecars…".into());
+        ui.set_notification_text(tr("⏳ Moving inline attachments to sidecars…", "⏳ ইনলাইন অ্যাটাচমেন্ট সাইডকারে সরানো হচ্ছে…").into());
         std::thread::spawn(move || {
             let master = lock_master_pw(&master_clone).clone();
             let Some(master) = master else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ Vault not unlocked.".into());
+                        ui.set_notification_text(tr("⚠️ Vault not unlocked.", "⚠️ ভল্ট আনলক করা নেই।").into());
                     }
                 });
                 return;
@@ -13875,7 +13875,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 if let Some(ui) = weak.upgrade() {
                     match result {
                         Ok((0, _, _)) => {
-                            ui.set_notification_text("📎 No inline attachments to move.".into())
+                            ui.set_notification_text(tr("📎 No inline attachments to move.", "📎 সরানোর মতো ইনলাইন অ্যাটাচমেন্ট নেই।").into())
                         }
                         Ok((moved, inline, side)) => {
                             ui.set_att_inline_count(inline as i32);
@@ -13891,7 +13891,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 "migrated inline to sidecars",
                             );
                         }
-                        Err(e) => ui.set_notification_text(format!("⚠️ Migration: {e}").into()),
+                        Err(e) => ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Migration: ", "⚠️ মাইগ্রেশন: ")).into()),
                     }
                 }
             });
@@ -14006,11 +14006,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         Ok(v) => {
                                 ui.set_auth_accounts(rebuild_auth_list(&v));
                             ui.set_auth_rows(rebuild_auth_rows(&v, ui.get_totp_search_query().as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
-                            ui.set_notification_text("🔢 HOTP advanced to next code.".into());
+                            ui.set_notification_text(tr("🔢 HOTP advanced to next code.", "🔢 HOTP পরের কোডে গেছে।").into());
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("⚠️ HOTP advance failed: {e}").into());
+                            ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ HOTP advance failed: ", "⚠️ HOTP এগোনো ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -14070,7 +14070,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     security::access_log::log_event("offline-cache", "enable");
                     format!("✅ Enabled — {count} logins cached. Windows Hello opens it; 15-minute session.")
                 }
-                Err(e) => format!("⚠️ Could not enable: {e}"),
+                Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Could not enable: ", "⚠️ চালু করা গেল না: ")),
             }
         } else {
             let _ = security::offline_cache::clear();
@@ -14093,11 +14093,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         if on && !security::offline_cache::enabled() {
-            ui.set_offline_cache_status("⚠️ Enable the offline cache first.".into());
+            ui.set_offline_cache_status(tr("⚠️ Enable the offline cache first.", "⚠️ আগে অফলাইন ক্যাশে চালু করুন।").into());
             return;
         }
         if on && !security::ext_pin::is_set(Path::new(".")) {
-            ui.set_offline_cache_status("⚠️ Set an extension PIN first.".into());
+            ui.set_offline_cache_status(tr("⚠️ Set an extension PIN first.", "⚠️ আগে এক্সটেনশন PIN সেট করুন।").into());
             return;
         }
         match security::offline_cache::set_pin_allowed(on) {
@@ -14181,7 +14181,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let bkn_weak = main_window.as_weak();
     main_window.on_backup_now(move || {
         if let Some(ui) = bkn_weak.upgrade() {
-            ui.set_backup_status("⏳ Backing up…".into());
+            ui.set_backup_status(tr("⏳ Backing up…", "⏳ ব্যাকআপ হচ্ছে…").into());
         }
         let weak = bkn_weak.clone();
         std::thread::spawn(move || {
@@ -14195,10 +14195,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             ui.set_backup_status(
                                 format!("✅ {} (pruned {})", o.path, o.pruned).into(),
                             );
-                            ui.set_notification_text("💾 Manual backup complete.".into());
+                            ui.set_notification_text(tr("💾 Manual backup complete.", "💾 ম্যানুয়াল ব্যাকআপ সম্পন্ন।").into());
                         }
                         Err(e) => {
-                            ui.set_backup_status(format!("⚠️ Backup failed: {e}").into());
+                            ui.set_backup_status(format!("{}{e}", crate::i18n::tr("⚠️ Backup failed: ", "⚠️ ব্যাকআপ ব্যর্থ: ")).into());
                         }
                     }
                 }
@@ -14283,7 +14283,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some((title, url)) = target else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ Logo override needs an open login.".into());
+                        ui.set_notification_text(tr("⚠️ Logo override needs an open login.", "⚠️ লোগো বদলাতে একটি খোলা লগইন দরকার।").into());
                     }
                 });
                 return;
@@ -14291,13 +14291,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let Some(domain) = crate::core::favicon::icon_domain(&title, &url) else {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
-                        ui.set_notification_text("⚠️ No domain on this item (title/URL).".into());
+                        ui.set_notification_text(tr("⚠️ No domain on this item (title/URL).", "⚠️ এই আইটেমে ডোমেইন নেই (শিরোনাম/URL)।").into());
                     }
                 });
                 return;
             };
             let picked = rfd::FileDialog::new()
-                .set_title(format!("Logo for {domain} (PNG/ICO/JPG)"))
+                .set_title(if crate::i18n::is_bn() { format!("{domain}-এর লোগো (PNG/ICO/JPG)") } else { format!("Logo for {domain} (PNG/ICO/JPG)") })
                 .add_filter("images", &["png", "ico", "jpg", "jpeg", "webp", "bmp", "gif"])
                 .pick_file();
             let Some(path) = picked else {
@@ -14306,7 +14306,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let bytes = match std::fs::read(&path) {
                 Ok(b) => b,
                 Err(e) => {
-                    let msg = format!("⚠️ Cannot read file: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("⚠️ Cannot read file: ", "⚠️ ফাইল পড়া যাচ্ছে না: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -14317,7 +14317,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             };
             match crate::core::favicon::save_custom_icon(&domain, &bytes) {
                 Err(e) => {
-                    let msg = format!("⚠️ Not a usable logo: {e}");
+                    let msg = format!("{}{e}", crate::i18n::tr("⚠️ Not a usable logo: ", "⚠️ লোগো হিসেবে ব্যবহারযোগ্য নয়: "));
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             ui.set_notification_text(msg.into());
@@ -14341,7 +14341,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 }
                             }
                             ui.set_notification_text(
-                                format!("🖼️ Custom logo saved for {domain}.").into(),
+                                if crate::i18n::is_bn() { format!("🖼️ {domain}-এর কাস্টম লোগো সেভ হয়েছে।") } else { format!("🖼️ Custom logo saved for {domain}.") }.into(),
                             );
                         }
                     });
@@ -14413,7 +14413,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
         if pin != confirm {
-            ui.set_pin_status("⚠️ PINs do not match.".into());
+            ui.set_pin_status(tr("⚠️ PINs do not match.", "⚠️ PIN মিলছে না।").into());
             return;
         }
         let master_opt = lock_master_pw(&pinset_master).clone();
@@ -14425,7 +14425,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         match security::app_pin::enroll(Path::new("."), &pin, master_pw.expose_secret()) {
             Ok(()) => {
                 ui.set_pin_available(true);
-                ui.set_pin_status("✅ App PIN set — lock screen shows PIN unlock on this PC.".into());
+                ui.set_pin_status(tr("✅ App PIN set — lock screen shows PIN unlock on this PC.", "✅ App PIN সেট হয়েছে — এই PC-তে লক স্ক্রিনে PIN আনলক দেখাবে।").into());
             }
             Err(e) => {
                 ui.set_pin_status(format!("⚠️ {e}").into());
@@ -14466,7 +14466,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_rekey_status(err.into());
             return;
         }
-        ui.set_rekey_status("⏳ Re-encrypting vault (Argon2id)…".into());
+        ui.set_rekey_status(tr("⏳ Re-encrypting vault (Argon2id)…", "⏳ ভল্ট আবার এনক্রিপ্ট হচ্ছে (Argon2id)…").into());
         let old_s = old.as_str().to_string();
         let new_s = new.as_str().to_string();
         let weak = rekey_weak.clone();
@@ -14525,7 +14525,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 Err(e) => {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_rekey_status(format!("❌ Rekey failed: {e}").into());
+                            ui.set_rekey_status(format!("{}{e}", crate::i18n::tr("❌ Rekey failed: ", "❌ rekey ব্যর্থ: ")).into());
                         }
                     });
                 }
@@ -14642,7 +14642,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 Err(e) => {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_pq_status(format!("❌ Profile change failed: {e}").into());
+                            ui.set_pq_status(format!("{}{e}", crate::i18n::tr("❌ Profile change failed: ", "❌ প্রোফাইল বদল ব্যর্থ: ")).into());
                         }
                     });
                 }
@@ -14667,7 +14667,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if !paranoid_active() {
-            ui.set_pq_status("⚠️ Enable PQ-paranoid first.".into());
+            ui.set_pq_status(tr("⚠️ Enable PQ-paranoid first.", "⚠️ আগে PQ-paranoid চালু করুন।").into());
             return;
         }
         if !PARANOID_BACKUP_READY.load(std::sync::atomic::Ordering::SeqCst) {
@@ -14678,14 +14678,14 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         if security::pq_profile::active_backend() == Some("tpm") {
-            ui.set_pq_status("✅ The device key is already TPM-backed.".into());
+            ui.set_pq_status(tr("✅ The device key is already TPM-backed.", "✅ ডিভাইস কী আগেই TPM-ব্যাকড।").into());
             return;
         }
         if !security::pq_tpm::provider_available(security::pq_tpm::Backend::Tpm) {
-            ui.set_pq_status("⚠️ No TPM 2.0 provider on this machine.".into());
+            ui.set_pq_status(tr("⚠️ No TPM 2.0 provider on this machine.", "⚠️ এই মেশিনে TPM 2.0 নেই।").into());
             return;
         }
-        ui.set_pq_status("⏳ Moving device key to TPM 2.0…".into());
+        ui.set_pq_status(tr("⏳ Moving device key to TPM 2.0…", "⏳ ডিভাইস কী TPM 2.0-এ সরানো হচ্ছে…").into());
         let weak = mv_weak.clone();
         std::thread::spawn(move || {
             let result = (|| {
@@ -14701,7 +14701,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                     Err(e) => {
                         security::pq_profile::remove_tpm();
-                        Err(format!("vault proof failed: {e}"))
+                        Err(format!("{}{e}", crate::i18n::tr("vault proof failed: ", "ভল্ট প্রুফ ব্যর্থ: ")))
                     }
                 }
             })();
@@ -14722,7 +14722,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
                             set_pq_backend_ui(&ui);
-                            ui.set_pq_status(format!("❌ TPM move failed: {e}").into());
+                            ui.set_pq_status(format!("{}{e}", crate::i18n::tr("❌ TPM move failed: ", "❌ TPM-এ সরানো ব্যর্থ: ")).into());
                         }
                     });
                 }
@@ -14939,7 +14939,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             .into(),
         );
         ui.set_notification_text(
-            format!("📤 {n} login(s) staged in Settings → Expiring shares.").into(),
+            if crate::i18n::is_bn() { format!("📤 {n}টি লগইন Settings → Expiring shares-এ স্টেজ হয়েছে।") } else { format!("📤 {n} login(s) staged in Settings → Expiring shares.") }.into(),
         );
     });
 
@@ -14960,13 +14960,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         }
         let Some(ttl_secs) = share_cli::parse_ttl(ttl.as_str()) else {
-            ui.set_ls_status("⚠️ TTL must look like 30m, 24h or 7d".into());
+            ui.set_ls_status(tr("⚠️ TTL must look like 30m, 24h or 7d", "⚠️ TTL এরূপ হতে হবে: 30m, 24h বা 7d").into());
             return;
         };
         let views: u32 = match views.trim().parse() {
             Ok(v) => v,
             Err(_) => {
-                ui.set_ls_status("⚠️ views must be a number (0 = unlimited)".into());
+                ui.set_ls_status(tr("⚠️ views must be a number (0 = unlimited)", "⚠️ views একটি সংখ্যা হতে হবে (0 = সীমাহীন)").into());
                 return;
             }
         };
@@ -15008,11 +15008,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let pass_secret = if pass_on {
             let p = pass.as_str().trim();
             if p.len() < 8 {
-                ui.set_ls_status("⚠️ Share passphrase must be at least 8 characters.".into());
+                ui.set_ls_status(tr("⚠️ Share passphrase must be at least 8 characters.", "⚠️ শেয়ার পাসফ্রেজ অন্তত ৮ অক্ষরের হতে হবে।").into());
                 return;
             }
             if p != pass_confirm.as_str().trim() {
-                ui.set_ls_status("⚠️ Share passphrases do not match.".into());
+                ui.set_ls_status(tr("⚠️ Share passphrases do not match.", "⚠️ শেয়ার পাসফ্রেজ মিলছে না।").into());
                 return;
             }
             Some(SecretString::new(p.to_string()))
@@ -15302,7 +15302,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Err(e) = storage::save_vault_secret(&vault, &master, VAULT_FILE) {
             *vault = snapshot;
-            ui.set_ls_status(format!("⚠️ Import failed: {e}").into());
+            ui.set_ls_status(format!("{}{e}", crate::i18n::tr("⚠️ Import failed: ", "⚠️ ইমপোর্ট ব্যর্থ: ")).into());
             return;
         }
         let f = login_share_add_search.lock().unwrap().clone();
@@ -15318,8 +15318,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         drop(vault);
         ui.set_ls_ready(false);
         ui.set_ls_preview("".into());
-        ui.set_ls_status(format!("✅ Imported {added} login(s) from share.").into());
-        ui.set_notification_text(format!("✅ Imported {added} login(s) from share.").into());
+        ui.set_ls_status(if crate::i18n::is_bn() { format!("✅ শেয়ার থেকে {added}টি লগইন ইমপোর্ট হয়েছে।") } else { format!("✅ Imported {added} login(s) from share.") }.into());
+        ui.set_notification_text(if crate::i18n::is_bn() { format!("✅ শেয়ার থেকে {added}টি লগইন ইমপোর্ট হয়েছে।") } else { format!("✅ Imported {added} login(s) from share.") }.into());
         security::access_log::log_event("share", "imported from UI");
     });
 
@@ -15332,7 +15332,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         let weak = login_share_revoke_weak.clone();
         let server_slot = Arc::clone(&login_share_revoke_server);
         let id_s = id.to_string();
-        ui.set_ls_status(format!("⏳ Revoking {id}…").into());
+        ui.set_ls_status(if crate::i18n::is_bn() { format!("⏳ {id} প্রত্যাহার হচ্ছে…") } else { format!("⏳ Revoking {id}…") }.into());
         std::thread::spawn(move || {
             let gist = share_store::get(&id_s).and_then(|r| r.relay_gist);
             let mut warning = None;
@@ -15355,7 +15355,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                     refresh_ls_rows(&ui);
                     let status = match (local, warning) {
-                        (Err(e), _) => format!("⚠️ Revoke failed: {e}"),
+                        (Err(e), _) => format!("{}{e}", crate::i18n::tr("⚠️ Revoke failed: ", "⚠️ প্রত্যাহার ব্যর্থ: ")),
                         (Ok(()), Some(e)) => format!(
                             "🗑️ Revoked {id_s} locally — relay delete failed: {e}"
                         ),
@@ -15411,11 +15411,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         let (pin, confirm) = (pin.as_str().trim().to_string(), confirm.as_str().trim().to_string());
         if pin != confirm {
-            ui.set_ext_pin_status("⚠️ PINs do not match.".into());
+            ui.set_ext_pin_status(tr("⚠️ PINs do not match.", "⚠️ PIN মিলছে না।").into());
             return;
         }
         if pin.len() < 4 || pin.len() > 8 || !pin.bytes().all(|c| c.is_ascii_digit()) {
-            ui.set_ext_pin_status("⚠️ PIN must be 4–8 digits.".into());
+            ui.set_ext_pin_status(tr("⚠️ PIN must be 4–8 digits.", "⚠️ PIN ৪–৮ ডিজিটের হতে হবে।").into());
             return;
         }
         let master_opt = lock_master_pw(&epinset_master).clone();
@@ -15429,7 +15429,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 // A11b: a new PIN always requires re-consent for cache unlock.
                 let _ = security::offline_cache::set_pin_allowed(false);
                 ui.set_offline_pin_on(false);
-                ui.set_ext_pin_status("✅ Extension PIN set — the host verifies it (Argon2id).".into());
+                ui.set_ext_pin_status(tr("✅ Extension PIN set — the host verifies it (Argon2id).", "✅ এক্সটেনশন PIN সেট — হোস্ট এটা যাচাই করে (Argon2id)।").into());
             }
             Err(e) => {
                 ui.set_ext_pin_status(format!("⚠️ {e}").into());
@@ -15460,7 +15460,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         ct_store.store(v, std::sync::atomic::Ordering::SeqCst);
         if let Some(ui) = ct_weak.upgrade() {
             ui.set_clipboard_timeout(secs);
-            ui.set_notification_text(format!("Clipboard auto-clear: {secs}s").into());
+            ui.set_notification_text(if crate::i18n::is_bn() { format!("ক্লিপবোর্ড অটো-ক্লিয়ার: {secs} সে") } else { format!("Clipboard auto-clear: {secs}s") }.into());
         }
     });
     // Wire-up #3: auto-lock timeout + activity touch.
@@ -15475,7 +15475,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Some(ui) = al_weak.upgrade() {
             ui.set_autolock_timeout(mins);
-            if mins == 0 { ui.set_notification_text(tr("Auto-lock: Never", "অটো-লক: কখনো নয়").into()); } else { ui.set_notification_text(format!("Auto-lock: {mins} min").into()); }
+            if mins == 0 { ui.set_notification_text(tr("Auto-lock: Never", "অটো-লক: কখনো নয়").into()); } else { ui.set_notification_text(if crate::i18n::is_bn() { format!("অটো-লক: {mins} মিনিট") } else { format!("Auto-lock: {mins} min") }.into()); }
         }
     });
     // Cat 8 kill-switch: one toggle silences sync + HIBP audit paths.
@@ -15530,11 +15530,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let name = name.as_str().trim().to_string();
         if name.is_empty() {
-            ui.set_notification_text("⚠️ Enter your phone's Bluetooth name first.".into());
+            ui.set_notification_text(tr("⚠️ Enter your phone's Bluetooth name first.", "⚠️ আগে ফোনের ব্লুটুথ নাম লিখুন।").into());
             return;
         }
         if name.len() > 64 {
-            ui.set_notification_text("⚠️ Device name too long (64 max).".into());
+            ui.set_notification_text(tr("⚠️ Device name too long (64 max).", "⚠️ ডিভাইসের নাম বেশি লম্বা (সর্বোচ্চ ৬৪)।").into());
             return;
         }
         {
@@ -15546,7 +15546,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             m.reset();
         }
         ui.set_prox_device(name.into());
-        ui.set_notification_text("📱 Tracking device saved.".into());
+        ui.set_notification_text(tr("📱 Tracking device saved.", "📱 ট্র্যাকিং ডিভাইস সেভ হয়েছে।").into());
     });
     let prox_weak_sen = main_window.as_weak();
     let prox_cfg_sen = Arc::clone(&prox_config);
@@ -15562,7 +15562,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         ui.set_prox_sensitivity(level);
         ui.set_notification_text(
-            format!("📱 Sensitivity: {threshold} dBm cutoff.").into(),
+            if crate::i18n::is_bn() { format!("📱 সংবেদনশীলতা: {threshold} dBm কাটঅফ।") } else { format!("📱 Sensitivity: {threshold} dBm cutoff.") }.into(),
         );
     });
     // Batch-4: SSH agent status badge — real named-pipe probe, off-thread.
@@ -15573,7 +15573,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let favr_search = Arc::clone(&search_state);
     main_window.on_refresh_favicons(move || {
         if let Some(ui) = favr_weak.upgrade() {
-            ui.set_notification_text("🎨 Refreshing website icons…".into());
+            ui.set_notification_text(tr("🎨 Refreshing website icons…", "🎨 ওয়েবসাইট আইকন রিফ্রেশ হচ্ছে…").into());
         }
         trigger_favicon_prefetch(
             Arc::clone(&favr_vault),
@@ -15623,12 +15623,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
         match developer::ssh_agent::start_agent(keys) {
             Ok(()) => {
                 ui.set_ssh_agent_running(true);
-                ui.set_ssh_status("● Running".into());
-                ui.set_notification_text("🔑 SSH agent serving vault keys.".into());
+                ui.set_ssh_status(tr("● Running", "● চলছে").into());
+                ui.set_notification_text(tr("🔑 SSH agent serving vault keys.", "🔑 SSH এজেন্ট ভল্টের কী দিচ্ছে।").into());
                 security::access_log::log_event("ssh-agent", "start");
             }
             Err(e) => {
-                ui.set_notification_text(format!("⚠️ Agent not started: {e}").into());
+                ui.set_notification_text(format!("{}{e}", crate::i18n::tr("⚠️ Agent not started: ", "⚠️ এজেন্ট চালু হয়নি: ")).into());
             }
         }
     });
@@ -15637,8 +15637,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
         developer::ssh_agent::stop_agent();
         if let Some(ui) = stop_weak.upgrade() {
             ui.set_ssh_agent_running(false);
-            ui.set_ssh_status("○ Stopped".into());
-            ui.set_notification_text("🔑 SSH agent stopped.".into());
+            ui.set_ssh_status(tr("○ Stopped", "○ বন্ধ").into());
+            ui.set_notification_text(tr("🔑 SSH agent stopped.", "🔑 SSH এজেন্ট বন্ধ।").into());
             security::access_log::log_event("ssh-agent", "stop");
         }
     });
@@ -15811,7 +15811,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         };
         let msg = match windows_native::clipboard::copy_sensitive(&script, 60, || {}) {
             Ok(()) => format!("📋 {shell} completion copied (60s) — paste into your shell profile."),
-            Err(e) => format!("⚠️ Copy failed: {e}"),
+            Err(e) => format!("{}{e}", crate::i18n::tr("⚠️ Copy failed: ", "⚠️ কপি ব্যর্থ: ")),
         };
         if let Some(ui) = comp_weak.upgrade() {
             ui.set_health_status(msg.clone().into());
@@ -15827,8 +15827,8 @@ fn launch_url(ui: &MainWindow, url: &str) {
             return;
         };
         if let Some(ui) = sc_weak.upgrade() {
-            ui.set_health_status("🔍 Scanning working tree for leaked secrets…".into());
-            ui.set_notification_text("🔍 Scanning for leaked secrets…".into());
+            ui.set_health_status(tr("🔍 Scanning working tree for leaked secrets…", "🔍 ওয়ার্কিং ট্রি-তে ফাঁস হওয়া সিক্রেট খোঁজা হচ্ছে…").into());
+            ui.set_notification_text(tr("🔍 Scanning for leaked secrets…", "🔍 ফাঁস হওয়া সিক্রেট খোঁজা হচ্ছে…").into());
         }
         let weak = sc_weak.clone();
         thread::spawn(move || {
@@ -15841,16 +15841,16 @@ fn launch_url(ui: &MainWindow, url: &str) {
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = weak.upgrade() {
                     if n == 0 {
-                        ui.set_health_status("✅ Scan complete: no leaked secrets found.".into());
+                        ui.set_health_status(tr("✅ Scan complete: no leaked secrets found.", "✅ স্ক্যান সম্পন্ন: ফাঁস হওয়া সিক্রেট পাওয়া যায়নি।").into());
                         ui.set_notification_text(
                             "✅ Scan complete: No leaked secrets found in directory!".into(),
                         );
                     } else {
                         ui.set_health_status(
-                            format!("🚨 Scan complete: {n} potential secrets. See terminal log.").into(),
+                            if crate::i18n::is_bn() { format!("🚨 স্ক্যান সম্পন্ন: {n}টি সম্ভাব্য সিক্রেট। টার্মিনাল লগ দেখুন।") } else { format!("🚨 Scan complete: {n} potential secrets. See terminal log.") }.into(),
                         );
                         ui.set_notification_text(
-                            format!("🚨 Leak Alert: Found {n} potential secrets! Check terminal log.").into(),
+                            if crate::i18n::is_bn() { format!("🚨 লিক অ্যালার্ট: {n}টি সম্ভাব্য সিক্রেট পাওয়া গেছে! টার্মিনাল লগ দেখুন।") } else { format!("🚨 Leak Alert: Found {n} potential secrets! Check terminal log.") }.into(),
                         );
                     }
                 }
@@ -15881,7 +15881,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             } else {
                 "⏳ Auditing passwords (k-anonymity, no plaintext leaves device)…".into()
             });
-            ui.set_notification_text("🛡️ Auditing vault health…".into());
+            ui.set_notification_text(tr("🛡️ Auditing vault health…", "🛡️ ভল্ট হেলথ অডিট হচ্ছে…").into());
         }
         let weak = audit_weak.clone();
         let vault_clone = Arc::clone(&audit_vault_arc);
@@ -15915,7 +15915,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let Some(rt) = tokio_rt() else {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_health_status("⚠️ Could not start network runtime.".into());
+                            ui.set_health_status(tr("⚠️ Could not start network runtime.", "⚠️ নেটওয়ার্ক রানটাইম চালু হলো না।").into());
                         }
                     });
                     return;
@@ -16058,7 +16058,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
         if f.janitor {
             let n = janitor_ids(&v, &read_fill_keys()).len();
             ui.set_notification_text(
-                format!("🧹 {n} review candidates (unverified, never filled) — Select mode + 🗑️ Trash to sweep. Click Janitor again to close.").into(),
+                if crate::i18n::is_bn() { format!("🧹 {n}টি পর্যালোচনার প্রার্থী (যাচাই হয়নি, কখনো fill হয়নি) — Select মোড + 🗑️ Trash দিয়ে সরান। বন্ধ করতে আবার Janitor চাপুন।") } else { format!("🧹 {n} review candidates (unverified, never filled) — Select mode + 🗑️ Trash to sweep. Click Janitor again to close.") }.into(),
             );
         } else {
             ui.set_notification_text(tr("Janitor queue closed.", "জ্যানিটর কিউ বন্ধ।").into());

@@ -257,6 +257,32 @@ generator) return Bengali when `i18n::is_bn()`:
 The existing unit tests assert the English output and still pass because the
 process-wide language flag defaults to English.
 
+## Coverage update (2026-11-09, Rust status batch B6)
+
+Every status/toast line that this app authors now follows `ui_lang`:
+
+- **138 plain statuses (156 call sites)** via `tr()`: vault/decoy guards,
+  "vault not unlocked" (13 sites), sync/merge/fetch results, import and export
+  flow, trash/shred/restore, passkeys, shard grants, attachments, PIN setup,
+  TPM/PQ moves, SSH agent state, secret scan, health audit, update flow and the
+  browser bridge installers.
+- **69 `format!("…{e}")` templates** wrap only their text in `tr()`; the
+  interpolated payload (COM/serde/OS error) is left untouched, so no technical
+  string is mistranslated.
+- **26 inline-capture templates** switch on `i18n::is_bn()`: canary trip,
+  "password appeared in N breaches", emptied trash, auto-lock countdown,
+  honeytoken planted, connected repo, import counts, clipboard/auto-lock
+  labels, leak-scan results.
+
+Verified on screen: the Dev & API secret scan reports
+`🚨 স্ক্যান সম্পন্ন: 918টি সম্ভাব্য সিক্রেট। টার্মিনাল লগ দেখুন।`
+(`%TEMP%\pv-bn-status-ssh.png`).
+
+Still English (~35 sites): `format!` templates that take explicit arguments
+(`format!("… {} …", x)`) — they need a per-site rewrite rather than a
+mechanical wrap — plus a handful of Slint property defaults that Rust sets
+(`ssh_status: "Not checked"`, `health_headline: "Not audited yet."`).
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

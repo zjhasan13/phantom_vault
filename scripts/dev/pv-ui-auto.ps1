@@ -467,6 +467,7 @@ switch ($Action) {
   "dump"      { Dump }
   "click"     { Click-Name $Arg }
   "clickcp"   { Click-Cps $Arg }
+  "tapcp"     { TapCps $Arg }
   "shot"      { Save-Screenshot $Arg }
   "unlock"    { Unlock $(if ($Arg) { $Arg } else { $script:MasterPw }) }
   "focus"     { FocusApp }
