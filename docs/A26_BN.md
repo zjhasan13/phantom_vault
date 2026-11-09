@@ -300,6 +300,24 @@ Closes the Rust-side gaps left by B6:
 Verified on screen: the Dev & API tab shows `যাচাই হয়নি` for the SSH agent and
 `এখনো অডিট হয়নি।` above the health buttons (`%TEMP%\pv-bn-dev-defaults2.png`).
 
+## Coverage update (2026-11-09, Settings minimum-width pass B8)
+
+Fixes the overflow documented since B4.
+
+- The Settings `ScrollView` content had a minimum width larger than its viewport
+  at 960 logical px (the declared `min-width` of the window), so the language
+  row and its `বাংলা` button were clipped at the right edge.
+- Content padding 22 -> 16 and the six tab widths re-tuned
+  (100/132/92/94/92/100 px) so the tab row needs ~630 px instead of ~652.
+- Measured with UIA at 1200x1000 physical (960 logical): the widest row now ends
+  at the window edge, nothing beyond it (`pv-bn-set-960.png`).
+
+Also translated: nine labels whose literals sit after a `?` and were missed by
+the B4 sweep (`label: cond ? "…" : "…"`) — Remove PIN / Sure?, Change Master
+Password / Sure? Re-encrypt, Disable (portable) / Sure? Convert back, the
+backup-exported warning, the LAN / gist / passphrase ON-OFF chips and
+Remove Ext PIN.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

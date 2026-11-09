@@ -2174,7 +2174,7 @@ export component MainWindow inherits Window {
         }
         if root.active_nav == 3 : Rectangle {
             background: PhantomTheme.canvas; horizontal-stretch: 1; clip: true;
-            settings_scroll := ScrollView { VerticalLayout { padding: 22px; spacing: 14px;
+            settings_scroll := ScrollView { VerticalLayout { padding: 16px; spacing: 14px;
                 Rectangle { background: PhantomTheme.surface-low; border-radius: 14px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 18px; spacing: 10px;
                     HorizontalLayout { spacing: 10px; alignment: center;
                         Text { text: (root.ui_lang == "bn" ? "সেটিংস ও ডেভ সেন্টার" : "SETTINGS & DEV CENTER"); color: PhantomTheme.text; font-size: 20px; font-weight: 900; letter-spacing: 0.4px; }
@@ -2185,12 +2185,12 @@ export component MainWindow inherits Window {
                     }
                     Text { text: (root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড, Windows Hello, সিঙ্ক, প্রাইভেসি, রিকভারি, ব্যাকআপ আর লোকাল API — সব কন্ট্রোল নিচে ভাগ করা আছে।" : "Master password, Windows Hello, sync, privacy, recovery, backups and the local API - every control grouped below."); color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: (root.ui_lang == "bn" ? "সিকিউরিটি" : "Security"); primary: root.settings_tab == 0; width: 102px; height: 30px; clicked => { root.settings_tab = 0; } }
-                        AuraButton { label: (root.ui_lang == "bn" ? "সিঙ্ক ও ডিভাইস" : "Sync & Devices"); primary: root.settings_tab == 1; width: 134px; height: 30px; clicked => { root.settings_tab = 1; } }
-                        AuraButton { label: (root.ui_lang == "bn" ? "প্রাইভেসি" : "Privacy"); primary: root.settings_tab == 2; width: 94px; height: 30px; clicked => { root.settings_tab = 2; } }
-                        AuraButton { label: (root.ui_lang == "bn" ? "রিকভারি" : "Recovery"); primary: root.settings_tab == 3; width: 96px; height: 30px; clicked => { root.settings_tab = 3; } }
-                        AuraButton { label: (root.ui_lang == "bn" ? "ব্যাকআপ" : "Backups"); primary: root.settings_tab == 4; width: 94px; height: 30px; clicked => { root.settings_tab = 4; } }
-                        AuraButton { label: (root.ui_lang == "bn" ? "ডেভ ও API" : "Dev & API"); primary: root.settings_tab == 5; width: 102px; height: 30px; clicked => { root.settings_tab = 5; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "সিকিউরিটি" : "Security"); primary: root.settings_tab == 0; width: 100px; height: 30px; clicked => { root.settings_tab = 0; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "সিঙ্ক ও ডিভাইস" : "Sync & Devices"); primary: root.settings_tab == 1; width: 132px; height: 30px; clicked => { root.settings_tab = 1; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "প্রাইভেসি" : "Privacy"); primary: root.settings_tab == 2; width: 92px; height: 30px; clicked => { root.settings_tab = 2; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "রিকভারি" : "Recovery"); primary: root.settings_tab == 3; width: 94px; height: 30px; clicked => { root.settings_tab = 3; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "ব্যাকআপ" : "Backups"); primary: root.settings_tab == 4; width: 92px; height: 30px; clicked => { root.settings_tab = 4; } }
+                        AuraButton { label: (root.ui_lang == "bn" ? "ডেভ ও API" : "Dev & API"); primary: root.settings_tab == 5; width: 100px; height: 30px; clicked => { root.settings_tab = 5; } }
                     }
                 }
                 }
@@ -2210,7 +2210,7 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: (root.ui_lang == "bn" ? "PIN সেট করুন" : "Set PIN"); primary: true; width: 130px; height: 34px; clicked => { root.setup_app_pin(pin_new.text, pin_confirm.text); pin_new.text = ""; pin_confirm.text = ""; } }
-                        if root.pin_available : AuraButton { label: root.confirm_pin_remove ? "Sure?" : "Remove PIN"; danger: true; width: root.confirm_pin_remove ? 110px : 130px; height: 34px; clicked => { if root.confirm_pin_remove { root.confirm_pin_remove = false; root.disable_app_pin(); } else { root.confirm_pin_remove = true; } } }
+                        if root.pin_available : AuraButton { label: root.confirm_pin_remove ? (root.ui_lang == "bn" ? "নিশ্চিত?" : "Sure?") : (root.ui_lang == "bn" ? "PIN সরান" : "Remove PIN"); danger: true; width: root.confirm_pin_remove ? 110px : 130px; height: 34px; clicked => { if root.confirm_pin_remove { root.confirm_pin_remove = false; root.disable_app_pin(); } else { root.confirm_pin_remove = true; } } }
                     }
                     if root.pin_status != "" : Text { text: root.pin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     // A5: master-password rotation (rekey). Old backups, exports
@@ -2223,7 +2223,7 @@ export component MainWindow inherits Window {
                         rekey_confirm := LineEdit { placeholder-text: (root.ui_lang == "bn" ? "নতুনটি নিশ্চিত করুন" : "Confirm new"); input-type: password; height: 36px; horizontal-stretch: 1; }
                     }
                     HorizontalLayout { spacing: 8px;
-                        AuraButton { label: root.confirm_rekey ? "Sure? Re-encrypt" : "Change Master Password"; primary: !root.confirm_rekey; danger: root.confirm_rekey; width: root.confirm_rekey ? 190px : 220px; height: 34px; clicked => { if root.confirm_rekey { root.confirm_rekey = false; root.change_master_password(rekey_old.text, rekey_new.text, rekey_confirm.text); rekey_old.text = ""; rekey_new.text = ""; rekey_confirm.text = ""; } else { root.confirm_rekey = true; } } }
+                        AuraButton { label: root.confirm_rekey ? (root.ui_lang == "bn" ? "নিশ্চিত? পুনরায় এনক্রিপ্ট" : "Sure? Re-encrypt") : (root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড বদলান" : "Change Master Password"); primary: !root.confirm_rekey; danger: root.confirm_rekey; width: root.confirm_rekey ? 190px : 220px; height: 34px; clicked => { if root.confirm_rekey { root.confirm_rekey = false; root.change_master_password(rekey_old.text, rekey_new.text, rekey_confirm.text); rekey_old.text = ""; rekey_new.text = ""; rekey_confirm.text = ""; } else { root.confirm_rekey = true; } } }
                         if root.confirm_rekey : AuraButton { label: (root.ui_lang == "bn" ? "বাতিল" : "Cancel"); width: 90px; height: 34px; clicked => { root.confirm_rekey = false; } }
                     }
                     if root.rekey_status != "" : Text { text: root.rekey_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
@@ -2242,10 +2242,10 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "কন্টেইনার প্রোফাইল" : "Container profile"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } Text { text: root.pq_paranoid_on ? "PARANOID" : "PORTABLE"; color: root.pq_paranoid_on ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 11px; font-weight: 800; vertical-alignment: center; } }
                     Text { text: (root.ui_lang == "bn" ? "ডিভাইস কী: " : "Device key: ") + root.pq_backend_detail; color: root.pq_backend == "tpm" ? PhantomTheme.success : PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                     if root.pq_paranoid_on && root.pq_backend == "dpapi" : AuraButton { label: (root.ui_lang == "bn" ? "ডিভাইস কী TPM-এ সরান" : "Move device key to TPM"); width: 210px; height: 34px; clicked => { root.move_pq_key_to_tpm(); } }
-                    Text { text: root.pq_backup_ready ? "✅ A backup was exported this session." : "⚠️ Export an encrypted .pvx backup first (Importer → Encrypted (.pvx)) — required before enabling."; color: root.pq_backup_ready ? PhantomTheme.success : PhantomTheme.warning; font-size: 11px; wrap: word-wrap; }
+                    Text { text: root.pq_backup_ready ? (root.ui_lang == "bn" ? "✅ এই সেশনে একটি ব্যাকআপ এক্সপোর্ট হয়েছে।" : "✅ A backup was exported this session.") : (root.ui_lang == "bn" ? "⚠️ আগে একটি এনক্রিপ্টেড .pvx ব্যাকআপ এক্সপোর্ট করুন (Importer → Encrypted (.pvx)) — চালু করার আগে বাধ্যতামূলক।" : "⚠️ Export an encrypted .pvx backup first (Importer → Encrypted (.pvx)) — required before enabling."); color: root.pq_backup_ready ? PhantomTheme.success : PhantomTheme.warning; font-size: 11px; wrap: word-wrap; }
                     if !root.pq_paranoid_on : AuraButton { label: (root.ui_lang == "bn" ? "PQ-paranoid চালু করুন" : "Enable PQ-paranoid"); width: 190px; height: 34px; clicked => { root.convert_pq_profile(true); } }
                     if root.pq_paranoid_on : HorizontalLayout { spacing: 8px;
-                        AuraButton { label: root.pq_confirm_off ? "Sure? Convert back" : "Disable (portable)"; primary: !root.pq_confirm_off; danger: root.pq_confirm_off; width: root.pq_confirm_off ? 200px : 180px; height: 34px; clicked => { if root.pq_confirm_off { root.pq_confirm_off = false; root.convert_pq_profile(false); } else { root.pq_confirm_off = true; } } }
+                        AuraButton { label: root.pq_confirm_off ? (root.ui_lang == "bn" ? "নিশ্চিত? ফিরিয়ে নিন" : "Sure? Convert back") : (root.ui_lang == "bn" ? "বন্ধ (পোর্টেবল)" : "Disable (portable)"); primary: !root.pq_confirm_off; danger: root.pq_confirm_off; width: root.pq_confirm_off ? 200px : 180px; height: 34px; clicked => { if root.pq_confirm_off { root.pq_confirm_off = false; root.convert_pq_profile(false); } else { root.pq_confirm_off = true; } } }
                         if root.pq_confirm_off : AuraButton { label: (root.ui_lang == "bn" ? "বাতিল" : "Cancel"); width: 90px; height: 34px; clicked => { root.pq_confirm_off = false; } }
                     }
                     if root.pq_status != "" : Text { text: root.pq_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
@@ -2269,12 +2269,12 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: (root.ui_lang == "bn" ? "TTL (২৪ ঘণ্টা)" : "TTL (24h)"); text <=> root.ls_ttl; width: 110px; height: 36px; }
                         LineEdit { placeholder-text: (root.ui_lang == "bn" ? "ভিউ (১, ০=∞)" : "Views (1, 0=∞)"); text <=> root.ls_views; width: 130px; height: 36px; enabled: !root.ls_relay; }
-                        AuraButton { label: root.ls_serve ? "LAN: ON" : "LAN: OFF"; primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; root.ls_relay = root.ls_serve ? false : root.ls_relay; } }
-                        AuraButton { label: root.ls_relay ? "Async gist: ON" : "Async gist: OFF"; primary: root.ls_relay; width: 140px; height: 34px; clicked => { root.ls_relay = !root.ls_relay; root.ls_serve = root.ls_relay ? false : root.ls_serve; } }
+                        AuraButton { label: root.ls_serve ? (root.ui_lang == "bn" ? "LAN: চালু" : "LAN: ON") : (root.ui_lang == "bn" ? "LAN: বন্ধ" : "LAN: OFF"); primary: root.ls_serve; width: 100px; height: 34px; clicked => { root.ls_serve = !root.ls_serve; root.ls_relay = root.ls_serve ? false : root.ls_relay; } }
+                        AuraButton { label: root.ls_relay ? (root.ui_lang == "bn" ? "অ্যাসিঙ্ক gist: চালু" : "Async gist: ON") : (root.ui_lang == "bn" ? "অ্যাসিঙ্ক gist: বন্ধ" : "Async gist: OFF"); primary: root.ls_relay; width: 140px; height: 34px; clicked => { root.ls_relay = !root.ls_relay; root.ls_serve = root.ls_relay ? false : root.ls_serve; } }
                     }
                     HorizontalLayout { spacing: 6px;
-                        AuraButton { label: root.ls_pass_on ? "Passphrase: ON" : "Passphrase: OFF"; primary: root.ls_pass_on; width: 150px; height: 34px; clicked => { root.ls_pass_on = !root.ls_pass_on; } }
-                        Text { text: root.ls_relay ? "Secret gist — anyone with the link can fetch until you revoke; the link includes your GitHub login. Expiry is best-effort, not one-time." : ""; color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
+                        AuraButton { label: root.ls_pass_on ? (root.ui_lang == "bn" ? "পাসফ্রেজ: চালু" : "Passphrase: ON") : (root.ui_lang == "bn" ? "পাসফ্রেজ: বন্ধ" : "Passphrase: OFF"); primary: root.ls_pass_on; width: 150px; height: 34px; clicked => { root.ls_pass_on = !root.ls_pass_on; } }
+                        Text { text: root.ls_relay ? (root.ui_lang == "bn" ? "সিক্রেট gist — প্রত্যাহার না করলে লিংক থাকা যে কেউ আনতে পারে; লিংকে আপনার GitHub লগইন থাকে। মেয়াদ শেষ হওয়া best-effort, এক-বার নয়।" : "Secret gist — anyone with the link can fetch until you revoke; the link includes your GitHub login. Expiry is best-effort, not one-time.") : (root.ui_lang == "bn" ? "" : ""); color: PhantomTheme.text-dim; font-size: 11px; vertical-alignment: center; horizontal-stretch: 1; wrap: word-wrap; }
                     }
                     if root.ls_pass_on : HorizontalLayout { spacing: 6px;
                         LineEdit { placeholder-text: (root.ui_lang == "bn" ? "শেয়ার পাসফ্রেজ (৮+)" : "Share passphrase (8+)"); input-type: password; text <=> root.ls_pass; height: 36px; horizontal-stretch: 1; }
@@ -2309,7 +2309,7 @@ export component MainWindow inherits Window {
                     }
                     HorizontalLayout { spacing: 8px;
                         AuraButton { label: (root.ui_lang == "bn" ? "Ext PIN সেট করুন" : "Set Ext PIN"); primary: true; width: 130px; height: 34px; clicked => { root.setup_ext_pin(ext_pin_new.text, ext_pin_confirm.text); ext_pin_new.text = ""; ext_pin_confirm.text = ""; } }
-                        if root.ext_pin_set : AuraButton { label: root.confirm_ext_pin_remove ? "Sure?" : "Remove Ext PIN"; danger: true; width: root.confirm_ext_pin_remove ? 110px : 150px; height: 34px; clicked => { if root.confirm_ext_pin_remove { root.confirm_ext_pin_remove = false; root.disable_ext_pin(); } else { root.confirm_ext_pin_remove = true; } } }
+                        if root.ext_pin_set : AuraButton { label: root.confirm_ext_pin_remove ? (root.ui_lang == "bn" ? "নিশ্চিত?" : "Sure?") : (root.ui_lang == "bn" ? "Ext PIN সরান" : "Remove Ext PIN"); danger: true; width: root.confirm_ext_pin_remove ? 110px : 150px; height: 34px; clicked => { if root.confirm_ext_pin_remove { root.confirm_ext_pin_remove = false; root.disable_ext_pin(); } else { root.confirm_ext_pin_remove = true; } } }
                     }
                     if root.ext_pin_status != "" : Text { text: root.ext_pin_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "দুই-ধাপ আনলক (পাসওয়ার্ড + Hello)" : "Two-factor unlock (password + Hello)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.and_mode); primary: root.and_mode; width: 90px; clicked => { root.set_and_mode(!root.and_mode); } } }
