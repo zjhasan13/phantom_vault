@@ -10,14 +10,31 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `58104f5` (BN Settings page B4) |
+| Branch / HEAD | `main` @ `766f5b5` (BN item detail B5) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-09) - `58104f5`
+## Last code batch (2026-11-09) - `766f5b5`
+
+B5 = Bengali item detail pane. The right pane (labels, diagnostic tiles,
+storage/history/tags, trash + stale warnings, Open URL/Share/Close/Check/Copy)
+follows `ui_lang`, and two shared Rust helpers now localize:
+
+- `models::ago()` -> `à¦à¦‡à¦®à¦¾à¦¤à§à¦°` / `à§© à¦¦à¦¿à¦¨ à¦†à¦—à§‡` / `à§¨ à¦®à¦¾à¦¸ à¦†à¦—à§‡` (feeds every list row,
+  the detail meta line and the credential age).
+- `core::password_strength::{label,detail}` -> `à¦®à¦¾à¦à¦¾à¦°à¦¿ â€¢ 20 à¦…à¦•à§à¦·à¦° â€¢ à¦‡à¦‰à¦¨à¦¿à¦•`,
+  `à¦¦à§à¦°à§à¦¬à¦²/à¦¶à¦•à§à¦¤à¦¿à¦¶à¦¾à¦²à§€/à¦šà¦®à§Žà¦•à¦¾à¦°`, `Nà¦Ÿà¦¿ à¦†à¦‡à¦Ÿà§‡à¦®à§‡ à¦ªà§à¦¨à¦°à¦¾à¦¬à§ƒà¦¤à§à¦¤`, `à¦°à§‹à¦Ÿà§‡à¦Ÿ à¦•à¦°à§à¦¨`.
+
+Still English: the Rust status tail (`set_sync_status`, `set_notification_text`,
+`format!` variants - ~250 literals), a few Rust-set Slint defaults
+(`ssh_status`, `health_headline`), and the Settings rows that overflow ~20
+logical px at the 960 px minimum.
+
+Evidence: `pv-bn-detail8.png` in `%TEMP%` (list row "3 à¦¦à¦¿à¦¨ à¦†à¦—à§‡", tiles, copy chip).
+## Previous batch (2026-11-09) - `58104f5`
 
 B4 = Bengali Settings page. All six tabs follow `ui_lang` (196 literals), the
 15 ON/OFF chips render as `à¦šà¦¾à¦²à§`/`à¦¬à¦¨à§à¦§` via a new `tog(on)` helper, and the

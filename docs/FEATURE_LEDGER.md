@@ -87,6 +87,7 @@ product-copy decision, not a bug fix.
 
 | Commit | What changed |
 |---|---|
+| `766f5b5` | i18n: item detail pane BN + `ago()` / password-strength helpers localized |
 | `58104f5` | i18n: Settings page BN (6 tabs, 196 strings) + `tog()` ON/OFF chips (`চালু`/`বন্ধ`) |
 | `17c6dc9` | i18n/layout: main screen fully BN (sidebar/chips/counters/nudge/travel) + detail proof-strip fit at 1185 logical px |
 | `119934f` | i18n: Rust status toasts + `VaultError::localized()` (Auto-Type payloads mapped) |
