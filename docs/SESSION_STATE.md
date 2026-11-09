@@ -10,14 +10,29 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `766f5b5` (BN item detail B5) |
+| Branch / HEAD | `main` @ `be741cf` (BN Rust statuses B6) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.7k lines) |
 
-## Last code batch (2026-11-09) - `766f5b5`
+## Last code batch (2026-11-09) - `be741cf`
+
+B6 = Bengali Rust statuses. 138 plain statuses (156 sites) go through `tr()`,
+69 `format!("â€¦{e}")` error templates localize only their text (technical
+payloads stay), and 26 inline-capture templates switch on `i18n::is_bn()`
+(canary trip, breach warning, emptied trash, auto-lock countdown, honeytoken,
+import counts, leak scanâ€¦).
+
+Verified on screen: Dev & API secret scan shows
+`ðŸš¨ à¦¸à§à¦•à§à¦¯à¦¾à¦¨ à¦¸à¦®à§à¦ªà¦¨à§à¦¨: 918à¦Ÿà¦¿ à¦¸à¦®à§à¦­à¦¾à¦¬à§à¦¯ à¦¸à¦¿à¦•à§à¦°à§‡à¦Ÿà¥¤ à¦Ÿà¦¾à¦°à§à¦®à¦¿à¦¨à¦¾à¦² à¦²à¦— à¦¦à§‡à¦–à§à¦¨à¥¤`
+(`pv-bn-status-ssh.png`).
+
+Still English: ~35 `format!` templates with explicit args, a few Rust-set Slint
+defaults (`ssh_status`, `health_headline`), the Settings rows that overflow at
+960 logical px, and some add/edit-form labels.
+## Previous batch (2026-11-09) - `766f5b5`
 
 B5 = Bengali item detail pane. The right pane (labels, diagnostic tiles,
 storage/history/tags, trash + stale warnings, Open URL/Share/Close/Check/Copy)
