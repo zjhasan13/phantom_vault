@@ -283,6 +283,23 @@ Still English (~35 sites): `format!` templates that take explicit arguments
 mechanical wrap — plus a handful of Slint property defaults that Rust sets
 (`ssh_status: "Not checked"`, `health_headline: "Not audited yet."`).
 
+## Coverage update (2026-11-09, arg-template batch B7)
+
+Closes the Rust-side gaps left by B6:
+
+- **15 `format!` templates with explicit arguments** (17 call sites) now branch
+  on `i18n::is_bn()`: Auto-Type errors, "already saved" list, password strength
+  bits, save/delete/restore failures, QR scan/parse, import save, webcam scan,
+  import counts, "already on latest", download progress and the page counter.
+- **Rust-set Slint defaults** are localized at startup and kept in sync on a
+  language switch: `ssh_status` (`Not checked` / `যাচাই হয়নি`) and
+  `health_status` + `health_headline` (`Not audited yet.` / `এখনো অডিট হয়নি।`).
+  The switch only rewrites them while they still hold an untouched default, so a
+  real probe/audit result is never clobbered.
+
+Verified on screen: the Dev & API tab shows `যাচাই হয়নি` for the SSH agent and
+`এখনো অডিট হয়নি।` above the health buttons (`%TEMP%\pv-bn-dev-defaults2.png`).
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

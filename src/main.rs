@@ -649,7 +649,7 @@ fn trigger_autotype(
                         }
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("⚠️ Auto-Type: {}", e.localized()).into());
+                        ui.set_notification_text(if crate::i18n::is_bn() { format!("⚠️ অটো-টাইপ: {}", e.localized()) } else { format!("⚠️ Auto-Type: {}", e.localized()) }.into());
                         ui.set_notification_kind("error".into());
                     }
                 }
@@ -2616,7 +2616,7 @@ fn park_twofa_for_dup(ui: &MainWindow, accounts: Vec<TotpAccount>, conflicts: Ve
             seen.push(w);
         }
     }
-    ui.set_dup_title(format!("⚠️ Already saved: {}", seen.join(", ")).into());
+    ui.set_dup_title(if crate::i18n::is_bn() { format!("⚠️ আগেই সেভ করা: {}", seen.join(", ")) } else { format!("⚠️ Already saved: {}", seen.join(", ")) }.into());
     // Secrets are deliberately NOT rendered. Naming the account is enough to
     // act on, and a modal is the worst possible place to echo key material.
     ui.set_dup_body(format!(
@@ -4264,6 +4264,10 @@ fn main() -> Result<(), slint::PlatformError> {
     let saved_lang = normalize_lang(saved_lang.trim());
     i18n::set_bn(saved_lang == "bn");
     main_window.set_ui_lang(saved_lang.into());
+    // Slint property defaults that only Rust sets (see on_set_language).
+    main_window.set_ssh_status(tr("Not checked", "যাচাই হয়নি").into());
+    main_window.set_health_status(tr("Not audited yet.", "এখনো অডিট হয়নি।").into());
+    main_window.set_health_headline(tr("Not audited yet.", "এখনো অডিট হয়নি।").into());
     main_window.set_status_text(
         tr(
             "Vault is locked. Enter Master Password:",
@@ -5549,7 +5553,7 @@ fn main() -> Result<(), slint::PlatformError> {
         } else {
             "Unbreakable"
         };
-        ui.set_ob_strength_label(format!("{} (~{:.0} bits)", label, bits).into());
+        ui.set_ob_strength_label(if crate::i18n::is_bn() { format!("{} (~{:.0} বিট)", label, bits) } else { format!("{} (~{:.0} bits)", label, bits) }.into());
         ui.set_ob_strength_frac((bits / 100.0).clamp(0.0, 1.0) as f32);
     });
 
@@ -6583,7 +6587,7 @@ fn main() -> Result<(), slint::PlatformError> {
                             trigger_favicon_prefetch(fav_vc, fav_sc, fav_w);
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Save failed: {}", e).into());
+                            ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ সেভ ব্যর্থ: {}", e) } else { format!("❌ Save failed: {}", e) }.into());
                         }
                     }
                 });
@@ -6689,7 +6693,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Delete failed: {}", e).into());
+                        ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ মুছে ফেলা ব্যর্থ: {}", e) } else { format!("❌ Delete failed: {}", e) }.into());
                     }
                 }
             });
@@ -6760,7 +6764,7 @@ fn main() -> Result<(), slint::PlatformError> {
                         trigger_sync_push(ui.as_weak());
                     }
                     Err(e) => {
-                        ui.set_notification_text(format!("❌ Restore failed: {}", e).into());
+                        ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ রিস্টোর ব্যর্থ: {}", e) } else { format!("❌ Restore failed: {}", e) }.into());
                     }
                 }
             });
@@ -7765,7 +7769,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
     if let Some(img) = png_bytes_to_image(&p.png) {
         ui.set_ga_image(img);
     }
-    ui.set_ga_page(format!("Page {} of {}", idx + 1, pages.len()).into());
+    ui.set_ga_page(if crate::i18n::is_bn() { format!("পৃষ্ঠা {} / {}", idx + 1, pages.len()) } else { format!("Page {} of {}", idx + 1, pages.len()) }.into());
     ui.set_ga_page_at(idx as i32);
     ui.set_ga_page_total(pages.len() as i32);
     ui.set_ga_busy(false);
@@ -7844,7 +7848,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             if !s.warnings.is_empty() {
                                 msg.push_str(&format!(" | ⚠️ {}", s.warnings.join(" | ")));
                             }
-                            ui.set_notification_text(format!("✅ Imported {} 2FA accounts!", s.accounts_imported).into());
+                            ui.set_notification_text(if crate::i18n::is_bn() { format!("✅ {}টি 2FA অ্যাকাউন্ট ইমপোর্ট হয়েছে!", s.accounts_imported) } else { format!("✅ Imported {} 2FA accounts!", s.accounts_imported) }.into());
                             ui.set_import_2fa_status(msg.into());
                             ui.set_import_input("".into());
                             {
@@ -8002,7 +8006,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 Err(e) => {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_notification_text(format!("❌ QR scan failed: {}", e).into());
+                            ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ QR স্ক্যান ব্যর্থ: {}", e) } else { format!("❌ QR scan failed: {}", e) }.into());
                         }
                     });
                     return;
@@ -8017,7 +8021,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 Err(e) => {
                     let _ = slint::invoke_from_event_loop(move || {
                         if let Some(ui) = weak.upgrade() {
-                            ui.set_notification_text(format!("❌ QR parse failed: {}", e).into());
+                            ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ QR পার্স ব্যর্থ: {}", e) } else { format!("❌ QR parse failed: {}", e) }.into());
                         }
                     });
                     return;
@@ -8087,7 +8091,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             trigger_sync_push(ui.as_weak());
                         }
                         Err(e) => {
-                            ui.set_notification_text(format!("❌ Import save failed: {}", e).into());
+                            ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ ইমপোর্ট সেভ ব্যর্থ: {}", e) } else { format!("❌ Import save failed: {}", e) }.into());
                         }
                     }
                 }
@@ -8194,7 +8198,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                             let _ = slint::invoke_from_event_loop(move || {
                                 if let Some(ui) = weak_in.upgrade() {
                                     ui.set_show_webcam_scan(false);
-                                    ui.set_notification_text(format!("❌ QR parse failed: {}", e).into());
+                                    ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ QR পার্স ব্যর্থ: {}", e) } else { format!("❌ QR parse failed: {}", e) }.into());
                                 }
                             });
                             return;
@@ -8260,7 +8264,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                                     trigger_sync_push(ui.as_weak());
                                 }
                                 Err(e) => {
-                                    ui.set_notification_text(format!("❌ Import save failed: {}", e).into());
+                                    ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ ইমপোর্ট সেভ ব্যর্থ: {}", e) } else { format!("❌ Import save failed: {}", e) }.into());
                                 }
                             }
                         }
@@ -8280,7 +8284,7 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak.upgrade() {
                         ui.set_show_webcam_scan(false);
-                        ui.set_notification_text(format!("❌ Webcam scan: {}", e).into());
+                        ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ ওয়েবক্যাম স্ক্যান: {}", e) } else { format!("❌ Webcam scan: {}", e) }.into());
                     }
                 });
             }
@@ -9924,7 +9928,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         ui.set_update_ready(false);
                         ui.set_update_notes(String::new().into());
                         ui.set_show_changelog(false);
-                        ui.set_update_status(format!("✅ Already on latest (v{}).", env!("CARGO_PKG_VERSION")).into());
+                        ui.set_update_status(if crate::i18n::is_bn() { format!("✅ সর্বশেষ ভার্সনেই আছেন (v{})।", env!("CARGO_PKG_VERSION")) } else { format!("✅ Already on latest (v{}).", env!("CARGO_PKG_VERSION")) }.into());
                     }
                     Ok(Some(info)) => {
                         ui.set_update_tag(info.tag.clone().into());
@@ -9957,7 +9961,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_update_status(tr("⚠️ Check for updates first.", "⚠️ আগে আপডেট দেখুন।").into());
             return;
         };
-        ui.set_update_status(format!("⏳ Downloading {}…", info.asset_name).into());
+        ui.set_update_status(if crate::i18n::is_bn() { format!("⏳ {} ডাউনলোড হচ্ছে…", info.asset_name) } else { format!("⏳ Downloading {}…", info.asset_name) }.into());
         let weak = dl_weak.clone();
         let bat_arc = Arc::clone(&dl_bat);
         std::thread::spawn(move || {
@@ -12168,7 +12172,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                     trigger_sync_push(ui.as_weak());
                                 }
                                 Err(e) => {
-                                    ui.set_notification_text(format!("❌ Delete failed: {}", e).into());
+                                    ui.set_notification_text(if crate::i18n::is_bn() { format!("❌ মুছে ফেলা ব্যর্থ: {}", e) } else { format!("❌ Delete failed: {}", e) }.into());
                                 }
                             }
                         }
@@ -15386,6 +15390,23 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
         if let Some(ui) = lang_weak.upgrade() {
             ui.set_ui_lang(lang.into());
+            // These two are Slint property defaults that only Rust ever sets;
+            // keep them in the active language while they still hold the
+            // untouched default of either language.
+            let ssh = ui.get_ssh_status().to_string();
+            if ssh == "Not checked" || ssh == "যাচাই হয়নি" {
+                ui.set_ssh_status(i18n::tr("Not checked", "যাচাই হয়নি").into());
+            }
+            let headline = ui.get_health_headline().to_string();
+            let status = ui.get_health_status().to_string();
+            if headline == "Not audited yet."
+                || headline == "এখনো অডিট হয়নি।"
+                || status == "Not audited yet."
+                || status == "এখনো অডিট হয়নি।"
+            {
+                ui.set_health_status(i18n::tr("Not audited yet.", "এখনো অডিট হয়নি।").into());
+                ui.set_health_headline(i18n::tr("Not audited yet.", "এখনো অডিট হয়নি।").into());
+            }
         }
         if let Some(cap) = cap_lang_weak.upgrade() {
             cap.set_ui_lang(lang.into());
