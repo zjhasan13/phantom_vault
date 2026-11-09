@@ -152,18 +152,21 @@ pub fn ago(ts: u64, now: u64) -> String {
     const HOUR: u64 = 3600;
     const DAY: u64 = 86400;
     const WEEK: u64 = 7 * DAY;
+    let bn = crate::i18n::is_bn();
     if d < MIN {
-        "just now".to_string()
+        if bn { "এইমাত্র".to_string() } else { "just now".to_string() }
     } else if d < HOUR {
-        format!("{} min ago", d / MIN)
+        if bn { format!("{} মিনিট আগে", d / MIN) } else { format!("{} min ago", d / MIN) }
     } else if d < DAY {
-        format!("{}h ago", d / HOUR)
+        if bn { format!("{} ঘণ্টা আগে", d / HOUR) } else { format!("{}h ago", d / HOUR) }
     } else if d < WEEK {
-        format!("{}d ago", d / DAY)
+        if bn { format!("{} দিন আগে", d / DAY) } else { format!("{}d ago", d / DAY) }
     } else if d < 30 * DAY {
-        format!("{}w ago", d / WEEK)
+        if bn { format!("{} সপ্তাহ আগে", d / WEEK) } else { format!("{}w ago", d / WEEK) }
     } else if d < 365 * DAY {
-        format!("{}mo ago", d / (30 * DAY))
+        if bn { format!("{} মাস আগে", d / (30 * DAY)) } else { format!("{}mo ago", d / (30 * DAY)) }
+    } else if bn {
+        format!("{} বছর আগে", d / (365 * DAY))
     } else {
         format!("{}y ago", d / (365 * DAY))
     }

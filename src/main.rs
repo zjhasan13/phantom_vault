@@ -11516,14 +11516,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
             ui.set_d_id(c.id.clone().into());
             ui.set_d_kind(1);
             ui.set_d_title(c.title.clone().into());
-            ui.set_d_meta_line(
-                format!(
-                    "ID: {} · Updated {}",
-                    c.id.chars().take(12).collect::<String>(),
-                    crate::models::ago(c.last_changed, crate::models::current_timestamp())
-                )
-                .into(),
-            );
+            ui.set_d_meta_line({
+                let short_id = c.id.chars().take(12).collect::<String>();
+                let ago = crate::models::ago(c.last_changed, crate::models::current_timestamp());
+                if crate::i18n::is_bn() {
+                    format!("ID: {short_id} · {ago} আপডেট").into()
+                } else {
+                    format!("ID: {short_id} · Updated {ago}").into()
+                }
+            });
             let mut tag_vec: Vec<String> = vault
                 .item_tags
                 .get(&c.id)
@@ -11604,7 +11605,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 );
                 ui.set_d_reuse_count(reused as i32);
                 ui.set_d_reuse_label(
-                    if reused == 0 {
+                    if crate::i18n::is_bn() {
+                        if reused == 0 {
+                            "ইউনিক পাসওয়ার্ড".to_string()
+                        } else {
+                            format!("আরও {reused}টি আইটেমে ব্যবহৃত")
+                        }
+                    } else if reused == 0 {
                         "Unique password".to_string()
                     } else {
                         format!("Shared with {reused} other item(s)")
@@ -11636,7 +11643,11 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 let now = crate::models::current_timestamp();
                 let days = now.saturating_sub(c.last_changed) / 86400;
                 ui.set_d_age_info(
-                    format!("Last edited {} • Password age: {} days", crate::models::ago(c.last_changed, now), days).into(),
+                    if crate::i18n::is_bn() {
+                        format!("শেষ সম্পাদনা {} • পাসওয়ার্ডের বয়স: {} দিন", crate::models::ago(c.last_changed, now), days).into()
+                    } else {
+                        format!("Last edited {} • Password age: {} days", crate::models::ago(c.last_changed, now), days).into()
+                    },
                 );
                 ui.set_d_age_frac((days as f32 / 180.0).min(1.0));
             }

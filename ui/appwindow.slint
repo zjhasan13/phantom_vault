@@ -3166,43 +3166,43 @@ export component MainWindow inherits Window {
                                     // detail pane past the window edge.
                                     if root.width >= 1300px : Text { text: "ARGON2ID 64 MiB"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; vertical-alignment: center; } if root.device_bound && root.width >= 1300px : Text { text: "DPAPI DEVICE BOUND"; color: PhantomTheme.success; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                     Rectangle { horizontal-stretch: 1; }
-                                    if root.d_kind == 1 && root.d_secret != "" : Text { text: "STRENGTH " + Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
+                                    if root.d_kind == 1 && root.d_secret != "" : Text { text: (root.ui_lang == "bn" ? "শক্তি " : "STRENGTH ") + Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; vertical-alignment: center; }
                                 }
                             }
                             HorizontalLayout { spacing: 8px;
                                 if !root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "⚡ অটোফিল / টাইপ" : "⚡ Launch & Autofill"; primary: true; horizontal-stretch: 1; height: 38px; clicked => { root.type_item_requested(root.d_kind, root.d_id); } }
-                                if root.d_url != "" : AuraButton { label: "↗ Open URL"; width: 104px; height: 38px; clicked => { root.open_url(root.d_url); } }
+                                if root.d_url != "" : AuraButton { label: (root.ui_lang == "bn" ? "↗ URL খুলুন" : "↗ Open URL"); width: 104px; height: 38px; clicked => { root.open_url(root.d_url); } }
                             }
                         }}
                         // Real-only diagnostic tiles (pwned / reuse / age).
                         HorizontalLayout { spacing: 8px;
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px;
-                                Text { text: "PWNED VERIFICATION"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
+                                Text { text: (root.ui_lang == "bn" ? "ফাঁস যাচাই" : "PWNED VERIFICATION"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
                                 HorizontalLayout { spacing: 6px;
-                                    Text { text: root.d_health == "" ? "Not scanned" : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
-                                    AuraButton { label: root.d_breach_busy ? "…" : "Check"; width: 58px; height: 24px; enabled: !root.d_breach_busy; clicked => { root.check_detail_breach(root.d_id); } }
+                                    Text { text: root.d_health == "" ? (root.ui_lang == "bn" ? "স্ক্যান হয়নি" : "Not scanned") : root.d_health; color: root.d_health == "" ? PhantomTheme.text-muted : PhantomTheme.warning; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
+                                    AuraButton { label: root.d_breach_busy ? "…" : (root.ui_lang == "bn" ? "যাচাই" : "Check"); width: 58px; height: 24px; enabled: !root.d_breach_busy; clicked => { root.check_detail_breach(root.d_id); } }
                                 }
                             } }
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px;
-                                Text { text: "PASSWORD REUSE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
+                                Text { text: (root.ui_lang == "bn" ? "পাসওয়ার্ড পুনরাবৃত্তি" : "PASSWORD REUSE"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; }
                                 HorizontalLayout { spacing: 6px;
                                     Text { text: root.d_reuse_label == "" ? "Unique password" : root.d_reuse_label; color: root.d_reuse_count > 0 ? PhantomTheme.warning : PhantomTheme.success; font-size: 11px; font-weight: 700; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; }
-                                    if root.d_reuse_count > 0 : AuraButton { label: "View"; width: 52px; height: 24px; clicked => { root.filter_health("reused"); } }
+                                    if root.d_reuse_count > 0 : AuraButton { label: (root.ui_lang == "bn" ? "দেখুন" : "View"); width: 52px; height: 24px; clicked => { root.filter_health("reused"); } }
                                 }
                             } }
-                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: "CREDENTIAL AGE"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
+                            Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 4px; Text { text: (root.ui_lang == "bn" ? "ক্রেডেনশিয়াল বয়স" : "CREDENTIAL AGE"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 800; font-family: "JetBrains Mono"; } Text { text: root.d_age_info == "" ? "Unknown" : root.d_age_info; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; wrap: word-wrap; } } }
                         }
-                        if root.d_trashed : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 8px; height: 30px; Text { text: "⚠️ This item is in Trash"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
-                        if root.d_stale : Text { text: "⚠️ Password is over 6 months old (Consider rotating)"; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; wrap: word-wrap; }
+                        if root.d_trashed : Rectangle { background: PhantomTheme.warning.with-alpha(0.10); border-radius: 8px; height: 30px; Text { text: (root.ui_lang == "bn" ? "⚠️ আইটেমটি ট্র্যাশে আছে" : "⚠️ This item is in Trash"); color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; vertical-alignment: center; } }
+                        if root.d_stale : Text { text: (root.ui_lang == "bn" ? "⚠️ পাসওয়ার্ডের বয়স ৬ মাসের বেশি (বদলানোর কথা ভাবুন)" : "⚠️ Password is over 6 months old (Consider rotating)"); color: PhantomTheme.warning; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                         // Two-column credential grid (Aegis inspector).
                         if root.d_kind != 8 : HorizontalLayout { spacing: 10px;
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 5px;
-                                HorizontalLayout { Text { text: "USERNAME / IDENTITY"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } if root.d_verified : Text { text: "VERIFIED"; color: PhantomTheme.success; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; } }
+                                HorizontalLayout { Text { text: (root.ui_lang == "bn" ? "ইউজারনেম / আইডেন্টিটি" : "USERNAME / IDENTITY"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } if root.d_verified : Text { text: (root.ui_lang == "bn" ? "যাচাইকৃত" : "VERIFIED"); color: PhantomTheme.success; font-size: 8px; font-weight: 700; font-family: "JetBrains Mono"; } }
                                 Text { text: root.d_user == "" ? "—" : root.d_user; color: PhantomTheme.text; font-size: 14px; font-family: "JetBrains Mono"; overflow: elide; }
-                                AuraButton { label: root.last_copied == root.d_user && root.last_copied != "" ? "✓ Copied" : "📋 Copy"; primary: root.last_copied == root.d_user && root.last_copied != ""; height: 28px; horizontal-stretch: 1; clicked => { root.copy_password_requested(root.d_user); } }
+                                AuraButton { label: (root.last_copied == root.d_user && root.last_copied != "") ? (root.ui_lang == "bn" ? "✓ কপি হয়েছে" : "✓ Copied") : (root.ui_lang == "bn" ? "📋 কপি" : "📋 Copy"); primary: root.last_copied == root.d_user && root.last_copied != ""; height: 28px; horizontal-stretch: 1; clicked => { root.copy_password_requested(root.d_user); } }
                             }}
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 5px;
-                                HorizontalLayout { Text { text: "MASTER PASSWORD"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } Text { text: Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; } }
+                                HorizontalLayout { Text { text: (root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড" : "MASTER PASSWORD"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } Text { text: Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; } }
                                 HorizontalLayout { spacing: 4px;
                                     Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••••••"); color: PhantomTheme.secondary; font-size: 14px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
                                     AuraButton { label: root.d_secret_visible ? "🙈" : "👁"; width: 32px; height: 28px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } }
@@ -3215,13 +3215,13 @@ export component MainWindow inherits Window {
                             }}
                         }
                         // Embedded / standalone 2FA live card
-                        if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #4edea355; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: "2FA CODE — " + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
+                        if root.d_totp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: #4edea355; HorizontalLayout { padding: 12px; spacing: 10px; alignment: space-between; VerticalLayout { spacing: 2px; Text { text: (root.ui_lang == "bn" ? "2FA কোড — " : "2FA CODE — ") + root.d_title; color: PhantomTheme.text-muted; font-size: 11px; font-weight: 700; overflow: elide; } Text { text: root.live_totp_code; color: PhantomTheme.secondary; font-size: 26px; font-weight: 900; } } HorizontalLayout { spacing: 8px; Rectangle { width: 52px; height: 52px; border-radius: 26px; border-width: 2px; border-color: PhantomTheme.warning; Text { text: root.totp_countdown; color: PhantomTheme.warning; font-size: 12px; font-weight: 800; horizontal-alignment: center; vertical-alignment: center; } } AuraButton { label: root.last_copied == root.live_totp_code && root.last_copied != "" ? "✓ Copied" : "📋 Copy 2FA"; primary: root.last_copied == root.live_totp_code && root.last_copied != ""; width: 84px; height: 30px; y: 11px; clicked => { root.copy_totp_requested(root.d_id); } } } } }
                         if root.d_pk_rp != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 4px;
-                            Text { text: "PASSKEY (WebAuthn)"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                            Text { text: (root.ui_lang == "bn" ? "পাসকি (WebAuthn)" : "PASSKEY (WebAuthn)"); color: PhantomTheme.text; font-size: 11px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
                             Text { text: "RP: " + root.d_pk_rp; color: PhantomTheme.primary; font-size: 12px; font-family: "JetBrains Mono"; overflow: elide; }
-                            Text { text: "User: " + root.d_pk_user; color: PhantomTheme.text-muted; font-size: 11px; font-family: "JetBrains Mono"; overflow: elide; }
-                            Text { text: "Credential: " + root.d_pk_id + "…"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
-                            Text { text: "Stored locally · no assertion metadata recorded"; color: PhantomTheme.text-dim; font-size: 9px; }
+                            Text { text: (root.ui_lang == "bn" ? "ইউজার: " : "User: ") + root.d_pk_user; color: PhantomTheme.text-muted; font-size: 11px; font-family: "JetBrains Mono"; overflow: elide; }
+                            Text { text: (root.ui_lang == "bn" ? "ক্রেডেনশিয়াল: " : "Credential: ") + root.d_pk_id + "…"; color: PhantomTheme.text-dim; font-size: 10px; font-family: "JetBrains Mono"; }
+                            Text { text: (root.ui_lang == "bn" ? "লোকালি সংরক্ষিত · কোনো assertion মেটাডেটা রাখা হয়নি" : "Stored locally · no assertion metadata recorded"); color: PhantomTheme.text-dim; font-size: 9px; }
                         }}
                         // CARD 3: auto-fill options — single-line elided URL, never wraps
                         if root.d_url != "" : Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 8px;
@@ -3232,17 +3232,17 @@ export component MainWindow inherits Window {
                         // Storage / revision / classification (real data only).
                         HorizontalLayout { spacing: 8px;
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
-                                Text { text: "STORAGE RECORD"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: (root.ui_lang == "bn" ? "স্টোরেজ রেকর্ড" : "STORAGE RECORD"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
                                 Text { text: root.pq_paranoid_on ? "ML-KEM-768 + XChaCha20" : "XChaCha20-Poly1305"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; }
-                                Text { text: "Local envelope"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
+                                Text { text: (root.ui_lang == "bn" ? "লোকাল এনভেলপ" : "Local envelope"); color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
                             }}
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
-                                Text { text: "REVISION HISTORY"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: (root.ui_lang == "bn" ? "রিভিশন হিস্ট্রি" : "REVISION HISTORY"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
                                 Text { text: root.d_history.length + " saved"; color: PhantomTheme.text; font-size: 11px; font-weight: 700; }
-                                Text { text: "Password history"; color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
+                                Text { text: (root.ui_lang == "bn" ? "পাসওয়ার্ড হিস্ট্রি" : "Password history"); color: PhantomTheme.text-dim; font-size: 9px; font-family: "JetBrains Mono"; }
                             }}
                             Rectangle { horizontal-stretch: 1; background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 10px; spacing: 3px;
-                                Text { text: "CLASSIFICATION TAGS"; color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
+                                Text { text: (root.ui_lang == "bn" ? "ক্লাসিফিকেশন ট্যাগ" : "CLASSIFICATION TAGS"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.5px; }
                                 Text { text: root.d_folder == "" ? "General" : root.d_folder; color: PhantomTheme.primary; font-size: 11px; font-weight: 700; }
                                 Text { text: root.d_tags == "" ? "Derived only" : root.d_tags; color: PhantomTheme.secondary; font-size: 9px; font-family: "JetBrains Mono"; overflow: elide; }
                             }}
@@ -3286,7 +3286,7 @@ export component MainWindow inherits Window {
                             if root.d_kind == 1 && !root.d_trashed : HorizontalLayout { spacing: 8px; alignment: center;
                                 AuraButton { label: root.d_verified ? "✅ Verified working" : "Mark as working ✓"; primary: !root.d_verified; width: 200px; height: 32px; clicked => { root.toggle_verified(root.d_kind, root.d_id); } }
                             }
-                            HorizontalLayout { spacing: 8px; FieldLabel { text: "✈️ SAFE FOR TRAVEL"; vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
+                            HorizontalLayout { spacing: 8px; FieldLabel { text: (root.ui_lang == "bn" ? "✈️ ট্রাভেলের জন্য নিরাপদ" : "✈️ SAFE FOR TRAVEL"); vertical-alignment: center; } Text { text: root.d_travel ? "ON ✓" : "OFF"; color: root.d_travel ? PhantomTheme.success : PhantomTheme.text-dim; font-size: 12px; font-weight: 700; vertical-alignment: center; } }
                         }}
                         // P0 audit timeline: global recent events, never per-item claims.
                         Rectangle { background: PhantomTheme.surface; border-radius: 8px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 12px; spacing: 6px;
@@ -3298,10 +3298,10 @@ export component MainWindow inherits Window {
                         HorizontalLayout { spacing: 8px;
                             if root.d_trashed : AuraButton { label: root.ui_lang == "bn" ? "🔄 আইটেম ফিরিয়ে আনুন" : "🔄 Restore Item"; primary: true; horizontal-stretch: 1; height: 36px; clicked => { root.restore_item(root.d_kind, root.d_id); } }
                             if root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? ধ্বংস" : "Sure? Shred") : (root.ui_lang == "bn" ? "🔥 স্থায়ীভাবে ধ্বংস" : "🔥 Permanently Shred"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
-                            if !root.d_trashed && root.d_kind == 1 : AuraButton { label: "📤 Share"; width: 110px; height: 36px; clicked => { root.share_item(root.d_kind, root.d_id); } }
+                            if !root.d_trashed && root.d_kind == 1 : AuraButton { label: (root.ui_lang == "bn" ? "📤 শেয়ার" : "📤 Share"); width: 110px; height: 36px; clicked => { root.share_item(root.d_kind, root.d_id); } }
     
                             if !root.d_trashed : AuraButton { label: root.confirm_delete_detail ? (root.ui_lang == "bn" ? "নিশ্চিত? মুছুন" : "Sure? Delete") : (root.ui_lang == "bn" ? "🗑 মুছুন" : "🗑 Delete"); danger: true; horizontal-stretch: 1; height: 36px; clicked => { if root.confirm_delete_detail { root.confirm_delete_detail = false; root.delete_item_requested(root.d_kind, root.d_id); } else { root.confirm_delete_detail = true; } } }
-                            AuraButton { label: "✕ Close"; width: 110px; height: 36px; clicked => { root.close_detail(); } }
+                            AuraButton { label: (root.ui_lang == "bn" ? "✕ বন্ধ" : "✕ Close"); width: 110px; height: 36px; clicked => { root.close_detail(); } }
                         }
                     }
                     if root.d_id == "" && !root.show_add_form : VerticalLayout { spacing: 8px; alignment: center; padding-top: 40px;

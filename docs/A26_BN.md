@@ -225,6 +225,38 @@ Hello status, App PIN chip) still run ~20 logical px past the right edge.
 `pv-bn-set-960.png` shows it; the tab row itself fits. Stacking those rows on
 narrow windows is the next layout task.
 
+## Coverage update (2026-11-09, item detail batch B5)
+
+The right-hand inspection pane now follows `ui_lang`:
+
+- Slint: field labels (`USERNAME / IDENTITY`, `MASTER PASSWORD`), tile headings
+  (`PWNED VERIFICATION`, `PASSWORD REUSE`, `CREDENTIAL AGE`), `STORAGE RECORD`,
+  `REVISION HISTORY`, `CLASSIFICATION TAGS`, `PASSKEY (WebAuthn)`, the trash /
+  stale-password warnings, `Open URL`, `Share`, `Close`, `Check`, `Copy`, the
+  `STRENGTH` prefix and the "not scanned" fallback.
+- Rust: the meta line (`ID: … · … ago`), the reuse label (`Unique password` /
+  `Shared with N other item(s)`), the credential-age line and the password
+  strength one-liner.
+
+Deliberately unchanged: `LOCAL`, `ARGON2ID 64 MiB`, `DPAPI DEVICE BOUND`,
+`RP:` and `General`/`Default` (data values).
+
+### Shared Rust helpers now localized
+
+`models::ago()` (used by every list row, detail meta and credential age) and
+`core::password_strength::{label,detail}` (used by the detail pane and the
+generator) return Bengali when `i18n::is_bn()`:
+
+| English | Bengali |
+|---|---|
+| `just now` / `3d ago` / `2mo ago` | `এইমাত্র` / `৩ দিন আগে` / `২ মাস আগে` |
+| `Weak` / `Fair` / `Strong` / `Excellent` | `দুর্বল` / `মাঝারি` / `শক্তিশালী` / `চমৎকার` |
+| `Fair • 20 char • unique` | `মাঝারি • ২০ অক্ষর • ইউনিক` |
+| `reused in 2 items` | `২টি আইটেমে পুনরাবৃত্ত` |
+
+The existing unit tests assert the English output and still pass because the
+process-wide language flag defaults to English.
+
 ## Verification
 
 - `cargo test` includes `ui_language_normalizes_to_en_or_bn`.

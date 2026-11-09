@@ -93,30 +93,44 @@ pub fn fraction(password: &str) -> f32 {
 
 /// Short label for the meter row.
 pub fn label(password: &str) -> String {
-    let name = match level(password) {
-        0 => "Weak",
-        1 => "Fair",
-        2 => "Strong",
-        _ => "Excellent",
+    let bn = crate::i18n::is_bn();
+    let name = match (level(password), bn) {
+        (0, true) => "দুর্বল",
+        (1, true) => "মাঝারি",
+        (2, true) => "শক্তিশালী",
+        (_, true) => "চমৎকার",
+        (0, false) => "Weak",
+        (1, false) => "Fair",
+        (2, false) => "Strong",
+        (_, false) => "Excellent",
     };
-    format!("{name} • {} char", password.chars().count())
+    if bn {
+        format!("{name} • {} অক্ষর", password.chars().count())
+    } else {
+        format!("{name} • {} char", password.chars().count())
+    }
 }
 
 /// Full one-liner with reuse/age appended by the detail renderer.
 /// `reused_n`: other items sharing the exact password. `stale`: 180d+.
 pub fn detail(password: &str, reused_n: usize, stale: bool) -> String {
     let mut s = label(password);
+    let bn = crate::i18n::is_bn();
     if reused_n > 0 {
-        s.push_str(&format!(
-            " • reused in {} item{}",
-            reused_n,
-            if reused_n == 1 { "" } else { "s" }
-        ));
+        if bn {
+            s.push_str(&format!(" • {}টি আইটেমে পুনরাবৃত্ত", reused_n));
+        } else {
+            s.push_str(&format!(
+                " • reused in {} item{}",
+                reused_n,
+                if reused_n == 1 { "" } else { "s" }
+            ));
+        }
     } else {
-        s.push_str(" • unique");
+        s.push_str(if bn { " • ইউনিক" } else { " • unique" });
     }
     if stale {
-        s.push_str(" • rotate me");
+        s.push_str(if bn { " • রোটেট করুন" } else { " • rotate me" });
     }
     s
 }
