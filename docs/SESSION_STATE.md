@@ -9,13 +9,36 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-09 |
-| Branch / HEAD | `main` @ `4eec7e9` (A26 Bengali pass: B1–B9 shipped) |
+| Date | 2026-11-10 |
+| Branch / HEAD | `main` @ `a031f29` (A26 Bengali pass B1-B9) + scan docs (`0874b86`) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Audit 2026-11-10 (docs only, no code change)
+
+Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
+(`A-crypto`, `B-ipc`, `C-gap`, `D-tests`).
+
+- Gates re-run on `116f57a`: `cargo check -j 1` **EXIT=0** (6m29s),
+  `npm test` **160/160**, `npm run test:tokens` **21**. `cargo test` /
+  `clippy` were **not** re-run; 581 is a static reconciliation
+  (585 test fns minus 4 ignored), not a fresh run.
+- Highest-severity findings: **B1/B2** extension fills on a synthetic
+  `mousedown`/`click` (no `isTrusted`; `content.js:1913`, `:2015`, `:2563`),
+  **B3** TOTP picker is an open shadow root (`content.js:515`), **D-1/D-2**
+  detail view reveals reprompt-armed secrets and `rp_action = 3` is never
+  armed (`main.rs:11477`, `:11563`, `appwindow.slint:3199`), **B5** native-host
+  allow-list fails open (`native_host.rs:141`, `:3371`).
+- Fix order agreed 2026-11-10:
+  1. extension B1/B2/B3 - `isTrusted` + closed shadow roots + no fixed ids;
+  2. desktop reprompt D-1/D-2 - gate reveal, wire delete;
+  3. native host B5 - fail closed, drop the argv bypass;
+  4. persist auto-lock + clipboard TTL (D-3);
+  5. crypto P2 `A-01`/`A-02`/`A-04`;
+  6. CI - add `npm test` + `test:tokens`, use `-j 1`.
 
 ## Where the Bengali (A26) work stands
 
