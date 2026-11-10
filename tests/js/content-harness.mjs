@@ -15,6 +15,8 @@ const CONTENT = fs.readFileSync(
 
 // host -> closed shadow root, populated by the attachShadow spy in loadContent.
 const shadowRoots = new WeakMap();
+// element -> { eventType -> [listener] }, filled by the addEventListener spy.
+const listenerMap = new WeakMap();
 
 /// Test-only handle on a closed shadow root (falls back to the host itself when
 /// an element has no shadow tree, e.g. the card/identity toasts).
@@ -131,6 +133,13 @@ export function loadContent(html, url = "https://example.com/login", entries = [
   }
   const store = { entries, cards, identities, totp, breach: null, reuse: 0, session: {}, pings: 0, sessionLocked: false, saves: [], cardSaves: [], local: { ...local } };
   window.chrome = makeChrome(store);
+  // jsdom has no async clipboard; the generate/copy paths call writeText and
+  // would otherwise throw after filling the field.
+  try {
+    Object.defineProperty(window.navigator, "clipboard", {
+      value: { writeText: async () => {} }, configurable: true,
+    });
+  } catch (_) {}
   // jsdom has no innerText. content.js reads it for OTP hint/context text, so
   // map it to textContent; without this the hint paths see empty strings and
   // the classification under test would be untestable here.
@@ -142,6 +151,23 @@ export function loadContent(html, url = "https://example.com/login", entries = [
     });
   } catch (_) {}
   // Manifest order: domain.js before content.js (same isolated world).
+  // Record listeners so fireTrusted() can play the browser for user-path
+  // tests (a script-dispatched event can never carry isTrusted).
+  const origAdd = window.EventTarget.prototype.addEventListener;
+  const origRemove = window.EventTarget.prototype.removeEventListener;
+  window.EventTarget.prototype.addEventListener = function (type, fn, opts) {
+    if (fn) {
+      let m = listenerMap.get(this);
+      if (!m) { m = {}; listenerMap.set(this, m); }
+      (m[type] = m[type] || []).push(fn);
+    }
+    return origAdd.call(this, type, fn, opts);
+  };
+  window.EventTarget.prototype.removeEventListener = function (type, fn, opts) {
+    const m = listenerMap.get(this);
+    if (m && m[type]) m[type] = m[type].filter((f) => f !== fn);
+    return origRemove.call(this, type, fn, opts);
+  };
   window.eval(DOMAIN);
   window.eval(CONTENT);
   return { dom, window, store };
@@ -167,4 +193,30 @@ export function runtimeMessage(window, msg) {
 
 export async function flush(ms = 25) {
   await new Promise((r) => setTimeout(r, ms));
+}
+
+
+// jsdom marks every script-dispatched event `isTrusted: false` and the
+// property is non-configurable, so an event cannot be faked into a gesture.
+// These tests still need to exercise the USER path; `fireTrusted` calls the
+// listener the browser would call, with an event shaped like a real one.
+
+/// Call the handler registered for `type` on `el` as if a real user fired it.
+/// Only for positive-path tests; the security tests dispatch a real synthetic
+/// event (isTrusted false) and assert nothing happens.
+export function fireTrusted(el, type = "click", extra = {}) {
+  const byType = listenerMap.get(el) || {};
+  const fns = (byType[type] || []).slice();
+  const results = [];
+  for (const fn of fns) {
+    const ev = {
+      type, isTrusted: true, target: el, currentTarget: el,
+      defaultPrevented: false, button: 0, detail: 1, key: "",
+      preventDefault() { this.defaultPrevented = true; },
+      stopPropagation() {}, stopImmediatePropagation() {},
+      ...extra,
+    };
+    results.push(fn.call(el, ev));
+  }
+  return Promise.all(results);
 }

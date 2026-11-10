@@ -514,7 +514,7 @@
     const host = document.createElement("div");
     host.id = "__pv_otp_picker";
     host.style.cssText = "all:initial;position:absolute;z-index:2147483647;";
-    const root = host.attachShadow ? host.attachShadow({ mode: "open" }) : host;
+    const root = host.attachShadow ? host.attachShadow({ mode: "closed" }) : host;
     const style = document.createElement("style");
     style.textContent = `
       .wrap{position:fixed;z-index:2147483647;min-width:min(94vw,320px);max-width:92vw;background:#0b1326;color:#dae2fd;
@@ -714,6 +714,7 @@
         if (code || waiting != null) paintCode();
       });
       mark.addEventListener("click", async (e) => {
+        if (!e.isTrusted) return;
         // The row click means "fill this code"; the button must not also do it.
         e.stopPropagation();
         e.preventDefault();
@@ -728,7 +729,7 @@
         paint();
         toast(now ? `✅ ${name} — working মার্ক হলো` : `⚠️ ${name} — working mark সরানো হলো`);
       });
-      row.addEventListener("click", () => {
+      const chooseOtp = () => {
         if (!code) {
           const w = remaining != null ? remaining : waiting;
           toast(w != null ? `⏳ নতুন code আসতে বাকি ${w}s` : "⏳ একটু পরে আবার চেপুন।");
@@ -737,11 +738,16 @@
         closeOtpPicker();
         fillFromCandidate({ id: c.id, code });
         notePicked();
+      };
+      row.addEventListener("click", (e) => {
+        if (!e.isTrusted) return;
+        chooseOtp();
       });
       row.addEventListener("keydown", (e) => {
+        if (!e.isTrusted) return;
         if (e.key !== "Enter" && e.key !== " ") return;
         e.preventDefault();
-        row.click();
+        chooseOtp();
       });
       wrap.appendChild(row);
     }
@@ -1931,6 +1937,9 @@
     // Re-renders row buttons live; indexed binding rebuilt per render so a
     // mid-click re-render can never mis-fire (same lesson as before).
     const list = document.createElement("div");
+    // Rows of the last paint, so Enter can pick without a synthetic mousedown
+    // (the isTrusted guard below rejects events the page dispatched itself).
+    let lastItems = [];
     const paint = (filter) => {
       list.innerHTML = "";
       const q = filter.trim().toLowerCase();
@@ -1938,6 +1947,7 @@
         // Action rows (e.g. Generate) always stay visible; only accounts filter.
         .filter((r) => r.action || !q || ((r.title || "") + " " + (r.sub || "")).toLowerCase().includes(q))
         .slice(0, 8);
+      lastItems = items;
       if (!items.length) {
         const none = document.createElement("div");
         none.className = "pvx-empty";
@@ -2013,6 +2023,8 @@
         go.setAttribute("aria-hidden", "true");
         b.append(icon, tx, go);
         b.addEventListener("mousedown", (e) => {
+          // Only a real user gesture may move a secret into the page.
+          if (!e.isTrusted) return;
           e.preventDefault();
           e.stopPropagation();
           const pick = items[index] && items[index].onPick;
@@ -2039,10 +2051,12 @@
       search.addEventListener("keydown", (e) => {
         e.stopPropagation();
         if (e.key === "Enter") {
+          if (!e.isTrusted) return;
           e.preventDefault();
           const first = [...list.querySelectorAll("button")]
             .find((b) => b.dataset.pvAction !== "1");
-          if (first) first.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+          const row = first && lastItems[Number(first.dataset.pvIndex)];
+          if (row && typeof row.onPick === "function") { row.onPick(); closeDrop("pick"); }
         }
       });
       search.addEventListener("keyup", (e) => { e.stopPropagation(); });
@@ -2262,6 +2276,7 @@
     fill.textContent = "Fill";
     fill.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
     fill.addEventListener("click", async (e) => {
+      if (!e.isTrusted) return;
       e.preventDefault();
       e.stopPropagation();
       if (!(await requireExtPin())) return;
@@ -2561,6 +2576,7 @@
     b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
+      if (!ev.isTrusted) return;
       ev.preventDefault(); ev.stopPropagation();
       if (b.dataset.pvGen === "1") await badgeActionMenu(field);
       else await badgeFill(field);
@@ -2615,6 +2631,7 @@
     b.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("pointerdown", (e) => { e.preventDefault(); e.stopPropagation(); }, true);
     b.addEventListener("click", async (ev) => {
+      if (!ev.isTrusted) return;
       ev.preventDefault(); ev.stopPropagation();
       if (!(await requireExtPin())) return;
       generateInto(field);

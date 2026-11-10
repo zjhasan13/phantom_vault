@@ -2,7 +2,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { loadContent, submit, flush, runtimeMessage, shadowOf } from "./content-harness.mjs";
+import { loadContent, submit, flush, runtimeMessage, shadowOf, fireTrusted } from "./content-harness.mjs";
 
 const saver = (window) => window.document.getElementById("__pv_saver");
 // A9: the login prompts keep their fields and buttons in a closed shadow root,
@@ -186,7 +186,7 @@ test("Continue as: one matching account on a password-only step fills in one cli
   assert.ok(el, "the continue-as chip must appear");
   assert.match(el.textContent, /alice@example\.com/);
   const fill = [...el.querySelectorAll("button")].find((b) => /Fill/i.test(b.textContent));
-  fill.click();
+  await fireTrusted(fill, "click");
   await flush(60);
   assert.equal(window.document.querySelector('input[name="password"]').value, "pw1");
 });
@@ -385,7 +385,7 @@ test("identity fill covers company, city, state, zip and country", async (t) => 
   await flush(80);
   const row = window.document.querySelector("button[data-pv-index]");
   assert.ok(row, "the identity row must reach the dropdown");
-  row.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await fireTrusted(row, "mousedown");
   await flush(60);
   const val = (n) => window.document.querySelector(`[name="${n}"]`).value;
   assert.equal(val("company"), "Analytical Engines");
@@ -722,12 +722,12 @@ test("change-password form has ONE shield with fill + generate actions", async (
   const icons = [...window.document.querySelectorAll("button")]
     .filter((b) => /PhantomVault/.test(b.title));
   assert.equal(icons.length, 1, "no second dice on the same form");
-  icons[0].click();
+  await fireTrusted(icons[0], "click");
   await flush(80);
   const gen = [...window.document.querySelectorAll("button")]
     .find((b) => /Generate strong password/.test(b.textContent));
   assert.ok(gen, "shield menu exposes generation for the new field");
-  gen.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await fireTrusted(gen, "mousedown");
   await flush(40);
   const v = (n) => window.document.querySelector(`input[name="${n}"]`).value;
   assert.equal(v("current_password"), "old", "current password is never overwritten");
@@ -1241,4 +1241,63 @@ test("A4: offscreen never blanks without a matching hash", () => {
     "read + hash compare must precede the blank");
   assert.match(O, /sha256Hex\(current\) !== want/);
   assert.match(O, /0-9a-f\]\{64\}/);
+});
+
+
+// ---------------------------------------------------------------------------
+// B1/B2: the dropdown, the badge and the filter live in the PAGE DOM, so page
+// script can dispatch synthetic events at them. Only a real user gesture may
+// move a secret into the page's own field (isTrusted guards in content.js).
+// ---------------------------------------------------------------------------
+const FILL_ENTRY = {
+  id: "c1", title: "Example", username: "alice", password: "S3cret!",
+  url: "https://example.com", urls: ["https://example.com"],
+  verified: false, health: "", last_filled: 0, reprompt: false,
+};
+const LOGIN_FORM = `<form>
+    <input type="text" name="username" value="alice">
+    <input type="password" name="password">
+  </form>`;
+
+function focusedLogin(t, entries) {
+  const { window } = env(t, LOGIN_FORM, "https://example.com/login", entries);
+  const pass = window.document.querySelector('input[type="password"]');
+  pass.focus();
+  return { window, pass };
+}
+
+test("B1: a page-dispatched mousedown on a dropdown row never fills", async (t) => {
+  const { window, pass } = focusedLogin(t, [FILL_ENTRY]);
+  await flush(60);
+  const drop = window.document.getElementById("__pv_drop");
+  assert.ok(drop, "the dropdown should open when a login field is focused");
+  const row = drop.querySelector("button.pvx-row");
+  assert.ok(row, "the credential row should be rendered");
+  row.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  await flush(40);
+  assert.equal(pass.value, "", "a synthetic mousedown must never fill the page");
+});
+
+test("B1: a page-dispatched Enter in the dropdown filter never fills", async (t) => {
+  const second = { ...FILL_ENTRY, id: "c2", username: "bob" };
+  const { window, pass } = focusedLogin(t, [FILL_ENTRY, second]);
+  await flush(60);
+  const drop = window.document.getElementById("__pv_drop");
+  assert.ok(drop, "the dropdown should open");
+  const filter = drop.querySelector("input");
+  assert.ok(filter, "two accounts should render the filter box");
+  filter.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
+  await flush(40);
+  assert.equal(pass.value, "", "a synthetic Enter must never fill the page");
+});
+
+test("B2: a page-dispatched click on the shield badge never fills", async (t) => {
+  const { window, pass } = focusedLogin(t, [FILL_ENTRY]);
+  await flush(60);
+  const badge = [...window.document.querySelectorAll("button")]
+    .find((b) => /PhantomVault/.test(b.title || ""));
+  assert.ok(badge, "the in-field shield badge should exist");
+  badge.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
+  await flush(40);
+  assert.equal(pass.value, "", "a synthetic badge click must never fill the page");
 });
