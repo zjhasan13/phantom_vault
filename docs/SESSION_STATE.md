@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-10 |
-| Branch / HEAD | `main` @ `a031f29` (A26 Bengali pass B1-B9) + scan docs (`0874b86`) |
+| Branch / HEAD | `main` @ `a031f29` (A26 Bengali pass B1-B9) + scan docs (`a579032`) |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
