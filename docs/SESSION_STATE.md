@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-10 |
-| Branch / HEAD | `main` @ `a031f29` (A26 Bengali pass B1-B9) + scan docs (`a579032`) |
+| Branch / HEAD | `main` @ `ecca87d` (extension gesture gate) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -33,12 +33,31 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   armed (`main.rs:11477`, `:11563`, `appwindow.slint:3199`), **B5** native-host
   allow-list fails open (`native_host.rs:141`, `:3371`).
 - Fix order agreed 2026-11-10:
-  1. extension B1/B2/B3 - `isTrusted` + closed shadow roots + no fixed ids;
+  1. ~~extension B1/B2/B3~~ — done `ecca87d` (closed roots left as B1b);
   2. desktop reprompt D-1/D-2 - gate reveal, wire delete;
   3. native host B5 - fail closed, drop the argv bypass;
   4. persist auto-lock + clipboard TTL (D-3);
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-10) — `ecca87d`
+
+Extension fill is now gesture-gated (scan B1/B2/B3): a page can no longer focus
+its own password field and dispatch a synthetic `mousedown`/`click` at the
+dropdown row, the shield/dice badge, the Continue-as chip or the OTP picker row
+to make the vault fill that field.
+
+- `content.js`: `isTrusted` on every fill handler; the dropdown Enter path calls
+  `onPick` directly (no synthetic `mousedown`); the OTP picker shadow root is
+  `mode: "closed"`, so the live code is no longer page-readable.
+- `tests/js`: 3 security tests that dispatch real (untrusted) events and assert
+  no fill, plus a harness listener spy (`fireTrusted`) so user-path tests still
+  run the same handlers.
+- Gates: `npm test` **165/165**, `npm run test:tokens` **21**, `cargo check -j 1`
+  **EXIT=0** (3m55s). `cargo test`/`clippy` not re-run — no Rust file changed.
+- Follow-up **B1b**: the dropdown and badges are still light-DOM, so a page can
+  read their row titles/usernames. Moving the hosts into closed shadow roots is
+  the remaining hardening step and needs a real browser check.
 
 ## Where the Bengali (A26) work stands
 

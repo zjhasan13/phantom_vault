@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-05 · `171eb92`
+> Last updated: 2026-11-10 · `ecca87d`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -38,7 +38,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 
 | Area | Status | Notes / where |
 |---|---|---|
-| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry |
+| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry; fills only on a real user gesture (`ecca87d`) |
 | Continue-as (identifier step) | ✅ | username-only step carries to password step (`fc1def7`) |
 | Save prompt — login | ✅ | closed shadow root, 60 s TTL, per-tab, folder picker, notes, editable title/URL, update-target chips, EN/BN, at-risk hint |
 | Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |
@@ -98,6 +98,7 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `ecca87d` | extension: fill requires a real user gesture — synthetic `mousedown`/`click` no longer fills (B1/B2/B3) |
 | `da1de56` | save prompts: card/identity reuse hint ("also in N other item(s)") |
 | `774420a` | i18n: auto-type notifications, 2FA countdown + Cancel, capture a11y labels follow ui_lang |
 | `a4c2bfc` | filter strip: 68px chips + a 5-column, two-row grid on narrow windows |
