@@ -2831,6 +2831,12 @@ fn reveal_needs_reprompt(kind: i32, armed: bool, visible: bool) -> bool {
     kind == 1 && armed && !visible
 }
 
+/// Detail extras (backup codes, hidden custom fields) follow the password
+/// rule: a reprompt-armed login needs the modal before any of them leaves.
+fn detail_copy_needs_reprompt(kind: i32, armed: bool) -> bool {
+    kind == 1 && armed
+}
+
 /// Sidebar Trash badge label ("Trash" / "Trash (3)"). The icon rides the
 /// NavItem separately, so this stays a plain label.
 fn set_trash_label(ui: &MainWindow, vault: &Vault) {
@@ -8589,6 +8595,26 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
         ui.set_rp_error(String::new().into());
         ui.set_rp_show(true);
         security::access_log::log_event("reveal", "master reprompt required");
+    });
+
+    // D-1b: backup codes and hidden custom fields leave through the same gate
+    // as the password itself; non-armed items keep the plain copy path.
+    let extra_copy_weak = main_window.as_weak();
+    main_window.on_copy_detail_extra(move |value| {
+        let Some(ui) = extra_copy_weak.upgrade() else {
+            return;
+        };
+        if !detail_copy_needs_reprompt(ui.get_d_kind(), ui.get_d_reprompt()) {
+            ui.invoke_copy_password_requested(value);
+            return;
+        }
+        ui.set_rp_action(1);
+        ui.set_rp_kind(ui.get_d_kind());
+        ui.set_rp_id(ui.get_d_id());
+        ui.set_rp_user(ui.get_d_user());
+        ui.set_rp_secret(value);
+        ui.set_rp_error(String::new().into());
+        ui.set_rp_show(true);
     });
 
     // Middle-list 1-click copy: resolves the secret by (kind, id) so the row
@@ -17963,7 +17989,7 @@ mod grid_tests {
 
 #[cfg(test)]
 mod reveal_gate_tests {
-    use super::reveal_needs_reprompt;
+    use super::{detail_copy_needs_reprompt, reveal_needs_reprompt};
 
     #[test]
     fn only_an_armed_login_needs_the_modal_to_reveal() {
@@ -17971,5 +17997,12 @@ mod reveal_gate_tests {
         assert!(!reveal_needs_reprompt(1, true, true), "hiding is free");
         assert!(!reveal_needs_reprompt(1, false, false));
         assert!(!reveal_needs_reprompt(2, true, false), "only logins arm");
+    }
+
+    #[test]
+    fn detail_copies_follow_the_reprompt_flag() {
+        assert!(detail_copy_needs_reprompt(1, true));
+        assert!(!detail_copy_needs_reprompt(1, false));
+        assert!(!detail_copy_needs_reprompt(2, true));
     }
 }
