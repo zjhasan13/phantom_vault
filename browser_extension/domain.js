@@ -72,10 +72,21 @@
   ];
 
   // Registrable domain (public suffix + one label).
+  // Shared-hosting tails from the PSL private section: every tenant owns one
+  // label, so `evil.github.io` must not collapse to `github.io` and inherit a
+  // victim's saved login on `victim.github.io` (B10).
+  const PRIVATE_SUFFIXES = new Set([
+    "github.io", "gitlab.io", "pages.dev", "web.app", "firebaseapp.com",
+    "netlify.app", "vercel.app", "herokuapp.com", "workers.dev", "blogspot.com",
+    "appspot.com", "onrender.com", "fly.dev", "glitch.me", "surge.sh",
+    "duckdns.org", "no-ip.org", "ngrok-free.app", "trycloudflare.com", "deno.dev",
+  ]);
+
   function registrable(host) {
     const parts = String(host || "").toLowerCase().split(".").filter(Boolean);
     if (parts.length <= 2) return parts.join(".");
-    if (MULTI_LABEL_SUFFIXES.has(parts.slice(-2).join("."))) {
+    const tail2 = parts.slice(-2).join(".");
+    if (MULTI_LABEL_SUFFIXES.has(tail2) || PRIVATE_SUFFIXES.has(tail2)) {
       return parts.slice(-3).join(".");
     }
     return parts.slice(-2).join(".");

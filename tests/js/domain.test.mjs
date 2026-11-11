@@ -109,3 +109,11 @@ test("P6: pickActionFrame prefers a visible password frame, then focus, then top
   assert.equal(pickActionFrame([]), null, "no probes → caller falls back to top");
   assert.equal(pickActionFrame(null), null);
 });
+test("B10: shared-hosting tenants are separate sites", () => {
+  const { pageBase } = load();
+  assert.equal(pageBase("evil.github.io"), "evil.github.io");
+  assert.notEqual(pageBase("evil.github.io"), pageBase("victim.github.io"));
+  assert.equal(pageBase("a.b.pages.dev"), "b.pages.dev");
+  assert.equal(pageBase("example.com"), "example.com");
+  assert.equal(pageBase("www.example.co.uk"), "example.co.uk");
+});
