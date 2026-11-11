@@ -27,6 +27,9 @@ attachments/
 pv_api_port
 # A26: remembered UI language (local preference).
 lang.pref
+# D-3: auto-lock + clipboard TTL (non-secret, machine-local).
+ui.prefs.json
+ui.prefs.json.tmp
 *.enc
 *.enc.*
 *.enc.bak

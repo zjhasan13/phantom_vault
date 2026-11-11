@@ -25,6 +25,7 @@ mod core;
 mod developer;
 mod error;
 mod importer;
+mod prefs;
 mod release_pubkey;
 mod security;
 mod sync;
@@ -4600,8 +4601,17 @@ fn main() -> Result<(), slint::PlatformError> {
     let _health_state: Arc<Mutex<std::collections::HashMap<String, String>>> =
         Arc::new(Mutex::new(std::collections::HashMap::new()));
     // Wire-up #3: dynamic clipboard flush + auto-lock state.
-    let clipboard_timeout_secs = Arc::new(std::sync::atomic::AtomicU64::new(15));
-    let autolock_timeout_mins = Arc::new(std::sync::atomic::AtomicU64::new(0));
+    // D-3: restore the user's security choices instead of resetting them to
+    // Never/15 s on every launch.
+    let startup_prefs = prefs::load();
+    let clipboard_timeout_secs = Arc::new(std::sync::atomic::AtomicU64::new(
+        startup_prefs.clipboard_secs,
+    ));
+    let autolock_timeout_mins = Arc::new(std::sync::atomic::AtomicU64::new(
+        startup_prefs.auto_lock_mins,
+    ));
+    main_window.set_clipboard_timeout(startup_prefs.clipboard_secs as i32);
+    main_window.set_autolock_timeout(startup_prefs.auto_lock_mins as i32);
     let last_activity = Arc::new(Mutex::new(std::time::Instant::now()));
     // Wire-up #4: last UIA-detected app for the autofill pill.
     let pill_app: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
@@ -15528,10 +15538,15 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let ct_weak = main_window.as_weak();
     let ct_store = Arc::clone(&clipboard_timeout_secs);
     main_window.on_set_clipboard_timeout(move |secs| {
-        let v = (secs as u64).clamp(5, 300);
+        let v = (secs as u64).clamp(prefs::MIN_CLIPBOARD_SECS, prefs::MAX_CLIPBOARD_SECS);
         ct_store.store(v, std::sync::atomic::Ordering::SeqCst);
+        let mut p = prefs::load();
+        p.clipboard_secs = v;
+        if let Err(e) = prefs::save(&p) {
+            eprintln!("ui.prefs.json write failed: {e}");
+        }
         if let Some(ui) = ct_weak.upgrade() {
-            ui.set_clipboard_timeout(secs);
+            ui.set_clipboard_timeout(v as i32);
             ui.set_notification_text(if crate::i18n::is_bn() { format!("ক্লিপবোর্ড অটো-ক্লিয়ার: {secs} সে") } else { format!("Clipboard auto-clear: {secs}s") }.into());
         }
     });
@@ -15540,8 +15555,13 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let al_store = Arc::clone(&autolock_timeout_mins);
     let al_touch = Arc::clone(&last_activity);
     main_window.on_set_autolock_timeout(move |mins| {
-        let v = (mins as u64).clamp(0, 120);
+        let v = (mins as u64).clamp(0, prefs::MAX_AUTOLOCK_MINS);
         al_store.store(v, std::sync::atomic::Ordering::SeqCst);
+        let mut p = prefs::load();
+        p.auto_lock_mins = v;
+        if let Err(e) = prefs::save(&p) {
+            eprintln!("ui.prefs.json write failed: {e}");
+        }
         if let Ok(mut t) = al_touch.lock() {
             *t = std::time::Instant::now();
         }
