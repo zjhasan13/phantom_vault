@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `7945ea1` (sender-scoped reads) + docs on top |
+| Branch / HEAD | `main` @ `19b5ac8` (detail copies gated) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,18 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-11d) — `19b5ac8`, `019b70b`
+
+- **D-1b** (`19b5ac8`): backup codes, text/hidden/linked custom fields now copy
+  through `copy_detail_extra`, which arms the master modal (action 1) for a
+  reprompt-armed login. Peep-hole keeps the codes masked until the item is
+  revealed. New predicate `detail_copy_needs_reprompt` + unit test.
+- **CI** (`019b70b`): `security.yml` runs `npm ci` + `npm test` +
+  `npm run test:tokens` and passes `-j 1` to check/clippy/test.
+- Gates: full suite **592 passed, 0 failed, 4 ignored**; `cargo clippy
+  --all-targets -j 1 -- -D warnings` **EXIT=0** (14m46s); `npm test` 170/170;
+  tokens 21.
 
 ## Last code batch (2026-11-11c) — `7945ea1`
 

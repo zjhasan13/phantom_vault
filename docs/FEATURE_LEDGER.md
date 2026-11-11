@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-11 · `7945ea1`
+> Last updated: 2026-11-11 · `19b5ac8`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -98,6 +98,8 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `19b5ac8` | desktop: backup codes + custom-field copies need the master modal (D-1b) |
+| `019b70b` | CI: npm test/tokens + `-j 1` cargo gates |
 | `7945ea1` | extension: vault reads are sender-scoped; list/fetch are popup-only (B4) |
 | `d7c3e1f` | settings: auto-lock + clipboard TTL persist; default auto-lock is 15 min (D-3) |
 | `361b309` | bridge: unknown/empty origin allow-list now fails closed (B5) |
