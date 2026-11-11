@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `19b5ac8` (detail copies gated) + docs on top |
+| Branch / HEAD | `main` @ `52696c4` (tenant split) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,15 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-11e) — `52696c4`
+
+- **B10**: `domain.js` now knows the PSL private-section suffixes users meet
+  (github.io, pages.dev, web.app, netlify.app, herokuapp.com, workers.dev, …),
+  so two tenants of a shared suffix are different sites. Before, a login saved
+  on `victim.github.io` was offered on `evil.github.io`.
+- Test: two tenants stay distinct; registry suffixes (co.uk) unchanged.
+- Gates: `npm test` **171/171**, no Rust change.
 
 ## Last code batch (2026-11-11d) — `19b5ac8`, `019b70b`
 
