@@ -1122,6 +1122,7 @@ export component MainWindow inherits Window {
     in-out property <bool> gen_reveal: true;
     callback unlock_requested(string);
     callback copy_password_requested(string);
+    callback reveal_secret_requested();
     callback quick_copy(int, string);
     // Last-copied feedback: buttons flash ✓ for 1.5s after a copy.
     in-out property <string> last_copied: "";
@@ -3205,8 +3206,8 @@ export component MainWindow inherits Window {
                                 HorizontalLayout { Text { text: (root.ui_lang == "bn" ? "মাস্টার পাসওয়ার্ড" : "MASTER PASSWORD"); color: PhantomTheme.text-dim; font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; letter-spacing: 0.6px; horizontal-stretch: 1; } Text { text: Math.round(root.d_pw_strength * 100) + "%"; color: root.d_pw_strength >= 0.75 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); font-size: 9px; font-weight: 700; font-family: "JetBrains Mono"; } }
                                 HorizontalLayout { spacing: 4px;
                                     Text { text: root.peep_hole_mode && !peep_hold_col.pressed ? "••••••••" : (root.d_secret_visible ? root.d_secret : "••••••••••••"); color: PhantomTheme.secondary; font-size: 14px; font-family: "JetBrains Mono"; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; }
-                                    AuraButton { label: root.d_secret_visible ? "🙈" : "👁"; width: 32px; height: 28px; clicked => { if !root.peep_hole_mode { root.d_secret_visible = !root.d_secret_visible; } } }
-                                    AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 32px; height: 28px; clicked => { root.copy_password_requested(root.d_secret); } }
+                                    AuraButton { label: root.d_secret_visible ? "🙈" : "👁"; width: 32px; height: 28px; clicked => { if !root.peep_hole_mode { root.reveal_secret_requested(); } } }
+                                    AuraButton { label: root.last_copied == root.d_secret && root.last_copied != "" ? "✓" : "📋"; primary: root.last_copied == root.d_secret && root.last_copied != ""; width: 32px; height: 28px; clicked => { root.quick_copy(root.d_kind, root.d_id); } }
                                 }
                                 Rectangle { background: PhantomTheme.border; border-radius: 4px; height: 6px; horizontal-stretch: 1;
                                     Rectangle { background: root.d_pw_strength >= 1.0 ? PhantomTheme.success : (root.d_pw_strength >= 0.5 ? PhantomTheme.warning : PhantomTheme.error); border-radius: 4px; width: parent.width * root.d_pw_strength; height: 6px; }

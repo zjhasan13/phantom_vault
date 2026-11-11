@@ -2824,6 +2824,12 @@ fn reprompt_gate(vault: &Vault, kind: i32, id: &str) -> Option<(String, String)>
     })
 }
 
+/// The detail eye: hiding is free, revealing a reprompt-armed login must pass
+/// the master-reprompt modal first. Pure predicate so it can be unit tested.
+fn reveal_needs_reprompt(kind: i32, armed: bool, visible: bool) -> bool {
+    kind == 1 && armed && !visible
+}
+
 /// Sidebar Trash badge label ("Trash" / "Trash (3)"). The icon rides the
 /// NavItem separately, so this stays a plain label.
 fn set_trash_label(ui: &MainWindow, vault: &Vault) {
@@ -6609,6 +6615,25 @@ fn main() -> Result<(), slint::PlatformError> {
             }
             ui.set_notification_text(tr("⏳ Deleting…", "⏳ মুছে ফেলা হচ্ছে…").into());
         }
+        // D-2: a reprompt-armed login must clear the master modal before it can
+        // be deleted; the action-3 arm re-enters the standard delete path.
+        {
+            let armed = lock_vault(&vault_arc_del)
+                .credentials
+                .iter()
+                .any(|c| c.id == id.as_str() && c.reprompt);
+            if armed {
+                if let Some(ui) = window_weak_del.upgrade() {
+                    ui.set_rp_kind(kind);
+                    ui.set_rp_id(id.clone());
+                    ui.set_rp_action(3);
+                    ui.set_rp_error(String::new().into());
+                    ui.set_rp_show(true);
+                    ui.set_notification_text(crate::i18n::tr("🔒 Master re-prompt required.", "🔒 মাস্টার রিপ্রম্পট প্রয়োজন।").into());
+                }
+                return;
+            }
+        }
         let id = id.as_str().to_string();
         let weak = window_weak_del.clone();
         let vault_clone = Arc::clone(&vault_arc_del);
@@ -8534,6 +8559,26 @@ fn ga_show_page(ui: &MainWindow, pages: &[GaPage], idx: usize) {
             secs,
         );
         mark_copied(ui.as_weak(), password_to_copy.as_str().to_string(), String::new());
+    });
+
+    // D-1: the detail eye is a reprompt gate, not a Slint property flip. A
+    // page/agent cannot reveal an armed login by poking the UI property.
+    let reveal_weak = main_window.as_weak();
+    main_window.on_reveal_secret_requested(move || {
+        let Some(ui) = reveal_weak.upgrade() else {
+            return;
+        };
+        if !reveal_needs_reprompt(ui.get_d_kind(), ui.get_d_reprompt(), ui.get_d_secret_visible()) {
+            ui.set_d_secret_visible(!ui.get_d_secret_visible());
+            return;
+        }
+        ui.set_rp_kind(ui.get_d_kind());
+        ui.set_rp_id(ui.get_d_id());
+        ui.set_rp_secret(String::new().into());
+        ui.set_rp_action(6);
+        ui.set_rp_error(String::new().into());
+        ui.set_rp_show(true);
+        security::access_log::log_event("reveal", "master reprompt required");
     });
 
     // Middle-list 1-click copy: resolves the secret by (kind, id) so the row
@@ -12178,6 +12223,12 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                     });
                 });
+            }
+            6 => {
+                // Reveal after the master reprompt (D-1). The secret is
+                // already in the detail model; only visibility was gated.
+                ui.set_d_secret_visible(true);
+                security::access_log::log_event("reveal", "master reprompt cleared");
             }
             4 => {
                 // Travel Mode disarm (master already verified above): show all.
@@ -17886,5 +17937,19 @@ mod grid_tests {
         assert!(backup_pass_error("backup-passphrase-1", "backup-passphrase-1", master).is_none());
         // Bengali script counts characters, not bytes.
         assert!(backup_pass_error("ব্যাকআপ-পাসফ্রেজ-১", "ব্যাকআপ-পাসফ্রেজ-১", master).is_none());
+    }
+}
+
+
+#[cfg(test)]
+mod reveal_gate_tests {
+    use super::reveal_needs_reprompt;
+
+    #[test]
+    fn only_an_armed_login_needs_the_modal_to_reveal() {
+        assert!(reveal_needs_reprompt(1, true, false));
+        assert!(!reveal_needs_reprompt(1, true, true), "hiding is free");
+        assert!(!reveal_needs_reprompt(1, false, false));
+        assert!(!reveal_needs_reprompt(2, true, false), "only logins arm");
     }
 }
