@@ -475,6 +475,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return { ok: !!t && t.id != null, tabId: t && t.id != null ? t.id : null };
     }
     if (msg.type === "PV_QUERY") {
+      const denied = senderScope(msg.app || msg.url || "");
+      if (denied) return { ok: false, error: denied };
       touchActivity();
       return await queryWithCache({ cmd: "query", app: msg.app || msg.url || "" });
     }
@@ -517,6 +519,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       }
     }
     if (msg.type === "PV_LIST") {
+      const denied = popupReadOnly("the vault list");
+      if (denied) return { ok: false, error: denied };
       touchActivity();
       return await hostRequest({ cmd: "list" });
     }
@@ -531,6 +535,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       return await hostRequest({ cmd: "breach_check", password: msg.password || "" }, 25000);
     }
     if (msg.type === "PV_FETCH") {
+      const denied = popupReadOnly("item fetch");
+      if (denied) return { ok: false, error: denied };
       touchActivity();
       return await hostRequest({ cmd: "fetch", kind: msg.kind || 1, id: msg.id || "" });
     }
@@ -541,6 +547,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     // Standalone 2FA Hub codes (fallback when logins carry no secret).
         if (msg.type === "PV_TOTP_LOOKUP") {
+          const denied = senderScope(msg.app || msg.domain || "");
+          if (denied) return { ok: false, error: denied };
           touchActivity();
           return await hostRequest({
             cmd: "totp_lookup",
@@ -553,9 +561,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
         }
     if (msg.type === "PV_CARDS") {
+      const denied = senderScope(msg.app || msg.url || "");
+      if (denied) return { ok: false, error: denied };
       return await hostRequest({ cmd: "cards", app: msg.app || msg.url || "", all: msg.all === true });
     }
     if (msg.type === "PV_IDENTITIES") {
+      const denied = senderScope(msg.app || msg.url || "");
+      if (denied) return { ok: false, error: denied };
       return await hostRequest({ cmd: "identities", app: msg.app || msg.url || "" });
     }
     if (msg.type === "PV_PING") {
@@ -611,6 +623,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // or trash a vault row (its sender carries a tab).
     function popupOnly() {
       return !!(sender && sender.tab) ? "item edits are popup-only" : "";
+    }
+    // B4: whole-vault reads are popup-only as well (a content script has no
+    // business listing the vault or fetching an item by id).
+    function popupReadOnly(what) {
+      return !!(sender && sender.tab) ? `${what} is popup-only` : "";
     }
     if (msg.type === "PV_REPROMPT") {
       const denied = popupOnly();
@@ -710,6 +727,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } catch (e) {
         return { ok: false, error: String((e && e.message) || e) };
       }
+    }
+    // B4: a content script may only read the vault for ITS OWN registrable
+    // domain. The popup has no sender.tab and stays the trusted extension UI.
+    // Without this the background was a confused deputy: any frame could ask
+    // for another site (or the whole list) and get plaintext back.
+    function senderFrameUrl() {
+      const frameUrl = sender && sender.url;
+      const tabUrl = sender && sender.tab && sender.tab.url;
+      return (frameUrl && /^https?:/i.test(frameUrl)) ? frameUrl : tabUrl;
+    }
+    function appBase(app) {
+      const raw = String(app || "").trim();
+      if (!raw) return "";
+      try {
+        const u = new URL(raw.includes("://") ? raw : "https://" + raw);
+        return pvRegistrable(u.hostname);
+      } catch (_) { return ""; }
+    }
+    /// "" when the read is allowed, otherwise the refusal reason.
+    function senderScope(app) {
+      if (!(sender && sender.tab)) return "";
+      const src = senderFrameUrl();
+      if (!src || !/^https?:/i.test(src)) return "sender frame is not a web origin";
+      let own = "";
+      try { own = pvRegistrable(new URL(src).hostname); }
+      catch (_) { return "sender frame is not a web origin"; }
+      if (!own) return "sender frame has no domain";
+      const asked = appBase(app);
+      if (!asked) return "app is required";
+      if (asked !== own) return "app does not match the sender frame";
+      return "";
     }
     // Sender check: a page must not save under another site's URL. P6 uses
     // the SENDER FRAME's URL (not the tab URL) so a login/card inside a

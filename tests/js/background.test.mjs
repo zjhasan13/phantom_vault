@@ -904,3 +904,66 @@ test("A11b: an empty query never dumps the cache", async () => {
   assert.equal(r.ok, false);
   assert.equal(r.entries, undefined);
 });
+
+// ---------------------------------------------------------------------------
+// B4: secret-bearing reads are bound to the sender. A content script may only
+// ask for its own registrable domain; the popup (no sender.tab) stays trusted.
+// ---------------------------------------------------------------------------
+test("B4: PV_QUERY is allowed for the sender's own domain", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://login.example.com/signin", tab: { url: "https://login.example.com/signin" } };
+  const p = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "example.com" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  assert.equal(chrome.__state.postedNative[0].cmd, "query");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, entries: [] }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("B4: PV_QUERY for another domain is refused with zero host spawn", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://evil.example.net/x", tab: { url: "https://evil.example.net/x" } };
+  const r = await sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "bank.example.com" }, sender);
+  assert.equal(r.ok, false);
+  assert.match(r.error || "", /sender frame/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("B4: PV_QUERY from the popup (no sender tab) is allowed", async () => {
+  const { chrome, onMessage } = fresh();
+  const p = sendMessage(onMessage, chrome, { type: "PV_QUERY", app: "example.com" }, {});
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative.length, 1);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, entries: [] }));
+  const r = await p;
+  assert.equal(r.ok, true);
+});
+
+test("B4: PV_LIST and PV_FETCH are popup-only", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://github.com/", tab: { url: "https://github.com/" } };
+  const list = await sendMessage(onMessage, chrome, { type: "PV_LIST" }, sender);
+  assert.equal(list.ok, false);
+  assert.match(list.error || "", /popup-only/i);
+  const one = await sendMessage(onMessage, chrome, { type: "PV_FETCH", kind: 1, id: "x" }, sender);
+  assert.equal(one.ok, false);
+  assert.match(one.error || "", /popup-only/i);
+  assert.equal(chrome.__state.postedNative.length, 0);
+});
+
+test("B4: PV_TOTP_LOOKUP and PV_CARDS are bound to the sender domain", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://github.com/login", tab: { url: "https://github.com/login" } };
+  const bad = await sendMessage(onMessage, chrome, { type: "PV_TOTP_LOOKUP", app: "bank.example.com" }, sender);
+  assert.equal(bad.ok, false);
+  const badCard = await sendMessage(onMessage, chrome, { type: "PV_CARDS", app: "bank.example.com" }, sender);
+  assert.equal(badCard.ok, false);
+  assert.equal(chrome.__state.postedNative.length, 0);
+  const p = sendMessage(onMessage, chrome, { type: "PV_TOTP_LOOKUP", app: "github.com" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "totp_lookup");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, candidates: [] }));
+  const ok = await p;
+  assert.equal(ok.ok, true);
+});
