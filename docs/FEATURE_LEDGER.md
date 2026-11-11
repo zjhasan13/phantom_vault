@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-10 · `ecca87d`
+> Last updated: 2026-11-11 · `361b309`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -22,12 +22,12 @@ when a user-visible capability is added, changed, or deliberately removed.
 | 2FA import sheet | ✅ | screen/webcam/file QR + manual paste; content-sized (`171eb92`) |
 | 2FA export sheet | ✅ | paginated otpauth QR, copy URI, honest empty/error states |
 | Vault health report | ✅ | breached / reused / weak / stale, per-row open; content-sized (`171eb92`) |
-| Master reprompt | ✅ | guard for reveal / autofill / delete / export; content-sized (`171eb92`) |
+| Master reprompt | ✅ | guard for reveal / autofill / delete / export (`6d09f35`); content-sized (`171eb92`) |
 | Recovery kit + shards | ✅ | print sheet, shard drill |
 | Audit & duress | ✅ | duress password, honeytokens, factory reset (3-pass) |
 | Secure Send | ✅ | expiring one-view notes, TTL, read + burn (`docs/A20_SEND.md`) |
 | Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback |
-| Extension bridge | ✅ | native-messaging host install, allowed origins |
+| Extension bridge | ✅ | native-messaging host install, allowed origins; allow-list fails closed (`361b309`) |
 | Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
 | Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs |
 | Offline cache | ✅ | snapshot + DPAPI key + Hello/PIN gate; freshness + sealed timestamp |
@@ -98,6 +98,8 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `361b309` | bridge: unknown/empty origin allow-list now fails closed (B5) |
+| `6d09f35` | desktop: reveal + delete of a reprompt-armed login need the master modal (D-1/D-2) |
 | `ecca87d` | extension: fill requires a real user gesture — synthetic `mousedown`/`click` no longer fills (B1/B2/B3) |
 | `da1de56` | save prompts: card/identity reuse hint ("also in N other item(s)") |
 | `774420a` | i18n: auto-type notifications, 2FA countdown + Cancel, capture a11y labels follow ui_lang |

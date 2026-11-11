@@ -8,10 +8,11 @@
 > Baseline at audit time: `cargo test` 446 passed / 1 ignored, `node --test
 > tests/js/background.test.mjs` 16/16, branch `main` clean, version `0.2.1`.
 
-> **2026-11-10:** the current extension trust-boundary findings (B1-B11) and
-> their fix status live in `docs/SCAN_2026-11-10.md`. B1/B2/B3 are fixed in
-> `ecca87d` (fill requires a real user gesture); B1b (closed roots for the
-> dropdown and badges) is still open.
+> **2026-11-11:** the current trust-boundary findings (B1-B11) and their fix
+> status live in `docs/SCAN_2026-11-10.md`. B1/B2/B3 are fixed in `ecca87d`
+> (fill requires a real user gesture), B5 in `361b309` (allow-list fails
+> closed), and D-1/D-2 in `6d09f35` (reveal/delete need the master modal).
+> B1b (closed roots for the dropdown and badges) is still open.
 
 ## 0. Verification log (claim → verdict)
 

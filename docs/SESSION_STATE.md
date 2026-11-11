@@ -9,8 +9,8 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-10 |
-| Branch / HEAD | `main` @ `ecca87d` (extension gesture gate) + docs on top |
+| Date | 2026-11-11 |
+| Branch / HEAD | `main` @ `361b309` (reprompt + bridge gates) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -34,11 +34,32 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   allow-list fails open (`native_host.rs:141`, `:3371`).
 - Fix order agreed 2026-11-10:
   1. ~~extension B1/B2/B3~~ — done `ecca87d` (closed roots left as B1b);
-  2. desktop reprompt D-1/D-2 - gate reveal, wire delete;
-  3. native host B5 - fail closed, drop the argv bypass;
+  2. ~~desktop reprompt D-1/D-2~~ — done `6d09f35`;
+  3. ~~native host B5~~ — done `361b309` (Firefox origin still rejected, see SCAN);
   4. persist auto-lock + clipboard TTL (D-3);
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-11) — `6d09f35`, `361b309`
+
+Two scan batches landed:
+
+- **D-1/D-2** (`6d09f35`): the detail eye no longer flips a Slint property.
+  Hiding is free; revealing a reprompt-armed login arms `rp_action 6` and only
+  the verified master password sets `d_secret_visible`. The detail password
+  copy now goes through `quick_copy(kind, id)` (same gate). Delete of an armed
+  login arms `rp_action 3` and re-enters the existing delete arm.
+  New pure predicate `reveal_needs_reprompt` + unit test.
+- **B5** (`361b309`): `origin_allowed` fails closed when `native-host.json` is
+  missing/empty (it returned `true`), and the bare `native-host` argv only
+  bypasses the check in debug builds. Pure `origin_allowed_in` + 3 tests.
+- Gates: `cargo check -j 1` EXIT=0, `cargo test -j 1` **586 passed / 1 failed**
+  (`api::local::tests::loopback_get_waits_…`, os error 10053 — passes alone,
+  flaky like the documented `share_serve` case), 4 ignored. `npm test` 165/165
+  and tokens 21 unchanged (JS untouched). `cargo clippy --all-targets -j 1 -- -D`
+  `warnings` EXIT=0 (13m12s).
+- Residual: `valid_origin_format` rejects `moz-extension://…`; Firefox bridge
+  support is therefore unproven. Remove or solve that before claiming it.
 
 ## Last code batch (2026-11-10) — `ecca87d`
 
