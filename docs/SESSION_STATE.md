@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `d7c3e1f` (settings persistence) + docs on top |
+| Branch / HEAD | `main` @ `7945ea1` (sender-scoped reads) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,17 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-11c) — `7945ea1`
+
+- **B4**: `PV_QUERY`, `PV_TOTP_LOOKUP`, `PV_CARDS` and `PV_IDENTITIES` now
+  require `app` to match the sender frame registrable domain; `PV_LIST` and
+  `PV_FETCH` are popup-only. The popup has no `sender.tab` and is unchanged.
+- 5 new JS tests: own domain, cross-domain refusal, popup, popup-only, TOTP.
+- Gates: `npm test` **170/170**, `npm run test:tokens` **21**. No Rust change,
+  so cargo gates were not re-run (last run: 591 passed, clippy 0).
+- Edge: a frame with no http(s) origin (file://, about:blank) is now denied —
+  there is no domain to bind the read to.
 
 ## Last code batch (2026-11-11b) — `d7c3e1f`
 
