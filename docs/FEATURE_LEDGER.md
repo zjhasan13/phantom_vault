@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-11 · `361b309`
+> Last updated: 2026-11-11 · `d7c3e1f`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -29,7 +29,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback |
 | Extension bridge | ✅ | native-messaging host install, allowed origins; allow-list fails closed (`361b309`) |
 | Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
-| Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs |
+| Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs; auto-lock + clipboard TTL persist (`d7c3e1f`) |
 | Offline cache | ✅ | snapshot + DPAPI key + Hello/PIN gate; freshness + sealed timestamp |
 | Travel mode | ✅ | local-only switch |
 | Localization | ◐ | EN/BN for shell + most dialogs; Rust status strings and some dialogs still English (`docs/A26_BN.md`) |
@@ -98,6 +98,7 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `d7c3e1f` | settings: auto-lock + clipboard TTL persist; default auto-lock is 15 min (D-3) |
 | `361b309` | bridge: unknown/empty origin allow-list now fails closed (B5) |
 | `6d09f35` | desktop: reveal + delete of a reprompt-armed login need the master modal (D-1/D-2) |
 | `ecca87d` | extension: fill requires a real user gesture — synthetic `mousedown`/`click` no longer fills (B1/B2/B3) |

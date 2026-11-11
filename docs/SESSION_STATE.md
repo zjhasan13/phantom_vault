@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `361b309` (reprompt + bridge gates) + docs on top |
+| Branch / HEAD | `main` @ `d7c3e1f` (settings persistence) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -36,9 +36,23 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   1. ~~extension B1/B2/B3~~ — done `ecca87d` (closed roots left as B1b);
   2. ~~desktop reprompt D-1/D-2~~ — done `6d09f35`;
   3. ~~native host B5~~ — done `361b309` (Firefox origin still rejected, see SCAN);
-  4. persist auto-lock + clipboard TTL (D-3);
+  4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-11b) — `d7c3e1f`
+
+- **D-3**: `src/prefs.rs` persists `auto_lock_mins` + `clipboard_secs` to
+  `ui.prefs.json` (tmp+rename, clamped, corrupt file -> defaults). Startup
+  seeds the atomics and the Slint properties; both Settings handlers save.
+  The shipped default is now **15 minutes** instead of Never, so a
+  hidden-to-tray vault actually locks.
+- Close-to-tray behaviour is unchanged; the idle timer now runs while hidden.
+- Gates: `cargo test -j 1 prefs` 4/4; full suite `--test-threads=1` **591 passed,
+  0 failed, 4 ignored**; `cargo clippy --all-targets -j 1 -- -D warnings`
+  **EXIT=0** (11m17s). Two flakes seen and re-run clean:
+  `api::local::…loopback…` (os 10053) and `crypto::…test_legacy_v2_still_opens`
+  under memory pressure — both pass alone.
 
 ## Last code batch (2026-11-11) — `6d09f35`, `361b309`
 
