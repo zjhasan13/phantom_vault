@@ -131,15 +131,22 @@ fn registered_origins() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Origin allow check: strict format AND (if a manifest is registered) listed
-/// there. Fail-closed: unknown/missing manifest still requires valid format.
+/// Origin allow check: strict format AND listed in the registered manifest.
+/// Fail-closed (B5): an empty or missing manifest allows nothing. The old
+/// `true` here let any extension the browser was willing to launch reach the
+/// vault as soon as `native-host.json` was absent or corrupt.
 pub(crate) fn origin_allowed(origin: &str) -> bool {
+    origin_allowed_in(&registered_origins(), origin)
+}
+
+/// Pure half of the check, so the fail-closed rule is unit-testable without
+/// touching `%LOCALAPPDATA%`.
+fn origin_allowed_in(reg: &[String], origin: &str) -> bool {
     if !valid_origin_format(origin) {
         return false;
     }
-    let reg = registered_origins();
     if reg.is_empty() {
-        return true;
+        return false;
     }
     reg.iter().any(|o| o == origin)
 }
@@ -3476,7 +3483,12 @@ pub fn serve_cli() -> i32 {
     // query pays one fresh KDF.
     const MAX_SECS: u64 = 8 * 3600;
     let origin = std::env::args().nth(1).unwrap_or_default();
-    if origin != "native-host" && !origin_allowed(&origin) {
+    // B5: the bare `native-host` argv used to skip the origin check entirely,
+    // so any local process could spawn the host and read the vault. Keep it
+    // only in debug builds (dev ergonomics); a release build must present a
+    // registered extension origin.
+    let dev_manual = origin == "native-host" && cfg!(debug_assertions);
+    if !dev_manual && !origin_allowed(&origin) {
         let frame = encode_frame(&err("origin not allowed"));
         let _ = std::io::stdout().write_all(&frame);
         let _ = std::io::stdout().flush();
@@ -6161,5 +6173,34 @@ mod tests {
         // Trashed rows no longer resolve for a second delete.
         let again = answer(&mut v, true, &serde_json::json!({"cmd": "delete_login", "id": "c1"}));
         assert_eq!(again.reply["ok"], false);
+    }
+}
+
+#[cfg(test)]
+mod origin_gate_tests {
+    use super::origin_allowed_in;
+
+    fn origin(c: char) -> String {
+        format!("chrome-extension://{}/", c.to_string().repeat(32))
+    }
+
+    #[test]
+    fn empty_or_missing_manifest_fails_closed() {
+        assert!(!origin_allowed_in(&[], &origin('a')));
+    }
+
+    #[test]
+    fn only_the_registered_origin_passes() {
+        let a = origin('a');
+        let b = origin('b');
+        assert!(origin_allowed_in(std::slice::from_ref(&a), &a));
+        assert!(!origin_allowed_in(std::slice::from_ref(&a), &b));
+    }
+
+    #[test]
+    fn malformed_and_literal_origins_never_pass() {
+        assert!(!origin_allowed_in(&["native-host".to_string()], "native-host"));
+        assert!(!origin_allowed_in(&[], ""));
+        assert!(!origin_allowed_in(&[], "chrome-extension://short/"));
     }
 }
