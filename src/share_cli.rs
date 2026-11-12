@@ -587,3 +587,34 @@ fn revoke(args: &[String]) -> i32 {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::parse_ttl;
+
+    #[test]
+    fn ttl_units_and_bare_seconds() {
+        assert_eq!(parse_ttl("24h"), Some(86_400));
+        assert_eq!(parse_ttl("30m"), Some(1_800));
+        assert_eq!(parse_ttl("45s"), Some(45));
+        assert_eq!(parse_ttl("2d"), Some(172_800));
+        assert_eq!(parse_ttl("3600"), Some(3_600));
+    }
+
+    #[test]
+    fn ttl_is_trimmed_and_case_insensitive() {
+        assert_eq!(parse_ttl("  24H "), Some(86_400));
+        assert_eq!(parse_ttl("1D"), Some(86_400));
+    }
+
+    #[test]
+    fn ttl_rejects_zero_junk_and_overflow() {
+        assert_eq!(parse_ttl("0"), None, "a zero-second share is not a share");
+        assert_eq!(parse_ttl("0h"), None);
+        assert_eq!(parse_ttl(""), None);
+        assert_eq!(parse_ttl("abc"), None);
+        assert_eq!(parse_ttl("10x"), None);
+        assert_eq!(parse_ttl("18446744073709551615h"), None, "checked_mul");
+        assert_eq!(parse_ttl("99999999999999999999h"), None, "parse overflow");
+    }
+}
