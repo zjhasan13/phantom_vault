@@ -69,7 +69,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 | E1 | `registrable()` / `pvRegistrable` mishandle multi-label ccTLDs (`foo.co.uk` → `co.uk`) | `content.js:87-91`, `background.js:419-423`, `popup.js:381-384` — **FIXED (Phase 3)**: `domain.js` PSL-subset `registrable()` |
 | E2 | `EQUIV_CLUSTERS` duplicated in three files (drift risk) | `content.js:94`, `background.js:424`, `popup.js:386` — **FIXED (Phase 3)**: single `domain.js` table |
 | E3 | Popup fill path bypasses desktop blocked-domains / punycode guards | `popup.js:466-517` — **FIXED (Phase 2)** via shared `domain.js` |
-| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` - **FIXED (Phase 4)**: `all_frames:true`; **P6** removes the inert cross-origin guard - every frame matches/fills with its OWN origin, save sender is validated by `sender.url`, and popup/hotkey/menu route to the frame that owns the form. No `match_about_blank` (hostless origin still refused) |
+| E4 | Login iframes are never scanned (`all_frames:false`, no `match_about_blank`) | `manifest.json:36-42` - **FIXED (Phase 4)**: `all_frames:true`; **P6** removes the inert cross-origin guard - every frame matches/fills with its OWN origin, save sender is validated by `sender.url`, and popup/hotkey/menu route to the frame that owns the form. **SUPERSEDED in 0.4.2 (B8): content scripts run in the top frame only.** No `match_about_blank` (hostless origin still refused) |
 | E5 | `extDeskOkPage` session cache never invalidated | `content.js:824-873` — **FIXED (Phase 5)**: 30 s TTL + cache drop on `focus` / `visibilitychange`(visible) / bfcache `pageshow`; a `PV_SESSION_STATE` locked reply clears it, and the background broadcasts `PV_GATE_LOCKED` to every tab the moment any caller detects a lock/idle timeout (Phase 6). Staleness is bounded to 30 s and every secret still rides the native bridge gate |
 | E6 | Broad `MutationObserver` on `documentElement` (perf) | `content.js:2468-2480` — **FIXED (Phase 6)**: the two synchronous subtree observers became ONE 120 ms-debounced observer (`pvScheduleScan`) that coalesces re-render storms into a single `scan()`+`scanForms()` pass; cold pages still scan immediately |
 
@@ -102,7 +102,7 @@ already guards `PV_SAVE_LOGIN` with a sender-tab domain match
 - **Tier 0 scope:** extension capture engine only.
 - **Multi-page carry:** username only (non-secret). Password is **never**
   persisted to `storage.session`/`local` (P1-b policy intact).
-- **iframe capture:** every frame, by its own origin (P6). `all_frames:true` injects everywhere; a cross-origin frame matches/fills only credentials saved for that frame's own URL, and `PV_SAVE_LOGIN` is validated against `sender.url` (never the top tab), so an embedded login is stored under the iframe origin. Popup, hotkey and context menu pick the frame with the visible form (`PVDomain.pickActionFrame`, `info.frameId` for menus). `match_about_blank` stays off (blank frames inherit a hostless origin and are refused).
+- **iframe capture: REMOVED in 0.4.2 (B8).** Content scripts now run in the top frame only (`all_frames:false`); hotkey/context menu always target frame 0. The earlier P6 design (every frame by its own origin, `sender.url`-validated saves, `pickActionFrame`) is kept here as history only.
 
 ## 6. Phase log
 

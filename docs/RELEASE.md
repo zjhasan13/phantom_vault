@@ -58,6 +58,10 @@ open `PV3` at all, so every device stays on a compatible build.
 
 - `v0.4.1` is tagged + pushed and published — it is the current rollback
   anchor (v0.4.0 remains the previous anchor).
+- **0.4.2 is prepared but not published** (version bumped, `CHANGELOG.md`, all
+  gates green). Packaging needs ISCC + the signing key:
+  `scripts/package_release.ps1 -SignKeyEnv PV_SIGNING_KEY`. Until it is tagged,
+  `v0.4.1` stays the rollback anchor.
 - Before publishing release N+1, confirm tag `vN` exists on GitHub with
   its artifacts attached (setup exe + extension zips + SHA256SUMS).
 - Rollback = users reinstall `vN` artifacts; vault file format is

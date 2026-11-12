@@ -11,7 +11,11 @@
   written to `pv_api_port`.
 - A 32-byte bearer token is generated on enable, **DPAPI-sealed** in
   `pv_api_token.dpapi`, expires after **24 hours**, and is revoked when the API
-  is turned off.
+  is turned off. The token is compared in constant time.
+- 0.4.2 adds a `Host`/`Origin` gate: a request must carry
+  `Host: 127.0.0.1[:port]`, `localhost[:port]` or `[::1]`, and must not carry an
+  `Origin` header. Anything else is answered `403` before the token is read, so
+  a DNS-rebinding page cannot reach the approval prompt.
 - Every secret read creates a pending request; the app shows an **Allow once /
   Deny** prompt (request TTL 60s; the CLI waits 50s). The CLI polls the result.
   Every decision is written to

@@ -59,8 +59,8 @@ third-party audit. Those are tracked as concrete work in
 **Browser extension**
 - Autofill logins, cards, identities and TOTP from the popup, context menu or `Ctrl+Shift+L`
 - **Edit-before-save**: the save prompt shows editable username/password fields in a closed shadow root
-- **Shadow-DOM autofill**: open web-component login forms (including nested roots) are scanned, badged, filled and watched for saves; closed roots are skipped
-- "Never save for this site", idle lock pushed to every tab, hash-guarded clipboard clear
+- **Shadow-DOM autofill**: open web-component login forms (including nested roots) are scanned, badged, filled and watched for saves; closed roots are skipped. Since 0.4.2 only the top frame is scanned (no iframe widgets)
+- "Never save for this site", idle lock pushed to every tab; the native host clears copied secrets after the clipboard TTL (the extension no longer holds `clipboardRead`)
 - Clipboard writes go through the native host so Windows can exclude them from history and cloud sync
 - **Opt-in offline cache**: with the desktop app closed, matching logins still fill after Windows Hello **or** an extension PIN (separate opt-in) — logins only, read-only, 15-minute session, erased on decoy/disable/rekey
 
@@ -232,7 +232,7 @@ src/
   windows_native/      native host, clipboard, Hello, tray, IME guard
   importer/            Bitwarden JSON/CSV, .pvx
 ui/                    Slint UI
-browser_extension/     MV3 extension (content, background, popup, offscreen)
+browser_extension/     MV3 extension (content, background, popup)
 tests/js/              jsdom harnesses for the extension
 docs/                  handoff, audit, gap analysis, release process
 installer.iss          Inno Setup script
