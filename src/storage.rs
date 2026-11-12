@@ -19,6 +19,9 @@ use zeroize::Zeroize;
 /// password.
 pub const CONTAINER_FORMAT: &str = "phantom-vault";
 pub const CONTAINER_VERSION: u32 = 2;
+/// A-06: refuse an absurd container before allocating it (release builds abort
+/// on allocation failure). 16 MiB of JSON is the payload cap; 64 MiB is slack.
+const MAX_CONTAINER_BYTES: u64 = 64 * 1024 * 1024;
 
 /// A22: which key chain sealed the container. `Portable` needs the password
 /// alone (cross-device safe). `Paranoid` needs the password **and** this
@@ -138,6 +141,52 @@ pub fn container_head(path: &Path) -> Option<(u64, String)> {
         .unwrap_or_else(|p| p.into_inner())
         .get(&path_key(path))
         .map(|h| (h.rev, h.hash.clone()))
+}
+
+/// A-05: a transient read error (AV, OneDrive, sharing violation) must abort the
+/// save. Collapsing it into an empty buffer made `next_meta` take the first-save
+/// branch and rewrite the container with rev = 1 and no prev_hash, silently
+/// resetting the anti-rollback chain.
+fn read_old_container(path: &Path) -> Result<Vec<u8>, String> {
+    match fs::read(path) {
+        Ok(b) => Ok(b),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+        Err(e) => Err(format!("Vault read error: {e}")),
+    }
+}
+
+/// A-06: size gate before `fs::read`.
+fn check_container_size(len: u64) -> Result<(), String> {
+    if len > MAX_CONTAINER_BYTES {
+        return Err(format!(
+            "Vault file too large ({len} bytes, limit {MAX_CONTAINER_BYTES})"
+        ));
+    }
+    Ok(())
+}
+
+/// A-10: a container written by a newer build parses as v2 and the next save
+/// rewrites it as v2, dropping fields this build does not know. Refuse it
+/// instead of silently down-converting. Unknown FIELDS within a known version
+/// stay forward-compatible (see `json_ignores_unknown_future_fields`).
+fn check_container_version(bytes: &[u8]) -> Result<(), String> {
+    #[derive(serde::Deserialize)]
+    struct MetaOnly {
+        meta: ContainerMeta,
+    }
+    let Ok(doc) = serde_json::from_slice::<MetaOnly>(bytes) else {
+        return Ok(()); // legacy JSON vault: no envelope
+    };
+    if doc.meta.format != CONTAINER_FORMAT {
+        return Ok(());
+    }
+    if doc.meta.version > CONTAINER_VERSION {
+        return Err(format!(
+            "Vault was written by a newer PhantomVault (container v{}, this build reads v{}) — update the app",
+            doc.meta.version, CONTAINER_VERSION
+        ));
+    }
+    Ok(())
 }
 
 /// Parse a rev-2 envelope. `None` = a legacy JSON vault (no envelope).
@@ -482,7 +531,7 @@ fn save_vault_secret_inner<P: AsRef<Path>>(
     // Resolve the profile only after the lock is held: a concurrent
     // `convert_vault_profile` must not be raced into a silent downgrade.
     let profile = profile.unwrap_or_else(|| current_profile(path));
-    let old = fs::read(path).unwrap_or_default();
+    let old = read_old_container(path)?;
     let (rev, prev_hash) = next_meta(path, &old, master_password)?;
     // A-01: the envelope is the whole vault as JSON — wipe it after encrypting.
     let payload = zeroize::Zeroizing::new(envelope_bytes(vault, rev, prev_hash, profile)?);
@@ -637,6 +686,9 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     file_path: P,
 ) -> Result<(Vault, bool), String> {
     // ১. ডিস্ক থেকে বাইনারি পড়া
+    if let Ok(md) = fs::metadata(&file_path) {
+        check_container_size(md.len())?;
+    }
     let payload = fs::read(&file_path).map_err(|e| format!("File read error: {}", e))?;
 
     // M7: single-byte magic flip (PV2\0 → PV2) forces the legacy branch
@@ -676,6 +728,7 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
         }
         VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
     });
+    check_container_version(decrypted.as_slice())?;
     let expected = if version == VaultVersion::V3Paranoid {
         ContainerProfile::Paranoid
     } else {
@@ -1443,5 +1496,65 @@ mod tests {
             "demo vault: {} (password Demo-Pass-123!)",
             path.display()
         );
+    }
+}
+
+#[cfg(test)]
+mod container_guard_tests {
+    use super::{
+        check_container_size, check_container_version, read_old_container, MAX_CONTAINER_BYTES,
+    };
+    use crate::models::Vault;
+    use secrecy::SecretString;
+
+    fn tmp(name: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::create_dir_all(&dir);
+        dir
+    }
+
+    #[test]
+    fn unreadable_container_is_an_error_not_a_first_save() {
+        let dir = tmp("pv_container_guard");
+        assert!(read_old_container(&dir).is_err(), "a directory is not a vault");
+        assert!(
+            read_old_container(&dir.join("missing.enc"))
+                .expect("missing file = first save")
+                .is_empty()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn absurd_container_sizes_are_refused() {
+        assert!(check_container_size(MAX_CONTAINER_BYTES).is_ok());
+        assert!(check_container_size(MAX_CONTAINER_BYTES + 1).is_err());
+    }
+
+    #[test]
+    fn newer_container_version_is_refused() {
+        use crate::crypto::{decrypt_vault_portable_secret, encrypt_vault_portable_secret};
+        let dir = tmp("pv_newer_version");
+        let path = dir.join("vault.enc");
+        let pass = SecretString::new("newer-pass-1".to_string());
+        crate::storage::save_vault_secret(&Vault::new(), &pass, &path).expect("save");
+        let file_bytes = std::fs::read(&path).expect("read container");
+        let inner = decrypt_vault_portable_secret(&pass, &file_bytes).expect("decrypt");
+        let text = String::from_utf8(inner).expect("utf8");
+        let bumped = text.replacen("\"version\":2", "\"version\":3", 1);
+        assert_ne!(bumped, text, "envelope meta version must be present");
+        let resealed =
+            encrypt_vault_portable_secret(&pass, bumped.as_bytes()).expect("reseal");
+        std::fs::write(&path, resealed).expect("write");
+        let err = crate::storage::load_vault_versioned_secret(&pass, &path).unwrap_err();
+        assert!(err.contains("newer"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn envelope_version_gate_ignores_legacy_json() {
+        // A plain pre-envelope vault must not be rejected by the v2 gate.
+        assert!(check_container_version(b"{\"version\":1,\"credentials\":[]}").is_ok());
     }
 }
