@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `54c3c74` (crypto P2) + docs on top |
+| Branch / HEAD | `main` @ `5d3f21e` (bridge + API gates) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,18 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12b) — `f60b446`, `5d3f21e`
+
+- **B6** (`f60b446`): `bridge_unlocked()` and the watchdog no longer trust
+  `vault_hello.dpapi` existing — the blob must unseal to a non-empty passphrase
+  (1 s cache; tests bypass it). An empty file recreated after a lock can no
+  longer keep a running host serving.
+- **B7** (`5d3f21e`): the local API now requires `Host: 127.0.0.1 | localhost |
+  [::1]` and rejects any `Origin` (DNS-rebinding), before the token is read.
+  `ct_eq` hashes both sides, removing the length early-return.
+- Gates: full suite **595 passed, 0 failed, 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (8m27s).
 
 ## Last code batch (2026-11-12) — `54c3c74`
 
