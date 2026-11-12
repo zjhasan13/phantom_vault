@@ -87,10 +87,51 @@ fn desktop_alive() -> bool {
     heartbeat_parts(ts, now_secs())
 }
 
-/// Full bridge-unlock predicate: sealed Hello credential AND a live app.
-/// Either half missing ⇒ locked (extension shows Vault Locked / App Closed).
+/// A lock deletes `vault_hello.dpapi`. `exists()` is not enough: any same-user
+/// process can recreate an empty file and a running host would keep serving
+/// the vault it decrypted before the lock (B6). Unsealing proves the sealed
+/// credential is still readable.
+fn hello_token_readable() -> bool {
+    match std::fs::read(HELLO_TOKEN_FILE) {
+        Ok(blob) if !blob.is_empty() => crate::core::memory::DpapiGuard::unprotect(&blob)
+            .map(|s| !s.expose().is_empty())
+            .unwrap_or(false),
+        _ => false,
+    }
+}
+
+/// `hello_token_readable` costs a DPAPI call; a 1 s cache keeps the serve loop
+/// cheap while a lock can lag by at most one frame.
+#[cfg(not(test))]
+fn token_ok_cached() -> bool {
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
+    static CACHE: Mutex<Option<(Instant, bool)>> = Mutex::new(None);
+    let now = Instant::now();
+    if let Ok(mut slot) = CACHE.lock() {
+        if let Some((at, ok)) = *slot {
+            if now.duration_since(at) < Duration::from_secs(1) {
+                return ok;
+            }
+        }
+        let ok = hello_token_readable();
+        *slot = Some((now, ok));
+        return ok;
+    }
+    hello_token_readable()
+}
+
+/// Tests flip the fixture files inside one process, so a 1 s cache would make
+/// the AND-matrix order-dependent; tests always re-read.
+#[cfg(test)]
+fn token_ok_cached() -> bool {
+    hello_token_readable()
+}
+
+/// Full bridge-unlock predicate: a readable sealed Hello credential AND a live
+/// app. Either half missing ⇒ locked.
 fn bridge_unlocked() -> bool {
-    std::path::Path::new(HELLO_TOKEN_FILE).exists() && desktop_alive()
+    token_ok_cached() && desktop_alive()
 }
 /// Length-prefixed frame for one JSON value.
 pub fn encode_frame(msg: &serde_json::Value) -> Vec<u8> {
@@ -3650,7 +3691,7 @@ pub fn serve_cli() -> i32 {
             .unwrap_or(0);
         let idle = now.saturating_sub(watch_last2.load(std::sync::atomic::Ordering::SeqCst));
         let total = watch_start.elapsed().as_secs();
-        if !std::path::Path::new(HELLO_TOKEN_FILE).exists() {
+        if !token_ok_cached() {
             // Lock is an immediate-clear event: the guarded flush only fires
             // when our secret is still on the clipboard.
             crate::windows_native::clipboard::flush_now();
@@ -3676,7 +3717,7 @@ pub fn serve_cli() -> i32 {
     loop {
         // Live lock state: token deleted (app locked) / idle / max lifetime
         // → zeroize + exit instead of serving secrets indefinitely.
-        let token_alive = std::path::Path::new(HELLO_TOKEN_FILE).exists();
+        let token_alive = token_ok_cached();
         let clip_linger =
             now_secs() < clip_until.load(std::sync::atomic::Ordering::SeqCst);
         if !token_alive {
@@ -3884,7 +3925,7 @@ pub fn serve_cli() -> i32 {
         if until == 0 || now_secs() >= until {
             break;
         }
-        if !std::path::Path::new(HELLO_TOKEN_FILE).exists() || !desktop_alive() {
+        if !token_ok_cached() || !desktop_alive() {
             crate::windows_native::clipboard::flush_now();
             break;
         }
@@ -4971,14 +5012,17 @@ mod tests {
 
     #[test]
     fn bridge_unlocked_needs_both_halves() {
-        // Full AND-matrix over fixture files. bridge_unlocked() only checks
-        // token EXISTENCE (content never read here), so a garbage token
-        // fixture is safe. Both files snapshot-restored, never wiped.
+        // Full AND-matrix over fixture files. bridge_unlocked() now unseals the
+        // token (B6), so the fixture must be a real DPAPI blob, not just bytes.
+        // Both files snapshot-restored, never wiped.
         let _g = sidecar_guard();
         let snap_hb: Option<Vec<u8>> = std::fs::read(HEARTBEAT_FILE).ok();
         let snap_tok: Option<Vec<u8>> = std::fs::read(HELLO_TOKEN_FILE).ok();
         let write_hb = |s: &str| std::fs::write(HEARTBEAT_FILE, s).unwrap();
-        let write_tok = || std::fs::write(HELLO_TOKEN_FILE, b"test-fixture").unwrap();
+        let write_tok = || {
+            let sealed = crate::core::memory::DpapiGuard::protect(b"test-fixture").expect("seal");
+            std::fs::write(HELLO_TOKEN_FILE, sealed).unwrap();
+        };
         let wipe = || {
             let _ = std::fs::remove_file(HEARTBEAT_FILE);
             let _ = std::fs::remove_file(HELLO_TOKEN_FILE);
