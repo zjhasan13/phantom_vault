@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `5d3f21e` (bridge + API gates) + docs on top |
+| Branch / HEAD | `main` @ `84143e6` (storage guards) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,18 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12c) — `84143e6`
+
+- **A-05**: a transient container read error (AV/OneDrive) no longer looks like
+  a first save — only `NotFound` does. Before, the rewrite used rev=1 + empty
+  `prev_hash` and silently reset the anti-rollback chain.
+- **A-06**: `metadata().len()` is checked against 64 MiB before `fs::read`; a
+  corrupt multi-GB synced file fails cleanly instead of aborting on allocation.
+- **A-10**: a container whose `meta.version` is above this build is refused
+  (with a clear update message) instead of being parsed as v2 and rewritten.
+- Gates: full suite **599 passed, 0 failed, 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (10m22s).
 
 ## Last code batch (2026-11-12b) — `f60b446`, `5d3f21e`
 
