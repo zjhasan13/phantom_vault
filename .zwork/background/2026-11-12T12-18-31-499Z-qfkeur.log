@@ -1,0 +1,17 @@
+cargo :     Checking phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... OR='never'; cargo clippy --all-targets -j 1 -- -D warnings 2>&1; Writ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (    Checking ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+error: use of deprecated function `storage::load_vault_versioned`: use load_vault_versioned_secret with a SecretString
+    --> src\storage.rs:1550:35
+     |
+1550 |         let err = crate::storage::load_vault_versioned("newer-pass-1", &path).unwrap_err();
+     |                                   ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `-D deprecated` implied by `-D warnings`
+     = help: to override `-D warnings` add `#[allow(deprecated)]`
+error: could not compile `phantom_vault` (bin "phantom_vault" test) due to 1 previous error
+CLIPPY_EXIT=101

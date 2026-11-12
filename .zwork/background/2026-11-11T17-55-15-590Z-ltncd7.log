@@ -1,0 +1,15 @@
+cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... nv:CARGO_TERM_COLOR='never'; cargo test -j 1 detail_copy 2>&1; Write- ...
++                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 11m 38s
+     Running unittests src\main.rs (target\debug\deps\phantom_vault-97b648ecba56eda3.exe)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 596 filtered out; finished in 0.00s
+
+TEST_EXIT=0

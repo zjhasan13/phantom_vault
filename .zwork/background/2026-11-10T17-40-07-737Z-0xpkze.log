@@ -1,0 +1,9 @@
+cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... TAL='0'; $env:CARGO_TERM_COLOR='never'; cargo check -j 1 2>&1; Write- ...
++                                             ~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3m 55s
+CHECK_EXIT=0

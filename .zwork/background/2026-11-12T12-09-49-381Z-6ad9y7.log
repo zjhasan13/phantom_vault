@@ -1,0 +1,30 @@
+cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... $env:CARGO_TERM_COLOR='never'; cargo test -j 1 container 2>&1; Write- ...
++                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: use of deprecated function `storage::load_vault_versioned`: use load_vault_versioned_secret with a 
+SecretString
+    --> src\storage.rs:1550:35
+     |
+1550 |         let err = crate::storage::load_vault_versioned("newer-pass-1", &path).unwrap_err();
+     |                                   ^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+warning: `phantom_vault` (bin "phantom_vault" test) generated 1 warning
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 6m 58s
+     Running unittests src\main.rs (target\debug\deps\phantom_vault-97b648ecba56eda3.exe)
+
+running 6 tests
+test storage::container_guard_tests::absurd_container_sizes_are_refused ... ok
+test storage::container_guard_tests::envelope_version_gate_ignores_legacy_json ... ok
+test storage::container_guard_tests::unreadable_container_is_an_error_not_a_first_save ... ok
+test storage::tests::secret_save_emits_portable_container ... ok
+test storage::tests::a18_container_is_padded_to_a_fixed_bucket ... ok
+test storage::container_guard_tests::newer_container_version_is_refused ... ok
+
+test result: ok. 6 passed; 0 failed; 0 ignored; 0 measured; 597 filtered out; finished in 3.54s
+
+TEST_EXIT=0

@@ -1,0 +1,39 @@
+cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... $env:CARGO_TERM_COLOR='never'; cargo test -j 1 container 2>&1; Write- ...
++                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+warning: use of deprecated function `crypto::decrypt_vault_portable`: use decrypt_vault_portable_secret with a 
+SecretString
+    --> src\storage.rs:1543:21
+     |
+1543 |         let inner = decrypt_vault_portable("newer-pass-1", &file_bytes).expect("decrypt");
+     |                     ^^^^^^^^^^^^^^^^^^^^^^
+     |
+     = note: `#[warn(deprecated)]` on by default
+warning: use of deprecated function `crypto::encrypt_vault_portable`: use encrypt_vault_portable_secret with a 
+SecretString
+    --> src\storage.rs:1548:13
+     |
+1548 |             encrypt_vault_portable("newer-pass-1", bumped.as_bytes()).expect("reseal");
+     |             ^^^^^^^^^^^^^^^^^^^^^^
+warning: use of deprecated function `storage::load_vault_versioned`: use load_vault_versioned_secret with a 
+SecretString
+    --> src\storage.rs:1550:35
+     |
+1550 |         let err = crate::storage::load_vault_versioned("newer-pass-1", &path).unwrap_err();
+     |                                   ^^^^^^^^^^^^^^^^^^^^
+warning: use of deprecated function `crypto::decrypt_vault_portable`: use decrypt_vault_portable_secret with a 
+SecretString
+    --> src\storage.rs:1537:29
+     |
+1537 |         use crate::crypto::{decrypt_vault_portable, encrypt_vault_portable};
+     |                             ^^^^^^^^^^^^^^^^^^^^^^
+warning: use of deprecated function `crypto::encrypt_vault_portable`: use encrypt_vault_portable_secret with a 
+SecretString
+    --> src\storage.rs:1537:53
+     |
+1537 |         use crate::crypto::{decrypt_vault_portable, encrypt_vault_portable};
+     |                                                     ^^^^^^^^^^^^^^^^^^^^^^

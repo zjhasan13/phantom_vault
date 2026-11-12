@@ -1,0 +1,17 @@
+cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... NTAL='0'; $env:CARGO_TERM_COLOR='never'; cargo test -j 1 2>&1; Write- ...
++                                              ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+The Win32 internal error "No process is on the other end of the pipe" 0xE9 
+occurred while setting the console window title. Contact Microsoft Customer 
+Support Services.
+At line:1 char:60
++ ... NTAL='0'; $env:CARGO_TERM_COLOR='never'; cargo test -j 1 2>&1; Write- ...
++                                              ~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : ResourceUnavailable: (:) [], HostException
+    + FullyQualifiedErrorId : SetConsoleWindowTitle
+ 
+TEST_EXIT=1

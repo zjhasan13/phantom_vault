@@ -1,0 +1,9 @@
+cargo :    Compiling phantom_vault v0.4.2 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
+At line:1 char:60
++ ... OR='never'; cargo clippy --all-targets -j 1 -- -D warnings 2>&1; Writ ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10m 09s
+CLIPPY_EXIT=0
