@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-12 · `84143e6`
+> Last updated: 2026-11-12 · `652abba`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -98,6 +98,7 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `652abba` | crypto: temp cleanup, PIN KDF bounds, constant-time log compare (A-07/A-08/A-09) |
 | `84143e6` | storage: unreadable/oversized/newer containers refused (A-05/A-06/A-10) |
 | `5d3f21e` | api: non-loopback Host and any Origin refused (B7) |
 | `f60b446` | bridge: liveness unseals the Hello token, not just stats it (B6) |

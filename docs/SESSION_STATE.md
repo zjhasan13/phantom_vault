@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `84143e6` (storage guards) + docs on top |
+| Branch / HEAD | `main` @ `652abba` (crypto P2 complete) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,20 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12d) — `652abba`
+
+- **A-07**: `secure_write` deletes its temp file on every path (RAII guard),
+  and syncs the parent directory best-effort after the rename. No more `.tmp`
+  litter after a failed save.
+- **A-08**: the extension PIN record clamps `m/t/p` (8..=1 MiB KiB, 1..=16,
+  1..=8) before `Params::new`, so a crafted record cannot ask for ~4 TiB.
+- **A-09**: the access-log chain compare is constant-time (`subtle::ct_eq`).
+- Gates: full suite **602 passed, 0 failed, 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (9m44s).
+- **A-03** (no AAD on the container AEAD) stays open on purpose: it needs a
+  container format bump + migration, and is not exploitable with today's
+  header layout. It is the only open item from the A-series.
 
 ## Last code batch (2026-11-12c) — `84143e6`
 
