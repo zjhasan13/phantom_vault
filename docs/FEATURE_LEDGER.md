@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-12 · `b45969c`
+> Last updated: 2026-11-12 · `b81c766`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -38,7 +38,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 
 | Area | Status | Notes / where |
 |---|---|---|
-| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry; fills only on a real user gesture (`ecca87d`); rows in a closed shadow root (`b45969c`) |
+| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry; fills only on a real user gesture (`ecca87d`); rows in a closed shadow root (`b45969c`); **top frame only** — iframe widgets are not filled (`b81c766`) |
 | Continue-as (identifier step) | ✅ | username-only step carries to password step (`fc1def7`) |
 | Save prompt — login | ✅ | closed shadow root, 60 s TTL, per-tab, folder picker, notes, editable title/URL, update-target chips, EN/BN, at-risk hint |
 | Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |
@@ -98,6 +98,7 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `b81c766` | extension: clipboardRead removed, all_frames off, hook.js on http(s) only (B8/B9) |
 | `b45969c` | extension: dropdown + Continue-as rows moved into closed shadow roots (B1b) |
 | `652abba` | crypto: temp cleanup, PIN KDF bounds, constant-time log compare (A-07/A-08/A-09) |
 | `84143e6` | storage: unreadable/oversized/newer containers refused (A-05/A-06/A-10) |
