@@ -5,6 +5,9 @@ import { readFileSync } from "node:fs";
 import { loadContent, submit, flush, runtimeMessage, shadowOf, fireTrusted } from "./content-harness.mjs";
 
 const saver = (window) => window.document.getElementById("__pv_saver");
+// B1b: the dropdown and the Continue-as chip keep only an empty host in the
+// page; their rows live in a closed shadow root (harness shadowOf).
+const dropRoot = (window) => shadowOf(window.document.getElementById("__pv_drop"));
 // A9: the login prompts keep their fields and buttons in a closed shadow root,
 // so tests reach them through the harness spy rather than the page tree.
 // Card/identity prompts have no shadow tree; shadowOf() falls back to the host.
@@ -86,7 +89,7 @@ test("carry-priority: previous step's email sorts first in the login dropdown", 
   const pw = window.document.querySelector('#step2 input[type="password"]');
   pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
   await flush(80);
-  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  const rows = [...dropRoot(window).querySelectorAll("button[data-pv-index]")];
   assert.ok(rows.length >= 2, "dropdown should list both accounts");
   assert.match(rows[0].textContent, /alice@example\.com/,
     "carried email must be first even though the other account is verified");
@@ -106,7 +109,7 @@ test("recency beats the sticky verified flag when the page shows no account", as
   const pw = window.document.querySelector('input[type="password"]');
   pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
   await flush(80);
-  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  const rows = [...dropRoot(window).querySelectorAll("button[data-pv-index]")];
   assert.ok(rows.length >= 2, "both accounts must stay listed");
   assert.match(rows[0].textContent, /fresh@example\.com/,
     "the most recently filled account wins over a stale verified one");
@@ -126,7 +129,7 @@ test("page hint ranks the displayed account first (Google-style password step)",
   const pw = window.document.querySelector('input[type="password"]');
   pw.dispatchEvent(new window.Event("focusin", { bubbles: true }));
   await flush(80);
-  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  const rows = [...dropRoot(window).querySelectorAll("button[data-pv-index]")];
   assert.ok(rows.length >= 2, "hint must order rows, never drop them");
   assert.match(rows[0].textContent, /right@example\.com/,
     "the account the page displays must be first");
@@ -184,8 +187,8 @@ test("Continue as: one matching account on a password-only step fills in one cli
   await flush(600);
   const el = window.document.getElementById("__pv_continue");
   assert.ok(el, "the continue-as chip must appear");
-  assert.match(el.textContent, /alice@example\.com/);
-  const fill = [...el.querySelectorAll("button")].find((b) => /Fill/i.test(b.textContent));
+  assert.match(shadowOf(el).textContent, /alice@example\.com/);
+  const fill = [...shadowOf(el).querySelectorAll("button")].find((b) => /Fill/i.test(b.textContent));
   await fireTrusted(fill, "click");
   await flush(60);
   assert.equal(window.document.querySelector('input[name="password"]').value, "pw1");
@@ -200,7 +203,7 @@ test("Continue as: dismissed chip stays hidden for the site", async (t) => {
   await flush(600);
   const el = window.document.getElementById("__pv_continue");
   assert.ok(el, "chip appears first");
-  el.querySelector(".x").click();
+  shadowOf(el).querySelector(".x").click();
   await flush(400);
   assert.equal(window.document.getElementById("__pv_continue"), null);
 });
@@ -383,7 +386,7 @@ test("identity fill covers company, city, state, zip and country", async (t) => 
   const street = window.document.querySelector('input[name="street"]');
   street.dispatchEvent(new window.Event("focusin", { bubbles: true }));
   await flush(80);
-  const row = window.document.querySelector("button[data-pv-index]");
+  const row = dropRoot(window).querySelector("button[data-pv-index]");
   assert.ok(row, "the identity row must reach the dropdown");
   await fireTrusted(row, "mousedown");
   await flush(60);
@@ -425,7 +428,7 @@ test("identity suggestions reach the dropdown (url-less rows survive)", async (t
   const addr = window.document.querySelector('input[autocomplete="street-address"]');
   addr.dispatchEvent(new window.Event("focusin", { bubbles: true }));
   await flush(80);
-  const rows = [...window.document.querySelectorAll("button[data-pv-index]")];
+  const rows = [...dropRoot(window).querySelectorAll("button[data-pv-index]")];
   assert.ok(rows.some((r) => /Ada Lovelace/.test(r.textContent)),
     "identity row must appear even though identities store no URL");
 });
@@ -724,7 +727,7 @@ test("change-password form has ONE shield with fill + generate actions", async (
   assert.equal(icons.length, 1, "no second dice on the same form");
   await fireTrusted(icons[0], "click");
   await flush(80);
-  const gen = [...window.document.querySelectorAll("button")]
+  const gen = [...shadowOf(window.document.getElementById("__pv_drop")).querySelectorAll("button")]
     .find((b) => /Generate strong password/.test(b.textContent));
   assert.ok(gen, "shield menu exposes generation for the new field");
   await fireTrusted(gen, "mousedown");
@@ -1271,7 +1274,7 @@ test("B1: a page-dispatched mousedown on a dropdown row never fills", async (t) 
   await flush(60);
   const drop = window.document.getElementById("__pv_drop");
   assert.ok(drop, "the dropdown should open when a login field is focused");
-  const row = drop.querySelector("button.pvx-row");
+  const row = shadowOf(drop).querySelector("button.pvx-row");
   assert.ok(row, "the credential row should be rendered");
   row.dispatchEvent(new window.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
   await flush(40);
@@ -1284,7 +1287,7 @@ test("B1: a page-dispatched Enter in the dropdown filter never fills", async (t)
   await flush(60);
   const drop = window.document.getElementById("__pv_drop");
   assert.ok(drop, "the dropdown should open");
-  const filter = drop.querySelector("input");
+  const filter = shadowOf(drop).querySelector("input");
   assert.ok(filter, "two accounts should render the filter box");
   filter.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
   await flush(40);

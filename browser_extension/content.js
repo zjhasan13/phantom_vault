@@ -1855,60 +1855,60 @@
   };
   // One skin for both surfaces: same surfaces/border/radius/type as the app.
   const PV_DROP_CSS = `
-    #__pv_drop{position:absolute;z-index:2147483647;box-sizing:border-box;background:#0b1326;
+    :host{position:absolute;z-index:2147483647;box-sizing:border-box;background:#0b1326;
       border:1px solid #3c4a42;border-radius:12px;padding:8px;color:#dae2fd;
       box-shadow:0 18px 48px #000d,inset 0 1px 0 #ffffff08;
       font:13px/1.45 Inter,"Segoe UI",system-ui,sans-serif}
-    #__pv_drop *{box-sizing:border-box;font-family:inherit}
-    #__pv_drop .pvx-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
-    #__pv_drop .pvx-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:34px;
+    *{box-sizing:border-box;font-family:inherit}
+    .pvx-head{display:flex;align-items:center;gap:8px;margin-bottom:7px}
+    .pvx-search{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:34px;
       padding:0 10px;background:#171f33;border:1px solid #3c4a42;border-radius:9px;color:#86948a}
-    #__pv_drop .pvx-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;
+    .pvx-search input{flex:1;min-width:0;background:transparent;border:0;outline:0;
       color:#dae2fd;font:12.5px/1 Inter,"Segoe UI",system-ui,sans-serif}
-    #__pv_drop .pvx-search input::placeholder{color:#86948a}
-    #__pv_drop .pvx-meta{display:flex;align-items:center;gap:6px;padding:0 3px 7px;
+    .pvx-search input::placeholder{color:#86948a}
+    .pvx-meta{display:flex;align-items:center;gap:6px;padding:0 3px 7px;
       font:700 9px/1 "JetBrains Mono",Consolas,monospace;letter-spacing:.6px;
       text-transform:uppercase;color:#86948a;white-space:nowrap;overflow:hidden}
-    #__pv_drop .pvx-meta .dom{color:#4edea3;text-transform:none;letter-spacing:.2px}
-    #__pv_drop .pvx-meta .cnt{margin-left:auto;color:#86948a}
-    #__pv_drop .pvx-row{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;
+    .pvx-meta .dom{color:#4edea3;text-transform:none;letter-spacing:.2px}
+    .pvx-meta .cnt{margin-left:auto;color:#86948a}
+    .pvx-row{display:flex;align-items:center;gap:10px;width:100%;min-height:46px;
       padding:8px 9px;margin:0;background:transparent;border:1px solid transparent;border-radius:10px;
       color:#dae2fd;text-align:left;cursor:pointer}
-    #__pv_drop .pvx-row:hover,#__pv_drop .pvx-row:focus-visible{background:#171f33;
+    .pvx-row:hover,.pvx-row:focus-visible{background:#171f33;
       border-color:#3c4a42;outline:none}
-    #__pv_drop .pvx-row[data-dim="1"]{opacity:.55}
-    #__pv_drop .pvx-av{flex:none;width:30px;height:30px;border-radius:9px;overflow:hidden;
+    .pvx-row[data-dim="1"]{opacity:.55}
+    .pvx-av{flex:none;width:30px;height:30px;border-radius:9px;overflow:hidden;
       background:#222a3d;border:1px solid #3c4a42;color:#4edea3;
       font:800 12px/1 "JetBrains Mono",Consolas,monospace;display:flex;align-items:center;
       justify-content:center;text-transform:uppercase}
-    #__pv_drop .pvx-av img{width:100%;height:100%;object-fit:cover}
-    #__pv_drop .pvx-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
-    #__pv_drop .pvx-t{display:flex;align-items:center;gap:6px;font-weight:650;font-size:12.5px;
+    .pvx-av img{width:100%;height:100%;object-fit:cover}
+    .pvx-tx{flex:1;min-width:0;display:flex;flex-direction:column;gap:2px}
+    .pvx-t{display:flex;align-items:center;gap:6px;font-weight:650;font-size:12.5px;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #__pv_drop .pvx-t .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
-    #__pv_drop .pvx-s{display:flex;align-items:center;gap:4px;font-size:11px;color:#86948a;
+    .pvx-t .nm{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .pvx-s{display:flex;align-items:center;gap:4px;font-size:11px;color:#86948a;
       white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #__pv_drop .pvx-s .u{min-width:0;overflow:hidden;text-overflow:ellipsis}
-    #__pv_drop .pvx-sep{opacity:.5}
-    #__pv_drop .pvx-badges{display:inline-flex;align-items:center;gap:4px;flex:none}
-    #__pv_drop .pvx-badge{display:inline-flex;align-items:center;justify-content:center;
+    .pvx-s .u{min-width:0;overflow:hidden;text-overflow:ellipsis}
+    .pvx-sep{opacity:.5}
+    .pvx-badges{display:inline-flex;align-items:center;gap:4px;flex:none}
+    .pvx-badge{display:inline-flex;align-items:center;justify-content:center;
       width:17px;height:17px;border-radius:5px;background:#222a3d;border:1px solid #3c4a42}
-    #__pv_drop .pvx-badge.good{color:#4edea3}
-    #__pv_drop .pvx-badge.info{color:#4cd7f6}
-    #__pv_drop .pvx-badge.warn{color:#f59e0b}
-    #__pv_drop .pvx-badge.bad{color:#ffb4ab}
-    #__pv_drop .pvx-go{flex:none;font:700 9px/1 "JetBrains Mono",Consolas,monospace;
+    .pvx-badge.good{color:#4edea3}
+    .pvx-badge.info{color:#4cd7f6}
+    .pvx-badge.warn{color:#f59e0b}
+    .pvx-badge.bad{color:#ffb4ab}
+    .pvx-go{flex:none;font:700 9px/1 "JetBrains Mono",Consolas,monospace;
       letter-spacing:.7px;text-transform:uppercase;color:#4edea3;background:#4edea31a;
       border:1px solid #4edea355;border-radius:6px;padding:5px 8px;opacity:0;
       transition:opacity .12s ease}
-    #__pv_drop .pvx-row:hover .pvx-go,#__pv_drop .pvx-row:focus-visible .pvx-go{opacity:1}
-    #__pv_drop .pvx-foot{display:flex;align-items:center;gap:12px;margin-top:7px;padding:7px 3px 1px;
+    .pvx-row:hover .pvx-go,.pvx-row:focus-visible .pvx-go{opacity:1}
+    .pvx-foot{display:flex;align-items:center;gap:12px;margin-top:7px;padding:7px 3px 1px;
       border-top:1px solid #2d3449;color:#86948a;
       font:600 9px/1 "JetBrains Mono",Consolas,monospace;letter-spacing:.4px}
-    #__pv_drop .pvx-foot .k{display:inline-block;margin-right:4px;padding:2px 5px;border-radius:4px;
+    .pvx-foot .k{display:inline-block;margin-right:4px;padding:2px 5px;border-radius:4px;
       background:#171f33;border:1px solid #3c4a42;color:#bbcabf}
-    #__pv_drop .pvx-foot .cnt{margin-left:auto}
-    #__pv_drop .pvx-empty{padding:10px;color:#86948a;font-size:12px}
+    .pvx-foot .cnt{margin-left:auto}
+    .pvx-empty{padding:10px;color:#86948a;font-size:12px}
   `;
 
   function showDrop(anchor, rows) {
@@ -1917,12 +1917,15 @@
     if (!rows.length || !isVisible(anchor)) return;
     dropEl = document.createElement("div");
     dropEl.id = "__pv_drop";
-    // The skin rides with the dropdown (removed on close). GitHub/Instagram
-    // allow inline styles and Google ships no style-src, so a <style> tag is
-    // safe here; everything stays scoped under #__pv_drop.
+    // B1b: the host is page-visible and empty; every row lives in a CLOSED
+    // shadow root, so page script cannot read the vault titles/usernames that
+    // used to sit in plain DOM.
+    const root = dropEl.attachShadow ? dropEl.attachShadow({ mode: "closed" }) : dropEl;
+    // The skin rides with the dropdown (removed on close); inside the shadow
+    // tree :host is the card and the .pvx-* rules are already scoped.
     const skin = document.createElement("style");
     skin.textContent = PV_DROP_CSS;
-    dropEl.appendChild(skin);
+    root.appendChild(skin);
     // Position, width and stacking live on the element itself; the skin keeps
     // only the Aegis look so a page can never inherit our colours.
     dropEl.style.cssText = "position:absolute;z-index:2147483647;box-sizing:border-box;";
@@ -2063,7 +2066,7 @@
       search.addEventListener("input", () => paint(search.value));
       box.append(search);
       head.append(box);
-      dropEl.append(head);
+      root.append(head);
       setTimeout(() => { try { search.focus({ preventScroll: true }); } catch (_) {} }, 0);
     }
     // Site context line: which domain these accounts were matched for, and
@@ -2079,9 +2082,9 @@
     cnt.className = "cnt";
     cnt.textContent = `${accounts.length} account${accounts.length === 1 ? "" : "s"}`;
     meta.append(domLabel, dom, cnt);
-    dropEl.append(meta);
+    root.append(meta);
     paint("");
-    dropEl.append(list);
+    root.append(list);
     // Keyboard hints only for keys that actually work here: Esc always closes,
     // Enter fills the first row only while the filter box exists.
     const foot = document.createElement("div");
@@ -2097,7 +2100,7 @@
     };
     if (accounts.length > 1) foot.append(hint("↵", "Fill"));
     foot.append(hint("Esc", "Close"));
-    dropEl.append(foot);
+    root.append(foot);
     document.documentElement.appendChild(dropEl);
     const rc = anchor.getBoundingClientRect();
     // Bitwarden parity: dropdown matches the input's EXACT bounding box.
@@ -2183,24 +2186,24 @@
   // and fill gates are the same as every other path (K1: nothing is dropped,
   // and a fill still needs the user gesture + PIN gate).
   const PV_CONTINUE_CSS = `
-    #__pv_continue{position:fixed;z-index:2147483647;display:flex;align-items:center;gap:9px;
+    :host{position:fixed;z-index:2147483647;display:flex;align-items:center;gap:9px;
       max-width:min(92vw,360px);padding:8px 9px;background:#0b1326;border:1px solid #3c4a42;
       border-radius:11px;box-shadow:0 14px 36px #000d;color:#dae2fd;box-sizing:border-box;
       font:12px/1.35 Inter,"Segoe UI",system-ui,sans-serif}
-    #__pv_continue .av{flex:none;width:26px;height:26px;border-radius:8px;overflow:hidden;
+    .av{flex:none;width:26px;height:26px;border-radius:8px;overflow:hidden;
       background:#222a3d;border:1px solid #3c4a42;color:#4edea3;display:flex;align-items:center;
       justify-content:center;font:800 11px "JetBrains Mono",monospace;text-transform:uppercase}
-    #__pv_continue .av img{width:100%;height:100%;object-fit:cover}
-    #__pv_continue .who{min-width:0;display:flex;flex-direction:column;gap:1px}
-    #__pv_continue .lbl{font:700 8.5px "JetBrains Mono",monospace;letter-spacing:.6px;color:#86948a}
-    #__pv_continue .u{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-    #__pv_continue .fill{flex:none;background:#4edea3;color:#003824;border:1px solid #4edea3;
+    .av img{width:100%;height:100%;object-fit:cover}
+    .who{min-width:0;display:flex;flex-direction:column;gap:1px}
+    .lbl{font:700 8.5px "JetBrains Mono",monospace;letter-spacing:.6px;color:#86948a}
+    .u{font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+    .fill{flex:none;background:#4edea3;color:#003824;border:1px solid #4edea3;
       border-radius:7px;padding:5px 9px;font:700 9px "JetBrains Mono",monospace;letter-spacing:.5px;
       text-transform:uppercase;cursor:pointer}
-    #__pv_continue .fill:hover{background:#6ff0b8}
-    #__pv_continue .x{flex:none;background:transparent;border:1px solid #3c4a42;border-radius:7px;
+    .fill:hover{background:#6ff0b8}
+    .x{flex:none;background:transparent;border:1px solid #3c4a42;border-radius:7px;
       color:#86948a;width:22px;height:22px;cursor:pointer;line-height:1;padding:0;font-size:13px}
-    #__pv_continue .x:hover{color:#dae2fd;border-color:#86948a}
+    .x:hover{color:#dae2fd;border-color:#86948a}
   `;
   let continueAsEl = null;
   let continueAsField = null;
@@ -2248,6 +2251,8 @@
     if (continueAsEl) return;
     const el = document.createElement("div");
     el.id = "__pv_continue";
+    // B1b: the username is vault metadata; keep it out of page-readable DOM.
+    const root = el.attachShadow ? el.attachShadow({ mode: "closed" }) : el;
     const style = document.createElement("style");
     style.textContent = PV_CONTINUE_CSS;
     const av = document.createElement("div");
@@ -2292,7 +2297,7 @@
     x.setAttribute("aria-label", "Hide Continue as");
     x.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); });
     x.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); dismissContinueAs(true); });
-    el.append(style, av, who, fill, x);
+    root.append(style, av, who, fill, x);
     continueAsEl = el;
     continueAsField = f.pass[0];
     document.documentElement.appendChild(el);
