@@ -279,25 +279,6 @@ function clipSeconds(raw) {
   return Math.min(Math.max(Math.round(n), 5), 3600);
 }
 
-async function ensureOffscreen() {
-  try {
-    if (!chrome.offscreen || typeof chrome.offscreen.createDocument !== "function") return false;
-    if (chrome.runtime.getContexts) {
-      const ctx = await chrome.runtime.getContexts({ contextTypes: ["OFFSCREEN_DOCUMENT"] });
-      if (Array.isArray(ctx) && ctx.length) return true;
-    } else if (typeof chrome.offscreen.hasDocument === "function" && await chrome.offscreen.hasDocument()) {
-      return true;
-    }
-    await chrome.offscreen.createDocument({
-      url: "offscreen.html",
-      reasons: ["CLIPBOARD"],
-      justification: "Clear copied passwords and 2FA codes after the auto-clear timeout.",
-    });
-    return true;
-  } catch (_) {
-    return false;
-  }
-}
 
 async function clearClipboardNow() {
   let cleared = false;
@@ -316,15 +297,10 @@ async function clearClipboardNow() {
     } catch (_) {}
     return { ok: true, cleared: false, skipped: true };
   }
-  // Preferred: offscreen document owns a DOM clipboard for the SW lifetime.
-  try {
-    if (await ensureOffscreen()) {
-      const r = await chrome.runtime.sendMessage({
-        target: "offscreen", type: "PV_CLIP_CLEAR", hash: wantHash,
-      });
-      cleared = !!(r && r.ok);
-    }
-  } catch (_) {}
+  // B8: the extension no longer holds clipboardRead, so it cannot verify the
+  // clipboard before blanking it. The native host still clears its own copies
+  // (Win+V exclusion + TTL); this path stays match-guarded and fails closed
+  // when the read is denied, instead of blanking something the user copied.
   // Fallback: a content script can blank the clipboard while its page is
   // focused. The content script re-hashes the current text and refuses a
   // mismatch, so this is still match-guarded.
@@ -463,7 +439,7 @@ if (chrome.alarms && chrome.alarms.onAlarm && chrome.alarms.onAlarm.addListener)
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // Offscreen clipboard document answers on its own channel; the router must
   // not race it with an "unknown message" reply.
-  if (msg && msg.target === "offscreen") return false;
+  if (msg && msg.target === "offscreen") return false; // no producer since B8
   (async () => {
     const retouchBadge = () => {
       try {
@@ -904,41 +880,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 // ---- Smart-autofill: context menus + keyboard shortcut dispatcher ----
 const PV_MENU_ROOT = "pv_root";
 
-// P6: the login form may live in a cross-origin iframe. Probe every frame and
-// route the action to the frame that owns a visible password/text field.
-// Pick priority lives in domain.js (shared with the popup).
-const PV_FRAME_PROBE = () => {
-  const vis = (el) => {
-    if (!el) return false;
-    const r = el.getBoundingClientRect();
-    if (r.width < 12 || r.height < 8) return false;
-    const st = getComputedStyle(el);
-    return st.visibility !== "hidden" && st.display !== "none" && Number(st.opacity) > 0.05;
-  };
-  const pass = Array.from(document.querySelectorAll('input[type="password"]')).some(vis);
-  const text = Array.from(document.querySelectorAll(
-    'input[type="text"],input[type="email"],input[type="tel"],input:not([type])')).some(vis);
-  return { pass, text, focused: document.hasFocus(), top: window.top === window };
-};
-
-async function pvTargetFrame(tabId) {
-  try {
-    if (!chrome.scripting || typeof chrome.scripting.executeScript !== "function") return null;
-    const probes = await chrome.scripting.executeScript({
-      target: { tabId, allFrames: true },
-      func: PV_FRAME_PROBE,
-    });
-    return PVDomain.pickActionFrame(probes);
-  } catch (_) {
-    return null; // restricted page / no host permission — top frame fallback
-  }
-}
-
+// B8: content scripts run in the top frame only (all_frames:false). The old
+// per-frame probe could point at an iframe that has no engine any more, so the
+// action is always routed to frame 0. Embedded login widgets are out of scope.
 async function pvSendToActionFrame(tabId, msg) {
-  const frameId = await pvTargetFrame(tabId);
-  // frameId 0 is explicit: never fan out to every iframe, where a hidden
-  // third-party widget could answer (or fill) first.
-  await chrome.tabs.sendMessage(tabId, msg, { frameId: frameId == null ? 0 : frameId });
+  await chrome.tabs.sendMessage(tabId, msg, { frameId: 0 });
 }
 
 async function refreshContextMenus() {
@@ -971,13 +917,9 @@ chrome.storage.onChanged.addListener((changes, area) => {
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   if (!tab || tab.id == null) return;
   try {
-    // P6: the click already knows its frame (info.frameId); use it instead of
-    // guessing. Probe only when the browser did not supply one.
-    const frameId = (info && info.frameId != null)
-      ? info.frameId
-      : await pvTargetFrame(tab.id);
+    // B8: only frame 0 has a content script now.
     await chrome.tabs.sendMessage(tab.id, { type: "PV_MENU", menu: info.menuItemId },
-      { frameId: frameId == null ? 0 : frameId });
+      { frameId: 0 });
   } catch (_) { /* no content script on this page */ }
 });
 

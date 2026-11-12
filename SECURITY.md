@@ -27,7 +27,7 @@ encrypted channel, use the advisory — it is private and stored by GitHub.
 
 Please include:
 
-- PhantomVault version (`0.4.1`), Windows build, and architecture (x64/ARM64)
+- PhantomVault version (`0.4.2`), Windows build, and architecture (x64/ARM64)
 - Whether the extension, the desktop app, the native host, or the sync path is affected
 - Minimal reproduction steps or a proof of concept
 - Impact: what an attacker gains, and what preconditions they need
@@ -98,7 +98,7 @@ tell us the date in the report so the advisory can land first.
   keys, signing, reproducible builds, PQ-paranoid profile)
 - Third-party services you explicitly configure (your GitHub account, your LAN)
 
-## Known limitations at 0.4.1
+## Known limitations at 0.4.2
 
 These are documented rather than secret; please do not report them as new findings.
 
@@ -112,6 +112,11 @@ These are documented rather than secret; please do not report them as new findin
   later stale pulls are refused.
 - Decoy provisioning hides its filename/size class (A18), but mtimes are not
   aligned and large-attachment vaults can still differ in size class.
+- 0.4.2 stops loading the content script in subframes: autofill/capture inside
+  an embedded cross-origin login widget is gone by design.
+- 0.4.2 drops `clipboardRead`. The extension can no longer verify-and-clear a
+  copy it made itself; the native host still clears its own copies (Win+V
+  exclusion + TTL flush).
 - Canary alerts reach paired devices only while P2P is reachable; otherwise
   they queue locally for the next P2P enable/launch. There is no dead-drop yet.
 - P2P requests/responses are signed by paired device keys (A15a/c), pushes carry

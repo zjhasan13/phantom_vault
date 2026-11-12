@@ -1236,14 +1236,15 @@ test("E5: never-save sites have a Settings list with Remove", () => {
   assert.match(js, /btn\.dataset\.domain = d/);
 });
 
-test("A4: offscreen never blanks without a matching hash", () => {
-  const O = readFileSync(
-    new URL("../../browser_extension/offscreen.js", import.meta.url), "utf8");
-  assert.match(O, /readText\(\)/);
-  assert.ok(O.indexOf("readText()") < O.indexOf('writeText("")'),
-    "read + hash compare must precede the blank");
-  assert.match(O, /sha256Hex\(current\) !== want/);
-  assert.match(O, /0-9a-f\]\{64\}/);
+test("A4/B8: the offscreen clipboard document is gone", () => {
+  assert.throws(
+    () => readFileSync(new URL("../../browser_extension/offscreen.js", import.meta.url), "utf8"),
+    /ENOENT/,
+    "offscreen.js must not come back without clipboardRead");
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const m = JSON.parse(read("../../browser_extension/manifest.json"));
+  assert.ok(!m.permissions.includes("offscreen"), "no offscreen permission");
+  assert.ok(!m.permissions.includes("clipboardRead"), "no clipboardRead");
 });
 
 

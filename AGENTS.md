@@ -12,7 +12,7 @@ No Chromium, no Electron, no WebView inside the app.
 
 - Repo: `zjhasan13/phantom_vault` (branch `main`). **Never delete, rename, or
   force-push `origin`.** Normal `git push origin main` only.
-- App version: `Cargo.toml` / `browser_extension/manifest.json` (currently 0.4.1).
+- App version: `Cargo.toml` / `browser_extension/manifest.json` (currently 0.4.2).
 - Brand name is always **PHANTOM VAULT** (two words, all caps in UI).
 
 ## 2. Read order in a fresh session

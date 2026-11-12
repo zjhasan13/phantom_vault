@@ -11,9 +11,9 @@
 |---|---|
 | Date | 2026-11-11 |
 | Branch / HEAD | `main` @ `b81c766` (permission/scope trim) + docs on top |
-| App version | 0.4.1 (`Cargo.toml`) |
-| Extension version | 0.4.1 (`browser_extension/manifest.json`) |
-| Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
+| App version | 0.4.2 (`Cargo.toml`) |
+| Extension version | 0.4.2 (`browser_extension/manifest.json`) |
+| Installer present | 0.4.1 build only — 0.4.2 is not packaged yet (ISCC + signing) |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 

@@ -1523,7 +1523,24 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             });
             return;
         }
-        let local = std::fs::read(VAULT_FILE).unwrap_or_default();
+        // A-05 sibling: a transient read error must not look like "no local
+        // vault" — that would let a remote container overwrite a PQ-paranoid
+        // one we merely failed to read.
+        let local = match std::fs::read(VAULT_FILE) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+            Err(e) => {
+                let w = main_weak.clone();
+                let msg = format!("local vault read failed: {e}");
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = w.upgrade() {
+                        ui.set_sync_status(tr("⛔ Local vault unreadable — refusing to adopt.", "⛔ লোকাল ভল্ট পড়া যায়নি — গ্রহণ করা হলো না।").into());
+                        ui.set_notification_text(msg.into());
+                    }
+                });
+                return;
+            }
+        };
         // A22: a device-bound container is not syncable; never adopt one either.
         if crypto::detect_version(&local) == crypto::VaultVersion::V3Paranoid {
             let w = main_weak.clone();
@@ -4710,6 +4727,15 @@ fn main() -> Result<(), slint::PlatformError> {
             // Trigger B: inactivity timeout (0 = disabled).
             let mins = timeout_lock.load(std::sync::atomic::Ordering::SeqCst);
             if mins == 0 {
+                continue;
+            }
+            // D-3/G5: an open editor holds unsaved work. Treat it as activity —
+            // the 15-minute default must never guillotine a half-typed item.
+            let editing = editing_lock.lock().map(|e| e.is_some()).unwrap_or(false);
+            if editing {
+                if let Ok(mut t) = activity_lock.lock() {
+                    *t = std::time::Instant::now();
+                }
                 continue;
             }
             let idle = activity_lock

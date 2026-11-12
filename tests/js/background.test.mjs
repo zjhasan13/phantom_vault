@@ -454,7 +454,7 @@ test("PV_CARDS: forwards the checkout `all` flag", async () => {
   assert.equal(r.ok, true);
 });
 
-test("P6: hotkey routes to the frame with the embedded login form", async () => {
+test("P6/B8: hotkey routes to the top frame (subframes have no engine)", async () => {
   const { chrome } = fresh();
   chrome.__state.tabList = [{ id: 7, url: "https://shop.example.net/" }];
   chrome.scripting = {
@@ -466,7 +466,7 @@ test("P6: hotkey routes to the frame with the embedded login form", async () => 
   await chrome.__listeners.onCommand[0]("autofill_active_tab");
   const hit = chrome.__state.sentToTabs.filter((x) => x.msg && x.msg.type === "PV_HOTKEY_FILL");
   assert.equal(hit.length, 1);
-  assert.equal(hit[0].opts.frameId, 4);
+  assert.equal(hit[0].opts.frameId, 0, "B8: only frame 0 has a content script");
 });
 
 test("P6: hotkey falls back to the top frame on restricted pages", async () => {
@@ -719,18 +719,17 @@ test("A4: timeout 0 disarms and clears the stored deadline", async () => {
   assert.equal(chrome.__state.sessionStore.pv_clip_hash, undefined);
 });
 
-test("A4: the alarm clears through the offscreen document and drops the marker", async () => {
+test("A4/B8: the alarm drops the marker and never creates an offscreen doc", async () => {
   const { chrome } = fresh();
   chrome.__state.sessionStore.pv_clip_clear_at = Date.now() + 30000;
   chrome.__state.sessionStore.pv_clip_hash = HASH_A;
   chrome.__listeners.onAlarm[0]({ name: "pv_clip_clear" });
   await flushTicks();
-  assert.equal(chrome.__state.offscreenDocs.length, 1);
-  assert.equal(chrome.__state.offscreenDocs[0].reasons[0], "CLIPBOARD");
-  const clear = chrome.__state.runtimeMessages.filter(
-    (m) => m && m.target === "offscreen" && m.type === "PV_CLIP_CLEAR");
-  assert.equal(clear.length, 1);
-  assert.equal(clear[0].hash, HASH_A, "clear is hash-guarded");
+  assert.equal(chrome.__state.offscreenDocs.length, 0, "B8 deleted the offscreen document");
+  assert.equal(
+    chrome.__state.runtimeMessages.filter((m) => m && m.target === "offscreen").length,
+    0,
+    "no offscreen messages are possible without clipboardRead");
   assert.equal(chrome.__state.sessionStore.pv_clip_clear_at, undefined);
   assert.equal(chrome.__state.sessionStore.pv_clip_hash, undefined);
 });
