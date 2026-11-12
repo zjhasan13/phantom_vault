@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `ed804cf` (coverage gaps) + docs on top |
+| Branch / HEAD | `main` @ `b45969c` (closed shadow roots) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,19 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12f) — `b45969c`
+
+- **B1b**: the autofill dropdown and the Continue-as chip keep only an empty
+  host in the page (same ids) and build their rows in a **closed** shadow root.
+  Page script can no longer read vault titles/usernames via
+  `getElementById("__pv_drop").innerText`. The skin moved too (`:host` root,
+  scoped `.pvx-*`); outside-click still works because a closed root retargets
+  events to the host.
+- Badges stay light-DOM: they carry no vault text, and the click path is already
+  isTrusted-gated.
+- Gates: `npm test` **171/171**, `npm run test:tokens` **21**. No Rust change.
+- Pending: a real-browser visual check (no extension E2E on this machine).
 
 ## Last code batch (2026-11-12e) — `ed804cf`
 
