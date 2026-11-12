@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `b81c766` (permission/scope trim) + docs on top |
+| Branch / HEAD | `main` @ `a51fb35` (0.4.2 release prep) + docs on top |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.1 build only — 0.4.2 is not packaged yet (ISCC + signing) |
@@ -39,6 +39,22 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Release 0.4.2 — `a51fb35`
+
+- Version bumped to **0.4.2** in `Cargo.toml`, both manifests, the popup chip
+  and `installer.iss`; `CHANGELOG.md` added; README/SECURITY/AGENTS claims
+  refreshed (test counts and the iframe/clipboard behaviour changes).
+- The offscreen document and its permission are gone (dead since B8).
+- An independent review of the 16-commit series found four real problems, all
+  fixed: hotkey/context-menu fills aimed at a dead iframe id; a reprompt-armed
+  login's hidden custom fields and linked-password field still revealed the
+  secret; auto-lock ignored an open editor and could discard an unsaved item;
+  the sync-adoption path treated an unreadable local vault as empty.
+- Gates: `cargo test` **607 passed / 0 failed / 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (10m09s); `npm test` 172/172;
+  tokens 21.
+- Not done: installer not rebuilt (needs ISCC + signing); no on-screen E2E.
 
 ## Last code batch (2026-11-12g) — `b81c766`
 
