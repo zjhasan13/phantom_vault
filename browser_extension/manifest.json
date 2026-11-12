@@ -3,7 +3,7 @@
   "name": "PhantomVault AutoFill",
   "version": "0.4.1",
   "description": "Zero-knowledge autofill via the PhantomVault native bridge (vault-gated, no cloud).",
-  "permissions": ["favicon", "tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus", "alarms", "offscreen", "clipboardRead", "clipboardWrite"],
+  "permissions": ["favicon", "tabs", "nativeMessaging", "activeTab", "scripting", "storage", "contextMenus", "alarms", "offscreen", "clipboardWrite"],
   "commands": {
     "autofill_active_tab": {
       "suggested_key": {
@@ -38,13 +38,13 @@
       "matches": ["<all_urls>"],
       "js": ["domain.js", "content.js"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["hook.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }

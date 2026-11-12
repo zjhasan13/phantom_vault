@@ -335,7 +335,9 @@ async function clearClipboardNow() {
         if (!t || t.id == null) return null;
         return Promise.resolve(chrome.tabs.sendMessage(
           t.id, { type: "PV_CLIP_CLEAR", hash: wantHash }, { frameId: 0 }))
-          .then(() => { cleared = true; })
+          // Only a real `{ok:true}` means the page blanked it; with
+          // clipboardRead gone (B8) this now correctly reports failure.
+          .then((r) => { if (r && r.ok) cleared = true; })
           .catch(() => {});
       }));
     } catch (_) {}

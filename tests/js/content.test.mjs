@@ -787,16 +787,16 @@ test("email-only login step is badged from its action/path", async (t) => {
   assert.ok(window.document.querySelector('input[name="email"]').dataset.pvBadged);
 });
 
-test("E4/P6: all frames load the engine, domain decisions use the frame origin", () => {
+test("E4/P6/B8: top frame only, domain decisions use the frame origin", () => {
   const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
   for (const mf of ["manifest.json", "manifest.firefox.json"]) {
     const m = JSON.parse(read("../../browser_extension/" + mf));
-    assert.equal(m.content_scripts[0].all_frames, true, mf + " must opt into subframes");
+    assert.equal(m.content_scripts[0].all_frames, false, mf + " must not run in subframes (B8)");
     assert.deepEqual(m.content_scripts[0].js, ["domain.js", "content.js"]);
   }
   const src = read("../../browser_extension/content.js");
-  // P6: cross-origin frames are no longer inert — an embedded login widget is
-  // filled by the frame that owns it, using its own origin for every match.
+  // B8: the engine no longer boots in subframes at all; the frame-origin rule
+  // still matters for the top document (never read another origin).
   assert.ok(!/if \(window\.top !== window\)/.test(src),
     "no early return for cross-origin frames");
   assert.ok(!src.includes("window.top.location"),
@@ -1303,4 +1303,14 @@ test("B2: a page-dispatched click on the shield badge never fills", async (t) =>
   badge.dispatchEvent(new window.MouseEvent("click", { bubbles: true, cancelable: true }));
   await flush(40);
   assert.equal(pass.value, "", "a synthetic badge click must never fill the page");
+});
+
+test("B8/B9: no clipboardRead, hook.js limited to http(s)", () => {
+  const read = (p) => readFileSync(new URL(p, import.meta.url), "utf8");
+  const m = JSON.parse(read("../../browser_extension/manifest.json"));
+  assert.ok(!m.permissions.includes("clipboardRead"), "clipboardRead must stay out (B8)");
+  assert.ok(m.permissions.includes("clipboardWrite"), "copying still needs write");
+  const war = m.web_accessible_resources.find((r) => r.resources.includes("hook.js"));
+  assert.ok(war, "hook.js must stay web-accessible for the MAIN-world tripwire");
+  assert.deepEqual(war.matches, ["http://*/*", "https://*/*"], "no file:// pages (B9)");
 });

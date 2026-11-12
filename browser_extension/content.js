@@ -7,14 +7,12 @@
   if (window.__pvEngine) return;
   window.__pvEngine = true;
 
-  // P6: this engine boots in every frame (all_frames:true), including
-  // cross-origin login widgets (Stripe/Okta/SSO). Every domain decision below
-  // derives from THIS frame's own location; the top document's origin is
-  // never read. An embedded frame can therefore only ever see/fill
-  // credentials saved for its OWN origin. The embedding page cannot smuggle
-  // another site's password into a third-party iframe, and a malicious iframe
-  // cannot borrow the top page's match. Popup/hotkey route explicitly to the
-  // frame that owns the form.
+  // P6/B8: since the 2026-11 scan the engine boots in the TOP frame only
+  // (all_frames:false). Embedded cross-origin login widgets (Stripe/Okta/SSO)
+  // therefore no longer get the engine at all — they cannot be autofilled or
+  // captured. That is the deliberate trade: a hostile ad frame can no longer
+  // reach the vault. Every domain decision below still derives from THIS
+  // frame's own location; the top document's origin is never read.
 
   const DEFAULTS = {
     show_suggestions: true,

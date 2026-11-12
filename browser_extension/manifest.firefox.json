@@ -44,13 +44,13 @@
       "matches": ["<all_urls>"],
       "js": ["domain.js", "content.js"],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": false
     }
   ],
   "web_accessible_resources": [
     {
       "resources": ["hook.js"],
-      "matches": ["<all_urls>"]
+      "matches": ["http://*/*", "https://*/*"]
     }
   ]
 }
