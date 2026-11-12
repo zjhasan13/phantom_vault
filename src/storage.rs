@@ -484,8 +484,9 @@ fn save_vault_secret_inner<P: AsRef<Path>>(
     let profile = profile.unwrap_or_else(|| current_profile(path));
     let old = fs::read(path).unwrap_or_default();
     let (rev, prev_hash) = next_meta(path, &old, master_password)?;
-    let payload = envelope_bytes(vault, rev, prev_hash, profile)?;
-    let encrypted_payload = encrypt_container(profile, master_password, &payload)?;
+    // A-01: the envelope is the whole vault as JSON — wipe it after encrypting.
+    let payload = zeroize::Zeroizing::new(envelope_bytes(vault, rev, prev_hash, profile)?);
+    let encrypted_payload = encrypt_container(profile, master_password, payload.as_slice())?;
 
     if rotate {
         rotate_backups(path)?;
@@ -643,7 +644,9 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     // branches before failing — an attacker who can rewrite the file can
     // already delete it; a flipped magic must not brick a good vault.
     let version = detect_version(&payload);
-    let decrypted = match version {
+    // A-01: every password/TOTP/SSH key sits in this plaintext buffer; it must
+    // be wiped on every return path, not just the happy one.
+    let decrypted = zeroize::Zeroizing::new(match version {
         VaultVersion::V3Paranoid => {
             let dk = crate::security::pq_profile::load_decapsulation().map_err(|e| {
                 format!("This vault requires this device's PQ key: {e}")
@@ -672,21 +675,21 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
             }
         }
         VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
-    };
+    });
     let expected = if version == VaultVersion::V3Paranoid {
         ContainerProfile::Paranoid
     } else {
         ContainerProfile::Portable
     };
     // A16 rev-2 envelope (meta + vault). The meta is inside the AEAD payload.
-    if let Some((vault, meta)) = parse_envelope(&decrypted) {
+    if let Some((vault, meta)) = parse_envelope(decrypted.as_slice()) {
         check_profile(expected, &meta)?;
         remember_head(file_path.as_ref(), meta.rev, sha256_hex(&payload));
         return Ok((vault, false));
     }
     // JSON-first legacy payload: a plain `Vault` (pre-A16). Appended fields
     // resolve via #[serde(default)]; unknown fields are ignored.
-    if let Ok(vault) = serde_json::from_slice::<Vault>(&decrypted) {
+    if let Ok(vault) = serde_json::from_slice::<Vault>(decrypted.as_slice()) {
         remember_head(file_path.as_ref(), 0, sha256_hex(&payload));
         return Ok((vault, false));
     }
@@ -713,28 +716,28 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     }
     // Any bincode hit is a pre-A16 legacy vault (rev 0).
     remember_head(file_path.as_ref(), 0, sha256_hex(&payload));
-    if let Ok(legacy) = opts.deserialize::<crate::models::VaultLegacy>(&decrypted) {
+    if let Ok(legacy) = opts.deserialize::<crate::models::VaultLegacy>(decrypted.as_slice()) {
         let v: Vault = legacy.into();
         return Ok((v, true));
     }
-    if let Ok(g1) = opts.deserialize::<crate::models::VaultGen1>(&decrypted) {
+    if let Ok(g1) = opts.deserialize::<crate::models::VaultGen1>(decrypted.as_slice()) {
         let v: Vault = g1.into();
         return Ok((v, true));
     }
-    if let Ok(g2) = opts.deserialize::<crate::models::VaultGen2>(&decrypted) {
+    if let Ok(g2) = opts.deserialize::<crate::models::VaultGen2>(decrypted.as_slice()) {
         let v: Vault = g2.into();
         return Ok((v, true));
     }
-    if let Ok(g3) = opts.deserialize::<crate::models::VaultGen3>(&decrypted) {
+    if let Ok(g3) = opts.deserialize::<crate::models::VaultGen3>(decrypted.as_slice()) {
         let v: Vault = g3.into();
         return Ok((v, true));
     }
-    if let Ok(g4) = opts.deserialize::<crate::models::VaultGen4>(&decrypted) {
+    if let Ok(g4) = opts.deserialize::<crate::models::VaultGen4>(decrypted.as_slice()) {
         let v: Vault = g4.into();
         return Ok((v, true));
     }
     // Current-schema bincode LAST (pre-JSON writers only).
-    if let Ok(v) = opts.deserialize::<Vault>(&decrypted) {
+    if let Ok(v) = opts.deserialize::<Vault>(decrypted.as_slice()) {
         return Ok((v, true));
     }
     Err("Deserialization error: unknown legacy payload".to_string())

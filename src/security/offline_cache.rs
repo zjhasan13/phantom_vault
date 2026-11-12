@@ -37,7 +37,7 @@ pub const MAX_AGE_SECS: u64 = 7 * 24 * 60 * 60;
 
 type CacheResult<T> = std::result::Result<T, String>;
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Serialize, Deserialize, PartialEq)]
 pub struct CachedLogin {
     pub id: String,
     pub title: String,
@@ -543,5 +543,45 @@ mod tests {
         assert_eq!(i.folder, "Work");
         assert!(i.reprompt);
         assert_eq!(i.last_changed, 77);
+    }
+}
+
+/// The derive would print the plaintext password in any `{:?}` (A-11).
+impl std::fmt::Debug for CachedLogin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CachedLogin")
+            .field("id", &self.id)
+            .field("title", &self.title)
+            .field("username", &self.username)
+            .field("password", &"[redacted]")
+            .field("urls", &self.urls.len())
+            .field("folder", &self.folder)
+            .field("reprompt", &self.reprompt)
+            .field("last_changed", &self.last_changed)
+            .field("verified", &self.verified)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::CachedLogin;
+
+    #[test]
+    fn cached_login_debug_redacts_the_password() {
+        let c = CachedLogin {
+            id: "1".into(),
+            title: "t".into(),
+            username: "u".into(),
+            password: "S3cret!".into(),
+            urls: Vec::new(),
+            folder: "General".into(),
+            reprompt: false,
+            last_changed: 0,
+            verified: false,
+        };
+        let s = format!("{c:?}");
+        assert!(!s.contains("S3cret!"), "password leaked through Debug");
+        assert!(s.contains("[redacted]"));
     }
 }

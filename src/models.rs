@@ -593,7 +593,7 @@ pub struct SharedGrant {
 /// সম্পূর্ণ মূল ভল্ট কন্টেইনার.
 /// C3 Hardening: Zeroize-derived so EVERY heap clone (snapshots, rollback
 /// copies, invoke payloads) is scrubbed on drop — no lingering plaintext.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop)]
+#[derive(Clone, Serialize, Deserialize, Default, Zeroize, ZeroizeOnDrop)]
 pub struct Vault {
     pub version: u32,
     #[serde(default)]
@@ -2058,5 +2058,40 @@ mod tests {
         assert_eq!(CustomFieldType::from_i32(9), CustomFieldType::Text);
         assert_eq!(CustomFieldType::Hidden.to_i32(), 1);
         assert_eq!(CustomFieldType::Linked.to_i32(), 3);
+    }
+}
+
+/// Hand-written because the derive would print card numbers, SSH keys, the
+/// vault TOTP secret and the attachment root (A-02). Counts only.
+impl std::fmt::Debug for Vault {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Vault")
+            .field("version", &self.version)
+            .field("folders", &self.folders.len())
+            .field("credentials", &self.credentials.len())
+            .field("totp_accounts", &self.totp_accounts.len())
+            .field("licenses", &self.licenses.len())
+            .field("notes", &self.notes.len())
+            .field("cards", &self.cards.len())
+            .field("identities", &self.identities.len())
+            .field("ssh_keys", &self.ssh_keys.len())
+            .field("passkeys", &self.passkeys.len())
+            .finish_non_exhaustive()
+    }
+}
+
+#[cfg(test)]
+mod debug_redaction_tests {
+    use super::Vault;
+
+    #[test]
+    fn vault_debug_never_prints_a_secret() {
+        let mut v = Vault::new();
+        v.totp_unlock_secret = "JBSWY3DPEHPK3PXP".into();
+        v.attachment_root = vec![7, 8, 9];
+        let s = format!("{v:?}");
+        assert!(!s.contains("JBSWY3DPEHPK3PXP"), "totp unlock secret leaked");
+        assert!(!s.contains("[7, 8, 9]"), "attachment root leaked");
+        assert!(s.contains("credentials"), "still useful for debugging");
     }
 }

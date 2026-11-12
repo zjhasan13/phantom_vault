@@ -290,18 +290,34 @@ pub fn encrypt_vault_portable_secret(
 
     // Fresh PQ keypair every save (per-save forward secrecy on the PQ half).
     let kp = PQ::generate_keypair();
-    let (pq_ct, pq_secret) = PQ::encapsulate(&kp.encapsulation)
-        .map_err(|e| format!("PQ encapsulate: {e}"))?;
+    let (pq_ct, pq_secret) = match PQ::encapsulate(&kp.encapsulation) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ encapsulate: {e}"));
+        }
+    };
     if pq_ct.len() != CT_LEN {
         argon2_key.zeroize();
         return Err("PQ ciphertext malformed".to_string());
     }
-    let hybrid = PQ::combine(&argon2_key, &pq_secret)
-        .map_err(|e| format!("Hybrid combine: {e}"))?;
+    let hybrid = match PQ::combine(&argon2_key, &pq_secret) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
     drop(pq_secret);
 
     // Seal the DK with the password-derived key (this is what travels).
-    let (wrap_nonce, wrapped_dk) = wrap_with_key(&argon2_key, kp.decapsulation.expose())?;
+    let (wrap_nonce, wrapped_dk) = match wrap_with_key(&argon2_key, kp.decapsulation.expose()) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
     if wrapped_dk.len() != WRAPPED_DK_LEN {
         argon2_key.zeroize();
         return Err("Wrapped DK malformed".to_string());
@@ -367,15 +383,31 @@ pub fn decrypt_vault_portable_secret(
     let ciphertext = &payload[off..];
 
     let mut argon2_key = derive_key_secret(master_password, salt)?;
-    let dk_bytes = unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk)?;
+    let dk_bytes = match unwrap_with_key(&argon2_key, wrap_nonce, wrapped_dk) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
     // H6: the 2400B decapsulation key must zeroize on EVERY path, including
     // the decapsulate-failure early return (corrupt/tampered pq_ct).
     let dk_guard = crate::core::pq_hybrid::PqDecapsulationBytes(dk_bytes);
-    let pq_secret = PQ::decapsulate(dk_guard.expose(), pq_ct)
-        .map_err(|e| format!("PQ decapsulate: {e}"))?;
+    let pq_secret = match PQ::decapsulate(dk_guard.expose(), pq_ct) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
     drop(dk_guard);
-    let hybrid = PQ::combine(&argon2_key, &pq_secret)
-        .map_err(|e| format!("Hybrid combine: {e}"))?;
+    let hybrid = match PQ::combine(&argon2_key, &pq_secret) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
     argon2_key.zeroize();
     drop(pq_secret);
 
