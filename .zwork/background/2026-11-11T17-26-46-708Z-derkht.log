@@ -1,9 +1,0 @@
-cargo :     Checking phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
-At line:1 char:60
-+ ... OR='never'; cargo clippy --all-targets -j 1 -- -D warnings 2>&1; Writ ...
-+                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (    Checking ph...\phantom_vault):String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
-    Finished `dev` profile [unoptimized + debuginfo] target(s) in 11m 17s
-CLIPPY_EXIT=0

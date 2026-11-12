@@ -1,7 +1,0 @@
-cargo :    Compiling phantom_vault v0.4.1 (C:\Users\Admin\Desktop\New folder\dekstop app\phantom_vault)
-At line:1 char:60
-+ ... nv:CARGO_TERM_COLOR='never'; cargo test -j 1 reveal_gate 2>&1; Write- ...
-+                                  ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-    + CategoryInfo          : NotSpecified: (   Compiling ph...\phantom_vault):String) [], RemoteException
-    + FullyQualifiedErrorId : NativeCommandError
- 
