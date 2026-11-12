@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `652abba` (crypto P2 complete) + docs on top |
+| Branch / HEAD | `main` @ `ed804cf` (coverage gaps) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,19 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12e) — `ed804cf`
+
+Test coverage for the two files the scan flagged as untested:
+
+- `share_cli.rs` (589 lines, zero tests): `parse_ttl` now has three tests —
+  units, trim/case, and the zero/junk/overflow rejects.
+- `hello.rs` (88 lines, security boundary, zero tests): the WinRT result
+  mappings are now pure functions (`availability_from` / `verification_from`),
+  tested without a biometric device (Verified=true, Canceled=false,
+  busy/policy/not-configured=error).
+- Gates: full suite **607 passed, 0 failed, 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (13m43s).
 
 ## Last code batch (2026-11-12d) — `652abba`
 
