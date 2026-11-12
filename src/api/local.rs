@@ -197,6 +197,13 @@ fn serve_conn(mut stream: TcpStream, state: &ApiState) {
         let _ = stream.write_all(&http_response(400, r#"{"ok":false,"error":"bad request"}"#));
         return;
     };
+    // B7: a loopback listener is reachable from any local page via DNS
+    // rebinding. A browser always sends Host and, for cross-origin fetches,
+    // Origin; the CLI sends `Host: 127.0.0.1` and no Origin.
+    if !host_header_ok(&headers) || headers.contains_key("origin") {
+        let _ = stream.write_all(&http_response(403, r#"{"ok":false,"error":"forbidden"}"#));
+        return;
+    }
     let (status, mut body) = handle_request(state, &method, &path, &headers);
     let _ = stream.write_all(&http_response(status, &body));
     body.zeroize();
@@ -226,14 +233,32 @@ fn http_response(status: u16, body: &str) -> Vec<u8> {
 }
 
 fn ct_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
+    // Fixed-size compare: hashing first removes the length-mismatch early
+    // return, so the token length is not a timing oracle (B7).
+    use sha2::{Digest, Sha256};
+    let ha = Sha256::digest(a);
+    let hb = Sha256::digest(b);
     let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
+    for (x, y) in ha.iter().zip(hb.iter()) {
         diff |= x ^ y;
     }
     diff == 0
+}
+
+/// Only the loopback names the API is bound to. Anything else is a rebinding
+/// attempt (or a proxy), and is refused before the token is even read.
+fn host_header_ok(headers: &HashMap<String, String>) -> bool {
+    let Some(host) = headers.get("host") else {
+        return false;
+    };
+    let h = host.trim();
+    let name = match h.rsplit_once(':') {
+        Some((n, port)) if !port.is_empty() && port.chars().all(|c| c.is_ascii_digit()) => n,
+        _ => h,
+    };
+    name.eq_ignore_ascii_case("127.0.0.1")
+        || name.eq_ignore_ascii_case("localhost")
+        || name == "[::1]"
 }
 
 fn authorized(headers: &HashMap<String, String>) -> bool {
@@ -710,5 +735,29 @@ mod tests {
         std::env::remove_var("PV_API_TOKEN_FILE");
         std::env::remove_var("PV_API_PORT_FILE");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod host_gate_tests {
+    use super::host_header_ok;
+    use std::collections::HashMap;
+
+    fn h(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn only_loopback_hosts_pass() {
+        assert!(host_header_ok(&h(&[("host", "127.0.0.1:47821")])));
+        assert!(host_header_ok(&h(&[("host", "localhost:47821")])));
+        assert!(host_header_ok(&h(&[("host", "127.0.0.1")])));
+        assert!(host_header_ok(&h(&[("host", "[::1]:47821")])));
+        assert!(!host_header_ok(&h(&[("host", "evil.example")])));
+        assert!(!host_header_ok(&h(&[("host", "127.0.0.1.evil.example:80")])));
+        assert!(!host_header_ok(&h(&[])));
     }
 }
