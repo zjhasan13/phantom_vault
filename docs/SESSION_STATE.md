@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `52696c4` (tenant split) + docs on top |
+| Branch / HEAD | `main` @ `54c3c74` (crypto P2) + docs on top |
 | App version | 0.4.1 (`Cargo.toml`) |
 | Extension version | 0.4.1 (`browser_extension/manifest.json`) |
 | Installer present | `installer-output/PhantomVault-Setup-0.4.1.exe` (20,582,400 bytes) |
@@ -39,6 +39,21 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   4. ~~persist auto-lock + clipboard TTL (D-3)~~ — done `d7c3e1f`;
   5. crypto P2 `A-01`/`A-02`/`A-04`;
   6. CI - add `npm test` + `test:tokens`, use `-j 1`.
+
+## Last code batch (2026-11-12) — `54c3c74`
+
+Crypto P2 from the scan (A-series):
+
+- **A-01**: the JSON envelope and the decrypted loader buffer are `Zeroizing`,
+  so save and every early return wipe the plaintext vault copy.
+- **A-04**: every `?` between Argon2 and the payload AEAD (encapsulate,
+  combine, wrap, unwrap, decapsulate) is an explicit match that zeroizes the
+  derived key before returning.
+- **A-02/A-11**: `Vault` and `CachedLogin` no longer derive `Debug`; both have
+  redacting impls (counts / [redacted]) with regression tests.
+- Gates: full suite **594 passed, 0 failed, 4 ignored**; clippy
+  `--all-targets -j 1 -- -D warnings` **EXIT=0** (7m34s).
+- Still open from A: A-03, A-05, A-06, A-07, A-08, A-09, A-10.
 
 ## Last code batch (2026-11-11e) — `52696c4`
 

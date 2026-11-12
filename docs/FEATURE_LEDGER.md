@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-11 · `52696c4`
+> Last updated: 2026-11-12 · `54c3c74`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -66,7 +66,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Attachments | ✅ | `src/attachment_store.rs`, `docs/A24_ATTACHMENTS.md` |
 | Access log (hash-chained) | ✅ | metadata only, `open_access_log` in `main.rs` |
 | Windows Hello / PIN / DPAPI | ✅ | `src/security/`, `src/windows_native/` |
-| Zeroize / secrecy | ✅ | required by `rules.md`; enforced in review + clippy |
+| Zeroize / secrecy | ✅ | required by `rules.md`; envelope + decrypted buffer `Zeroizing`, redacting `Debug` (`54c3c74`) |
 
 ## 4. Deliberately absent (do not "fix" without asking)
 
@@ -98,6 +98,7 @@ product-copy decision, not a bug fix.
 | `a486f85` | i18n: main dialogs (import/dup/factory/new-PC/attachment/changelog/access-log/shred/health) follow ui_lang |
 | `1cf5c6d` | extension: SSH + License view/edit (bridge kinds 6/7, Add chooser, masked keys) |
 | `0b7e0c6` | extension: read-only item view (masked secrets) with Edit/Fill/Close; per-row 👁 |
+| `54c3c74` | crypto: envelope/decrypted buffers zeroized, Argon2 key wiped on every path, redacting Debug (A-01/A-02/A-04/A-11) |
 | `52696c4` | extension: shared-hosting tenants are separate sites (B10) |
 | `19b5ac8` | desktop: backup codes + custom-field copies need the master modal (D-1b) |
 | `019b70b` | CI: npm test/tokens + `-j 1` cargo gates |
