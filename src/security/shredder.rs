@@ -98,6 +98,17 @@ pub fn secure_write(path: &Path, data: &[u8]) -> Result<(), String> {
         "{file_name}.{:016x}.tmp",
         u64::from_le_bytes(nonce)
     ));
+    // A-07: any early return must delete the temp file; before this, a failed
+    // write/flush/sync left one ciphertext .tmp per attempt behind forever.
+    struct TmpFile<'a>(&'a Path, bool);
+    impl Drop for TmpFile<'_> {
+        fn drop(&mut self) {
+            if self.1 {
+                let _ = std::fs::remove_file(self.0);
+            }
+        }
+    }
+    let mut guard = TmpFile(&tmp, true);
     {
         use std::io::Write;
         let mut f = std::fs::OpenOptions::new()
@@ -109,10 +120,15 @@ pub fn secure_write(path: &Path, data: &[u8]) -> Result<(), String> {
         f.flush().map_err(|e| format!("tmp flush: {e}"))?;
         f.sync_all().map_err(|e| format!("tmp sync: {e}"))?;
     }
-    std::fs::rename(&tmp, path).map_err(|e| {
-        let _ = std::fs::remove_file(&tmp);
-        format!("atomic replace: {e}")
-    })?;
+    std::fs::rename(&tmp, path).map_err(|e| format!("atomic replace: {e}"))?;
+    guard.1 = false;
+    // The rename is durable only after the directory entry is flushed. Windows
+    // refuses to open a directory through std, so this stays best-effort.
+    if let Some(dir) = path.parent() {
+        if let Ok(d) = std::fs::File::open(dir) {
+            let _ = d.sync_all();
+        }
+    }
     Ok(())
 }
 
@@ -145,6 +161,30 @@ mod tests {
         secure_write(&f, b"version-one-payload!!").unwrap();
         secure_write(&f, b"v2").unwrap();
         assert_eq!(std::fs::read(&f).unwrap(), b"v2");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod tmp_cleanup_tests {
+    use super::secure_write;
+
+    #[test]
+    fn secure_write_leaves_no_temp_file() {
+        let dir = std::env::temp_dir().join("pv_tmp_cleanup");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let f = dir.join("vault.enc");
+        secure_write(&f, b"payload").unwrap();
+        secure_write(&f, b"payload-2").unwrap();
+        let temps: Vec<String> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(temps.is_empty(), "leftover temps: {temps:?}");
+        assert_eq!(std::fs::read(&f).unwrap(), b"payload-2");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

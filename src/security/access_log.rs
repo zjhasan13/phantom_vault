@@ -291,7 +291,7 @@ pub fn verify_at_detailed(path: &Path) -> (usize, bool, Option<usize>) {
             return (count, false, Some(lineno));
         }
         let recomputed_hmac = chain_hash(&key, &prev, t_num, &event, &detail);
-        if recomputed_hmac == hash {
+        if ct_eq_hex(&recomputed_hmac, &hash) {
             prev = hash.clone();
             count += 1;
             continue;
@@ -299,7 +299,7 @@ pub fn verify_at_detailed(path: &Path) -> (usize, bool, Option<usize>) {
         // Legacy plain-SHA256 lines (pre-HMAC) — still verify to avoid false
         // alarm after upgrade, but only for older format lines.
         let recomputed_legacy = sha256_hex(format!("{p}{t}{event}{detail}").as_bytes());
-        if recomputed_legacy == hash {
+        if ct_eq_hex(&recomputed_legacy, &hash) {
             prev = hash.clone();
             count += 1;
             continue;
@@ -495,5 +495,28 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].contains('b'));
         let _ = std::fs::remove_file(&p);
+    }
+}
+
+/// Constant-time compare for two hex digests (A-09): `==` short-circuits at the
+/// first differing byte. Length is a public constant here, so the early length
+/// check leaks nothing.
+fn ct_eq_hex(a: &str, b: &str) -> bool {
+    use subtle::ConstantTimeEq;
+    if a.len() != b.len() {
+        return false;
+    }
+    a.as_bytes().ct_eq(b.as_bytes()).into()
+}
+
+#[cfg(test)]
+mod ct_compare_tests {
+    use super::ct_eq_hex;
+
+    #[test]
+    fn ct_eq_hex_matches_only_identical_digests() {
+        assert!(ct_eq_hex("abcd", "abcd"));
+        assert!(!ct_eq_hex("abcd", "abce"));
+        assert!(!ct_eq_hex("abcd", "abcde"));
     }
 }

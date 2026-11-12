@@ -68,8 +68,16 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A-08: `m/t/p` come from a DPAPI-sealed record, but sealed data is still
+/// data. Bound them before `Params::new` — a crafted record with `m = u32::MAX`
+/// asks for roughly 4 TiB and aborts the process.
+fn bounded_params(m: u32, t: u32, p: u32) -> (u32, u32, u32) {
+    (m.clamp(8, 1024 * 1024), t.clamp(1, 16), p.clamp(1, 8))
+}
+
 fn derive(salt: &[u8], pin: &str, m: u32, t: u32, p: u32) -> Result<[u8; HASH_LEN], String> {
     use argon2::{Algorithm, Argon2, Params, Version};
+    let (m, t, p) = bounded_params(m, t, p);
     let params = Params::new(m, t, p, Some(HASH_LEN))
         .map_err(|e| format!("PIN KDF params: {e}"))?;
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
@@ -272,5 +280,17 @@ mod tests {
         std::fs::write(pin_path(&d), b"definitely-not-dpapi").unwrap();
         assert!(verify(&d, "1234").is_err());
         let _ = std::fs::remove_dir_all(&d);
+    }
+}
+
+#[cfg(test)]
+mod param_bounds_tests {
+    use super::bounded_params;
+
+    #[test]
+    fn absurd_recorded_params_are_clamped() {
+        assert_eq!(bounded_params(u32::MAX, u32::MAX, 0), (1024 * 1024, 16, 1));
+        assert_eq!(bounded_params(0, 0, 999), (8, 1, 8));
+        assert_eq!(bounded_params(32 * 1024, 3, 4), (32 * 1024, 3, 4));
     }
 }
