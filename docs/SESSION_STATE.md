@@ -54,7 +54,7 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
 - Gates: `cargo test` **607 passed / 0 failed / 4 ignored**; clippy
   `--all-targets -j 1 -- -D warnings` **EXIT=0** (10m09s); `npm test` 172/172;
   tokens 21.
-- Not done: installer not rebuilt (needs ISCC + signing); no on-screen E2E.
+- Artifacts built locally (unsigned): `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` (portable exe 25.2 MB, chrome/firefox zips, SHA256SUMS). No `.sig` files: the updater will refuse this build until it is signed. No on-screen E2E.
 
 ## Last code batch (2026-11-12g) — `b81c766`
 
@@ -296,6 +296,22 @@ screenshots: `pv-bn-100-main.png`, `pv-bn-100-narrow.png`, `pv-bn-detail8.png`,
 | `npm run test:tokens` | **21 palette values OK** |
 
 Run Rust gates with `-j 1`; see "Known traps".
+
+## Known traps
+
+- Run Rust gates with `-j 1`: `share_serve::…served_share_is_one_view_and_revocable`,
+  `api::local::…loopback_get_waits…` (os 10053) and
+  `crypto::…test_legacy_v2_still_opens` (under memory pressure) all flake in
+  parallel and pass alone.
+- A cold `cargo build --release -j 1` took **106m** on this machine and
+  succeeded; a >1h build is not a hang. `Allocation failed` linker errors mean
+  RAM is tight (close Chrome and retry), not a code defect.
+- `.zwork/` is agent runtime state (build logs, subagent reports) and is
+  git-ignored. Never commit it.
+- The dropdown and Continue-as rows live in **closed** shadow roots; tests must
+  query them through the harness `shadowOf(host)`, never the page tree.
+- `cargo clippy -- -D warnings` fails on deprecated calls: use the `*_secret`
+  crypto/storage entry points, not the `&str` ones.
 
 ## Next move (pick up here)
 
