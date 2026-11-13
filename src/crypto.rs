@@ -103,9 +103,15 @@ pub fn encrypt_vault_secret(master_password: &SecretString, plaintext: &[u8]) ->
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
 
     // ৪. ডেটা এনক্রিপ্ট করা
-    let ciphertext = cipher
-        .encrypt(&nonce, plaintext)
-        .map_err(|e| format!("Encryption error: {}", e))?;
+    // An encrypt error must still wipe the derived key: `?` would drop the
+    // plain `[u8; 32]` without zeroizing it.
+    let ciphertext = match cipher.encrypt(&nonce, plaintext) {
+        Ok(v) => v,
+        Err(e) => {
+            key_bytes.zeroize();
+            return Err(format!("Encryption error: {}", e));
+        }
+    };
 
     // মেমোরি থেকে সিক্রেট কি সাথে সাথে মুছে ফেলা
     key_bytes.zeroize();
@@ -232,10 +238,22 @@ pub fn decrypt_vault_hybrid_legacy_secret(
     let ciphertext = &payload[3 + SALT_LEN + CT_LEN + NONCE_LEN..];
 
     let mut argon2_key = derive_key_secret(master_password, salt)?;
-    let pq_secret = PqHybridEngine::decapsulate(decapsulation_key, pq_ct)
-        .map_err(|e| format!("PQ decapsulate: {e}"))?;
-    let hybrid = PqHybridEngine::combine(&argon2_key, &pq_secret)
-        .map_err(|e| format!("Hybrid combine: {e}"))?;
+    // `?` here would drop the plain `[u8; 32]` un-zeroized; `pq_secret` is
+    // ZeroizeOnDrop, the Argon2 key is not.
+    let pq_secret = match PqHybridEngine::decapsulate(decapsulation_key, pq_ct) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
+    let hybrid = match PqHybridEngine::combine(&argon2_key, &pq_secret) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
     argon2_key.zeroize();
     drop(pq_secret);
 

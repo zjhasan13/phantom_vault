@@ -17956,6 +17956,11 @@ mod grid_tests {
         assert!(!is_native_host_launch(""));
         assert!(!is_native_host_launch("chrome-extension"));
         assert!(!is_native_host_launch("https://github.com/"));
+        // Firefox-shaped but not our id, and near-misses of the real id, must
+        // not enter the serve loop.
+        assert!(!is_native_host_launch("moz-extension://abc"));
+        assert!(!is_native_host_launch("phantomvault@phantomvault.local.evil"));
+        assert!(!is_native_host_launch(" native-host"));
     }
 
     #[test]
