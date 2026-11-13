@@ -267,9 +267,9 @@ async function sessionState() {
 // ---- Clipboard auto-clear (A4) ----
 // The popup writes the secret itself (user gesture), then asks the SW to arm
 // a one-shot alarm. The alarm survives popup close and service-worker suspend,
-// and clears through an offscreen document (Chrome) or a content-script
-// fallback (Firefox). The deadline is mirrored in session storage so a SW
-// restart mid-window re-arms instead of leaking the secret until reboot.
+// and clears through a content-script fallback. The deadline is mirrored in
+// session storage so a SW restart mid-window re-arms instead of leaking the
+// secret until reboot.
 const CLIP_ALARM = "pv_clip_clear";
 const CLIP_DEFAULT_SEC = 30;
 

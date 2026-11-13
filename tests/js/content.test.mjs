@@ -8,6 +8,15 @@ const saver = (window) => window.document.getElementById("__pv_saver");
 // B1b: the dropdown and the Continue-as chip keep only an empty host in the
 // page; their rows live in a closed shadow root (harness shadowOf).
 const dropRoot = (window) => shadowOf(window.document.getElementById("__pv_drop"));
+// Badge insertion is debounced; a fixed sleep flakes when the machine is busy.
+const waitFor = async (fn, ms = 4000) => {
+  const until = Date.now() + ms;
+  while (Date.now() < until) {
+    if (fn()) return true;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return false;
+};
 // A9: the login prompts keep their fields and buttons in a closed shadow root,
 // so tests reach them through the harness spy rather than the page tree.
 // Card/identity prompts have no shadow tree; shadowOf() falls back to the host.
@@ -1189,9 +1198,11 @@ test("A12: a shadow-DOM login gets a badge and offers save on submit", async (t)
     <input type="password" name="password" value="pw123">
   </form>`;
   // Boot scan + the 120 ms debounced observer must discover the new root.
-  await flush(320);
-  const badges = [...window.document.querySelectorAll('button[data-pv-kind="shield"]')];
-  assert.ok(badges.length >= 1, "shadow field gets a badge");
+  const gotBadge = await waitFor(
+    () => window.document.querySelectorAll('button[data-pv-kind="shield"]').length >= 1);
+  assert.ok(gotBadge, "shadow field gets a badge");
+  const watched = await waitFor(() => root.querySelector("form").dataset.pvWatched === "1");
+  assert.ok(watched, "the scan must bind the shadow form before submit");
   submit(window, root.querySelector("form"));
   await flush();
   assert.ok(saver(window), "shadow form submit must offer save");
@@ -1206,9 +1217,11 @@ test("A12: nested open shadow roots are traversed", async (t) => {
     <input type="text" name="username" value="deep">
     <input type="password" name="password" value="pw">
   </form>`;
-  await flush(320);
-  const badges = [...window.document.querySelectorAll('button[data-pv-kind="shield"]')];
-  assert.ok(badges.length >= 1, "nested shadow input gets a badge");
+  const gotBadge = await waitFor(
+    () => window.document.querySelectorAll('button[data-pv-kind="shield"]').length >= 1);
+  assert.ok(gotBadge, "nested shadow input gets a badge");
+  const watched = await waitFor(() => inner.querySelector("form").dataset.pvWatched === "1");
+  assert.ok(watched, "nested form must be watched before submit");
   submit(window, inner.querySelector("form"));
   await flush();
   assert.ok(saver(window), "nested shadow submit must offer save");
