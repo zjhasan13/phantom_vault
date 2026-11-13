@@ -284,10 +284,11 @@ pub fn decrypt_blob_to_envelope(
     bytes: &[u8],
 ) -> Result<(Vault, crate::storage::ContainerMeta), String> {
     use crate::crypto::{
-        decrypt_vault_hybrid_legacy_secret, decrypt_vault_portable_secret, decrypt_vault_secret,
-        detect_version, VaultVersion,
+        decrypt_vault_hybrid_legacy_secret, decrypt_vault_portable_secret,
+        decrypt_vault_portable_v4_secret, decrypt_vault_secret, detect_version, VaultVersion,
     };
     let decrypted = match detect_version(bytes) {
+        VaultVersion::V4Portable => decrypt_vault_portable_v4_secret(master, bytes)?,
         VaultVersion::V2Portable => decrypt_vault_portable_secret(master, bytes).or_else(|_| {
             let dk = crate::storage::load_legacy_pq_dk()?;
             let out = decrypt_vault_hybrid_legacy_secret(master, bytes, dk.expose());
@@ -306,7 +307,7 @@ pub fn decrypt_blob_to_envelope(
                 Err(_) => decrypt_vault_portable_secret(master, bytes)?,
             }
         }
-        VaultVersion::V3Paranoid => {
+        VaultVersion::V3Paranoid | VaultVersion::V4Paranoid => {
             return Err(
                 "a PQ-paranoid vault cannot be synced — it opens only on the device that sealed it"
                     .to_string(),

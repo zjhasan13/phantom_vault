@@ -22,9 +22,19 @@ pub const NONCE_LEN: usize = 24;
 /// - v3-paranoid (A22, device-bound decapsulation key): `PV3\0` (4 bytes).
 ///   The device DK never travels in the container; only an ML-KEM ciphertext
 ///   encapsulated to this device's key does.
+/// - v4 (A-03): `PV4\0` + a one-byte profile, and every header byte before the
+///   ciphertext is authenticated as AEAD associated data. v2/v3 stay readable;
+///   only v4 is written.
 pub const V2_MAGIC: &[u8; 3] = b"PV2";
 pub const V2_PORTABLE_MAGIC: &[u8; 4] = b"PV2\x00";
 pub const V3_PARANOID_MAGIC: &[u8; 4] = b"PV3\x00";
+pub const V4_MAGIC: &[u8; 4] = b"PV4\x00";
+/// A-03: profile byte that follows [`V4_MAGIC`]. A container cannot be
+/// re-labelled from one profile to the other without breaking the AEAD tag.
+pub const V4_MODE_PORTABLE: u8 = 0;
+pub const V4_MODE_PARANOID: u8 = 1;
+/// `PV4\0` + mode: the bytes both v4 layouts share before the salt.
+pub const V4_PREFIX_LEN: usize = 5;
 
 /// A22: HKDF info for the paranoid hybrid key. Distinct from the legacy
 /// [`crate::core::pq_hybrid::HYBRID_INFO`] so the two key chains can never
@@ -44,10 +54,32 @@ pub enum VaultVersion {
     /// A22 PQ-paranoid layout: Argon2id + this device's ML-KEM decapsulation
     /// key (DPAPI sidecar). The password alone cannot open it.
     V3Paranoid,
+    /// A-03: portable hybrid with an AAD-bound header.
+    V4Portable,
+    /// A-03: paranoid profile with an AAD-bound header.
+    V4Paranoid,
+}
+
+impl VaultVersion {
+    /// True for every device-bound layout: those never travel to another
+    /// machine, so sync and P2P must refuse them.
+    pub fn is_paranoid(self) -> bool {
+        matches!(self, VaultVersion::V3Paranoid | VaultVersion::V4Paranoid)
+    }
 }
 
 /// Detect container version by magic prefix (4-byte check first).
 pub fn detect_version(payload: &[u8]) -> VaultVersion {
+    if payload.len() >= 5 && &payload[..4] == V4_MAGIC {
+        // A-03: the mode byte decides the profile. An unknown mode is not a
+        // container this build understands; fall through to the legacy checks
+        // so a corrupted byte cannot be mistaken for a valid v4 file.
+        return match payload[4] {
+            V4_MODE_PARANOID => VaultVersion::V4Paranoid,
+            V4_MODE_PORTABLE => VaultVersion::V4Portable,
+            _ => VaultVersion::V1Classical,
+        };
+    }
     if payload.len() >= 4 && &payload[..4] == V3_PARANOID_MAGIC {
         VaultVersion::V3Paranoid
     } else if payload.len() >= 4 && &payload[..4] == V2_PORTABLE_MAGIC {
@@ -191,13 +223,25 @@ pub fn open_with_raw_key(key: &[u8; 32], payload: &[u8]) -> Result<Vec<u8>, Stri
 /// Phase 17: wrap arbitrary bytes (the DK) with a raw 32B key + fresh nonce.
 /// Returns (nonce, ciphertext+tag). Caller packs both into the container.
 fn wrap_with_key(key_bytes: &[u8; 32], plaintext: &[u8]) -> Result<([u8; NONCE_LEN], Vec<u8>), String> {
+    wrap_with_key_aad(key_bytes, &[], plaintext)
+}
+
+/// A-03: same as [`wrap_with_key`], with associated data. Every header byte
+/// that precedes the wrapped blob is passed as `aad`, so moving the blob into
+/// another container (or editing the salt/mode/magic) fails the tag.
+fn wrap_with_key_aad(
+    key_bytes: &[u8; 32],
+    aad: &[u8],
+    plaintext: &[u8],
+) -> Result<([u8; NONCE_LEN], Vec<u8>), String> {
+    use chacha20poly1305::aead::Payload;
     let key = Key::from_slice(key_bytes);
     let cipher = XChaCha20Poly1305::new(key);
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
     let mut nonce_bytes = [0u8; NONCE_LEN];
     nonce_bytes.copy_from_slice(&nonce);
     let ct = cipher
-        .encrypt(&nonce, plaintext)
+        .encrypt(&nonce, Payload { msg: plaintext, aad })
         .map_err(|e| format!("Wrap error: {}", e))?;
     Ok((nonce_bytes, ct))
 }
@@ -217,6 +261,25 @@ fn unwrap_with_key(
     let nonce = XNonce::from_slice(nonce_bytes);
     cipher
         .decrypt(nonce, ciphertext)
+        .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())
+}
+
+/// A-03: [`unwrap_with_key`] counterpart that also authenticates `aad`.
+fn open_with_aad(
+    key_bytes: &[u8; 32],
+    aad: &[u8],
+    nonce_bytes: &[u8],
+    ciphertext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use chacha20poly1305::aead::Payload;
+    if nonce_bytes.len() != NONCE_LEN {
+        return Err("Invalid wrap nonce".to_string());
+    }
+    let key = Key::from_slice(key_bytes);
+    let cipher = XChaCha20Poly1305::new(key);
+    let nonce = XNonce::from_slice(nonce_bytes);
+    cipher
+        .decrypt(nonce, Payload { msg: ciphertext, aad })
         .map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())
 }
 
@@ -280,9 +343,10 @@ pub fn decrypt_vault_hybrid_legacy(
     )
 }
 
-/// Phase 17: portable self-contained hybrid encryption.
-/// Layout: [PV2\0 4B] + [salt 16B] + [wrap_nonce 24B] + [wrapped_dk 2416B]
-///       + [kem_ct 1088B] + [payload_nonce 24B] + [ct+tag].
+/// A-03: portable hybrid container with an AAD-bound header.
+/// Layout: `[PV4\0 4B] + [mode 1B] + [salt 16B] + [wrap_nonce 24B]
+/// + [wrapped_dk 2416B] + [kem_ct 1088B] + [payload_nonce 24B] + [ct+tag]`.
+///
 /// Fresh ML-KEM keypair per save; the DK travels INSIDE the container,
 /// sealed by the Argon2id key — no machine-bound sidecar needed.
 ///
@@ -295,8 +359,93 @@ pub fn decrypt_vault_hybrid_legacy(
 /// stays at 64 MiB/t=3/p=4 for unlock-latency + test-suite reasons — a param
 /// bump needs container versioning and is tracked separately.
 ///
+/// The DK wrap authenticates `magic|mode|salt`; the payload authenticates every
+/// header byte that precedes its nonce. A flipped magic, a swapped mode byte or
+/// a blob lifted from another container therefore fails the tag instead of
+/// silently changing what the file means. Nonces are bound implicitly (they key
+/// the tag), so they are not repeated inside the AAD.
+///
 /// Secret-owning variant — see [`derive_key_secret`].
 pub fn encrypt_vault_portable_secret(
+    master_password: &SecretString,
+    plaintext: &[u8],
+) -> Result<Vec<u8>, String> {
+    use crate::core::pq_hybrid::PqHybridEngine as PQ;
+    use chacha20poly1305::aead::Payload;
+
+    let mut salt = [0u8; SALT_LEN];
+    OsRng.fill_bytes(&mut salt);
+    let mut argon2_key = derive_key_secret(master_password, &salt)?;
+
+    // Fresh PQ keypair every save (per-save forward secrecy on the PQ half).
+    let kp = PQ::generate_keypair();
+    let (pq_ct, pq_secret) = match PQ::encapsulate(&kp.encapsulation) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ encapsulate: {e}"));
+        }
+    };
+    if pq_ct.len() != CT_LEN {
+        argon2_key.zeroize();
+        return Err("PQ ciphertext malformed".to_string());
+    }
+    let hybrid = match PQ::combine(&argon2_key, &pq_secret) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
+    drop(pq_secret);
+
+    // A-03: the prefix the wrapped DK lives in, authenticated as AAD.
+    let mut prefix = Vec::with_capacity(V4_PREFIX_LEN + SALT_LEN);
+    prefix.extend_from_slice(V4_MAGIC);
+    prefix.push(V4_MODE_PORTABLE);
+    prefix.extend_from_slice(&salt);
+
+    let (wrap_nonce, wrapped_dk) =
+        match wrap_with_key_aad(&argon2_key, &prefix, kp.decapsulation.expose()) {
+            Ok(v) => v,
+            Err(e) => {
+                argon2_key.zeroize();
+                return Err(e);
+            }
+        };
+    if wrapped_dk.len() != WRAPPED_DK_LEN {
+        argon2_key.zeroize();
+        return Err("Wrapped DK malformed".to_string());
+    }
+    drop(kp);
+    argon2_key.zeroize();
+
+    // Every header byte the payload must be bound to.
+    let mut header =
+        Vec::with_capacity(V4_PREFIX_LEN + SALT_LEN + NONCE_LEN + WRAPPED_DK_LEN + CT_LEN);
+    header.extend_from_slice(&prefix);
+    header.extend_from_slice(&wrap_nonce);
+    header.extend_from_slice(&wrapped_dk);
+    header.extend_from_slice(&pq_ct);
+
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(hybrid.expose()));
+    let payload_nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let sealed = cipher.encrypt(&payload_nonce, Payload { msg: plaintext, aad: &header });
+    drop(hybrid);
+    let ciphertext = sealed.map_err(|e| format!("Encryption error: {}", e))?;
+
+    let mut out = header;
+    out.extend_from_slice(&payload_nonce);
+    out.extend_from_slice(&ciphertext);
+    Ok(out)
+}
+
+/// Phase 17 legacy writer: a `PV2\0` container with no AAD. Kept so the
+/// migration tests can still produce the old shape and prove v4 reads both.
+/// Production code writes [`encrypt_vault_portable_secret`] (v4) only.
+/// Secret-owning variant — see [`derive_key_secret`].
+#[allow(dead_code)] // only the compat/migration tests call it
+pub fn encrypt_vault_portable_v2_secret(
     master_password: &SecretString,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, String> {
@@ -365,13 +514,14 @@ pub fn encrypt_vault_portable_secret(
 }
 
 /// Legacy `&str` entrypoint — prefer [`encrypt_vault_portable_secret`].
-/// (Compat tests only — see [`derive_key`].)
+/// (Compat tests only — see [`derive_key`].) This one writes the pre-A-03
+/// `PV2\0` shape, so the legacy read path keeps its own coverage.
 #[deprecated(note = "use encrypt_vault_portable_secret with a SecretString")]
 pub fn encrypt_vault_portable(
     master_password: &str,
     plaintext: &[u8],
 ) -> Result<Vec<u8>, String> {
-    encrypt_vault_portable_secret(&SecretString::new(master_password.to_string()), plaintext)
+    encrypt_vault_portable_v2_secret(&SecretString::new(master_password.to_string()), plaintext)
 }
 
 /// Phase 17: portable hybrid decryption. Password failures surface at the
@@ -438,6 +588,20 @@ pub fn decrypt_vault_portable_secret(
     Ok(plaintext)
 }
 
+/// A-03: open a portable container of either generation. Production loads
+/// dispatch on [`detect_version`] themselves; this helper exists for callers
+/// that hold bytes of unknown age (tests, migration proofs).
+pub fn decrypt_vault_portable_any_secret(
+    master_password: &SecretString,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    if detect_version(payload) == VaultVersion::V4Portable {
+        decrypt_vault_portable_v4_secret(master_password, payload)
+    } else {
+        decrypt_vault_portable_secret(master_password, payload)
+    }
+}
+
 /// Legacy `&str` entrypoint — prefer [`decrypt_vault_portable_secret`].
 /// (Compat tests only — see [`derive_key`].)
 #[deprecated(note = "use decrypt_vault_portable_secret with a SecretString")]
@@ -445,7 +609,77 @@ pub fn decrypt_vault_portable(
     master_password: &str,
     payload: &[u8],
 ) -> Result<Vec<u8>, String> {
-    decrypt_vault_portable_secret(&SecretString::new(master_password.to_string()), payload)
+    decrypt_vault_portable_any_secret(&SecretString::new(master_password.to_string()), payload)
+}
+
+/// A-03: open a `PV4\0` portable container. Every header byte before the payload
+/// nonce is reconstructed from the file itself and re-supplied as AAD, so any
+/// edit to the magic, the mode byte, the salt, the wrap nonce, the wrapped DK or
+/// the KEM ciphertext fails the tag instead of changing the meaning.
+/// Secret-owning variant — see [`derive_key_secret`].
+pub fn decrypt_vault_portable_v4_secret(
+    master_password: &SecretString,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    use crate::core::pq_hybrid::PqHybridEngine as PQ;
+
+    let min = V4_PREFIX_LEN + SALT_LEN + NONCE_LEN + WRAPPED_DK_LEN + CT_LEN + NONCE_LEN;
+    if payload.len() < min {
+        return Err("Invalid payload: data is too short!".to_string());
+    }
+    if &payload[..4] != V4_MAGIC || payload[4] != V4_MODE_PORTABLE {
+        return Err("Not a portable v4 container.".to_string());
+    }
+    let mut off = V4_PREFIX_LEN;
+    let salt = &payload[off..off + SALT_LEN];
+    off += SALT_LEN;
+    let wrap_nonce = &payload[off..off + NONCE_LEN];
+    off += NONCE_LEN;
+    let wrapped_dk = &payload[off..off + WRAPPED_DK_LEN];
+    off += WRAPPED_DK_LEN;
+    let pq_ct = &payload[off..off + CT_LEN];
+    off += CT_LEN;
+    // Everything up to here is the payload's AAD; `off` is also the payload
+    // nonce offset, so the header is exactly `payload[..off]`.
+    let header = &payload[..off];
+    let payload_nonce = XNonce::from_slice(&payload[off..off + NONCE_LEN]);
+    off += NONCE_LEN;
+    let ciphertext = &payload[off..];
+
+    let mut argon2_key = derive_key_secret(master_password, salt)?;
+    // The wrap authenticates magic|mode|salt only.
+    let dk_bytes = match open_with_aad(&argon2_key, &payload[..V4_PREFIX_LEN + SALT_LEN], wrap_nonce, wrapped_dk) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
+    // H6: the 2400B decapsulation key must zeroize on EVERY path.
+    let dk_guard = crate::core::pq_hybrid::PqDecapsulationBytes(dk_bytes);
+    let pq_secret = match PQ::decapsulate(dk_guard.expose(), pq_ct) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
+    drop(dk_guard);
+    let hybrid = match PQ::combine(&argon2_key, &pq_secret) {
+        Ok(v) => v,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("Hybrid combine: {e}"));
+        }
+    };
+    argon2_key.zeroize();
+    drop(pq_secret);
+
+    use chacha20poly1305::aead::Payload;
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(hybrid.expose()));
+    let opened = cipher.decrypt(payload_nonce, Payload { msg: ciphertext, aad: header });
+    drop(hybrid);
+    opened.map_err(|_| "Decryption failed! Wrong password or corrupted file.".to_string())
 }
 
 /// A22: hybrid key for the paranoid profile.
@@ -468,6 +702,7 @@ fn encrypt_paranoid_with_argon(
     plaintext: &[u8],
 ) -> Result<Vec<u8>, String> {
     use crate::core::pq_hybrid::PqHybridEngine as PQ;
+    use chacha20poly1305::aead::Payload;
 
     let (pq_ct, pq_secret) =
         PQ::encapsulate(encapsulation_key).map_err(|e| format!("PQ encapsulate: {e}"))?;
@@ -477,25 +712,32 @@ fn encrypt_paranoid_with_argon(
     let mut hybrid = combine_paranoid(argon2_key, &pq_secret)?;
     drop(pq_secret);
 
+    // A-03: the whole header is the payload's AAD.
+    let mut header = Vec::with_capacity(V4_PREFIX_LEN + SALT_LEN + CT_LEN);
+    header.extend_from_slice(V4_MAGIC);
+    header.push(V4_MODE_PARANOID);
+    header.extend_from_slice(salt);
+    header.extend_from_slice(&pq_ct);
+
     let cipher = XChaCha20Poly1305::new(Key::from_slice(&hybrid));
     let nonce = XChaCha20Poly1305::generate_nonce(&mut OsRng);
-    let encrypted = cipher.encrypt(&nonce, plaintext);
+    let encrypted = cipher.encrypt(&nonce, Payload { msg: plaintext, aad: &header });
     hybrid.zeroize();
     let ciphertext = encrypted.map_err(|e| format!("Encryption error: {e}"))?;
 
-    let mut out =
-        Vec::with_capacity(4 + SALT_LEN + CT_LEN + NONCE_LEN + ciphertext.len());
-    out.extend_from_slice(V3_PARANOID_MAGIC);
-    out.extend_from_slice(salt);
-    out.extend_from_slice(&pq_ct);
+    let mut out = header;
+    out.reserve(NONCE_LEN + ciphertext.len());
     out.extend_from_slice(&nonce);
     out.extend_from_slice(&ciphertext);
     Ok(out)
 }
 
-/// A22 PQ-paranoid encryption.
+/// A22 + A-03: PQ-paranoid encryption.
 ///
-/// Layout: `[PV3\0 4B] + [salt 16B] + [kem_ct 1088B] + [nonce 24B] + [ct+tag]`.
+/// Layout: `[PV4\0 4B]`, `[mode 1B]`, `[salt 16B]`, `[kem_ct 1088B]`,
+/// `[nonce 24B]`, `[ct+tag]`. The whole header is the payload's AAD, so a
+/// flipped mode byte or a swapped KEM ciphertext fails the tag.
+///
 /// The decapsulation key stays in the DPAPI sidecar; only the encapsulated
 /// ciphertext travels. A fresh salt + fresh encapsulation are used per save.
 pub fn encrypt_vault_paranoid_secret(
@@ -557,6 +799,57 @@ pub fn decrypt_vault_paranoid_secret(
         .map_err(|_| "Decryption failed! Wrong password, wrong device key, or corrupted file.".to_string());
     hybrid.zeroize();
     result
+}
+
+/// A-03: open a `PV4\0` paranoid container. The header before the nonce is the
+/// AAD, so a flipped mode byte, a swapped salt or a lifted KEM ciphertext fails
+/// the tag instead of being silently accepted.
+pub fn decrypt_vault_paranoid_v4_secret(
+    master_password: &SecretString,
+    decapsulation: &PqDecapsulationBytes,
+    payload: &[u8],
+) -> Result<Vec<u8>, String> {
+    use crate::core::pq_hybrid::PqHybridEngine as PQ;
+    use chacha20poly1305::aead::Payload;
+
+    let min = V4_PREFIX_LEN + SALT_LEN + CT_LEN + NONCE_LEN;
+    if payload.len() < min {
+        return Err("Invalid payload: data is too short!".to_string());
+    }
+    if &payload[..4] != V4_MAGIC || payload[4] != V4_MODE_PARANOID {
+        return Err("Not a PQ-paranoid v4 container.".to_string());
+    }
+    let salt = &payload[V4_PREFIX_LEN..V4_PREFIX_LEN + SALT_LEN];
+    let pq_ct = &payload[V4_PREFIX_LEN + SALT_LEN..V4_PREFIX_LEN + SALT_LEN + CT_LEN];
+    // `min` is the payload-nonce offset, so the header is `payload[..min]`.
+    let header = &payload[..min - NONCE_LEN];
+    let nonce = XNonce::from_slice(&payload[min - NONCE_LEN..min]);
+    let ciphertext = &payload[min..];
+
+    let mut argon2_key = derive_key_secret(master_password, salt)?;
+    let pq_secret = match PQ::decapsulate(decapsulation.expose(), pq_ct) {
+        Ok(s) => s,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(format!("PQ decapsulate: {e}"));
+        }
+    };
+    let mut hybrid = match combine_paranoid(&argon2_key, &pq_secret) {
+        Ok(k) => k,
+        Err(e) => {
+            argon2_key.zeroize();
+            return Err(e);
+        }
+    };
+    argon2_key.zeroize();
+    drop(pq_secret);
+
+    let cipher = XChaCha20Poly1305::new(Key::from_slice(&hybrid));
+    let result = cipher.decrypt(nonce, Payload { msg: ciphertext, aad: header });
+    hybrid.zeroize();
+    result.map_err(|_| {
+        "Decryption failed! Wrong password, wrong device key, or corrupted file.".to_string()
+    })
 }
 
 #[cfg(test)]
@@ -625,6 +918,73 @@ mod tests {
     }
 
     #[test]
+    fn a03_v4_portable_binds_every_header_region() {
+        let pw = SecretString::new("AadMaster!2026".to_string());
+        let data = b"aad bound vault bytes";
+        let enc = encrypt_vault_portable_secret(&pw, data).expect("v4 encrypt");
+        assert_eq!(detect_version(&enc), super::VaultVersion::V4Portable);
+        assert_eq!(
+            decrypt_vault_portable_v4_secret(&pw, &enc).expect("v4 decrypt"),
+            data
+        );
+
+        // One byte per header region: magic, mode, salt, wrap nonce, wrapped DK,
+        // KEM ciphertext. Each edit must fail the tag (or the magic/mode check)
+        // instead of silently changing what the file means.
+        let header_end = V4_PREFIX_LEN + SALT_LEN + NONCE_LEN + WRAPPED_DK_LEN + CT_LEN;
+        let probes = [0usize, 4, V4_PREFIX_LEN, V4_PREFIX_LEN + SALT_LEN, 45, header_end - 1];
+        for off in probes {
+            let mut bad = enc.clone();
+            bad[off] ^= 0x01;
+            assert!(
+                decrypt_vault_portable_v4_secret(&pw, &bad).is_err(),
+                "header byte {off} is not authenticated"
+            );
+        }
+
+        // A swapped mode byte is a different profile, never a portable file.
+        let mut relabelled = enc.clone();
+        relabelled[4] = V4_MODE_PARANOID;
+        assert_eq!(detect_version(&relabelled), super::VaultVersion::V4Paranoid);
+        assert!(decrypt_vault_portable_v4_secret(&pw, &relabelled).is_err());
+    }
+
+    #[test]
+    fn a03_v2_container_still_opens_and_is_never_read_as_v4() {
+        let pw = SecretString::new("AadMaster!2026".to_string());
+        let data = b"pre-aad bytes";
+        let old = encrypt_vault_portable_v2_secret(&pw, data).expect("v2 encrypt");
+        assert_eq!(detect_version(&old), super::VaultVersion::V2Portable);
+        assert_eq!(
+            decrypt_vault_portable_secret(&pw, &old).expect("legacy open"),
+            data
+        );
+        // The v4 reader refuses a v2 file instead of guessing at its layout.
+        assert!(decrypt_vault_portable_v4_secret(&pw, &old).is_err());
+    }
+
+    #[test]
+    fn a03_v4_paranoid_binds_its_header() {
+        let kp = PqHybridEngine::generate_keypair();
+        let pw = SecretString::new("ParanoidAad!2026".to_string());
+        let data = b"aad bound paranoid bytes";
+        let enc = encrypt_vault_paranoid_secret(&pw, &kp.encapsulation, data).expect("encrypt");
+        assert_eq!(detect_version(&enc), super::VaultVersion::V4Paranoid);
+        assert_eq!(
+            decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &enc).expect("decrypt"),
+            data
+        );
+        for off in [0usize, 4, V4_PREFIX_LEN, V4_PREFIX_LEN + SALT_LEN] {
+            let mut bad = enc.clone();
+            bad[off] ^= 0x01;
+            assert!(
+                decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &bad).is_err(),
+                "header byte {off} is not authenticated"
+            );
+        }
+    }
+
+    #[test]
     fn test_legacy_v2_still_opens() {
         // Hand-build a Phase-14 (3-byte magic) container: the loader must
         // keep opening already-migrated vaults with the DPAPI-sidecar key.
@@ -660,26 +1020,26 @@ mod tests {
         let data = b"paranoid payload";
 
         let enc = encrypt_vault_paranoid_secret(&pw, &kp.encapsulation, data).expect("encrypt");
-        assert_eq!(detect_version(&enc), super::VaultVersion::V3Paranoid);
-        let dec = decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &enc).expect("decrypt");
+        assert_eq!(detect_version(&enc), super::VaultVersion::V4Paranoid);
+        let dec = decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &enc).expect("decrypt");
         assert_eq!(dec, data);
 
         // The password alone is not an API: without the matching device key the
         // decapsulated secret differs and the AEAD tag fails.
         let other = PqHybridEngine::generate_keypair();
-        assert!(decrypt_vault_paranoid_secret(&pw, &other.decapsulation, &enc).is_err());
+        assert!(decrypt_vault_paranoid_v4_secret(&pw, &other.decapsulation, &enc).is_err());
 
         // Even with the device key, a wrong password fails.
         let bad = SecretString::new("wrong-password".to_string());
-        assert!(decrypt_vault_paranoid_secret(&bad, &kp.decapsulation, &enc).is_err());
+        assert!(decrypt_vault_paranoid_v4_secret(&bad, &kp.decapsulation, &enc).is_err());
 
         // Tampering / truncation / a portable container all fail closed.
         let mut tampered = enc.clone();
         let last = tampered.len() - 1;
         tampered[last] ^= 1;
-        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &tampered).is_err());
-        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &enc[..20]).is_err());
+        assert!(decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &tampered).is_err());
+        assert!(decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &enc[..20]).is_err());
         let portable = encrypt_vault_portable_secret(&pw, b"x").expect("portable");
-        assert!(decrypt_vault_paranoid_secret(&pw, &kp.decapsulation, &portable).is_err());
+        assert!(decrypt_vault_paranoid_v4_secret(&pw, &kp.decapsulation, &portable).is_err());
     }
 }

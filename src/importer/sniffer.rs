@@ -121,7 +121,12 @@ pub fn sniff(bytes: &[u8]) -> Result<Format> {
     }
     // Legacy `.pvx`: the portable envelope is BINARY, so the magic check must
     // run before text decoding (lossy UTF-8 would shred it into CSV noise).
-    if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V2_PORTABLE_MAGIC {
+    // A-03: a v4 portable container is the same thing under a new magic; a
+    // device-bound (paranoid) container is not an importable backup.
+    if matches!(
+        crate::crypto::detect_version(bytes),
+        crate::crypto::VaultVersion::V2Portable | crate::crypto::VaultVersion::V4Portable
+    ) {
         return Ok(Format::PhantomNativeEncrypted);
     }
     // A13: KeePass 2.x KDBX is binary (sig1+sig2), so check before decoding.

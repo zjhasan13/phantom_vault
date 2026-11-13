@@ -5,6 +5,17 @@ project does not yet follow SemVer strictly (pre-1.0).
 
 ## Unreleased
 
+### Container format (breaking)
+
+- **A-03**: new containers are `PV4\0` and authenticate their header as AEAD
+  associated data. A flipped magic, a swapped profile byte, a re-used salt or a
+  wrapped DK / KEM ciphertext lifted from another container now fails the tag
+  instead of being silently accepted. `PV2\0`/`PV3\0` vaults still open and are
+  rewritten as v4 on the next save.
+- **Compatibility:** a build older than this one cannot read a v4 container (it
+  sees an unknown magic and reports "wrong password or corrupted file"). Every
+  device that syncs the same vault must be updated together.
+
 ### Extension
 
 - Firefox native messaging works: the host accepts the add-on id Firefox passes
@@ -16,6 +27,10 @@ project does not yet follow SemVer strictly (pre-1.0).
 - A failed export now reports in the UI instead of only on stderr (G3).
 - The clipboard fallback verifies `set_text` and only clears a copy it still
   owns, so a failed copy no longer shows "Copied" (G4).
+- Locking clears the "Undo last import" affordance together with the undo copy,
+  so the button can no longer outlive its data (G7).
+- A failed access-log append is counted and reported on stderr instead of being
+  dropped silently (G8).
 
 ## 0.4.2 — 2026-11-12
 

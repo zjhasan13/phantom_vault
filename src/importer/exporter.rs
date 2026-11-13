@@ -825,7 +825,7 @@ mod tests {
         let blob = export_native_encrypted(&v, &pw).unwrap();
         assert_eq!(&blob[..5], BACKUP_V2_MAGIC);
         let plain =
-            crate::crypto::decrypt_vault_portable_secret(&pw, &blob[BACKUP_V2_MAGIC.len()..])
+            crate::crypto::decrypt_vault_portable_any_secret(&pw, &blob[BACKUP_V2_MAGIC.len()..])
                 .unwrap();
         let doc: serde_json::Value = serde_json::from_slice(&plain).unwrap();
         assert_eq!(doc["format"], NATIVE_FORMAT);
@@ -839,7 +839,7 @@ mod tests {
         assert_eq!(back.credentials[0].attachments[0].data, vec![1, 2, 3]);
         let bad = secrecy::SecretString::new("wrong".to_string());
         assert!(
-            crate::crypto::decrypt_vault_portable_secret(&bad, &blob[BACKUP_V2_MAGIC.len()..])
+            crate::crypto::decrypt_vault_portable_any_secret(&bad, &blob[BACKUP_V2_MAGIC.len()..])
                 .is_err()
         );
     }
@@ -851,9 +851,9 @@ mod tests {
         let master = secrecy::SecretString::new("master-password-1".to_string());
         let blob = export_native_gated(&v, false, &backup).unwrap();
         let body = &blob[BACKUP_V2_MAGIC.len()..];
-        assert!(crate::crypto::decrypt_vault_portable_secret(&backup, body).is_ok());
+        assert!(crate::crypto::decrypt_vault_portable_any_secret(&backup, body).is_ok());
         assert!(
-            crate::crypto::decrypt_vault_portable_secret(&master, body).is_err(),
+            crate::crypto::decrypt_vault_portable_any_secret(&master, body).is_err(),
             "the vault master must not open a backup export"
         );
     }

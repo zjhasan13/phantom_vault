@@ -1164,6 +1164,15 @@ fn backup_pass_error(pass: &str, confirm: &str, master: &str) -> Option<&'static
     None
 }
 
+/// G5: mark the vault as used. The idle clock is a single `Instant`; every
+/// user-driven input path calls this so the inactivity lock measures real
+/// absence, not "the last time a copy button was pressed".
+fn touch_activity(activity: &Arc<Mutex<std::time::Instant>>) {
+    // Poison-recovering: under `panic=abort` a poisoned clock would otherwise
+    // stop every later touch and lock the vault mid-typing.
+    *activity.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now();
+}
+
 /// Audit finding: the Rust vault was wiped but Slint-side models/props
 /// (detail secrets, history, form drafts, health badges) survived in UI-layer
 /// RAM — exactly what Mimikatz-style dumping hunts. Everything secret-shaped
@@ -1229,6 +1238,10 @@ fn lock_vault_now(
         // H8: poison-recovering (a poisoned mutex under panic=abort would
         // otherwise kill the lock-scrub mid-wipe, leaving secrets in UI).
         *pending_import_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
+        // G7: the undo store was wiped above, so the button that offers it must
+        // go too - a leftover enabled "Undo last import" over an empty store
+        // does nothing and reads as data loss.
+        ui.set_import_undo_available(false);
         clear_favicon_bytes();
         ui.set_select_mode(false);
         ui.set_selected_count(0);
@@ -1564,7 +1577,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             }
         };
         // A22: a device-bound container is not syncable; never adopt one either.
-        if crypto::detect_version(&local) == crypto::VaultVersion::V3Paranoid {
+        if crypto::detect_version(&local).is_paranoid() {
             let w = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = w.upgrade() {
@@ -1573,7 +1586,7 @@ fn run_startup_pull(main_weak: slint::Weak<MainWindow>) {
             });
             return;
         }
-        if crypto::detect_version(&bytes) == crypto::VaultVersion::V3Paranoid {
+        if crypto::detect_version(&bytes).is_paranoid() {
             let w = main_weak.clone();
             let _ = slint::invoke_from_event_loop(move || {
                 if let Some(ui) = w.upgrade() {
@@ -7180,7 +7193,11 @@ fn main() -> Result<(), slint::PlatformError> {
     let window_weak_search = main_window.as_weak();
     let vault_arc_search = Arc::clone(&active_vault);
     let search_state_search = Arc::clone(&search_state);
+    // G5: a keystroke in the search box is activity. Typing a long query used to
+    // leave the idle clock untouched, so the inactivity lock could fire mid-word.
+    let activity_search = Arc::clone(&last_activity);
     main_window.on_search_changed(move |query| {
+        touch_activity(&activity_search);
         let mut f = search_state_search.lock().unwrap().clone();
         f.query = query.as_str().to_string();
         // New search starts fast at the first page.
@@ -7198,7 +7215,10 @@ fn main() -> Result<(), slint::PlatformError> {
     // (and vice versa) — the 1s ticker re-applies this same query.
     let window_weak_totp = main_window.as_weak();
     let vault_arc_totp = Arc::clone(&active_vault);
+    // G5: same rule for the 2FA Hub search box.
+    let activity_totp_search = Arc::clone(&last_activity);
     main_window.on_totp_search_changed(move |query| {
+        touch_activity(&activity_totp_search);
         let vault = lock_vault(&vault_arc_totp);
         if let Some(ui) = window_weak_totp.upgrade() {
             ui.set_auth_rows(rebuild_auth_rows(&vault, query.as_str(), ui.get_totp_filter(), ui.get_totp_sort()));
@@ -18115,6 +18135,43 @@ mod grid_tests {
     }
 }
 
+
+#[cfg(test)]
+mod activity_touch_tests {
+    use super::touch_activity;
+    use std::sync::{Arc, Mutex};
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn typing_resets_the_idle_clock() {
+        let activity = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(3600)));
+        touch_activity(&activity);
+        let idle = activity.lock().unwrap().elapsed();
+        assert!(
+            idle < Duration::from_secs(5),
+            "idle clock was not reset: {idle:?}"
+        );
+    }
+
+    #[test]
+    fn a_poisoned_clock_is_recovered_not_ignored() {
+        let activity = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(3600)));
+        let poisoner = Arc::clone(&activity);
+        let _ = std::thread::spawn(move || {
+            let _held = poisoner.lock().unwrap();
+            panic!("poison the activity clock on purpose");
+        })
+        .join();
+        // A poisoned mutex must not stop the touch: otherwise the vault locks
+        // while the user is still typing.
+        touch_activity(&activity);
+        let idle = activity.lock().unwrap_or_else(|p| p.into_inner()).elapsed();
+        assert!(
+            idle < Duration::from_secs(5),
+            "poisoned clock was not reset: {idle:?}"
+        );
+    }
+}
 
 #[cfg(test)]
 mod reveal_gate_tests {

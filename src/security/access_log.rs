@@ -17,6 +17,27 @@ const KEY_FILE: &str = "access_log.key.dpapi";
 
 static LOG_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
+/// G8: appends stay best effort — a failed log must never break the action —
+/// but a dead audit trail must not be silent. Every failed open, write, fsync
+/// or head-anchor write bumps this counter; the first failure and every 100th
+/// after it also reach stderr, so a support log shows the trail died.
+static WRITE_FAILURES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many access-log writes have failed in this process. Non-zero means the
+/// audit trail is incomplete; the desktop can surface that instead of implying
+/// the log is intact.
+#[allow(dead_code)] // no caller yet — the counter and its test are live
+pub fn write_failures() -> u64 {
+    WRITE_FAILURES.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+fn note_write_failure(why: &str) {
+    let n = WRITE_FAILURES.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+    if n == 1 || n.is_multiple_of(100) {
+        eprintln!("access_log: append failed #{n} — {why}");
+    }
+}
+
 fn sha256_hex(input: &[u8]) -> String {
     use sha2::Digest;
     let digest = sha2::Sha256::digest(input);
@@ -210,12 +231,24 @@ fn log_event_with_key(path: &Path, event: &str, detail: &str, key: &[u8]) {
     let line = format!(
         "{{\"t\":{t},\"event\":\"{event}\",\"detail\":\"{detail}\",\"prev\":\"{prev}\",\"hash\":\"{hash}\"}}\n"
     );
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
-        use std::io::Write;
-        if f.write_all(line.as_bytes()).is_ok() {
-            let _ = f.sync_all();
-            let _ = std::fs::write(head_path_for(path), &hash);
+    match std::fs::OpenOptions::new().create(true).append(true).open(path) {
+        Ok(mut f) => {
+            use std::io::Write;
+            match f.write_all(line.as_bytes()) {
+                Ok(()) => {
+                    if let Err(e) = f.sync_all() {
+                        note_write_failure(&format!("fsync: {e}"));
+                    }
+                    // The head anchor is what makes tail truncation detectable;
+                    // a stale anchor silently weakens `verify_at`.
+                    if let Err(e) = std::fs::write(head_path_for(path), &hash) {
+                        note_write_failure(&format!("head anchor: {e}"));
+                    }
+                }
+                Err(e) => note_write_failure(&format!("write: {e}")),
+            }
         }
+        Err(e) => note_write_failure(&format!("open: {e}")),
     }
     if _xproc.is_some() {
         let _ = std::fs::remove_file(lock_path_for(path));
@@ -495,6 +528,23 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert!(rows[0].contains('b'));
         let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn a_failed_append_is_counted_not_swallowed() {
+        // The log path is a directory, so every open must fail. Before G8 the
+        // error was dropped and the caller could not tell the trail had died.
+        let p = tmp("dead");
+        let _ = std::fs::remove_file(&p);
+        std::fs::create_dir_all(&p).unwrap();
+        let before = write_failures();
+        log_event_with_key(&p, "copy", "clipboard", &[0u8; 32]);
+        assert!(
+            write_failures() > before,
+            "a refused append must bump write_failures()"
+        );
+        let _ = std::fs::remove_dir_all(&p);
+        let _ = std::fs::remove_file(lock_path_for(&p));
     }
 }
 

@@ -258,7 +258,7 @@ pub fn parse_import_any(
             .get(exporter::BACKUP_V2_MAGIC.len()..)
             .filter(|b| b.len() > 4)
             .ok_or_else(|| VaultError::Sync("backup envelope is truncated".into()))?;
-        let plain = crate::crypto::decrypt_vault_portable_secret(pw, body).map_err(|_| {
+        let plain = crate::crypto::decrypt_vault_portable_any_secret(pw, body).map_err(|_| {
             VaultError::Sync(
                 "cannot open backup: wrong backup passphrase (the master password will not work)"
                     .into(),
@@ -273,7 +273,7 @@ pub fn parse_import_any(
                 "legacy encrypted backup needs the vault master password".into(),
             ));
         };
-        let plain = crate::crypto::decrypt_vault_portable_secret(pw, &bytes).map_err(|_| {
+        let plain = crate::crypto::decrypt_vault_portable_any_secret(pw, &bytes).map_err(|_| {
             VaultError::Sync(
                 "cannot open legacy backup: it was not sealed with this vault's master password"
                     .into(),

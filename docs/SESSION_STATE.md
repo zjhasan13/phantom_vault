@@ -72,8 +72,9 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   clipboard still holds our text, so a failed copy cannot toast "Copied".
 - Gates on `eecf3de`: `cargo test -j 1` **607 passed / 0 failed / 4 ignored**
   (117.11s), `npm test` **172/172**, `npm run test:tokens` **21**.
-- Test gap: `is_native_host_launch` itself has no test — the new tests cover
-  `is_registered_firefox_id` and `manifest_json` only.
+- Tests: `grid_tests::native_host_launch_detection` already covered the three
+  accepted spellings; this batch adds the three negatives that were missing
+  (`moz-extension://…`, an id that only prefixes ours, a leading space).
 
 ## Last code batch (2026-11-12g) — `b81c766`
 

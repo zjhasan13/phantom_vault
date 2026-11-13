@@ -2,7 +2,8 @@ use crate::core::memory::DpapiGuard;
 use crate::core::pq_hybrid::PqDecapsulationBytes;
 use crate::crypto::{
     decrypt_vault_hybrid_legacy_secret, decrypt_vault_paranoid_secret,
-    decrypt_vault_portable_secret, decrypt_vault_secret, detect_version,
+    decrypt_vault_paranoid_v4_secret, decrypt_vault_portable_secret,
+    decrypt_vault_portable_v4_secret, decrypt_vault_secret, detect_version,
     encrypt_vault_paranoid_secret, encrypt_vault_portable_secret, VaultVersion,
 };
 use crate::models::Vault;
@@ -413,16 +414,17 @@ fn next_meta(path: &Path, old: &[u8], master: &SecretString) -> Result<(u64, Str
 /// Missing/too-short/unknown files read as `Portable` (the legacy default).
 pub fn current_profile<P: AsRef<Path>>(path: P) -> ContainerProfile {
     match fs::read(path) {
-        Ok(bytes)
-            if bytes.len() >= 4 && &bytes[..4] == crate::crypto::V3_PARANOID_MAGIC =>
-        {
+        // A-03: the profile byte of a v4 container and the v3 magic both mean
+        // "device-bound". Matching the v3 magic alone let a save silently
+        // downgrade a v4 paranoid vault to portable.
+        Ok(bytes) if crate::crypto::detect_version(&bytes).is_paranoid() => {
             ContainerProfile::Paranoid
         }
         _ => ContainerProfile::Portable,
     }
 }
 
-/// Save in the container's current profile: a fresh portable v2 container
+/// Save in the container's current profile: a fresh portable `PV4` container
 /// (fresh PQ keypair + DK wrapped by the password key) for a portable vault, or
 /// the device-bound `PV3` profile for a paranoid vault. No sidecar is created
 /// here; `convert_vault_profile` owns explicit profile changes.
@@ -490,17 +492,18 @@ fn encrypt_container(
 }
 
 /// A22: symmetric open counterpart of [`encrypt_container`]. Used by rekey
-/// proofs; normal loads dispatch on the container magic instead.
+/// proofs, so it only ever sees a container this build just wrote (v4); normal
+/// loads dispatch on the container magic instead.
 fn decrypt_container(
     profile: ContainerProfile,
     master_password: &SecretString,
     payload: &[u8],
 ) -> Result<Vec<u8>, String> {
     match profile {
-        ContainerProfile::Portable => decrypt_vault_portable_secret(master_password, payload),
+        ContainerProfile::Portable => decrypt_vault_portable_v4_secret(master_password, payload),
         ContainerProfile::Paranoid => {
             let dk = crate::security::pq_profile::load_decapsulation()?;
-            decrypt_vault_paranoid_secret(master_password, &dk, payload)
+            decrypt_vault_paranoid_v4_secret(master_password, &dk, payload)
         }
     }
 }
@@ -632,9 +635,10 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
     //    next revision, chained to the old container. A22: the profile is
     //    preserved — rekeying never silently downgrades paranoid → portable.
     let old = fs::read(path).map_err(|e| format!("File read error: {e}"))?;
-    let profile = match detect_version(&old) {
-        VaultVersion::V3Paranoid => ContainerProfile::Paranoid,
-        _ => ContainerProfile::Portable,
+    let profile = if detect_version(&old).is_paranoid() {
+        ContainerProfile::Paranoid
+    } else {
+        ContainerProfile::Portable
     };
     let (rev, prev_hash) = next_meta(path, &old, old_password)?;
     let mut serialized = envelope_bytes(vault, rev, prev_hash, profile)?;
@@ -667,11 +671,13 @@ pub fn rekey_vault_secret<P: AsRef<Path>>(
     Ok(())
 }
 
-/// Load with 4-way envelope dispatch:
+/// Load with a version dispatch over six container shapes:
 ///
+/// - V4Paranoid: password + this device's DPAPI sidecar, AAD-bound header (A-03).
+/// - V4Portable: password alone, AAD-bound header (A-03). What this build writes.
 /// - V3Paranoid: password + this device's DPAPI sidecar (A22). Never falls
 ///   back to portable.
-/// - V2Portable: password alone (cross-device safe).
+/// - V2Portable: password alone (cross-device safe, no AAD).
 /// - V2Legacy: password + DPAPI sidecar (same-machine migration only).
 /// - V1Classical: password alone (legacy fallback).
 ///
@@ -699,6 +705,17 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
     // A-01: every password/TOTP/SSH key sits in this plaintext buffer; it must
     // be wiped on every return path, not just the happy one.
     let decrypted = zeroize::Zeroizing::new(match version {
+        VaultVersion::V4Paranoid => {
+            let dk = crate::security::pq_profile::load_decapsulation().map_err(|e| {
+                format!("This vault requires this device's PQ key: {e}")
+            })?;
+            let out = decrypt_vault_paranoid_v4_secret(master_password, &dk, &payload);
+            drop(dk);
+            out?
+        }
+        VaultVersion::V4Portable => {
+            decrypt_vault_portable_v4_secret(master_password, &payload)?
+        }
         VaultVersion::V3Paranoid => {
             let dk = crate::security::pq_profile::load_decapsulation().map_err(|e| {
                 format!("This vault requires this device's PQ key: {e}")
@@ -729,7 +746,7 @@ pub fn load_vault_versioned_secret<P: AsRef<Path>>(
         VaultVersion::V1Classical => decrypt_vault_secret(master_password, &payload)?,
     });
     check_container_version(decrypted.as_slice())?;
-    let expected = if version == VaultVersion::V3Paranoid {
+    let expected = if version.is_paranoid() {
         ContainerProfile::Paranoid
     } else {
         ContainerProfile::Portable
@@ -886,7 +903,7 @@ mod tests {
         )
         .unwrap();
         let raw = std::fs::read(&path).unwrap();
-        assert_eq!(crate::crypto::detect_version(&raw), VaultVersion::V2Portable);
+        assert_eq!(crate::crypto::detect_version(&raw), VaultVersion::V4Portable);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -897,7 +914,7 @@ mod tests {
         let path = dir.join("vault.enc");
         save_vault(&demo_vault(), "portable-pass-1", &path).unwrap();
         let raw = std::fs::read(&path).unwrap();
-        assert_eq!(crate::crypto::detect_version(&raw), VaultVersion::V2Portable);
+        assert_eq!(crate::crypto::detect_version(&raw), VaultVersion::V4Portable);
         let (vault, needs_migration) =
             load_vault_versioned("portable-pass-1", &path).unwrap();
         assert!(!needs_migration);
@@ -951,7 +968,7 @@ mod tests {
         save_vault(&demo_vault(), "json-proof-1", &path).unwrap();
         let file_bytes = std::fs::read(&path).unwrap();
         // Envelope untouched (still self-contained portable v2).
-        assert_eq!(crate::crypto::detect_version(&file_bytes), VaultVersion::V2Portable);
+        assert_eq!(crate::crypto::detect_version(&file_bytes), VaultVersion::V4Portable);
         let inner = decrypt_vault_portable("json-proof-1", &file_bytes).unwrap();
         // A16: JSON object envelope (meta + vault), never bincode.
         assert_eq!(inner.first(), Some(&b'{'));
@@ -1178,7 +1195,7 @@ mod tests {
         assert!(needs_migration);
         save_vault(&vault, "mig-pass-123", &v2_path).unwrap();
         let raw2 = std::fs::read(&v2_path).unwrap();
-        assert_eq!(crate::crypto::detect_version(&raw2), VaultVersion::V2Portable);
+        assert_eq!(crate::crypto::detect_version(&raw2), VaultVersion::V4Portable);
         let (vault2, needs_migration2) = load_vault_versioned("mig-pass-123", &v2_path).unwrap();
         assert!(!needs_migration2);
         assert_eq!(vault2.credentials[0].password, "s3cret!");
@@ -1314,7 +1331,7 @@ mod tests {
         save_vault_secret(&demo_vault(), &pw, &path).unwrap();
         assert_eq!(
             detect_version(&std::fs::read(&path).unwrap()),
-            VaultVersion::V2Portable
+            VaultVersion::V4Portable
         );
         assert!(load_vault_secret(&pw, &path).is_ok());
 
@@ -1329,10 +1346,11 @@ mod tests {
         assert!(err.contains("device key"), "unexpected error: {err}");
         assert_eq!(
             detect_version(&std::fs::read(&path).unwrap()),
-            VaultVersion::V2Portable
+            VaultVersion::V4Portable
         );
 
-        // With a device key: PV3 container, opens only with password + sidecar.
+        // With a device key: v4 paranoid container, opens only with password +
+        // sidecar.
         crate::security::pq_profile::generate_and_seal().unwrap();
         convert_vault_profile(
             &demo_vault(),
@@ -1342,7 +1360,7 @@ mod tests {
         )
         .unwrap();
         let raw = std::fs::read(&path).unwrap();
-        assert_eq!(detect_version(&raw), VaultVersion::V3Paranoid);
+        assert_eq!(detect_version(&raw), VaultVersion::V4Paranoid);
         let loaded = load_vault_secret(&pw, &path).unwrap();
         assert_eq!(loaded.credentials.len(), 1);
 
@@ -1366,14 +1384,14 @@ mod tests {
         rekey_vault_secret(&demo_vault(), &pw, &new_pw, &path).unwrap();
         assert_eq!(
             detect_version(&std::fs::read(&path).unwrap()),
-            VaultVersion::V3Paranoid
+            VaultVersion::V4Paranoid
         );
         assert!(load_vault_secret(&pw, &path).is_err());
         assert!(load_vault_secret(&new_pw, &path).is_ok());
         assert!(container_head(&path).map(|(rev, _)| rev) >= Some(3));
 
-        // No silent downgrade: a plain save over PV3 stays PV3 and refuses
-        // when the device key is missing.
+        // No silent downgrade: a plain save over a paranoid container stays
+        // paranoid and refuses when the device key is missing.
         std::fs::remove_file(&sidecar).unwrap();
         let err = save_vault_secret(&demo_vault(), &new_pw, &path).unwrap_err();
         assert!(err.contains("device key"), "unexpected: {err}");
@@ -1381,7 +1399,7 @@ mod tests {
         save_vault_secret(&demo_vault(), &new_pw, &path).unwrap();
         assert_eq!(
             detect_version(&std::fs::read(&path).unwrap()),
-            VaultVersion::V3Paranoid
+            VaultVersion::V4Paranoid
         );
 
         // Explicit conversion is the only downgrade path; after it the sidecar
@@ -1395,7 +1413,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             detect_version(&std::fs::read(&path).unwrap()),
-            VaultVersion::V2Portable
+            VaultVersion::V4Portable
         );
         std::fs::remove_file(&sidecar).unwrap();
         assert!(load_vault_secret(&new_pw, &path).is_ok());
@@ -1534,13 +1552,13 @@ mod container_guard_tests {
 
     #[test]
     fn newer_container_version_is_refused() {
-        use crate::crypto::{decrypt_vault_portable_secret, encrypt_vault_portable_secret};
+        use crate::crypto::{decrypt_vault_portable_v4_secret, encrypt_vault_portable_secret};
         let dir = tmp("pv_newer_version");
         let path = dir.join("vault.enc");
         let pass = SecretString::new("newer-pass-1".to_string());
         crate::storage::save_vault_secret(&Vault::new(), &pass, &path).expect("save");
         let file_bytes = std::fs::read(&path).expect("read container");
-        let inner = decrypt_vault_portable_secret(&pass, &file_bytes).expect("decrypt");
+        let inner = decrypt_vault_portable_v4_secret(&pass, &file_bytes).expect("decrypt");
         let text = String::from_utf8(inner).expect("utf8");
         let bumped = text.replacen("\"version\":2", "\"version\":3", 1);
         assert_ne!(bumped, text, "envelope meta version must be present");

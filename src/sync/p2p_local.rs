@@ -778,7 +778,7 @@ fn serve_conn_inner(
     // A22: a PQ-paranoid vault is device-bound — never serve it to peers and
     // never accept a paranoid blob over P2P.
     if !blob.is_empty()
-        && crate::crypto::detect_version(blob) == crate::crypto::VaultVersion::V3Paranoid
+        && crate::crypto::detect_version(blob).is_paranoid()
     {
         let _ = stream.write_all(&http_response(
             409,
@@ -926,7 +926,7 @@ fn serve_conn_inner(
     );
     if let Some((sha, mtime, data)) = adopt {
         // A22: never adopt a device-bound paranoid container.
-        if crate::crypto::detect_version(&data) == crate::crypto::VaultVersion::V3Paranoid {
+        if crate::crypto::detect_version(&data).is_paranoid() {
             let _ = stream.write_all(&http_response(
                 409,
                 r#"{"ok":false,"error":"PQ-paranoid vault is not syncable"}"#,
@@ -1444,11 +1444,11 @@ pub fn sync_with_peer(
     let (local_sha, local_mtime) = local_head();
     let local_blob = std::fs::read(crate::developer::vault_run::VAULT_FILE).unwrap_or_default();
     // A22: device-bound containers are not syncable in either direction.
-    if crate::crypto::detect_version(&local_blob) == crate::crypto::VaultVersion::V3Paranoid {
+    if crate::crypto::detect_version(&local_blob).is_paranoid() {
         return Err("PQ-paranoid vault is not syncable".to_string());
     }
     let (remote_sha, remote_mtime, remote_blob) = pull_peer(addr, pin)?;
-    if crate::crypto::detect_version(&remote_blob) == crate::crypto::VaultVersion::V3Paranoid {
+    if crate::crypto::detect_version(&remote_blob).is_paranoid() {
         return Err("peer has a PQ-paranoid vault — not syncable".to_string());
     }
     if remote_sha == local_sha {
