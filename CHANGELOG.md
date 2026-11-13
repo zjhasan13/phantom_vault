@@ -3,6 +3,20 @@
 All notable changes to PhantomVault. The format follows Keep a Changelog; the
 project does not yet follow SemVer strictly (pre-1.0).
 
+## Unreleased
+
+### Extension
+
+- Firefox native messaging works: the host accepts the add-on id Firefox passes
+  as `argv[1]`, allows the registered gecko ids through the origin gate, and the
+  registration writes `allowed_extensions`. Not yet verified in a real Firefox.
+
+### Desktop
+
+- A failed export now reports in the UI instead of only on stderr (G3).
+- The clipboard fallback verifies `set_text` and only clears a copy it still
+  owns, so a failed copy no longer shows "Copied" (G4).
+
 ## 0.4.2 — 2026-11-12
 
 Security and correctness pass from the 2026-11-10 scan

@@ -9,11 +9,12 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-11 |
-| Branch / HEAD | `main` @ `a51fb35` (0.4.2 release prep) + docs on top |
+| Date | 2026-11-13 |
+| Branch / HEAD | `main` @ `eecf3de` (Firefox bridge + silent-failure fixes) + docs on top |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
-| Installer present | 0.4.1 build only — 0.4.2 is not packaged yet (ISCC + signing) |
+| Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
+| Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
@@ -55,6 +56,24 @@ Full report: `docs/SCAN_2026-11-10.md`; appendices in `docs/scan/2026-11-10/`
   `--all-targets -j 1 -- -D warnings` **EXIT=0** (10m09s); `npm test` 172/172;
   tokens 21.
 - Artifacts built locally (unsigned): `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` (portable exe 25.2 MB, chrome/firefox zips, SHA256SUMS). No `.sig` files: the updater will refuse this build until it is signed. No on-screen E2E.
+
+## Last code batch (2026-11-13a) — `eecf3de`
+
+- **Firefox native messaging** (functional break): Firefox launches the bridge
+  with the add-on id as `argv[1]`, not an origin. `is_native_host_launch`
+  (`main.rs:139`) now accepts `FIREFOX_ADDON_ID` and any id registered in
+  `native-host-firefox.json`; `origin_allowed` (`native_host.rs:179`) falls
+  through to the registered gecko id list; the Firefox registration writes
+  `allowed_extensions`. **Not verified in a real Firefox** — only the code path
+  and the manifest writer are tested.
+- **G3**: export failures surface in the UI; all three `eprintln!` paths are
+  gone (0 `export refused` matches left in `main.rs`).
+- **G4**: the clipboard fallback checks `set_text` and clears only when the
+  clipboard still holds our text, so a failed copy cannot toast "Copied".
+- Gates on `eecf3de`: `cargo test -j 1` **607 passed / 0 failed / 4 ignored**
+  (117.11s), `npm test` **172/172**, `npm run test:tokens` **21**.
+- Test gap: `is_native_host_launch` itself has no test — the new tests cover
+  `is_registered_firefox_id` and `manifest_json` only.
 
 ## Last code batch (2026-11-12g) — `b81c766`
 
