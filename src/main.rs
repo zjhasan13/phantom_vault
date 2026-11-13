@@ -131,13 +131,16 @@ fn is_hello_token_unreadable() -> bool {
     is_hello_token_unreadable_at(std::path::Path::new(HELLO_TOKEN_FILE))
 }
 
-/// Native-host launch detector: humans type `native-host`, but Chromium
-/// launches the bridge as `<exe> chrome-extension://<id>/ [...]` (origin URL
-/// as argv[1]). Both spellings must enter the stdio serve loop — otherwise
-/// Chrome sees a code-2 exit and the popup hangs on "Loading…".
-/// Pure — unit tested.
+/// Native-host launch detector: humans type `native-host`, Chromium launches
+/// the bridge as `<exe> chrome-extension://<id>/ [...]`, and Firefox launches
+/// it as `<exe> <add-on-id>` (argv[1] is the gecko id, not an origin). All
+/// three must enter the stdio serve loop — otherwise the browser sees a code-2
+/// exit and the popup hangs on "Loading…".
 fn is_native_host_launch(arg: &str) -> bool {
-    arg == "native-host" || arg.starts_with("chrome-extension://")
+    arg == "native-host"
+        || arg.starts_with("chrome-extension://")
+        || arg == windows_native::native_host::FIREFOX_ADDON_ID
+        || windows_native::native_host::is_registered_firefox_id(arg)
 }
 
 fn tokio_rt() -> Option<tokio::runtime::Runtime> {
@@ -774,25 +777,44 @@ fn secure_copy_with_feedback(
             });
         }
         Err(_) => {
+            // G4: the fallback used to claim "Copied" even when set_text
+            // failed, and then blanked the clipboard blindly after the TTL.
+            let mut copied = false;
             if let Ok(mut clipboard) = Clipboard::new() {
-                let _ = clipboard.set_text(text.as_str());
+                copied = clipboard.set_text(text.as_str()).is_ok();
+            }
+            if !copied {
                 let _ = slint::invoke_from_event_loop(move || {
                     if let Some(ui) = weak_fb_msg.upgrade() {
-                        ui.set_notification_text(fb_msg.into());
+                        ui.set_notification_text(tr("⚠️ Could not copy to the clipboard.", "⚠️ ক্লিপবোর্ডে কপি করা যায়নি।").into());
+                        ui.set_notification_kind("warn".into());
                     }
                 });
-                thread::spawn(move || {
-                    thread::sleep(Duration::from_secs(secs));
-                    if let Ok(mut cb) = Clipboard::new() {
-                        let _ = cb.clear();
-                    }
-                    let _ = slint::invoke_from_event_loop(move || {
-                        if let Some(ui) = weak_fb_clear.upgrade() {
-                            ui.set_notification_text(tr("🧹 Clipboard auto-cleared for security!", "🧹 নিরাপত্তার জন্য ক্লিপবোর্ড স্বয়ংক্রিয়ভাবে মুছে দেওয়া হয়েছে!").into());
-                        }
-                    });
-                });
+                return;
             }
+            let _ = slint::invoke_from_event_loop(move || {
+                if let Some(ui) = weak_fb_msg.upgrade() {
+                    ui.set_notification_text(fb_msg.into());
+                    ui.set_notification_kind("success".into());
+                }
+            });
+            // Match-guarded like the native path: only clear when the
+            // clipboard still holds OUR text, never whatever came later.
+            let expected = text.clone();
+            thread::spawn(move || {
+                thread::sleep(Duration::from_secs(secs));
+                let Ok(mut cb) = Clipboard::new() else { return };
+                let ours = cb.get_text().map(|t| t == expected).unwrap_or(false);
+                if !ours {
+                    return;
+                }
+                let _ = cb.clear();
+                let _ = slint::invoke_from_event_loop(move || {
+                    if let Some(ui) = weak_fb_clear.upgrade() {
+                        ui.set_notification_text(tr("🧹 Clipboard auto-cleared for security!", "🧹 নিরাপত্তার জন্য ক্লিপবোর্ড স্বয়ংক্রিয়ভাবে মুছে দেওয়া হয়েছে!").into());
+                    }
+                });
+            });
         }
     }
 }
@@ -12314,6 +12336,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 }
                 ui.set_export_status(tr("⚠️ Plaintext export — pick a destination…", "⚠️ প্লেইনটেক্সট এক্সপোর্ট — গন্তব্য বাছুন…").into());
                 let weak = rp_main.clone();
+                let weak_err = rp_main.clone();
                 let vault_clone = Arc::clone(&rp_del_vault);
                 let export_backup =
                     secrecy::SecretString::new(backup_pass.as_str().to_string());
@@ -12335,8 +12358,20 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 ) {
                                     Ok(x) => x,
                                     Err(e) => {
-                                        eprintln!("export refused: {e}");
-                                        return;
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
+                                    return;
                                     }
                                 }
                             } else {
@@ -12349,7 +12384,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             ) {
                                 Ok(b) => b,
                                 Err(e) => {
-                                    eprintln!("export refused: {e}");
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
                                     return;
                                 }
                             };
@@ -12367,7 +12414,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let bytes = match importer::keepass::export_kdbx(&v, &export_backup) {
                                 Ok(b) => b,
                                 Err(e) => {
-                                    eprintln!("kdbx export refused: {e}");
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
                                     return;
                                 }
                             };
@@ -12398,8 +12457,20 @@ fn launch_url(ui: &MainWindow, url: &str) {
                                 match importer::exporter::export_csv_full_gated(&v, false) {
                                     Ok(s) => s,
                                     Err(e) => {
-                                        eprintln!("export refused: {e}");
-                                        return;
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
+                                    return;
                                     }
                                 };
                             let (n, _, _) = importer::exporter::native_stats(&v);
@@ -12413,7 +12484,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let csv = match importer::exporter::export_csv_gated(&v, false) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    eprintln!("export refused: {e}");
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
                                     return;
                                 }
                             };
@@ -12429,7 +12512,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                             let (doc, atts) = match importer::exporter::export_bitwarden_json_gated(&v, false) {
                                 Ok(t) => t,
                                 Err(e) => {
-                                    eprintln!("export refused: {e}");
+                                    {
+                                        // G3: a refused export used to vanish into
+                                        // stderr (invisible in a release build).
+                                        let w = weak_err.clone();
+                                        let msg = format!("❌ Export: {e}");
+                                        let _ = slint::invoke_from_event_loop(move || {
+                                            if let Some(ui) = w.upgrade() {
+                                                ui.set_export_status(tr("⚠️ Export failed.", "⚠️ এক্সপোর্ট ব্যর্থ।").into());
+                                                ui.set_notification_text(msg.into());
+                                                ui.set_notification_kind("error".into());
+                                            }
+                                        });
+                                    }
                                     return;
                                 }
                             };
@@ -17849,6 +17944,9 @@ mod grid_tests {
     #[test]
     fn native_host_launch_detection() {
         assert!(is_native_host_launch("native-host"));
+        assert!(is_native_host_launch(
+            windows_native::native_host::FIREFOX_ADDON_ID
+        ));
         assert!(is_native_host_launch(
             "chrome-extension://goegfnjadkancnkldlamofedndcppafo/"
         ));

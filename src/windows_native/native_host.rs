@@ -172,12 +172,34 @@ fn registered_origins() -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// Origin allow check: strict format AND listed in the registered manifest.
-/// Fail-closed (B5): an empty or missing manifest allows nothing. The old
-/// `true` here let any extension the browser was willing to launch reach the
-/// vault as soon as `native-host.json` was absent or corrupt.
+/// Origin allow check: strict Chrome origin AND listed in the registered
+/// manifest, or a Firefox add-on id listed in `native-host-firefox.json`
+/// (Firefox launches the host with the add-on id as argv[1], not an origin).
+/// Fail-closed (B5): an empty or missing manifest allows nothing.
 pub(crate) fn origin_allowed(origin: &str) -> bool {
-    origin_allowed_in(&registered_origins(), origin)
+    if valid_origin_format(origin) {
+        return origin_allowed_in(&registered_origins(), origin);
+    }
+    is_registered_firefox_id(origin)
+}
+
+/// `native-host-firefox.json` -> `allowed_extensions`.
+fn registered_firefox_ids() -> Vec<String> {
+    let doc: serde_json::Value = std::fs::read_to_string(
+        bridge_dir().join("native-host-firefox.json"),
+    )
+    .ok()
+    .and_then(|s| serde_json::from_str(&s).ok())
+    .unwrap_or(serde_json::Value::Null);
+    doc.get("allowed_extensions")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect())
+        .unwrap_or_default()
+}
+
+/// True only for a Firefox add-on id the installer actually registered.
+pub(crate) fn is_registered_firefox_id(id: &str) -> bool {
+    valid_firefox_id(id) && registered_firefox_ids().iter().any(|x| x == id)
 }
 
 /// Pure half of the check, so the fail-closed rule is unit-testable without
