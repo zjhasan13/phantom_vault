@@ -17,6 +17,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`), two-row grid below 1100 logical px (`a4c2bfc`) |
 | Item detail (all kinds) | ✅ | login, card, note, identity, license, SSH; history, attachments, TOTP |
 | Add / edit editor | ✅ | per-kind fields, folder, tags, favourite; custom-field checkbox rows toggle in place (G2, verified on screen 2026-11-14) |
+| Dialogs / modals | ✅ | content-sized instead of full-window tall (U1, all 11) |
 | Favicons | ✅ | per-domain cached icons, same-origin harvest; per-item logo override from the detail pane (G1); toggle/refresh/clear in Settings |
 | Password generator | ✅ | OS CSPRNG, Complex + Diceware, copy |
 | 2FA hub | ✅ | filter chips, sort, per-account params, HOTP next, Add-2FA sheet |

@@ -216,6 +216,12 @@ fn origin_allowed_in(reg: &[String], origin: &str) -> bool {
 
 /// Read one frame: 4-byte LE length, cap enforced, exact JSON body.
 pub fn decode_frame<R: Read>(r: &mut R) -> Result<serde_json::Value, String> {
+    decode_frame_raw(r).map(|(value, _)| value)
+}
+
+/// Same as [`decode_frame`], but also returns the raw JSON body — the pairing
+/// MAC covers those exact bytes, so re-serialising the parsed value would not do.
+pub fn decode_frame_raw<R: Read>(r: &mut R) -> Result<(serde_json::Value, Vec<u8>), String> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf)
         .map_err(|e| format!("frame read: {e}"))?;
@@ -226,7 +232,8 @@ pub fn decode_frame<R: Read>(r: &mut R) -> Result<serde_json::Value, String> {
     let mut body = vec![0u8; len];
     r.read_exact(&mut body)
         .map_err(|e| format!("frame body: {e}"))?;
-    serde_json::from_slice(&body).map_err(|e| format!("frame JSON: {e}"))
+    let value = serde_json::from_slice(&body).map_err(|e| format!("frame JSON: {e}"))?;
+    Ok((value, body))
 }
 
 fn err(msg: impl Into<String>) -> serde_json::Value {
@@ -3539,6 +3546,28 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
 /// Trust boundary (C2+C3+C4): argv[1] origin is enforced against the
 /// registered manifest; `unlocked` is re-derived every frame from the live
 /// Hello token + idle/max lifetimes (lock deletes the token → host exits).
+/// Load the A27 L2 pairing secret from the vault dir, if this machine has one.
+fn load_pair_secret() -> Option<Vec<u8>> {
+    let path = std::path::Path::new(crate::security::host_pairing::PAIRING_FILE);
+    match crate::security::host_pairing::load_at(path) {
+        Ok(v) => v,
+        Err(e) => {
+            // Warn-only: a seal from another user/machine must not brick the
+            // extension before the user re-pairs.
+            bridge_log(&format!("WARN pairing seal unreadable: {e}"));
+            None
+        }
+    }
+}
+
+/// Log (never enforce) the pairing verdict for one raw frame.
+fn log_frame_verdict(guard: &mut crate::security::host_pairing::FrameGuard, raw: &[u8]) {
+    use crate::security::host_pairing::FrameVerdict;
+    if let FrameVerdict::Rejected(why) = guard.observe(raw, now_secs()) {
+        bridge_log(&format!("host mac rejected: {why}"));
+    }
+}
+
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
     // Phase C: 60s idle TTL (HOST_IDLE_TTL_SECS) — one decrypted session
@@ -3558,6 +3587,10 @@ pub fn serve_cli() -> i32 {
         bridge_log("origin rejected");
         return 2;
     }
+    // A27 L1 (step 1, warn-only): the origin string above is public, so record
+    // which image actually spawned us. Never blocks; step 2 turns this into a
+    // refusal once the Authenticode check lands.
+    bridge_log(&crate::windows_native::host_provenance::audit_line());
     // Chrome spawns us with CWD=System32: jump back to the recorded data
     // dir so vault_hello.dpapi / my_secure_vault.enc resolve correctly.
     match resolve_data_dir() {
@@ -3575,19 +3608,27 @@ pub fn serve_cli() -> i32 {
         let _ = std::io::stdout().write_all(&frame);
         let _ = std::io::stdout().flush();
     };
+    // A27 L2 (step 1, warn-only): with a pairing secret on disk, verify
+    // `seq`/`ts`/`mac` on every frame and log a rejection. Serving is unchanged
+    // until step 2 flips the verdict into a refusal.
+    let mut pair_guard = crate::security::host_pairing::FrameGuard::new(load_pair_secret());
+    if pair_guard.is_paired() {
+        bridge_log("host paired: verifying frame macs (warn-only)");
+    }
     // A11: the extension may ask for the read-only offline cache while the
     // desktop app is closed. That path is the ONLY one allowed before the
     // heartbeat gate, and it requires a Windows Hello prompt + DPAPI unseal.
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
     let mut output = std::io::stdout();
-    let first_req = match decode_frame(&mut input) {
+    let (first_req, first_raw) = match decode_frame_raw(&mut input) {
         Ok(v) => v,
         Err(e) => {
             emit_err(&format!("bad frame: {e}"));
             return 2;
         }
     };
+    log_frame_verdict(&mut pair_guard, &first_raw);
     let first_cmd = first_req.get("cmd").and_then(|c| c.as_str());
     if first_cmd == Some("cache_status") {
         let reply = crate::security::offline_cache::cache_status();
@@ -3762,8 +3803,11 @@ pub fn serve_cli() -> i32 {
         }
         let req = match pending_req.take() {
             Some(r) => r,
-            None => match decode_frame(&mut input) {
-                Ok(v) => v,
+            None => match decode_frame_raw(&mut input) {
+                Ok((v, raw)) => {
+                    log_frame_verdict(&mut pair_guard, &raw);
+                    v
+                }
                 Err(e) => {
                     let msg = e.to_string();
                     if msg.contains("frame read") {

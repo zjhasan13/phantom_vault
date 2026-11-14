@@ -9,6 +9,7 @@ pub mod canary;
 pub mod decoy;
 pub mod emergency;
 pub mod ext_pin;
+pub mod host_pairing;
 pub mod integrity;
 pub mod offline_cache;
 pub mod pdf_sheet;

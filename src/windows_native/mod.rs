@@ -4,6 +4,7 @@ pub mod desktop_autofill;
 pub mod device_bind;
 pub mod display_guard;
 pub mod hello;
+pub mod host_provenance;
 pub mod ime_guard;
 pub mod native_host;
 pub mod process_guard;

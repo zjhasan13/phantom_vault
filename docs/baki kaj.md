@@ -31,6 +31,7 @@ GitHub Dependabot ১টা moderate alert দেখায়: `RUSTSEC-2023-007
 Live E2E, DPI pass, স্ক্রিনশট — installer ইনস্টল + extension reload ছাড়া হয় না
 UI harness trap: `setedit` (UIA ValuePattern) টেক্সট দেখায় কিন্তু Slint binding-এ সবসময় পৌঁছায় না — Save চাপলে "needs a title + key fields" আসতে পারে; এন্ড-টু-এন্ড save যাচাই করতে আসল keystroke দরকার
 UI harness trap: `click -Arg Save` ভুল টেক্সট ধরতে পারে ("0 saved") — বাটনের rect `dump` থেকে নিয়ে `clickshot` ব্যবহার করা নিরাপদ
+UI harness trap: এই মেশিনে StartAllBack shell hook মাঝে মাঝে modal error box ("StartAllBackLoaderX64.dll ... Bad Image") ফেলে, বিশেষ করে file-save/print path-এ — UIA click আটকে যায়; `EnumWindows` + `WM_CLOSE` দিয়ে বন্ধ করতে হয়
 
 আমার সুপারিশ (পরের ৩টা)
 Native-host pairing secret — same-user process host spawn আটকাতে একমাত্র আসল fix; ডিজাইন চেঞ্জ, ২–৩ দিন।

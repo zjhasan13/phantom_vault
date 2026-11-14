@@ -74,12 +74,15 @@ of scope. This layer alone stops the naive "spawn it myself" attack.
 
 Bootstrap is user-mediated because there is no out-of-band channel yet.
 
-1. Desktop app: **Settings → Browser extension → Pair extension** mints 32
-   CSPRNG bytes, shows them as 8 groups of 4 Crockford-base32 characters
-   (e.g. `K7Q2-9F3M-...`), and stores a DPAPI-sealed copy in
-   `<vault dir>\host_pairing.dpapi`. The displayed code expires after 10 min and
-   is never logged.
-2. Popup: **Pair with desktop** asks for the code, stores the decoded 32 bytes in
+1. Desktop app: **Settings → Browser extension → Pair extension** mints a
+   **20-byte (160-bit)** CSPRNG secret, shows it as 8 groups of 4 Crockford-base32
+   characters (e.g. `K7Q2-9F3M-...` — 32 characters total), and stores a
+   DPAPI-sealed copy in `<vault dir>\host_pairing.dpapi`. The displayed code
+   expires after 10 min and is never logged.
+   - *Correction (2026-11-14):* the first draft said "32 CSPRNG bytes / 8 groups
+     of 4". 8×4 = 32 characters = 160 bits, so the secret is 20 bytes. A 32-byte
+     secret would need 52 characters.
+2. Popup: **Pair with desktop** asks for the code, stores the decoded 20 bytes in
    `chrome.storage.local.pv_pair_secret` (base64), then sends `pair_confirm`
    (below). A wrong code fails the MAC and the popup says so.
 3. Every later frame carries `seq`, `ts` and `mac`:
@@ -88,6 +91,23 @@ Bootstrap is user-mediated because there is no out-of-band channel yet.
 {"cmd":"list","seq":7,"ts":1763000000,"mac":"<hex hmac-sha256>"}
 mac = HMAC-SHA256(secret, "pv1|" + cmd + "|" + seq + "|" + ts + "|" + sha256(canonical_body))
 ```
+
+Known-answer vector for both sides (secret = bytes `00..13`, cmd `list`, seq `7`,
+ts `1763000000`, body `{"cmd":"list"}`):
+
+```
+sha256(body) = 85b05f70b28a753f0b412901675f7bae25d1dbe8044980044a083961e76215c2
+mac          = bb99f3bb4a9c37e2113e8169f9abe64df76c86482022d9137137aeae1ae6113f
+```
+
+**What "canonical body" is, exactly.** Not a re-serialised JSON — that would
+depend on key order on both sides. The body is the frame **without the `mac`
+field**, byte for byte: the extension builds `{...request, seq, ts}`, stringifies
+that once (this is the MAC input), then posts `{...request, seq, ts, mac}`.
+`JSON.stringify` keeps insertion order, so the wire bytes are exactly `body`
+with `,"mac":"…"` spliced in before the closing brace. The host removes that one
+field from the raw line and MACs the remainder. `strip_mac_field` is the Rust
+half and is unit-tested against frames with `mac` first, middle and last.
 
 Host rules: constant-time compare; `seq` strictly increasing per session;
 `|now - ts| <= 60 s`; reject and audit-log `host mac rejected` on any miss. The
