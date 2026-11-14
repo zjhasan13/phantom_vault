@@ -966,3 +966,32 @@ test("B4: PV_TOTP_LOOKUP and PV_CARDS are bound to the sender domain", async () 
   const ok = await p;
   assert.equal(ok.ok, true);
 });
+
+// G-EXT: `reuse` is vault-derived (how many stored items share a password), so
+// a page that guesses a candidate learns whether it is in the vault. The
+// content script only needs the public HIBP verdict; the popup keeps both.
+test("PV_BREACH hides the vault-derived reuse count from page senders", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = { url: "https://example.com/login", tab: { url: "https://example.com/login" } };
+  const pending = sendMessage(onMessage, chrome, { type: "PV_BREACH", password: "hunter2" }, sender);
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "breach_check");
+  assert.equal(chrome.__state.postedNative[0].password, "hunter2");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, breach: 3, reuse: 4 }));
+  const r = await pending;
+  assert.equal(r.ok, true);
+  assert.equal(r.breach, 3, "the public verdict still reaches the save prompt");
+  assert.equal("reuse" in r, false, "reuse must not cross the page boundary");
+});
+
+test("PV_BREACH keeps reuse for the popup and refuses an empty password", async () => {
+  const { chrome, onMessage } = fresh();
+  const pending = sendMessage(onMessage, chrome, { type: "PV_BREACH", password: "hunter2" });
+  await flushTicks();
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, breach: 0, reuse: 2 }));
+  const r = await pending;
+  assert.equal(r.reuse, 2, "the popup health card still gets the count");
+  const empty = await sendMessage(onMessage, chrome, { type: "PV_BREACH", password: "" });
+  assert.equal(empty.ok, false);
+  assert.equal(chrome.__state.postedNative.length, 1, "an empty password never spawns the host");
+});

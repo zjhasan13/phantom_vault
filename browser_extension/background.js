@@ -510,7 +510,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     // prefix leaves the machine). Errors are returned as failures, never as
     // "clean".
     if (msg.type === "PV_BREACH") {
-      return await hostRequest({ cmd: "breach_check", password: msg.password || "" }, 25000);
+      const password = typeof msg.password === "string" ? msg.password : "";
+      if (!password) return { ok: false, error: "password is required" };
+      const res = await hostRequest({ cmd: "breach_check", password }, 25000);
+      // G-EXT: `reuse` is vault-derived — it says how many stored items share
+      // this password, so returning it to a page makes the host a
+      // vault-membership oracle for any candidate the page can guess. The
+      // in-page save prompt only needs the public HIBP verdict, so a
+      // content-script sender never sees the vault-derived half; the popup
+      // (no sender tab) still gets it for its own health card.
+      if (sender && sender.tab && res && typeof res === "object") {
+        const { reuse: _vaultDerived, ...publicPart } = res;
+        return publicPart;
+      }
+      return res;
     }
     if (msg.type === "PV_FETCH") {
       const denied = popupReadOnly("item fetch");
