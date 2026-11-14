@@ -21,6 +21,12 @@ project does not yet follow SemVer strictly (pre-1.0).
 - Firefox native messaging works: the host accepts the add-on id Firefox passes
   as `argv[1]`, allows the registered gecko ids through the origin gate, and the
   registration writes `allowed_extensions`. Not yet verified in a real Firefox.
+- `PV_BREACH` no longer returns the vault-derived `reuse` count to a
+  content-script sender. That count answers "how many stored items use this
+  password", which turned the host into a vault-membership oracle for any
+  candidate a page could guess; the in-page save prompt keeps only the public
+  HIBP verdict. The popup (no sender tab) still gets it. An empty password is
+  rejected before the native host is spawned.
 
 ### Desktop
 
@@ -31,6 +37,21 @@ project does not yet follow SemVer strictly (pre-1.0).
   so the button can no longer outlive its data (G7).
 - A failed access-log append is counted and reported on stderr instead of being
   dropped silently (G8).
+- The audit viewer now names the lost appends: its header says how many writes
+  failed in this session, so a chain that reads "VALID" over a gap is no longer
+  presented as complete (G8).
+- Custom-field checkbox rows toggle in the editor instead of staying write-once
+  (G2).
+- The item detail pane has a logo button that opens the favicon picker, so a
+  custom icon can be set without editing the vault file (G1).
+- **Sync fork (G6):** a remote that fails the freshness check is no longer a
+  dead end. The union merge is still previewed, prefixed with an explicit fork
+  warning, and Apply merges **locally only** — the push is skipped so the other
+  device's chain is not overwritten. The audit log records
+  `merge forced (local only, push skipped)`.
+- A staged merge (a full secret copy) is now dropped on lock, as its own comment
+  already promised.
+
 
 ## 0.4.2 — 2026-11-12
 

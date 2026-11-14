@@ -160,6 +160,20 @@ These are documented rather than secret; please do not report them as new findin
   the LAN endpoint is unauthenticated by design (128-bit random id, ciphertext
   only, key never in the request). File transport enforces expiry on the opener's
   clock and cannot enforce one-view.
+- The extension requests broad permissions because autofill needs them:
+  `<all_urls>` (content script + host permission) so the filler can run on
+  whatever page holds a login form, plus `tabs` (fill target), `scripting`
+  (frame routing), `clipboardWrite` (copy without a page gesture) and
+  `nativeMessaging` (host bridge). The cost is blast radius: a compromised
+  service worker could read page content on every site, and `hook.js` stays
+  web-accessible on all `http(s)` pages for the MAIN-world tripwire, which is
+  fingerprintable. No narrower set keeps autofill working, so this is accepted
+  and documented rather than reduced.
+- The native host does **not** yet require a pairing secret. A same-user process
+  that knows the registered extension origin/id can launch the bridge and speak
+  the native-messaging protocol. Today's mitigations are the local-only pipe,
+  the per-request UI gates (reprompt, PIN) and the audit log; a pairing secret
+  is designed but not shipped.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

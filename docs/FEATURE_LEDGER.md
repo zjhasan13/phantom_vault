@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-12 · `a51fb35`
+> Last updated: 2026-11-14 · `610df02`
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -16,7 +16,8 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Onboarding | ✅ | 3 steps; recovery-shards checkbox kept inside the card (`a1ac396`) |
 | Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`), two-row grid below 1100 logical px (`a4c2bfc`) |
 | Item detail (all kinds) | ✅ | login, card, note, identity, license, SSH; history, attachments, TOTP |
-| Add / edit editor | ✅ | per-kind fields, folder, tags, favourite |
+| Add / edit editor | ✅ | per-kind fields, folder, tags, favourite; custom-field checkbox rows toggle in place (G2) |
+| Favicons | ✅ | per-domain cached icons, same-origin harvest; per-item logo override from the detail pane (G1); toggle/refresh/clear in Settings |
 | Password generator | ✅ | OS CSPRNG, Complex + Diceware, copy |
 | 2FA hub | ✅ | filter chips, sort, per-account params, HOTP next, Add-2FA sheet |
 | 2FA import sheet | ✅ | screen/webcam/file QR + manual paste; content-sized (`171eb92`) |
@@ -26,7 +27,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Recovery kit + shards | ✅ | print sheet, shard drill |
 | Audit & duress | ✅ | duress password, honeytokens, factory reset (3-pass) |
 | Secure Send | ✅ | expiring one-view notes, TTL, read + burn (`docs/A20_SEND.md`) |
-| Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback |
+| Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback; a forked remote still previews and merges locally without pushing (G6) |
 | Extension bridge | ✅ | native-messaging host install, allowed origins; allow-list fails closed (`361b309`) |
 | Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
 | Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs; auto-lock + clipboard TTL persist (`d7c3e1f`) |

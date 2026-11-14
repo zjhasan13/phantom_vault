@@ -9,14 +9,47 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-13 |
-| Branch / HEAD | `main` @ `eecf3de` (Firefox bridge + silent-failure fixes) + docs on top |
+| Date | 2026-11-14 |
+| Branch / HEAD | `main` @ `610df02` (G1/G2/G6/G8 + extension scope) + docs on top |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-14a) — `610df02`
+
+- **G1**: the item detail pane grew a logo button (`ui/appwindow.slint:3234`)
+  wired to `override_favicon`; the Rust handler already existed and had no
+  emitter, so a custom icon could only be set by editing the vault file.
+- **G2**: a checkbox custom field toggles in place
+  (`callback toggle_custom_field(int)`, `main.rs:11552`). Anything that is not
+  exactly `"true"` is treated as unchecked (`flipped_checkbox_value`).
+- **G6**: a remote that fails `check_incoming` is no longer a dead end. The union
+  merge is still staged, prefixed with `merge_fork_note()`, and `Apply` merges
+  **locally only** — `trigger_sync_push` is skipped and the audit log records
+  `merge forced (local only, push skipped)`. `PendingMerge.forced` drives both.
+  The staged merge (a full secret copy) is now dropped on lock; the struct
+  comment had promised that since it was written.
+- **G8 (UI half)**: `access_log_header()` / `access_log_report()` — the audit
+  viewer says how many appends were lost in this session instead of showing a
+  clean `VALID` chain over a gap.
+- **Extension**: `PV_BREACH` no longer returns the vault-derived `reuse` count to
+  a content-script sender; an empty password is rejected before the host spawns.
+- Tests added: `merge_fork_tests` (2), `access_log_header_tests` (2),
+  `checkbox_field_tests` (2), two JS router tests.
+- **Gate trap found**: `Instant::now() - Duration` panics on Windows when the
+  monotonic origin is younger than the offset (`std\time.rs:446`). The two
+  `activity_touch_tests` now build their idle clock with `checked_sub`.
+- Gates on `610df02`: `cargo test -j 1` **618 passed / 1 failed / 4 ignored** —
+  the single failure is the documented `api::local` `os error 10053` flake and
+  passes alone (`1 passed; 0 failed`); clippy `--all-targets -j 1 --
+  -D warnings` **EXIT=0**; `cargo build -j 1` **EXIT=0**; `npm test` **174/174**.
+- Not verified on screen yet: G1 and G2 need the dev build + a throwaway vault.
+- `docs/A27_HOST_PAIRING.md` is a design only (parent-process provenance +
+  HMAC pairing secret); `SECURITY.md` now documents the permission breadth and
+  the missing pairing secret as accepted limitations.
 
 ## Audit 2026-11-10 (docs only, no code change)
 
