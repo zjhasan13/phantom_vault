@@ -209,6 +209,102 @@ function Dump {
   }
 }
 
+# Onboarding helpers: the first launch shows a Create-master-password card with
+# two LineEdits. List them, then target one by coordinate (UIA ValuePattern) so
+# the flow does not depend on guessing which Edit comes first in the tree.
+function EditDump {
+  $w = Get-UiaWindow
+  if (-not $w) { "NO_WINDOW"; return }
+  $ec = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Edit)
+  $i = 0
+  foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {
+    $r = $e.Current.BoundingRectangle
+    "EDIT[$i] {0},{1},{2},{3} name='{4}'" -f [int]$r.X, [int]$r.Y, [int]$r.Width, [int]$r.Height, $e.Current.Name
+    $i++
+  }
+  "EDIT_COUNT=$i"
+}
+
+function SetEditAt([string]$csv) {
+  $p = $csv -split ','
+  if ($p.Count -lt 3) { "SET_EDIT_BADARG"; return $false }
+  $x = [int]$p[0]; $y = [int]$p[1]; $val = $p[2]
+  $w = Get-UiaWindow
+  if (-not $w) { "NO_WINDOW"; return $false }
+  $ec = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Edit)
+  foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {
+    $r = $e.Current.BoundingRectangle
+    if ($x -ge $r.X -and $x -le ($r.X + $r.Width) -and $y -ge $r.Y -and $y -le ($r.Y + $r.Height)) {
+      $vp = $e.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+      $vp.SetValue($val)
+      "SET_EDIT {0},{1}" -f [int]$r.X, [int]$r.Y
+      return $true
+    }
+  }
+  "SET_EDIT_MISS $x,$y"
+  return $false
+}
+
+# First-run bootstrap: launch, create the master password, screenshot the result.
+# One process so no state is lost between UIA calls (a separate `place` +
+# `setedit` pair already died once when the window vanished in between).
+function Onboard([string]$pw) {
+  $env:PHANTOM_VAULT_DIR = $script:VaultDir
+  Get-Process phantom_vault -ErrorAction SilentlyContinue | Stop-Process -Force
+  Start-Sleep -Seconds 2
+  Start-Process -FilePath $script:ExePath | Out-Null
+  Start-Sleep -Seconds 10
+  NormalizeWindow | Out-Null
+  FocusApp | Out-Null
+  Start-Sleep -Milliseconds 800
+  # Step 1 -> 2 -> 3. Step 2's consent row has no CheckBox text (the label is a
+  # separate Text with its own TouchArea), so click the label itself.
+  foreach ($step in 1, 2) {
+    $next = FindTextRect 'Next'
+    if (-not $next) { "ONBOARD_NO_NEXT step=$step"; Save-Screenshot "pv-onboard-fail.png"; return $false }
+    Click-Rect $next
+    Start-Sleep -Seconds 1
+    if ($step -eq 1) {
+      $consent = FindTextRect 'I understand'
+      if (-not $consent) { "ONBOARD_NO_CONSENT"; Save-Screenshot "pv-onboard-fail.png"; return $false }
+      Click-Rect $consent
+      Start-Sleep -Milliseconds 400
+    }
+  }
+  Start-Sleep -Milliseconds 600
+  $w = Get-UiaWindow
+  if (-not $w) { "ONBOARD_NO_WINDOW"; return $false }
+  $ec = New-Object System.Windows.Automation.PropertyCondition(
+    [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+    [System.Windows.Automation.ControlType]::Edit)
+  $fields = @()
+  foreach ($e in $w.FindAll([System.Windows.Automation.TreeScope]::Descendants, $ec)) {
+    $r = $e.Current.BoundingRectangle
+    # The two onboarding LineEdits are 424x42; the unlock field is 492x40.
+    if ($r.Width -gt 400 -and $r.Width -lt 480 -and $r.Height -ge 41 -and $r.Height -le 43) {
+      $fields += ,@($e, $r)
+    }
+  }
+  "ONBOARD_FIELDS=$($fields.Count)"
+  if ($fields.Count -lt 2) { Save-Screenshot "pv-onboard-fail.png"; return $false }
+  foreach ($f in $fields) {
+    $vp = $f[0].GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern)
+    $vp.SetValue($pw)
+    Start-Sleep -Milliseconds 250
+  }
+  $r = FindTextRect 'Create Vault'
+  if (-not $r) { "ONBOARD_NO_BUTTON"; Save-Screenshot "pv-onboard-fail.png"; return $false }
+  Click-Rect $r
+  Start-Sleep -Seconds 12
+  Save-Screenshot "pv-onboard-done.png"
+  "ONBOARD_DONE ALIVE=$(Alive) SEALED=$([bool](FindTextRect 'VAULT SEALED'))"
+  return $true
+}
+
 function Save-Screenshot([string]$name) {
   FocusApp | Out-Null
   Start-Sleep -Milliseconds 350
@@ -465,6 +561,9 @@ function BnScreens([string]$tag) {
 
 switch ($Action) {
   "dump"      { Dump }
+  "edump"     { EditDump }
+  "onboard"   { Onboard $(if ($Arg) { $Arg } else { $script:MasterPw }) }
+  "setedit"   { SetEditAt $Arg }
   "click"     { Click-Name $Arg }
   "clickcp"   { Click-Cps $Arg }
   "tapcp"     { TapCps $Arg }
@@ -473,6 +572,7 @@ switch ($Action) {
   "focus"     { FocusApp }
   "wheel"     { $p = $Arg -split ','; Wheel ([int]$p[0]) ([int]$p[1]) ([int]$p[2]) }
   "place"     { $p = $Arg -split ','; NormalizeWindow | Out-Null; "PLACED" }
+  "size"      { $p = $Arg -split ','; SetWindowSize ([int]$p[0]) ([int]$p[1]) | Out-Null; "SIZED" }
   "clickshot" { $p = $Arg -split ','; FocusApp | Out-Null; Click-Rect (New-Object System.Windows.Rect([int]$p[0], [int]$p[1], 2, 2)); Start-Sleep -Seconds 2; Save-Screenshot $p[2] }
   "hovershot" { $p = $Arg -split ','; FocusApp | Out-Null; [PW]::SetCursorPos([int]$p[0], [int]$p[1]) | Out-Null; Start-Sleep -Milliseconds 500; Save-Screenshot $p[2] }
   "navshot"   {
