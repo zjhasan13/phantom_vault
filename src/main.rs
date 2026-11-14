@@ -1173,6 +1173,61 @@ fn touch_activity(activity: &Arc<Mutex<std::time::Instant>>) {
     *activity.lock().unwrap_or_else(|p| p.into_inner()) = std::time::Instant::now();
 }
 
+/// G2: checkbox custom fields store "true"/"false" as text. Anything that is
+/// not exactly "true" is treated as unchecked, so a hand-edited value cannot
+/// turn into a surprise "checked" on the next click.
+fn flipped_checkbox_value(value: &str) -> &'static str {
+    if value == "true" {
+        "false"
+    } else {
+        "true"
+    }
+}
+
+/// G8: header line of the audit viewer. A session that lost appends must not
+/// present the chain as complete — `write_failures()` is process-local, so the
+/// wording says "this session", never "the file".
+fn access_log_header(
+    n: usize,
+    valid: bool,
+    first_bad: Option<usize>,
+    write_failures: u64,
+) -> String {
+    let mut out = format!(
+        "{} entries · chain {}.",
+        n,
+        if valid { "VALID ✅" } else { "BROKEN 🚨" }
+    );
+    if let Some(i) = first_bad {
+        out.push_str(&format!(" (first-bad line {i})"));
+    }
+    if write_failures > 0 {
+        out.push_str(&format!(
+            "\n⚠️ {} audit-log write{} failed this session — entries are missing.",
+            write_failures,
+            if write_failures == 1 { "" } else { "s" }
+        ));
+    }
+    out
+}
+
+/// G8: full viewer text (header + newest rows) for the current bridge filter.
+fn access_log_report(hide_bridge: bool) -> String {
+    let (n, valid) = security::access_log::verify();
+    let first_bad = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2;
+    let rows = security::access_log::recent_filtered(20, hide_bridge);
+    let body = if rows.is_empty() {
+        "No events recorded yet.".to_string()
+    } else {
+        rows.join("\n")
+    };
+    format!(
+        "{}\n\n{}",
+        access_log_header(n, valid, first_bad, security::access_log::write_failures()),
+        body
+    )
+}
+
 /// Audit finding: the Rust vault was wiped but Slint-side models/props
 /// (detail secrets, history, form drafts, health badges) survived in UI-layer
 /// RAM — exactly what Mimikatz-style dumping hunts. Everything secret-shaped
@@ -1238,6 +1293,9 @@ fn lock_vault_now(
         // H8: poison-recovering (a poisoned mutex under panic=abort would
         // otherwise kill the lock-scrub mid-wipe, leaving secrets in UI).
         *pending_import_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
+        // G6: a staged CRDT merge is a full secret copy as well. The struct
+        // comment always promised "dropped on lock" — now it is.
+        *pending_merge_store().lock().unwrap_or_else(|p| p.into_inner()) = None;
         // G7: the undo store was wiped above, so the button that offers it must
         // go too - a leftover enabled "Undo last import" over an empty store
         // does nothing and reads as data loss.
@@ -3545,6 +3603,31 @@ struct PendingMerge {
     merged: Vault,
     took_remote: usize,
     conflicts: usize,
+    /// G6: staged despite a failed freshness check (fork or stale remote).
+    /// Apply must stay local: pushing a merged container on top of a diverged
+    /// remote chain would rewrite the other device's history.
+    forced: bool,
+}
+
+/// G6: a failed `check_incoming` used to be a dead end — the user could see a
+/// fork and had no way forward. The union merge never reverts a newer row, so
+/// the preview continues with this warning, and Apply stays local.
+fn merge_fork_note(reason: &str) -> String {
+    format!(
+        "⚠️ Fork: {reason}\nThis preview still unions both sides. Apply merges LOCALLY only — nothing is pushed, so the other device keeps its history. To reunite the chains, let one device re-link the remote (Settings → Sync & Devices) and sync the others from it."
+    )
+}
+
+/// G6: Apply result line. A forced merge must never read like a normal one,
+/// because the push (and therefore the other device) did not happen.
+fn merge_apply_summary(forced: bool, took_remote: usize, conflicts: usize) -> String {
+    if forced {
+        format!(
+            "✅ Merged locally: {took_remote} from remote, {conflicts} conflicts kept local. Not pushed — the remote fork is still open."
+        )
+    } else {
+        format!("✅ Merged: {took_remote} from remote, {conflicts} conflicts kept local.")
+    }
 }
 
 fn pending_merge_store() -> &'static Mutex<Option<PendingMerge>> {
@@ -9076,17 +9159,17 @@ fn launch_url(ui: &MainWindow, url: &str) {
                     }
                 };
             // A16: refuse a stale or forked remote before merging anything.
+            // G6: "refuse" now means "do not push", not "do not merge". The
+            // user still gets the union preview, clearly marked as a fork.
             let (local_rev, local_hash) =
                 storage::container_head(std::path::Path::new(VAULT_FILE)).unwrap_or((0, String::new()));
-            if let Err(e) = storage::check_incoming(
+            let fork = storage::check_incoming(
                 &remote_meta,
                 &storage::sha256_hex(&blob),
                 local_rev,
                 &local_hash,
-            ) {
-                report(format!("⚠️ {e}"));
-                return;
-            }
+            )
+            .err();
             let local = lock_vault(&vault_clone).clone();
             let rep = match sync::crdt_merge::merge_vaults(&local, &remote_vault) {
                 Ok(r) => r,
@@ -9101,18 +9184,27 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 rep.took_local_union,
                 rep.conflicts.len()
             );
+            if let Some(reason) = fork.as_deref() {
+                detail = format!("{}\n{detail}", merge_fork_note(reason));
+            }
             for c in rep.conflicts.iter().take(5) {
                 detail.push_str(&format!("\n• {} {} ({})", c.kind, c.id, c.reason));
             }
             if rep.conflicts.len() > 5 {
                 detail.push_str(&format!("\n… +{} more", rep.conflicts.len() - 5));
             }
+            let forced = fork.is_some();
             *pending_merge_store().lock().unwrap() = Some(PendingMerge {
                 merged: rep.merged,
                 took_remote: rep.took_remote,
                 conflicts: rep.conflicts.len(),
+                forced,
             });
-            security::access_log::log_event("sync", "merge preview");
+            if forced {
+                security::access_log::log_event("sync", "merge preview (fork — local only)");
+            } else {
+                security::access_log::log_event("sync", "merge preview");
+            }
             report(detail);
         });
     });
@@ -9154,9 +9246,10 @@ fn launch_url(ui: &MainWindow, url: &str) {
             *vault = staged.merged;
             vault.ensure_folders();
             match save_vault_secret(&vault, &master_pw, VAULT_FILE) {
-                Ok(()) => Ok(format!(
-                    "✅ Merged: {} from remote, {} conflicts kept local.",
-                    staged.took_remote, staged.conflicts
+                Ok(()) => Ok(merge_apply_summary(
+                    staged.forced,
+                    staged.took_remote,
+                    staged.conflicts,
                 )),
                 Err(e) => {
                     *vault = snapshot;
@@ -9180,9 +9273,19 @@ fn launch_url(ui: &MainWindow, url: &str) {
                         }
                     }
                     ui.set_merge_status(msg.into());
-                    ui.set_notification_text(tr("🔀 Remote merged.", "🔀 রিমোট মার্জ হয়েছে।").into());
-                    security::access_log::log_event("sync", "merge applied");
-                    trigger_sync_push(ui.as_weak());
+                    ui.set_notification_text(if staged.forced {
+                        tr("🔀 Merged locally — fork still open.", "🔀 লোকালি মার্জ — ফর্ক এখনো খোলা।").into()
+                    } else {
+                        tr("🔀 Remote merged.", "🔀 রিমোট মার্জ হয়েছে।").into()
+                    });
+                    if staged.forced {
+                        // G6: never push a union built on a diverged chain —
+                        // that would overwrite the other device's history.
+                        security::access_log::log_event("sync", "merge forced (local only, push skipped)");
+                    } else {
+                        security::access_log::log_event("sync", "merge applied");
+                        trigger_sync_push(ui.as_weak());
+                    }
                 }
                 Err(e) => ui.set_merge_status(format!("{}{e}", crate::i18n::tr("⚠️ Merge blocked: ", "⚠️ মার্জ আটকানো হলো: ")).into()),
             }
@@ -11439,6 +11542,29 @@ fn launch_url(ui: &MainWindow, url: &str) {
             pending.remove(i);
             ui.set_custom_fields(custom_to_ui(&pending));
         }
+    });
+
+    // G2: a checkbox field was write-once. The row rendered the glyph with no
+    // hit area, so a field added as "false" stayed "false" forever — the only
+    // way to change it was to delete and re-add it.
+    let cftog_weak = main_window.as_weak();
+    let cftog_pending = Arc::clone(&pending_cf);
+    main_window.on_toggle_custom_field(move |idx| {
+        let Some(ui) = cftog_weak.upgrade() else {
+            return;
+        };
+        let mut pending = cftog_pending.lock().unwrap();
+        let i = idx as usize;
+        let Some(field) = pending.get_mut(i) else {
+            return;
+        };
+        // Only a checkbox row emits this callback; a text/hidden/linked row that
+        // somehow reaches it must not have its value overwritten.
+        if field.field_type != models::CustomFieldType::Checkbox {
+            return;
+        }
+        field.value = flipped_checkbox_value(&field.value).to_string();
+        ui.set_custom_fields(custom_to_ui(&pending));
     });
 
     // Secondary website URLs: rows live in the Slint model directly
@@ -15906,26 +16032,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     let alog_weak = main_window.as_weak();
     main_window.on_view_access_log(move || {
         if let Some(ui) = alog_weak.upgrade() {
-            let (n, valid) = security::access_log::verify();
-            let fail_note = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2
-                .map(|i| format!(" (first-bad line {i})"))
-                .unwrap_or_default();
-            let rows = security::access_log::recent_filtered(20, ui.get_access_log_hide_bridge());
-            let body = if rows.is_empty() {
-                "No events recorded yet.".to_string()
-            } else {
-                rows.join("\n")
-            };
-            ui.set_access_log_text(
-                format!(
-                    "{} entries · chain {}{}.\n\n{}",
-                    n,
-                    if valid { "VALID ✅" } else { "BROKEN 🚨" },
-                    fail_note,
-                    body
-                )
-                .into(),
-            );
+            ui.set_access_log_text(access_log_report(ui.get_access_log_hide_bridge()).into());
             ui.set_show_access_log(true);
         }
     });
@@ -15934,26 +16041,7 @@ fn launch_url(ui: &MainWindow, url: &str) {
     main_window.on_toggle_log_bridge(move || {
         if let Some(ui) = bridge_weak.upgrade() {
             ui.set_access_log_hide_bridge(!ui.get_access_log_hide_bridge());
-            let rows = security::access_log::recent_filtered(20, ui.get_access_log_hide_bridge());
-            let (n, valid) = security::access_log::verify();
-            let fail_note = security::access_log::verify_at_detailed(std::path::Path::new("access.log")).2
-                .map(|i| format!(" (first-bad line {i})"))
-                .unwrap_or_default();
-            let body = if rows.is_empty() {
-                "No events recorded yet.".to_string()
-            } else {
-                rows.join("\n")
-            };
-            ui.set_access_log_text(
-                format!(
-                    "{} entries · chain {}{}.\n\n{}",
-                    n,
-                    if valid { "VALID ✅" } else { "BROKEN 🚨" },
-                    fail_note,
-                    body
-                )
-                .into(),
-            );
+            ui.set_access_log_text(access_log_report(ui.get_access_log_hide_bridge()).into());
         }
     });
     // Phase 26: anti-photography toggles (persist + mirror to Slint).
@@ -18137,14 +18225,95 @@ mod grid_tests {
 
 
 #[cfg(test)]
+mod access_log_header_tests {
+    use super::access_log_header;
+
+    #[test]
+    fn a_clean_session_reports_only_the_chain() {
+        let h = access_log_header(12, true, None, 0);
+        assert!(h.contains("12 entries"));
+        assert!(h.contains("VALID"));
+        assert!(!h.contains('⚠'), "no warning when nothing was lost");
+    }
+
+    #[test]
+    fn a_lost_append_is_named_and_pluralised() {
+        // G8: the counter alone is invisible to the user; the header must say it.
+        let one = access_log_header(3, true, Some(7), 1);
+        assert!(one.contains("(first-bad line 7)"));
+        assert!(one.contains("1 audit-log write failed this session"));
+        assert!(!one.contains("writes"));
+        let many = access_log_header(3, false, None, 42);
+        assert!(many.contains("BROKEN"));
+        assert!(many.contains("42 audit-log writes failed"));
+    }
+}
+
+#[cfg(test)]
+mod merge_fork_tests {
+    use super::{merge_apply_summary, merge_fork_note};
+
+    #[test]
+    fn a_fork_preview_says_local_only() {
+        // G6: the old flow dropped the user at "remote is forked" with no way
+        // forward. The note must state the merge is local AND why.
+        let n = merge_fork_note("remote has the same revision but different content");
+        assert!(n.contains("Fork"));
+        assert!(n.contains("different content"), "reason must survive");
+        assert!(n.contains("LOCALLY only"));
+        assert!(n.contains("nothing is pushed"));
+    }
+
+    #[test]
+    fn a_forced_apply_never_reads_like_a_normal_merge() {
+        let forced = merge_apply_summary(true, 3, 1);
+        assert!(forced.contains("locally"));
+        assert!(forced.contains("Not pushed"));
+        let normal = merge_apply_summary(false, 3, 1);
+        assert!(normal.contains("✅ Merged: 3"));
+        assert!(!normal.contains("Not pushed"));
+    }
+}
+
+#[cfg(test)]
+mod checkbox_field_tests {
+    use super::flipped_checkbox_value;
+
+    #[test]
+    fn a_checkbox_flips_both_ways() {
+        // G2: the row used to render the glyph with no hit area, so this flip
+        // never happened and the field stayed write-once.
+        assert_eq!(flipped_checkbox_value("false"), "true");
+        assert_eq!(flipped_checkbox_value("true"), "false");
+    }
+
+    #[test]
+    fn anything_but_true_reads_as_unchecked() {
+        // A legacy/hand-edited value must not be treated as checked.
+        assert_eq!(flipped_checkbox_value(""), "true");
+        assert_eq!(flipped_checkbox_value("TRUE"), "true");
+        assert_eq!(flipped_checkbox_value("1"), "true");
+    }
+}
+
+#[cfg(test)]
 mod activity_touch_tests {
     use super::touch_activity;
     use std::sync::{Arc, Mutex};
     use std::time::{Duration, Instant};
 
+    /// A clock value far enough in the past to be "idle". `Instant - Duration`
+    /// panics on Windows when the monotonic origin is younger than the offset
+    /// (QPC counts from boot), so subtract with `checked_sub` and fall back.
+    fn idle_clock() -> Instant {
+        Instant::now()
+            .checked_sub(Duration::from_secs(3600))
+            .unwrap_or_else(Instant::now)
+    }
+
     #[test]
     fn typing_resets_the_idle_clock() {
-        let activity = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(3600)));
+        let activity = Arc::new(Mutex::new(idle_clock()));
         touch_activity(&activity);
         let idle = activity.lock().unwrap().elapsed();
         assert!(
@@ -18155,7 +18324,7 @@ mod activity_touch_tests {
 
     #[test]
     fn a_poisoned_clock_is_recovered_not_ignored() {
-        let activity = Arc::new(Mutex::new(Instant::now() - Duration::from_secs(3600)));
+        let activity = Arc::new(Mutex::new(idle_clock()));
         let poisoner = Arc::clone(&activity);
         let _ = std::thread::spawn(move || {
             let _held = poisoner.lock().unwrap();
