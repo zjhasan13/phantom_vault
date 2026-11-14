@@ -18,6 +18,33 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-14c) — content-sized modals (U1) + A27 L1 probe
+
+- **U1 (all of it).** Nine more dialogs had no `height` on their inner
+  `Rectangle`, so they took the parent's and rendered full-window tall. Fixed by
+  binding the content layout's `preferred-height`: duplicate-confirm, What's New,
+  attachment preview, factory reset, new-PC, webcam, access log, shred source,
+  recovery shards (`ui/appwindow.slint`).
+  - `ScrollView` reports `preferred-height: 100%`, so the two dialogs that hold
+    one pin it: access log `max-height: 340px`, recovery shards `max-height:
+    360px` (its five long shards are now scrollable instead of overflowing).
+  - Recovery shards also caps the dialog itself:
+    `Math.min(shardsdlg_lay.preferred-height, parent.height - 24px)`.
+- **A27 L1, step 1 (warn-only).** New `src/windows_native/host_provenance.rs`:
+  Toolhelp snapshot → parent PID → `QueryFullProcessImageNameW` → file-name
+  allow-list (`chrome/msedge/brave/firefox/chromium/vivaldi/opera`). `serve_cli`
+  logs one line per start (`parent ok: chrome.exe` / `WARN parent not a known
+  browser: <path>`). No behaviour change; step 2 (refuse) is the next release.
+  - **Doc correction:** `docs/A27_HOST_PAIRING.md` claimed the updater already
+    links `WinVerifyTrust`. It does not — `src/sync/updater.rs` uses a SHA-256
+    sidecar plus a detached Ed25519 `.sig`. The Authenticode check is therefore
+    still open, and the doc now says so.
+  - Honest limit: without the signature check a renamed `chrome.exe` passes, so
+    this layer is a speed bump until step 2 + Authenticode land.
+- Verified on screen: `+ Add Custom Field` (content-sized), Vault Health Report,
+  Recovery Sheet (scrollable shards, fits the 730px window).
+- Gates: see the gate line below.
+
 ## Last code batch (2026-11-14b) — G2 follow-up + content-sized dialog
 
 - **G2 was shipped visually broken in `610df02`.** The toggle existed in the

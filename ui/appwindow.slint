@@ -2080,12 +2080,14 @@ export component MainWindow inherits Window {
                 x: (parent.width - self.width) / 2;
                 y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
                 width: 520px;
+                // Content-sized: a Rectangle without a height takes the parent's.
+                height: dupdlg_lay.preferred-height;
                 background: PhantomTheme.surface;
                 border-radius: 16px;
                 border-width: 1px;
                 border-color: PhantomTheme.warning;
                 clip: true;
-                VerticalLayout { padding: 20px; spacing: 12px;
+                dupdlg_lay := VerticalLayout { padding: 20px; spacing: 12px;
                     Text { text: root.dup_title; color: PhantomTheme.text; font-size: 15px; font-weight: 800; horizontal-alignment: center; }
                     Text { text: root.dup_body; color: PhantomTheme.text-muted; font-size: 12px; wrap: word-wrap; }
                     AuraButton { label: root.ui_lang == "bn" ? "🆕 দুটোই রাখুন — দ্বিতীয় কার্ড যোগ হবে" : "🆕 Keep both — add a second card"; primary: true; height: 40px; clicked => { root.dup_confirm_keep(); } }
@@ -3541,12 +3543,14 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 480px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: whatsnewdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1px;
             border-color: PhantomTheme.primary;
             clip: true;
-            VerticalLayout { padding: 20px; spacing: 10px;
+            whatsnewdlg_lay := VerticalLayout { padding: 20px; spacing: 10px;
                 Text { text: (root.ui_lang == "bn" ? "🎉 নতুন কী — " : "🎉 What's New in ") + root.update_tag; color: PhantomTheme.success; font-size: 15px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                 Rectangle { background: PhantomTheme.surface; border-radius: 8px; height: 300px; clip: true;
                     ScrollView { VerticalLayout { padding: 12px; Text { text: root.update_notes; color: PhantomTheme.text; font-size: 12px; wrap: word-wrap; } } }
@@ -3572,12 +3576,14 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 480px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: attdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1px;
             border-color: PhantomTheme.primary;
             clip: true;
-            VerticalLayout { padding: 16px; spacing: 10px;
+            attdlg_lay := VerticalLayout { padding: 16px; spacing: 10px;
                 Text { text: "📎 " + root.att_preview_name; color: PhantomTheme.text; font-size: 14px; font-weight: 800; horizontal-alignment: center; overflow: elide; }
                 Text { text: root.att_preview_info; color: PhantomTheme.text-dim; font-size: 11px; horizontal-alignment: center; }
                 if root.att_preview_kind == "image" : HorizontalLayout { alignment: center;
@@ -3607,12 +3613,14 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 480px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: frdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1px;
             border-color: PhantomTheme.error;
             clip: true;
-            VerticalLayout { padding: 20px; spacing: 10px;
+            frdlg_lay := VerticalLayout { padding: 20px; spacing: 10px;
                 Text { text: root.ui_lang == "bn" ? "🔥 ফ্যাক্টরি রিসেট — সবকিছু ধ্বংস করবেন?" : "🔥 Factory Reset — shred EVERYTHING?"; color: PhantomTheme.error; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                 Text { text: root.ui_lang == "bn" ? "ভল্ট ফাইল, সব ব্যাকআপ, ডিকয় কন্টেইনার ও মেশিন সিল DoD পদ্ধতিতে ধ্বংস হবে। এরপর ফিরিয়ে আনা অসম্ভব।" : "Vault file, all backup generations, decoy container, and machine seals are DoD-shredded. Recovery is IMPOSSIBLE afterwards."; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.fr_preview != "" : Text { text: root.fr_preview; color: PhantomTheme.warning; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
@@ -3640,12 +3648,14 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 460px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: newdevdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1px;
             border-color: PhantomTheme.warning;
             clip: true;
-            VerticalLayout { padding: 20px; spacing: 10px;
+            newdevdlg_lay := VerticalLayout { padding: 20px; spacing: 10px;
                 Text { text: root.ui_lang == "bn" ? "🖥️ নতুন PC শনাক্ত হয়েছে" : "🖥️ New PC detected"; color: PhantomTheme.warning; font-size: 16px; font-weight: 900; horizontal-alignment: center; wrap: word-wrap; }
                 Text { text: root.ui_lang == "bn" ? (root.new_device_reason == "hello-token" ? "এই PC-তে Windows Hello ক্রেডেনশিয়াল পড়া যাচ্ছে না। আপনি মাস্টার পাসওয়ার্ড দিয়ে খুলেছেন। এই মেশিনের জন্য Hello আবার চালু করবেন?" : "এই ভল্ট অন্য মেশিনে bound ছিল (পোর্টেবল USB-তে স্বাভাবিক)। আপনি মাস্টার পাসওয়ার্ড দিয়ে খুলেছেন। এই PC-র জন্য Windows Hello আবার চালু করবেন?") : (root.new_device_reason == "hello-token" ? "Windows Hello credential can't be read on this PC. You unlocked with your Master Password. Re-enroll Hello for this machine?" : "This vault was bound to a different machine (normal for portable USB). You unlocked with your Master Password. Re-enroll Windows Hello for this PC?"); color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
                 if root.new_device_error != "" : Text { text: root.new_device_error; color: PhantomTheme.error; font-size: 12px; font-weight: 700; horizontal-alignment: center; wrap: word-wrap; }
@@ -3666,13 +3676,15 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 440px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: webcamdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.secondary;
             drop-shadow-blur: 40px;
             drop-shadow-color: #4cd7f644;
-            VerticalLayout {
+            webcamdlg_lay := VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
                 Text { text: "📷  Scanning webcam for QR…"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
@@ -3785,19 +3797,24 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 520px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: accessdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
             drop-shadow-color: #4edea344;
-            VerticalLayout {
+            accessdlg_lay := VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
                 Text { text: root.ui_lang == "bn" ? "📜  অ্যাক্সেস লগ (tamper-evident)" : "📜  Access Log (tamper-evident)"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }
                 ScrollView {
                     vertical-stretch: 1;
                     min-height: 220px;
+                    // A ScrollView reports preferred-height 100%; pin it so the
+                    // content-sized dialog does not take the window's height.
+                    max-height: 340px;
                     Text { text: root.access_log_text; color: PhantomTheme.text-muted; font-size: 12px; wrap: word-wrap; }
                 }
                 HorizontalLayout {
@@ -3820,13 +3837,15 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 480px;
+            // Content-sized: a Rectangle without a height takes the parent's.
+            height: shreddlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.error;
             drop-shadow-blur: 40px;
             drop-shadow-color: #ffb4ab44;
-            VerticalLayout {
+            shreddlg_lay := VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
                 Text { text: root.ui_lang == "bn" ? "🔥  প্লেইনটেক্সট সোর্স ধ্বংস করবেন?" : "🔥  Shred plaintext source?"; font-size: 16px; font-weight: 800; color: PhantomTheme.error; horizontal-alignment: center; }
@@ -3855,22 +3874,32 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 520px;
+            // Content-sized, but never taller than the window.
+            height: Math.min(shardsdlg_lay.preferred-height, parent.height - 24px);
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.warning;
             drop-shadow-blur: 40px;
             drop-shadow-color: #f59e0b44;
-            VerticalLayout {
+            shardsdlg_lay := VerticalLayout {
                 padding: 20px;
                 spacing: 8px;
                 Text { text: "📄  Emergency Recovery Sheet (3-of-5)"; font-size: 16px; font-weight: 800; color: PhantomTheme.warning; horizontal-alignment: center; wrap: word-wrap; }
                 Text { text: "Save or print these 5 shards on paper. Any 3 shards will recover your vault."; color: PhantomTheme.text-muted; font-size: 12px; horizontal-alignment: center; wrap: word-wrap; }
+                // Five long shards overflow a small window; scroll them inside a
+                // bounded box so the dialog can stay content-sized.
+                ScrollView {
+                    min-height: 180px;
+                    max-height: 360px;
+                    VerticalLayout { spacing: 8px;
                 HorizontalLayout { spacing: 8px; Text { text: root.shard_1; color: PhantomTheme.secondary; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "📋"; width: 52px; height: 30px; clicked => { root.copy_password_requested(root.shard_1); } } }
                 HorizontalLayout { spacing: 8px; Text { text: root.shard_2; color: PhantomTheme.secondary; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "📋"; width: 52px; height: 30px; clicked => { root.copy_password_requested(root.shard_2); } } }
                 HorizontalLayout { spacing: 8px; Text { text: root.shard_3; color: PhantomTheme.secondary; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "📋"; width: 52px; height: 30px; clicked => { root.copy_password_requested(root.shard_3); } } }
                 HorizontalLayout { spacing: 8px; Text { text: root.shard_4; color: PhantomTheme.secondary; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "📋"; width: 52px; height: 30px; clicked => { root.copy_password_requested(root.shard_4); } } }
                 HorizontalLayout { spacing: 8px; Text { text: root.shard_5; color: PhantomTheme.secondary; font-size: 11px; horizontal-stretch: 1; vertical-alignment: center; wrap: word-wrap; } AuraButton { label: "📋"; width: 52px; height: 30px; clicked => { root.copy_password_requested(root.shard_5); } } }
+                    }
+                }
                 HorizontalLayout {
                     alignment: center;
                     AuraButton { label: "🖨️ Export PDF"; primary: true; width: 160px; clicked => { root.export_recovery_sheet(); } }

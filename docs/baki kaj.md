@@ -1,14 +1,14 @@
 এখনো খোলা — সিকিউরিটি / প্রাইভেসি
 #	গ্যাপ	ঝুঁকি
 ২	Binaries unsigned — Authenticode নেই, .sig নেই	SmartScreen warning; in-app updater এই বিল্ড refuse করবে
-৩	Same-user process registered origin string জেনে native host spawn করতে পারে	pairing secret দরকার (ডিজাইন চেঞ্জ, আলাদা ২–৩ দিনের ব্যাচ)
+৩	Same-user process registered origin string জেনে native host spawn করতে পারে	L1-এর parent-image probe এসেছে (`host_provenance`, warn-only audit line); Authenticode publisher check + L2 pairing MAC বাকি — ডিজাইন `docs/A27_HOST_PAIRING.md`
 ৪	Permission breadth — host_permissions:<all_urls>, tabs, scripting, clipboardWrite, nativeMessaging; hook.js সব http(s)-এ web-accessible	fingerprinting + SW compromise-এ blast radius. সিদ্ধান্ত: wontfix + নথিভুক্ত — <all_urls> ছাড়া autofill হয় না
 ৫	PV_BREACH sender-scoped নয় — যেকোনো content script পাসওয়ার্ডের SHA-1 prefix পাঠাতে পারে	k-anonymity, পেজের কাছে পাসওয়ার্ড আগেই আছে — কম ঝুঁকি. `reuse` leak বন্ধ হয়েছে (নিচে)
 ৬	Firefox bridge — আসল Firefox-এ যাচাই করা হয়নি (কোড ঠিক, manifest writer টেস্টেড)	কোড পাথে সমস্যা থাকলে Firefox ইউজার কিছুই পাবে না
 ৭	.zwork লগ একবার git history-তে ঢুকেছে (2460772)	শুধু লোকাল পাথ, সিক্রেট নেই; force-push ছাড়া ইতিহাস থেকে মোছা যাবে না — wontfix
 
 এখনো খোলা — লজিক / UX
-U1	Modal-গুলোর ভিতরের `Rectangle`-এ `height` নেই → parent (পুরো window) height নেয়, dialog লম্বা হয়ে ফাঁকা জায়গা দেখায়। ঠিক হয়েছে শুধু "+ Add Custom Field"-এ (`height: cfdlg_lay.preferred-height`); বাকিগুলো একটার পর একটা স্ক্রিনে দেখে ঠিক করতে হবে — `x: (parent.width - self.width) / 2` প্যাটার্নে লাইন 2080, 3511, 3572, 3607, 3640, 3666, 3785, 3820, 3855 (কোনোটায় ScrollView থাকলে preferred-height 100% হয়, ওখানে min/max দিয়ে pin করতে হবে)
+U1	Modal-গুলোর ভিতরের `Rectangle`-এ `height` ছিল না → parent (পুরো window) height নিচ্ছিল, dialog লম্বা হয়ে ফাঁকা জায়গা দেখাত। সব ঠিক হয়েছে: dup confirm, What's New, attachment preview, factory reset, new-PC, webcam, access log, shred source, recovery shards, Add Custom Field। বড় content-এ ScrollView + `max-height` pin (access log 340px, shards 360px), আর shards dialog-এর height window-এ cap করা (`Math.min(preferred-height, parent.height - 24px)`)। স্ক্রিনে যাচাই: Add Custom Field, Vault Health, Recovery shards
 
 বন্ধ হয়েছে
 A-03: container header এখন AEAD AAD-bound — `PV4\0` + mode byte; v2/v3 পড়া যায়, নতুন save সব v4. দাম: পুরোনো build v4 vault খুলবে না, সব ডিভাইস একসাথে আপডেট করতে হবে.

@@ -1,7 +1,10 @@
 # A27 — native-host pairing (design, not shipped)
 
-Status: **design only**. Tracked as open item 3 in `docs/baki kaj.md`.
-Owner batch: ~2–3 days (Rust + extension + tests + one manual browser pass).
+Status: **partially shipped**. L1's parent-image probe is in
+`src/windows_native/host_provenance.rs` and runs warn-only from `serve_cli`
+(one audit line per host start, no behaviour change). L1's Authenticode
+publisher check and all of L2 are still design. Tracked as open item 3 in
+`docs/baki kaj.md`.
 
 ## 1. The gap
 
@@ -50,8 +53,12 @@ At host start, before any frame is read:
 1. `GetCurrentProcessId` → Toolhelp32 `TH32CS_SNAPPROCESS` → parent PID.
 2. `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` →
    `QueryFullProcessImageNameW` → parent image path.
-3. `WinVerifyTrust` on that path (the updater already links the same API) and
-   match the signer against an allow-list of browser publishers.
+3. ~~`WinVerifyTrust` on that path~~ — **correction (2026-11-14):** the updater
+   does not link `WinVerifyTrust`; it verifies a SHA-256 sidecar plus a detached
+   Ed25519 `.sig` (`src/sync/updater.rs`). Authenticode would be new code
+   (`WinTrust` feature, `WINTRUST_DATA` marshalling), so it is still open.
+   Shipped today: steps 1–2 only (`host_provenance::parent_image_path`), matched
+   against a file-name allow-list and logged, never enforced.
 4. Optional extra signal for Chromium: argv contains `--parent-window=`.
 
 Accept `chrome.exe`, `msedge.exe`, `brave.exe`, `firefox.exe` **with a valid
