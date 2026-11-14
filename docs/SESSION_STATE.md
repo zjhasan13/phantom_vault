@@ -18,6 +18,32 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-14b) — G2 follow-up + content-sized dialog
+
+- **G2 was shipped visually broken in `610df02`.** The toggle existed in the
+  model (`toggle_custom_field`) but the row drew nothing: the `Text` glyph inside
+  a `TouchArea` never rendered, and the follow-up `Rectangle` + `Text` form drew
+  nothing either. It is now a drawn box — `Rectangle` with a 1.5px border plus a
+  `Path` tick when `cf.value == "true"` (`ui/appwindow.slint:3094`) — so it does
+  not depend on font coverage of `☐`/`☑`.
+- **`+ Add Custom Field` dialog was full-window tall.** The inner `Rectangle` had
+  no `height`, so it took the parent's (AGENTS.md §6 trap). It now binds
+  `height: cfdlg_lay.preferred-height` (`ui/appwindow.slint:3388`).
+- Verified on screen (dev build, `SLINT_SCALE_FACTOR=0.85`, 1280x730):
+  dialog is content-sized (`%TEMP%\pv-g2e-dialog.png`); the row shows an empty
+  box and clicking it paints the primary fill + tick
+  (`%TEMP%\pv-g2e-row.png` → `%TEMP%\pv-g2e-toggled-zoom.png`).
+- **Not verified:** that the toggled value survives Save. The harness `setedit`
+  (UIA `ValuePattern`) renders text in the field but the Slint binding does not
+  receive it, so the draft failed validation ("Login needs a title + key
+  fields") and nothing was written (`my_secure_vault.enc` mtime unchanged). The
+  flip logic itself is covered by `checkbox_field_tests`.
+- Remaining same-class bug: eight other modals still stretch to the window
+  height (`docs/baki kaj.md`, U1) — one at a time with a screen check, because a
+  `ScrollView` inside a content-sized dialog reports `preferred-height: 100%`.
+- Gates on this batch: `cargo test -j 1` **619 passed / 0 failed / 4 ignored**
+  (`TEST_EXIT=0`); clippy / build / `npm test` — see the gate line below.
+
 ## Last code batch (2026-11-14a) — `610df02`
 
 - **G1**: the item detail pane grew a logo button (`ui/appwindow.slint:3234`)

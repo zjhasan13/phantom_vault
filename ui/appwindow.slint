@@ -3091,7 +3091,7 @@ export component MainWindow inherits Window {
                         // Custom fields ride every item kind (logins/cards/notes/
                         // identities/SSH/licenses) — same pending store, same save.
                         FieldLabel { text: (root.ui_lang == "bn" ? "সিক্রেট কী / API টোকেন" : "SECRET KEYS / API TOKENS"); }
-                        for cf[idx] in root.custom_fields : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "☑ " : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: PhantomTheme.text-muted; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : VerticalLayout { alignment: center; TouchArea { width: 28px; height: 26px; mouse-cursor: pointer; clicked => { root.toggle_custom_field(idx); } Text { text: cf.value == "true" ? "☑" : "☐"; color: PhantomTheme.text; font-size: 14px; horizontal-alignment: center; vertical-alignment: center; } } } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: PhantomTheme.primary; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: PhantomTheme.primary; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: root.confirm_delete_field == "c" + idx ? (root.ui_lang == "bn" ? "নিশ্চিত?" : "Sure?") : "🗑"; width: root.confirm_delete_field == "c" + idx ? 56px : 40px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_field == "c" + idx { root.confirm_delete_field = ""; root.delete_custom_field(idx); } else { root.confirm_delete_field = "c" + idx; } } } } }
+                        for cf[idx] in root.custom_fields : Rectangle { background: PhantomTheme.surface-low; border-radius: 8px; height: 36px; HorizontalLayout { padding-left: 10px; padding-right: 6px; spacing: 8px; Text { text: (cf.ftype == 1 ? "🔒 " : (cf.ftype == 2 ? "" : (cf.ftype == 3 ? "🔗 " : "📝 "))) + cf.name; color: PhantomTheme.text-muted; font-size: 12px; horizontal-stretch: 1; vertical-alignment: center; overflow: elide; } if cf.ftype == 1 : Text { text: "••••"; color: PhantomTheme.text; font-size: 12px; vertical-alignment: center; } if cf.ftype == 2 : VerticalLayout { alignment: center; Rectangle { width: 22px; height: 22px; border-radius: 6px; border-width: 1.5px; border-color: cf.value == "true" ? PhantomTheme.primary : PhantomTheme.text-muted; background: cf.value == "true" ? PhantomTheme.primary : transparent; ta := TouchArea { mouse-cursor: pointer; clicked => { root.toggle_custom_field(idx); } } if cf.value == "true" : Path { x: 5px; y: 5px; width: 12px; height: 12px; viewbox-width: 12; viewbox-height: 12; commands: "M 1 6 L 4.5 9.5 L 11 2"; fill: transparent; stroke: PhantomTheme.surface; stroke-width: 2px; } } } if cf.ftype == 3 : Text { text: "→ " + cf.value; color: PhantomTheme.primary; font-size: 12px; horizontal-alignment: center; overflow: elide; } if cf.ftype == 0 : Text { text: cf.value; color: PhantomTheme.primary; font-size: 12px; horizontal-alignment: center; overflow: elide; } AuraButton { label: root.confirm_delete_field == "c" + idx ? (root.ui_lang == "bn" ? "নিশ্চিত?" : "Sure?") : "🗑"; width: root.confirm_delete_field == "c" + idx ? 56px : 40px; height: 24px; y: 6px; danger: true; clicked => { if root.confirm_delete_field == "c" + idx { root.confirm_delete_field = ""; root.delete_custom_field(idx); } else { root.confirm_delete_field = "c" + idx; } } } } }
                         AuraButton { label: (root.ui_lang == "bn" ? "+ কাস্টম ফিল্ড যোগ" : "+ Add Custom Field"); height: 34px; clicked => { root.show_cf_dialog = true; } }
                         FieldLabel { text: root.ui_lang == "bn" ? "নোট" : "NOTES"; }
                         TextEdit { text <=> root.f_notes; height: 64px; wrap: word-wrap; }
@@ -3388,13 +3388,16 @@ export component MainWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: Math.max((parent.height - self.height) / 2 - 16px, 12px);
             width: 400px;
+            // Content-sized sheet: a Rectangle without an explicit height takes
+            // the parent's, which stretched this dialog over the whole window.
+            height: cfdlg_lay.preferred-height;
             background: PhantomTheme.surface;
             border-radius: 16px;
             border-width: 1.5px;
             border-color: PhantomTheme.primary;
             drop-shadow-blur: 40px;
             drop-shadow-color: #4edea344;
-            VerticalLayout {
+            cfdlg_lay := VerticalLayout {
                 padding: 20px;
                 spacing: 10px;
                 Text { text: "+ Add Custom Field"; font-size: 16px; font-weight: 800; color: PhantomTheme.text; horizontal-alignment: center; }

@@ -6,7 +6,7 @@ This ledger is the quick answer to "does feature X exist, and where?". It is not
 marketing: every row points at the file or gate that can prove it. Update a row
 when a user-visible capability is added, changed, or deliberately removed.
 
-> Last updated: 2026-11-14 · `610df02`
+> Last updated: 2026-11-14 · G2 follow-up
 
 ## 1. Desktop UI (Slint — `ui/appwindow.slint`)
 
@@ -16,7 +16,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Onboarding | ✅ | 3 steps; recovery-shards checkbox kept inside the card (`a1ac396`) |
 | Vault list + filter strip | ✅ | All / Favorites / Recent / Login / Card / Note / SSH / Identity / License; centered (`1aa3a70`), two-row grid below 1100 logical px (`a4c2bfc`) |
 | Item detail (all kinds) | ✅ | login, card, note, identity, license, SSH; history, attachments, TOTP |
-| Add / edit editor | ✅ | per-kind fields, folder, tags, favourite; custom-field checkbox rows toggle in place (G2) |
+| Add / edit editor | ✅ | per-kind fields, folder, tags, favourite; custom-field checkbox rows toggle in place (G2, verified on screen 2026-11-14) |
 | Favicons | ✅ | per-domain cached icons, same-origin harvest; per-item logo override from the detail pane (G1); toggle/refresh/clear in Settings |
 | Password generator | ✅ | OS CSPRNG, Complex + Diceware, copy |
 | 2FA hub | ✅ | filter chips, sort, per-account params, HOTP next, Add-2FA sheet |
