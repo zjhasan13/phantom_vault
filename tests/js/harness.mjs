@@ -144,6 +144,9 @@ function loadBackground(chrome) {
     AbortController,
     TextEncoder,
     TextDecoder,
+    // WebCrypto + atob for the A27 L2 frame MAC (same objects a service worker has).
+    crypto: globalThis.crypto,
+    atob: (b64) => Buffer.from(b64, "base64").toString("binary"),
     URL,
     Buffer,
     btoa: (bin) => Buffer.from(bin, "binary").toString("base64"),

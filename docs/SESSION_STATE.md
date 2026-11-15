@@ -10,13 +10,46 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-14 |
-| Branch / HEAD | `main` @ `610df02` (G1/G2/G6/G8 + extension scope) + docs on top |
+| Branch / HEAD | `main` @ pending push (A27 L1+L2 groundwork, U1 modals) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-14d) — A27 L2 core: pairing secret + frame MAC
+
+- **`src/security/host_pairing.rs` (new).** 20-byte (160-bit) CSPRNG secret,
+  DPAPI-sealed at `host_pairing.dpapi`; Crockford-base32 code as 8 groups of 4
+  (`display_code` / `parse_code`, I/L→1, O→0); `mint_at` / `load_at` / `clear_at`;
+  `canonical("pv1|cmd|seq|ts|sha256(body)")`, `frame_mac`, constant-time
+  `verify_frame`, `ts_fresh` (±60 s), and `FrameGuard` (per-session `seq` must
+  strictly increase).
+  - **Doc correction:** the first draft said "32 CSPRNG bytes / 8 groups of 4".
+    8×4 = 32 characters = 160 bits, so the secret is 20 bytes; a 32-byte secret
+    would need 52 characters. `docs/A27_HOST_PAIRING.md` §3 L2 now says 20 bytes.
+- **How the MAC input is defined (no key-order trap).** The body is the frame
+  *without* the `mac` field, byte for byte. The extension stringifies
+  `{...request, seq, ts}` for the MAC and posts `{...request, seq, ts, mac}`;
+  `JSON.stringify` keeps insertion order, so the host rebuilds the exact input by
+  removing `,"mac":"…"` from the raw line (`strip_mac_field`, tested with `mac`
+  first/middle/last). `decode_frame_raw` keeps the raw bytes for this.
+- **`serve_cli` (step 1, warn-only).** Loads the secret if present, verifies every
+  frame's `seq`/`ts`/`mac`, and logs `host mac rejected: <reason>`. Serving is
+  unchanged — step 2 flips the verdict into a refusal.
+- **Extension.** `background.js`: `signFrame` adds `seq`/`ts`/`mac` to every
+  `hostRequest` when `chrome.storage.local.pv_pair_secret` holds 20 bytes
+  (WebCrypto HMAC-SHA256); unpaired installs send plain frames.
+- **Cross-language proof.** One known-answer vector, computed with .NET
+  `SHA256`+`HMACSHA256` and asserted by both suites:
+  `pv1|list|7|1763000000|8198cfed…567b` → `b80c4528…278d`.
+- Not shipped yet: the desktop **Pair extension** button (Slint + Rust callback),
+  the popup code-entry UI, `pair_confirm`, response MACs, and step 2 enforcement.
+- Gates: `cargo clippy --all-targets -j 1 -- -D warnings` **CLIPPY_EXIT=0**;
+  `cargo test -j 1` **633 passed / 0 failed / 4 ignored** (`TEST_EXIT=0`);
+  `npm test` **178 pass / 0 fail** (4 new A27 tests); `npm run test:tokens` OK
+  (21 palette values).
 
 ## Last code batch (2026-11-14c) — content-sized modals (U1) + A27 L1 probe
 

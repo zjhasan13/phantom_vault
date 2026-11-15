@@ -181,7 +181,81 @@ function pumpQueue() {
   }
 }
 
+// ---- A27 L2: frame MAC (opt-in until the user pairs) ----
+// Once the popup stores the 20-byte secret the desktop app minted, every frame
+// carries `seq`, `ts` and `mac`. Unpaired installs send plain frames: the host
+// logs them as unpaired and still serves (step 1 of the rollout in
+// docs/A27_HOST_PAIRING.md §4).
+let pairSeq = 0;
+
+function bytesToHex(buf) {
+  return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+// chrome.storage.local.get is callback-based in MV2 and promise-based in MV3;
+// support both so the harness and a real browser take the same path.
+function readLocalStore(keys) {
+  return new Promise((resolve) => {
+    try {
+      const maybe = chrome.storage.local.get(keys, (v) => resolve(v || {}));
+      if (maybe && typeof maybe.then === "function") {
+        maybe.then((v) => resolve(v || {}), () => resolve({}));
+      }
+    } catch (_) {
+      resolve({});
+    }
+  });
+}
+
+async function pairSecret() {
+  if (typeof crypto === "undefined" || !crypto.subtle || typeof atob !== "function") return null;
+  const store = await readLocalStore(["pv_pair_secret"]);
+  const b64 = store && store.pv_pair_secret;
+  if (!b64) return null;
+  try {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes.length === 20 ? bytes : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+// The frame to post. The MAC input is exactly JSON.stringify(frame without
+// `mac`), which is what the host rebuilds by stripping that field from the wire
+// line — so the two sides never have to agree on JSON key ordering beyond the
+// insertion order this function builds.
+async function signFrame(payload) {
+  const secret = await pairSecret();
+  if (!secret) return payload;
+  const seq = (pairSeq += 1);
+  const ts = Math.floor(Date.now() / 1000);
+  const body = JSON.stringify({ ...payload, seq, ts });
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body));
+  const canonical = `pv1|${payload.cmd}|${seq}|${ts}|${bytesToHex(digest)}`;
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secret,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonical));
+  return { ...payload, seq, ts, mac: bytesToHex(mac) };
+}
+
 function hostRequest(payload, timeoutMs = 10000) {
+  // Signing is async (WebCrypto); the queue and one-shot fallback below stay
+  // synchronous. A signing failure falls back to the plain frame, which the host
+  // treats as unpaired instead of dropping the request.
+  return signFrame(payload).then(
+    (frame) => sendFrame(frame, timeoutMs),
+    () => sendFrame(payload, timeoutMs)
+  );
+}
+
+function sendFrame(payload, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     const entry = { payload, resolve, reject, timer: 0 };
     entry.timer = setTimeout(() => {

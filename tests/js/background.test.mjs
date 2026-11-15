@@ -3,6 +3,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { makeChrome, loadBackground, sendMessage } from "./harness.mjs";
+import { createHash, createHmac } from "node:crypto";
 
 function fresh() {
   const chrome = makeChrome();
@@ -994,4 +995,82 @@ test("PV_BREACH keeps reuse for the popup and refuses an empty password", async 
   const empty = await sendMessage(onMessage, chrome, { type: "PV_BREACH", password: "" });
   assert.equal(empty.ok, false);
   assert.equal(chrome.__state.postedNative.length, 1, "an empty password never spawns the host");
+});
+
+// ---- A27 L2: pairing MAC ------------------------------------------------
+
+const PAIR_SECRET = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
+
+function sha256hex(text) {
+  return createHash("sha256").update(text).digest("hex");
+}
+
+// What the Rust host rebuilds after stripping the mac field from the wire line.
+function hostMac(secret, cmd, seq, ts, body) {
+  return createHmac("sha256", secret)
+    .update(`pv1|${cmd}|${seq}|${ts}|${sha256hex(body)}`)
+    .digest("hex");
+}
+
+test("A27 L2: the canonical MAC input matches the Rust known-answer vector", () => {
+  const body = JSON.stringify({ cmd: "list", seq: 7, ts: 1763000000 });
+  assert.equal(body, '{"cmd":"list","seq":7,"ts":1763000000}');
+  assert.equal(sha256hex(body), "8198cfede316ad1407846f9a3c080295f596d7ab6dfdca6390cb561af748567b");
+  assert.equal(
+    hostMac(PAIR_SECRET, "list", 7, 1763000000, body),
+    "b80c4528331e4deb59ffd09a370fd61ede4779b7702425fe44da692cba12278d"
+  );
+});
+
+test("A27 L2: a paired extension signs every frame", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks(10);
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "ext_pin_status");
+  assert.equal(typeof sent.seq, "number");
+  assert.ok(Math.abs(Date.now() / 1000 - sent.ts) < 5, "ts is unix seconds");
+  assert.match(sent.mac, /^[0-9a-f]{64}$/);
+  const { seq, ts, mac, ...rest } = sent;
+  const body = JSON.stringify({ ...rest, seq, ts });
+  assert.equal(mac, hostMac(PAIR_SECRET, sent.cmd, seq, ts, body));
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  await pending;
+});
+
+test("A27 L2: seq increases per frame and unpaired frames carry no mac", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const a = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks(10);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
+  await a;
+  const b = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks(10);
+  assert.ok(
+    chrome.__state.postedNative[1].seq > chrome.__state.postedNative[0].seq,
+    "seq must strictly increase"
+  );
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
+  await b;
+
+  const plain = fresh();
+  const p = sendMessage(plain.onMessage, plain.chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks(10);
+  const sent = plain.chrome.__state.postedNative[0];
+  assert.equal("mac" in sent, false, "unpaired installs keep sending plain frames");
+  assert.equal("seq" in sent, false);
+  plain.chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  await p;
+});
+
+test("A27 L2: a secret of the wrong length is ignored, not fatal", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = Buffer.from("short").toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  await flushTicks(10);
+  assert.equal("mac" in chrome.__state.postedNative[0], false);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  await pending;
 });

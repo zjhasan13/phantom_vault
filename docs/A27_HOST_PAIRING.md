@@ -2,8 +2,12 @@
 
 Status: **partially shipped**. L1's parent-image probe is in
 `src/windows_native/host_provenance.rs` and runs warn-only from `serve_cli`
-(one audit line per host start, no behaviour change). L1's Authenticode
-publisher check and all of L2 are still design. Tracked as open item 3 in
+(one audit line per host start, no behaviour change). L2's core is in
+`src/security/host_pairing.rs` (secret mint/seal, Crockford code, frame MAC,
+`FrameGuard` seq/ts checks) and the extension already signs every frame when
+paired; what is missing is the user-facing side (desktop **Pair extension**
+button, popup code entry, `pair_confirm`), response MACs, L1's Authenticode
+publisher check, and step-2 enforcement. Tracked as open item 3 in
 `docs/baki kaj.md`.
 
 ## 1. The gap
