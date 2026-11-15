@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-15 |
-| Branch / HEAD | `main` @ `51fc387` (A27 L2 pairing UI + step-2 enforcement); A27 L2b signed replies uncommitted |
+| Branch / HEAD | `main` @ `55e449f` (A27 L2b signed host replies) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
