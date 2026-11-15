@@ -27,7 +27,7 @@ PV_BREACH: `reuse` count আর content-script sender-এর কাছে যা
 টেস্ট / টুলিং
 তিনটা ফ্লেক (share_serve, loopback os 10053, crypto legacy) — -j 1-এ পাস, defuse করা হয়নি, শুধু ডক করা
 `Instant - Duration` Windows-এ panic করে (QPC origin) — টেস্টে `checked_sub` ব্যবহার করতে হবে
-GitHub Dependabot ১টা moderate alert দেখায়: `RUSTSEC-2023-0071` (`rsa` Marvin) — `ssh-key`-এর optional dep, build graph-এ নেই; `audit.toml` + CI-তে ignore করা
+Dependabot-এর moderate alert ছিল `jsonwebtoken 9.3.1` (GHSA-h395-gr6q-cpjc, type confusion → authz bypass) — `octocrab` 0.41-এর transitive dep। 2026-11-15-এ `octocrab` 0.50-এ bump করে `jsonwebtoken 10.4.0` (fixed 10.3.0) — alert বন্ধ। `RUSTSEC-2023-0071` (`rsa` Marvin) আর `RUSTSEC-2026-0387` (`crypto-bigint`) build graph-এ **আছে** (`jsonwebtoken` → `rsa`), কিন্তু path unreachable (GitHub App JWT কখনো sign/verify হয় না) — `audit.toml` + CI-তে ignore, কারণ নথিভুক্ত
 Live E2E, DPI pass, স্ক্রিনশট — installer ইনস্টল + extension reload ছাড়া হয় না
 UI harness trap: `setedit` (UIA ValuePattern) টেক্সট দেখায় কিন্তু Slint binding-এ সবসময় পৌঁছায় না — Save চাপলে "needs a title + key fields" আসতে পারে; এন্ড-টু-এন্ড save যাচাই করতে আসল keystroke দরকার
 UI harness trap: `click -Arg Save` ভুল টেক্সট ধরতে পারে ("0 saved") — বাটনের rect `dump` থেকে নিয়ে `clickshot` ব্যবহার করা নিরাপদ

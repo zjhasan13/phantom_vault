@@ -18,6 +18,35 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-15a) — dependency audit: jsonwebtoken 9 -> 10
+
+- **Closed the open Dependabot alert.** It was `jsonwebtoken 9.3.1`
+  (GHSA-h395-gr6q-cpjc, type confusion → authz bypass, fixed in 10.3.0), pulled
+  transitively by `octocrab 0.41`. `octocrab = "0.50"` is the first release that
+  requires `jsonwebtoken ^10`; the lock now has **jsonwebtoken 10.4.0**.
+  - `octocrab 0.50` also adds three transitive crates (`camino`,
+    `cargo-platform`, `cargo_metadata`). No direct dependency was added, and no
+    call site changed: `client()` and `is_not_found()` compile as they were.
+- **Found by scanning the whole lock, not by guessing.** `npm audit` is clean;
+  the Cargo side was checked by querying OSV for all 875 locked crates and then
+  evaluating each advisory's affected ranges locally (the raw OSV batch result
+  lists every historical advisory for a crate name, so 118 "hits" collapse to
+  16 real ones).
+- **Corrected a stale audit note.** `audit.toml` / `security.yml` claimed
+  `rsa` and `crypto-bigint` were "not in the build graph". They are:
+  `cargo tree -i rsa` → `rsa 0.9.10 <- jsonwebtoken 10.4.0 <- octocrab`. Both
+  stay ignored, but now with the real reason: the vulnerable operation is
+  unreachable (no JWT is ever signed or verified — the app uses a personal
+  access token, not GitHub App auth), so RUSTSEC-2023-0071's decryption oracle
+  has no code path here.
+- Remaining lock advisories are informational: unmaintained crates (`bincode`,
+  `paste`, `pin-utils`, `ttf-parser`, `zvariant`/`zbus_names` — the last two are
+  Linux-only via `nokhwa`) plus `quinn-proto`/`rustix`/`zlib-rs`, none on a path
+  this app exercises.
+- Gates: `cargo check` **EXIT=0** (5m20s); `cargo test -j 1` **633 passed /
+  0 failed / 4 ignored** (`TEST_EXIT=0`); `cargo clippy --all-targets -j 1 --
+  -D warnings` **CLIPPY_EXIT=0**.
+
 ## Last code batch (2026-11-14d) — A27 L2 core: pairing secret + frame MAC
 
 - **`src/security/host_pairing.rs` (new).** 20-byte (160-bit) CSPRNG secret,

@@ -101,7 +101,7 @@ sha1 = "0.10"
 # chain to hyper-rustls 0.27 / rustls 0.23 / webpki 0.103. Minimal jump
 # from 0.38 (same tower/secrecy stack); sync API surface re-verified
 # by build + existing proxy/sync tests.
-octocrab = "0.41"
+octocrab = "0.50"
 http = "1"
 
 # Phase 11: Windows Hello (WinRT) + async bridge
