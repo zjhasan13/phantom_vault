@@ -215,12 +215,16 @@ fn origin_allowed_in(reg: &[String], origin: &str) -> bool {
 }
 
 /// Read one frame: 4-byte LE length, cap enforced, exact JSON body.
-pub fn decode_frame<R: Read>(r: &mut R) -> Result<serde_json::Value, String> {
+/// Test-only wrapper: parse a frame and drop the raw bytes.
+#[cfg(test)]
+fn decode_frame<R: Read>(r: &mut R) -> Result<serde_json::Value, String> {
     decode_frame_raw(r).map(|(value, _)| value)
 }
 
-/// Same as [`decode_frame`], but also returns the raw JSON body — the pairing
-/// MAC covers those exact bytes, so re-serialising the parsed value would not do.
+/// Read one native-messaging frame: length prefix + JSON body.
+///
+/// Returns the raw body too — the A27 L2 pairing MAC covers those exact bytes,
+/// so re-serialising the parsed value would not do.
 pub fn decode_frame_raw<R: Read>(r: &mut R) -> Result<(serde_json::Value, Vec<u8>), String> {
     let mut len_buf = [0u8; 4];
     r.read_exact(&mut len_buf)
