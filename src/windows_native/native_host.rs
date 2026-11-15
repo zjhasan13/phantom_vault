@@ -3624,6 +3624,85 @@ fn pairing_refusal(verdict: crate::security::host_pairing::FrameVerdict) -> Opti
     }
 }
 
+/// A27 L2b: sign every reply frame with the pairing secret so the popup can tell
+/// a real host from a spawned look-alike.
+///
+/// All `serve_cli` reply sites write one complete frame (4-byte LE length + JSON)
+/// in a single `write_all`, so the wrapper can re-encode that frame with a `mac`
+/// field and stay invisible to the call sites. It is a pass-through when there is
+/// nothing to sign: no pairing secret, or a request that carried no `seq`/`ts`
+/// (the extension then has no MAC to check the reply against either).
+struct SignedOut<W: std::io::Write> {
+    inner: W,
+    secret: Option<Vec<u8>>,
+    ctx: Option<(String, u64, u64)>,
+}
+
+impl<W: std::io::Write> SignedOut<W> {
+    fn new(inner: W, secret: Option<Vec<u8>>) -> Self {
+        Self {
+            inner,
+            secret,
+            ctx: None,
+        }
+    }
+
+    /// Point the signer at the request being answered.
+    fn bind(&mut self, req: &serde_json::Value) {
+        self.ctx = request_ctx(req);
+    }
+}
+
+/// The `(cmd, seq, ts)` a reply MAC is bound to, when the request carried them.
+fn request_ctx(req: &serde_json::Value) -> Option<(String, u64, u64)> {
+    Some((
+        req.get("cmd")?.as_str()?.to_string(),
+        req.get("seq")?.as_u64()?,
+        req.get("ts")?.as_u64()?,
+    ))
+}
+
+/// Parse one complete frame back into JSON (`None` when it is not a whole frame).
+fn frame_json(buf: &[u8]) -> Option<serde_json::Value> {
+    if buf.len() < 4 {
+        return None;
+    }
+    let len = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
+    if len + 4 != buf.len() {
+        return None;
+    }
+    serde_json::from_slice(&buf[4..]).ok()
+}
+
+impl<W: std::io::Write> std::io::Write for SignedOut<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if let (Some(secret), Some((cmd, seq, ts))) = (self.secret.as_deref(), self.ctx.clone()) {
+            if let Some(mut body) = frame_json(buf) {
+                let mac = crate::security::host_pairing::reply_mac(secret, &cmd, seq, ts, &body);
+                let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+                if let Some(obj) = body.as_object_mut() {
+                    obj.insert("mac".to_string(), serde_json::Value::String(hex));
+                }
+                let frame = encode_frame(&body);
+                self.inner.write_all(&frame)?;
+                return Ok(buf.len());
+            }
+        }
+        self.inner.write(buf)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+/// Emit one error frame through the (signing) reply writer.
+fn emit_err<W: std::io::Write>(output: &mut W, msg: &str) {
+    let frame = encode_frame(&err(msg));
+    let _ = output.write_all(&frame);
+    let _ = output.flush();
+}
+
 /// Foreground entrypoint: `vault native-host`. Hello-cached unlock only
 /// (stdin is the protocol pipe), then serve frames until EOF.
 ///
@@ -3665,15 +3744,11 @@ pub fn serve_cli() -> i32 {
         }
         None => bridge_log("WARN no project_dir.txt; using launch CWD"),
     }
-    let emit_err = |msg: &str| {
-        let frame = encode_frame(&err(msg));
-        let _ = std::io::stdout().write_all(&frame);
-        let _ = std::io::stdout().flush();
-    };
     // A27 L2 (step 1, warn-only): with a pairing secret on disk, verify
     // `seq`/`ts`/`mac` on every frame and log a rejection. Serving is unchanged
     // until step 2 flips the verdict into a refusal.
-    let mut pair_guard = crate::security::host_pairing::FrameGuard::new(load_pair_secret());
+    let pair_secret = load_pair_secret();
+    let mut pair_guard = crate::security::host_pairing::FrameGuard::new(pair_secret.clone());
     // A27 L2 step 2: a release build serves only MAC-verified frames. Debug
     // builds stay warn-only, otherwise every `cargo build` in a dev loop would
     // need a fresh pairing. `pair_confirm` is exempt (below) — it is how a user
@@ -3693,15 +3768,17 @@ pub fn serve_cli() -> i32 {
     // heartbeat gate, and it requires a Windows Hello prompt + DPAPI unseal.
     let stdin = std::io::stdin();
     let mut input = stdin.lock();
-    let mut output = std::io::stdout();
+    let mut output = SignedOut::new(std::io::stdout(), pair_secret);
     let (first_req, first_raw) = match decode_frame_raw(&mut input) {
         Ok(v) => v,
         Err(e) => {
-            emit_err(&format!("bad frame: {e}"));
+            emit_err(&mut output, &format!("bad frame: {e}"));
             return 2;
         }
     };
     let first_verdict = check_frame(&mut pair_guard, &first_raw);
+    // Every reply below is bound to this request's (cmd, seq, ts) for signing.
+    output.bind(&first_req);
     let first_cmd = first_req.get("cmd").and_then(|c| c.as_str());
     // A27 L2 pairing handshake. The reply only states whether this frame's MAC
     // verified, so it is safe to answer before the heartbeat/unlock gate — the
@@ -3729,7 +3806,7 @@ pub fn serve_cli() -> i32 {
     if enforce_pairing {
         if let Some(msg) = pairing_refusal(first_verdict) {
             bridge_log(&format!("refused unpaired frame: {msg}"));
-            emit_err(&msg);
+            emit_err(&mut output, &msg);
             return 2;
         }
     }
@@ -3771,7 +3848,7 @@ pub fn serve_cli() -> i32 {
     // Checked BEFORE the backoff sleep + vault decrypt (no wasted Argon2id).
     if !desktop_alive() {
         bridge_log("refused: stale/missing heartbeat (app closed or locked)");
-        emit_err("desktop app closed — open PhantomVault");
+        emit_err(&mut output, "desktop app closed — open PhantomVault");
         return 2;
     }
     // H7: share the unlock throttle — an unthrottled second Argon2id path
@@ -3789,14 +3866,14 @@ pub fn serve_cli() -> i32 {
         Ok(b) => b,
         Err(e) => {
             bridge_log(&format!("Hello token missing: {e}"));
-            emit_err("no Hello-cached credential — unlock the app with Hello once first");
+            emit_err(&mut output, "no Hello-cached credential — unlock the app with Hello once first");
             return 2;
         }
     };
     let secret = match crate::core::memory::DpapiGuard::unprotect(&blob) {
         Ok(s) => s,
         Err(_) => {
-            emit_err("Hello credential unseal failed");
+            emit_err(&mut output, "Hello credential unseal failed");
             return 2;
         }
     };
@@ -3820,7 +3897,7 @@ pub fn serve_cli() -> i32 {
             None => {
                 drop(master);
                 bridge_log("vault unlock failed");
-                emit_err("unlock failed: wrong passphrase");
+                emit_err(&mut output, "unlock failed: wrong passphrase");
                 return 1;
             }
         },
@@ -3933,6 +4010,8 @@ pub fn serve_cli() -> i32 {
                 }
             },
         };
+        // A27 L2b: every reply to this frame is signed against its identity.
+        output.bind(&req);
         // Cover integrity (H9): a coerced session must never write into the
         // decoy — refuse every persisting command, not just save_login
         // (assert also has persist:true via the sign-count bump).

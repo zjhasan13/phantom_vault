@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-15 |
-| Branch / HEAD | `main` @ `1d20934` (dependency audit); A27 L2 pairing UI uncommitted |
+| Branch / HEAD | `main` @ `51fc387` (A27 L2 pairing UI + step-2 enforcement); A27 L2b signed replies uncommitted |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
@@ -18,6 +18,49 @@
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-15c) — A27 L2b: the host signs its replies
+
+- **The gap this closes.** L2 proved *the caller* holds the pairing secret, but
+  nothing proved *the answer* came from the real host. A look-alike process on
+  the port could feed the popup fabricated items. Now every reply carries
+  `"mac":"<64 hex>"` =
+  `HMAC(secret, "pv1r|req_cmd|req_seq|req_ts|sha256(canonical_reply)")`, and the
+  popup refuses a reply whose MAC is missing, wrong, or belongs to another
+  request. An unsigned request still gets an unsigned reply (unpaired installs
+  are unaffected).
+- **Canonical form, not raw bytes.** Requests can be MACed over the wire bytes
+  (`JSON.stringify` once, host strips `mac`), but Chrome hands the extension a
+  **parsed object** for replies, so key order and `1.0` vs `1` are gone. Both
+  sides canonicalise: recursively sorted keys, integral floats printed without a
+  fraction. Rust `host_pairing::canonical_json` / `reply_mac`; JS
+  `canonicalJson` / `verifyReply`. Shared known-answer vector
+  `4a0b4fe89bb5b65197d7c4e01af4bd58e370a247a5e629faabb59549e625ada8` is asserted in
+  both suites, so the two implementations cannot drift.
+- **Rust wiring without touching 20 call sites.** `serve_cli` writes through a
+  `SignedOut<W>` stdout wrapper: it sees one complete frame per `write_all`,
+  re-encodes it with the MAC, and is a pass-through when there is nothing to
+  sign (no secret, or a request with no `seq`/`ts`). `emit_err` became a free
+  function over that writer. `output.bind(&req)` runs once per frame.
+- **JS wiring keeps FIFO.** Reply verification is async, so the port listener
+  resolves/rejects and only then pumps the next queued frame — still exactly one
+  frame in flight. The one-shot fallback path verifies too. `PV_PAIR` maps a
+  failed reply MAC to "That code did not match the desktop — check the code and
+  try again." instead of showing a crypto string.
+- **Docs corrected for honesty.** `SECURITY.md` no longer claims the host lacks
+  a pairing secret (release builds enforce it, replies are signed); it now
+  states the remaining non-goal: a same-user process that can read
+  `chrome.storage.local` or DPAPI-unseal the secret still wins.
+- Tests: `cargo test -j 1` **637 passed / 0 failed / 4 ignored**
+  (`TEST_EXIT=0`); `cargo clippy --all-targets -j 1 -- -D warnings`
+  **CLIPPY_EXIT=0**; `npm test` **189 pass / 0 fail**; `npm run test:tokens` →
+  `UI tokens OK: 21 palette values`.
+- New JS tests: signed reply accepted; unsigned reply refused; tampered body
+  refused; replayed reply from an earlier `seq` refused; unpaired install still
+  accepts unsigned replies; reply KAT. New Rust tests: reply KAT + canonical-JSON
+  fixed point (nested, unicode, `-0.0`, `2.5`).
+- Still open in A27: the Authenticode publisher check (L1 step 2). Live E2E with
+  the installed build + reloaded extension is still a manual pass.
 
 ## Last code batch (2026-11-15b) — A27 L2: pairing UI + step-2 enforcement + manual QA guide
 

@@ -2,14 +2,15 @@
 
 Status: **partially shipped**. L1's parent-image probe is in
 `src/windows_native/host_provenance.rs` and runs warn-only from `serve_cli`
-(one audit line per host start, no behaviour change). L2 is shipped end to end
-but still warn-only: `src/security/host_pairing.rs` mints/seals the 20-byte
-secret, prints it as a Crockford code, and verifies a MAC + seq + ts on every
-frame; the desktop shows the code in **Settings → Sync & Devices → Extension
-pairing** (`Show pairing code` / `Revoke pairing`), the popup stores the decoded
-bytes and answers `pair_confirm`, and a rejected MAC is logged, not refused.
-Still open: response MACs and L1's Authenticode publisher check. Tracked as open
-item 3 in `docs/baki kaj.md`.
+(one audit line per host start, no behaviour change). L2 is shipped end to end:
+`src/security/host_pairing.rs` mints/seals the 20-byte secret, prints it as a
+Crockford code, and verifies a MAC + seq + ts on every frame; the desktop shows
+the code in **Settings → Sync & Devices → Extension pairing**
+(`Show pairing code` / `Revoke pairing`); the popup stores the decoded bytes,
+answers `pair_confirm`, and **verifies the MAC on every reply**; a release build
+refuses unverified frames (`enforce_pairing = !cfg!(debug_assertions)`).
+Still open: L1's Authenticode publisher check. Tracked as open item 3 in
+`docs/baki kaj.md`.
 
 ## 1. The gap
 
@@ -122,22 +123,43 @@ normal MACed frame — `{"cmd":"pair_confirm","seq":N,"ts":T,"mac":…}` — and
 reply is `{"ok":true,"paired":true}` or `{"error":"…"}`. It is answered before the
 heartbeat/unlock gate because the reply carries no vault data, only the MAC
 verdict, and the popup needs it while the desktop app is locked. The
-`ext`/`nonce`/`host_nonce` handshake below is **not implemented**; it stays here
-as the design for response MACs (next batch), not as a description of the code.
+`ext`/`nonce`/`host_nonce` handshake sketched below is **not implemented**; the
+reply MAC that replaced it binds the request identity instead.
 
-`pair_confirm` binds both directions (design only — not shipped yet):
+Not implemented (superseded):
 
 ```
 ext -> host: {"cmd":"pair_confirm","ext":"<id>","nonce":"<hex32>","mac":HMAC(secret,"pair-confirm|"+ext+"|"+nonce)}
 host -> ext: {"ok":true,"host_nonce":"<hex32>","mac":HMAC(secret,"pair-ok|"+ext+"|"+host_nonce)}
 ```
 
-Response MAC design (next batch): the host signs every reply as
-`HMAC(secret, "pv1r|" + req_cmd + "|" + req_seq + "|" + req_ts + "|" + sha256(canonical_reply))`,
-where `canonical_reply` is the reply JSON without `mac`, serialised with
-recursively sorted keys. Both sides must sort, because Chrome's native-messaging
+**Response MACs are shipped (2026-11-15c).** The host signs every reply as
+
+```
+HMAC(secret, "pv1r|" + req_cmd + "|" + req_seq + "|" + req_ts + "|" + sha256(canonical_reply))
+```
+
+and appends `"mac":"<64 hex>"` to the reply object. `canonical_reply` is the
+reply JSON without `mac`, serialised with recursively sorted keys and integral
+numbers printed without a fraction (`1.0` → `1`, which is what
+`JSON.stringify` does). Both sides must sort, because Chrome's native-messaging
 port hands the extension a **parsed object**, not raw bytes — the byte-exact
 trick used for requests cannot work in this direction.
+
+Rust: `host_pairing::canonical_json` + `reply_mac`; the host applies it with a
+`SignedOut<W>` stdout wrapper, so the ~20 reply sites in `serve_cli` stay
+unchanged — it re-encodes each complete frame once and passes everything through
+when there is nothing to sign (no secret, or a request with no `seq`/`ts`).
+JS: `canonicalJson` + `verifyReply` in `background.js`; a **signed request
+demands a signed reply**, so a missing or wrong MAC rejects the promise and the
+popup shows an error instead of the data. Shared known-answer vector
+`4a0b4fe89bb5b65197d7c4e01af4bd58e370a247a5e629faabb59549e625ada8` is asserted in
+both `host_pairing` and `tests/js/background.test.mjs`.
+
+Why it matters: without reply MACs, a look-alike host could answer the popup with
+fabricated items. With them, the popup only renders replies from a process that
+holds the same 20 bytes. It does **not** stop a same-user process that can read
+`chrome.storage.local` (see non-goals).
 
 Unpair wipes `host_pairing.dpapi` and `chrome.storage.local.pv_pair_secret`.
 
@@ -161,10 +183,11 @@ unchanged. L1/L2 are additive.
 - A paired extension keeps working across host updates because the secret lives
   in the vault dir, not in the binary.
 
-Shipped so far (step 1): `Show pairing code` / `Revoke pairing` in
-**Settings → Sync & Devices → Extension pairing**, `pair_confirm` answered before
-the heartbeat gate (the reply carries a MAC verdict, no vault data), the popup's
-`Desktop pairing` row, and `host mac rejected: <why>` in the bridge log.
+Shipped so far (step 1 + step 2 + response MACs): `Show pairing code` /
+`Revoke pairing` in **Settings → Sync & Devices → Extension pairing**,
+`pair_confirm` answered before the heartbeat gate (the reply carries a MAC
+verdict, no vault data), the popup's `Desktop pairing` row, signed replies that
+the popup verifies, and `host mac rejected: <why>` in the bridge log.
 
 Two traps learned while wiring this:
 
@@ -178,17 +201,23 @@ Two traps learned while wiring this:
 - **`pair_confirm` must be answered before the unlock gate.** The popup proves a
   typed code while the desktop may be locked; the reply is `{ok,paired}` or an
   error string, never vault content, so the gate stays where it is.
+- **Replies cannot be MACed over raw bytes.** Requests can (`JSON.stringify`
+  once, host strips `mac`), but Chrome delivers the reply as a parsed object, so
+  key order and `1.0` vs `1` are lost. Both sides canonicalise instead
+  (`host_pairing::canonical_json` / `canonicalJson`), and the shared vector keeps
+  them honest.
 
 ## 5. Files and tests
 
 | Area | Where |
 |---|---|
 | Parent check + MAC verify | `src/windows_native/native_host.rs` (`serve_cli`, `origin_allowed` neighbours) |
-| Secret mint/store | `src/main.rs` (Settings callback) + new `src/security/host_pairing.rs` |
+| Secret mint/store, request + reply MAC | `src/main.rs` (Settings callback) + `src/security/host_pairing.rs` (`canonical_json`, `reply_mac`) |
+| Reply signing wrapper | `src/windows_native/native_host.rs` (`SignedOut`, `emit_err`) |
 | Popup pairing UI | `browser_extension/popup.js` / `.html` |
-| Per-frame MAC | `browser_extension/background.js` (`hostRequest`) |
-| Rust tests | `host_pairing::tests` — canonical input stability, wrong seq/ts/mac, constant-time compare, DPAPI round-trip, parent allow-list |
-| JS tests | `tests/js/background.test.mjs` — MAC added to every frame; missing secret refuses; fixture vector shared with Rust (same pattern as `EQUIV_CLUSTERS`) |
+| Per-frame MAC + reply verify | `browser_extension/background.js` (`signFrame`, `verifyReply`) |
+| Rust tests | `host_pairing::tests` — canonical input stability, request + reply known-answer vectors, wrong seq/ts/mac, constant-time compare, DPAPI round-trip, parent allow-list |
+| JS tests | `tests/js/background.test.mjs` — MAC added to every frame; missing secret refuses; reply accepted when signed, refused when unsigned/tampered/replayed; both vectors shared with Rust (same pattern as `EQUIV_CLUSTERS`) |
 | Docs | `SECURITY.md` limitations, `docs/A23_LOCAL_API.md` neighbour note, `docs/FEATURE_LEDGER.md` |
 
 Manual verification is required in a real Chrome and a real Firefox (spawn with
@@ -205,7 +234,9 @@ Manual verification is required in a real Chrome and a real Firefox (spawn with
 ## 7. Open questions
 
 1. Hard-require pairing in the same release as L1, or the release after?
-2. MAC the responses as well, or requests only? (Cost is one HMAC per frame.)
+2. ~~MAC the responses as well, or requests only?~~ **Answered: responses are
+   MACed** (2026-11-15c, `pv1r|…` over the canonical reply). Cost is one HMAC per
+   frame, and it is what makes a look-alike host useless.
 3. Accept Edge/Brave by publisher signature, or Chrome + Firefox only?
 4. Is a QR-based pairing (desktop shows a QR with the secret) better UX than a
    typed 32-character code? QR needs a camera path on the extension side.

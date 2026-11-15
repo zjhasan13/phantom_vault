@@ -1022,6 +1022,34 @@ function hostMac(secret, cmd, seq, ts, body) {
     .digest("hex");
 }
 
+// A27 L2b: canonical reply JSON (sorted keys), mirroring
+// host_pairing::canonical_json. Reply MACs cannot use raw wire bytes because
+// Chrome hands the extension a parsed object.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value)
+      .sort()
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+// A reply as the paired host would send it: the body plus a MAC bound to the
+// request identity. Returns the body untouched when the extension is unpaired
+// (no secret, or a frame that went out unsigned).
+function hostReply(chrome, body, index = 0) {
+  const req = chrome.__state.postedNative[index];
+  const b64 = chrome.__state.localStore.pv_pair_secret;
+  if (!b64 || !req || !req.mac) return body;
+  const secret = Buffer.from(b64, "base64");
+  if (secret.length !== 20) return body;
+  const digest = sha256hex(canonicalJson(body));
+  const canonical = `pv1r|${req.cmd}|${req.seq}|${req.ts}|${digest}`;
+  return { ...body, mac: createHmac("sha256", secret).update(canonical).digest("hex") };
+}
+
 test("A27 L2: the canonical MAC input matches the Rust known-answer vector", () => {
   const body = JSON.stringify({ cmd: "list", seq: 7, ts: 1763000000 });
   assert.equal(body, '{"cmd":"list","seq":7,"ts":1763000000}');
@@ -1045,7 +1073,8 @@ test("A27 L2: a paired extension signs every frame", async () => {
   const { seq, ts, mac, ...rest } = sent;
   const body = JSON.stringify({ ...rest, seq, ts });
   assert.equal(mac, hostMac(PAIR_SECRET, sent.cmd, seq, ts, body));
-  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, set: false })));
   await pending;
 });
 
@@ -1053,21 +1082,23 @@ test("A27 L2: seq increases per frame and unpaired frames carry no mac", async (
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
   const a = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
-  await flushTicks(10);
-  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
+  assert.ok(await waitForFrame(chrome, 1), "first frame posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, set: true }, 0)));
   await a;
   const b = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
-  await flushTicks(10);
+  assert.ok(await waitForFrame(chrome, 2), "second frame posted");
   assert.ok(
     chrome.__state.postedNative[1].seq > chrome.__state.postedNative[0].seq,
     "seq must strictly increase"
   );
-  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: true }));
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, set: true }, 1)));
   await b;
 
   const plain = fresh();
   const p = sendMessage(plain.onMessage, plain.chrome, { type: "PV_EXT_PIN_STATUS" });
-  await flushTicks(10);
+  assert.ok(await waitForFrame(plain.chrome, 1), "unpaired frame posted");
   const sent = plain.chrome.__state.postedNative[0];
   assert.equal("mac" in sent, false, "unpaired installs keep sending plain frames");
   assert.equal("seq" in sent, false);
@@ -1092,20 +1123,103 @@ test("A27 L2: PV_PAIR proves the typed code with a MACed pair_confirm frame", as
   const sent = chrome.__state.postedNative[0];
   assert.equal(sent.cmd, "pair_confirm");
   assert.match(sent.mac, /^[0-9a-f]{64}$/, "the frame carries a MAC");
-  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, paired: true }));
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, paired: true })));
   const r = await pending;
   assert.equal(r.ok, true);
   assert.equal(r.paired, true);
 });
 
-test("A27 L2: a refused pair_confirm surfaces the host's reason", async () => {
+test("A27 L2b: a host reply that fails the pairing check reads as a wrong code", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
   const pending = sendMessage(onMessage, chrome, { type: "PV_PAIR" });
   assert.ok(await waitForFrame(chrome), "pair_confirm posted");
+  // A host that holds a different secret answers with its own (valid for it,
+  // wrong for us) MAC. The popup must not claim the pair worked.
   chrome.__state.ports[0].handlers.message.forEach((fn) =>
-    fn({ ok: false, error: "pairing code rejected: bad mac" }));
+    fn({ ok: false, error: "pairing code rejected: bad mac", mac: "00".repeat(32) }));
   const r = await pending;
   assert.equal(r.ok, false);
-  assert.match(r.error, /bad mac/);
+  assert.match(r.error, /did not match the desktop/);
+});
+
+// ---- A27 L2b: signed replies --------------------------------------------
+
+test("A27 L2b: the reply MAC matches the Rust known-answer vector", () => {
+  // Same secret as the request vector; reply body shared with
+  // host_pairing::reply_mac_matches_a_known_answer_vector.
+  const reply = { ok: true, items: [{ id: "a", n: 1.0 }], n: 2 };
+  const body = canonicalJson(reply);
+  assert.equal(body, '{"items":[{"id":"a","n":1}],"n":2,"ok":true}');
+  const canonical = `pv1r|list|7|1763000000|${sha256hex(body)}`;
+  assert.equal(
+    createHmac("sha256", PAIR_SECRET).update(canonical).digest("hex"),
+    "4a0b4fe89bb5b65197d7c4e01af4bd58e370a247a5e629faabb59549e625ada8"
+  );
+});
+
+test("A27 L2b: a signed reply is accepted", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome), "frame posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, set: false, n: 2.0 })));
+  const r = await pending;
+  assert.equal(r.ok, true);
+  assert.equal(r.set, false);
+  assert.match(r.mac, /^[0-9a-f]{64}$/);
+});
+
+test("A27 L2b: an unsigned reply is refused when the extension is paired", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome), "frame posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  const r = await pending;
+  assert.equal(r.ok, false, "an unsigned reply must not pass");
+  assert.match(r.error, /not signed/);
+});
+
+test("A27 L2b: a tampered reply body is refused", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome), "frame posted");
+  const signed = hostReply(chrome, { ok: true, set: false });
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn({ ...signed, set: true })); // body changed, MAC kept
+  const r = await pending;
+  assert.equal(r.ok, false);
+  assert.match(r.error, /pairing check/);
+});
+
+test("A27 L2b: a reply MAC is bound to its own request, not another one", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const first = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome, 1), "first frame posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn(hostReply(chrome, { ok: true, set: false }, 0)));
+  await first;
+  const second = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome, 2), "second frame posted");
+  // Replaying the first reply (valid MAC, wrong seq) must not pass.
+  const stale = hostReply(chrome, { ok: true, set: false }, 0);
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn(stale));
+  const r = await second;
+  assert.equal(r.ok, false, "a replayed reply must not pass");
+  assert.match(r.error, /pairing check/);
+});
+
+test("A27 L2b: an unpaired extension accepts unsigned replies", async () => {
+  const { chrome, onMessage } = fresh();
+  const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
+  assert.ok(await waitForFrame(chrome), "frame posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
+  const r = await pending;
+  assert.equal(r.ok, true);
+  assert.equal("mac" in r, false);
 });

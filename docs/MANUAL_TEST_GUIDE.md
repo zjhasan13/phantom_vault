@@ -232,6 +232,9 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 7. **গুরুত্বপূর্ণ:** installed (release) build-এ পেয়ার না করা পর্যন্ত extension
    কিছুই পড়তে পারবে না — popup-এ "extension not paired — … Show pairing code"
    মেসেজ আসবে। এটা বাগ নয়, নিরাপত্তার নিয়ম।
+8. পেয়ার করার পর host-এর প্রতিটা উত্তর (reply) sign হয়। কোনো reply-তে হাত
+   দেওয়া হলে বা অন্য প্রোগ্রাম উত্তর দিলে popup দেখাবে "host reply failed the
+   pairing check — re-pair the extension" — ভল্টের ডেটা দেখাবে না।
 
 ### 8.C দৈনন্দিন ব্যবহার
 

@@ -169,11 +169,17 @@ These are documented rather than secret; please do not report them as new findin
   web-accessible on all `http(s)` pages for the MAIN-world tripwire, which is
   fingerprintable. No narrower set keeps autofill working, so this is accepted
   and documented rather than reduced.
-- The native host does **not** yet require a pairing secret. A same-user process
-  that knows the registered extension origin/id can launch the bridge and speak
-  the native-messaging protocol. Today's mitigations are the local-only pipe,
-  the per-request UI gates (reprompt, PIN) and the audit log; a pairing secret
-  is designed but not shipped.
+- The native host **requires a pairing secret in release builds** (A27 L2). A
+  same-user process that knows the registered extension origin/id can still
+  launch the bridge, but a release host refuses every frame that does not carry
+  a valid HMAC over `cmd`/`seq`/`ts`/body, and the popup rejects any reply that
+  the paired host did not sign, so a look-alike host cannot feed the extension
+  data. This is not a boundary against a same-user process that can read
+  `chrome.storage.local` or DPAPI-unseal the sealed secret as the same user; it
+  raises the cost from *spawn and talk* to *steal the secret first*. Debug builds
+  stay warn-only.
+  The Authenticode publisher check on the parent process (A27 L1 step 2) is
+  designed and logged, not enforced. See `docs/A27_HOST_PAIRING.md`.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

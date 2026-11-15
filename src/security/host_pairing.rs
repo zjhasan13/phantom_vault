@@ -274,6 +274,90 @@ pub fn verify_frame(secret: &[u8], cmd: &str, seq: u64, ts: u64, body: &[u8], ma
     hmac.verify_slice(mac).is_ok()
 }
 
+/// Canonical JSON for reply MACs: recursively sorted keys and integral floats
+/// printed without a fraction, so Rust and JavaScript produce identical bytes.
+///
+/// Requests can use the raw wire bytes (the extension stringifies once and the
+/// host strips `mac`), but Chrome hands the extension a **parsed object** for
+/// replies, so this direction has to agree on a canonical form instead.
+pub fn canonical_json(value: &serde_json::Value) -> String {
+    let mut out = String::new();
+    write_canonical(value, &mut out);
+    out
+}
+
+fn write_canonical(value: &serde_json::Value, out: &mut String) {
+    use serde_json::Value;
+    match value {
+        Value::Null => out.push_str("null"),
+        Value::Bool(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Number(n) => {
+            // `JSON.stringify(1.0)` is `1`; serde would print `1.0`.
+            let integral = n.as_i64().is_none()
+                && n.as_u64().is_none()
+                && n.as_f64()
+                    .map(|f| f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0)
+                    .unwrap_or(false);
+            if integral {
+                out.push_str(&format!("{}", n.as_f64().unwrap_or(0.0) as i64));
+            } else {
+                out.push_str(&n.to_string());
+            }
+        }
+        Value::String(s) => out.push_str(&serde_json::to_string(s).expect("string serialises")),
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                write_canonical(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, key) in keys.iter().enumerate() {
+                if i > 0 {
+                    out.push(',');
+                }
+                out.push_str(&serde_json::to_string(key).expect("key serialises"));
+                out.push(':');
+                write_canonical(&map[*key], out);
+            }
+            out.push('}');
+        }
+    }
+}
+
+/// The MAC a host puts on a reply so the extension can tell a real host from a
+/// spawned look-alike. It binds the request identity plus the canonical reply
+/// body; the reply's own `mac` field is excluded.
+pub fn reply_mac(
+    secret: &[u8],
+    cmd: &str,
+    seq: u64,
+    ts: u64,
+    reply: &serde_json::Value,
+) -> [u8; 32] {
+    let mut body = reply.clone();
+    if let Some(obj) = body.as_object_mut() {
+        obj.remove("mac");
+    }
+    let msg = format!(
+        "pv1r|{cmd}|{seq}|{ts}|{}",
+        body_hash_hex(canonical_json(&body).as_bytes())
+    );
+    let mut hmac = HmacSha256::new_from_slice(secret).expect("HMAC accepts any key length");
+    hmac.update(msg.as_bytes());
+    let out = hmac.finalize().into_bytes();
+    let mut bytes = [0u8; 32];
+    bytes.copy_from_slice(&out);
+    bytes
+}
+
 /// Freshness window for `ts` (seconds, either direction).
 pub const TS_SKEW_SECS: u64 = 60;
 
@@ -348,6 +432,57 @@ mod tests {
             &body,
             &mac
         ));
+    }
+
+    #[test]
+    fn reply_mac_matches_a_known_answer_vector() {
+        // Same secret as the request vector. Computed independently with Node
+        // (JSON.stringify + sorted keys + HMACSHA256); the popup test decodes
+        // this exact reply and recomputes the MAC.
+        let secret = sample_secret();
+        let reply = serde_json::json!({
+            "ok": true,
+            "items": [{"id": "a", "n": 1.0}],
+            "n": 2
+        });
+        assert_eq!(
+            canonical_json(&reply),
+            r#"{"items":[{"id":"a","n":1}],"n":2,"ok":true}"#,
+            "keys sorted, integral float printed without a fraction"
+        );
+        let mac = reply_mac(&secret, "list", 7, 1_763_000_000, &reply);
+        let hex: String = mac.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(
+            hex,
+            "4a0b4fe89bb5b65197d7c4e01af4bd58e370a247a5e629faabb59549e625ada8"
+        );
+        // A reply that already carries a mac is signed over the same body.
+        let mut with_mac = reply.clone();
+        with_mac["mac"] = serde_json::json!("ff".repeat(32));
+        assert_eq!(
+            reply_mac(&secret, "list", 7, 1_763_000_000, &with_mac),
+            mac,
+            "the reply's own mac field never feeds its own MAC"
+        );
+        // The request identity is bound: another cmd/seq/ts changes the MAC.
+        assert_ne!(reply_mac(&secret, "list", 8, 1_763_000_000, &reply), mac);
+        assert_ne!(reply_mac(&secret, "query", 7, 1_763_000_000, &reply), mac);
+    }
+
+    #[test]
+    fn canonical_json_is_stable_for_nested_and_unicode_values() {
+        let value = serde_json::json!({
+            "b": [3, {"z": 1, "a": 2}],
+            "a": "বাংলা — ok",
+            "n": -0.0,
+            "f": 2.5
+        });
+        let once = canonical_json(&value);
+        // Re-parsing and re-canonicalising must be a fixed point.
+        let again = canonical_json(&serde_json::from_str(&once).expect("round trip"));
+        assert_eq!(once, again);
+        assert!(once.starts_with(r#"{"a":"বাংলা — ok","b":[3,{"a":2,"z":1}],"#), "{once}");
+        assert!(once.contains(r#""f":2.5"#), "{once}");
     }
 
     #[test]

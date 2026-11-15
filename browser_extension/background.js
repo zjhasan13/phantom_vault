@@ -126,11 +126,23 @@ function ensurePort() {
   port.onMessage.addListener((msg) => {
     const cur = inflight;
     inflight = null;
-    if (cur) {
-      clearTimeout(cur.timer);
-      cur.resolve(msg);
+    if (!cur) {
+      pumpQueue();
+      return;
     }
-    pumpQueue();
+    clearTimeout(cur.timer);
+    // A27 L2b: a signed request must get a signed reply. Verification is async,
+    // so the next frame is pumped only after this one settles (strict FIFO).
+    verifyReply(cur.payload, msg).then(
+      () => {
+        cur.resolve(msg);
+        pumpQueue();
+      },
+      (e) => {
+        cur.reject(e instanceof Error ? e : new Error(String(e)));
+        pumpQueue();
+      }
+    );
   });
   port.onDisconnect.addListener(() => {
     const errMsg = chrome.runtime.lastError
@@ -245,6 +257,72 @@ async function signFrame(payload) {
   return { ...payload, seq, ts, mac: bytesToHex(mac) };
 }
 
+// ---- A27 L2b: verify the host's reply MAC ----
+// Chrome hands us a parsed object, not the raw wire bytes, so both sides agree on
+// a canonical form instead: recursively sorted keys, integral numbers without a
+// fraction. The Rust side is `host_pairing::canonical_json`; the vector in
+// docs/A27_HOST_PAIRING.md is asserted in both test suites.
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const keys = Object.keys(value).sort();
+    return `{${keys
+      .map((k) => `${JSON.stringify(k)}:${canonicalJson(value[k])}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(text)
+  );
+  return bytesToHex(digest);
+}
+
+async function replyMacHex(secret, canonical) {
+  const key = await crypto.subtle.importKey(
+    "raw",
+    secret,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const mac = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(canonical));
+  return bytesToHex(mac);
+}
+
+function sameHex(a, b) {
+  if (typeof a !== "string" || typeof b !== "string" || a.length !== b.length) {
+    return false;
+  }
+  let diff = 0;
+  for (let i = 0; i < a.length; i += 1) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Resolves when the reply really came from the paired host. A signed request
+// demands a signed reply: a missing or wrong MAC means something else answered
+// on the port, which is exactly what A27 is for.
+async function verifyReply(request, reply) {
+  if (!request || !request.mac) return true; // unsigned request -> nothing to check
+  const secret = await pairSecret();
+  if (!secret) return true; // unpaired machine: the host cannot sign either
+  if (!reply || typeof reply !== "object") {
+    throw new Error("native host sent a non-object reply");
+  }
+  const { mac, ...body } = reply;
+  if (!mac) throw new Error("host reply is not signed — re-pair the extension");
+  const digest = await sha256Hex(canonicalJson(body));
+  const canonical = `pv1r|${request.cmd}|${request.seq}|${request.ts}|${digest}`;
+  const want = await replyMacHex(secret, canonical);
+  if (!sameHex(want, String(mac))) {
+    throw new Error("host reply failed the pairing check — re-pair the extension");
+  }
+  return true;
+}
+
 function hostRequest(payload, timeoutMs = 10000) {
   // Signing is async (WebCrypto); the queue and one-shot fallback below stay
   // synchronous. A signing failure falls back to the plain frame, which the host
@@ -299,7 +377,12 @@ function oneShotRequest(payload, timeoutMs = 10000) {
       () => done(reject, new Error("native host timeout")),
       timeoutMs
     );
-    port.onMessage.addListener((msg) => done(resolve, msg));
+    port.onMessage.addListener((msg) => {
+      verifyReply(payload, msg).then(
+        () => done(resolve, msg),
+        (e) => done(reject, e instanceof Error ? e : new Error(String(e)))
+      );
+    });
     port.onDisconnect.addListener(() => {
       const err = chrome.runtime.lastError
         ? chrome.runtime.lastError.message
@@ -578,7 +661,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (r && r.ok) return { ok: true, paired: true };
         return { ok: false, error: (r && r.error) || "pairing refused" };
       } catch (e) {
-        return { ok: false, error: (e && e.message) || "pairing failed" };
+        const why = String((e && e.message) || e);
+        // A wrong code fails the reply MAC too, so the host's "rejected" reason
+        // can arrive as a verification error. Say what the user should do.
+        if (/pairing check|not signed/.test(why)) {
+          return {
+            ok: false,
+            error: "That code did not match the desktop — check the code and try again.",
+          };
+        }
+        return { ok: false, error: why || "pairing failed" };
       }
     }
     if (msg.type === "PV_LIST") {
