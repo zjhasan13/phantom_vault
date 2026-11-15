@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-14 |
-| Branch / HEAD | `main` @ pending push (A27 L1+L2 groundwork, U1 modals) |
+| Branch / HEAD | `main` @ `dafa13f` (A27 L1+L2 groundwork; U1 modals in `adc846e`) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
