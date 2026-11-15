@@ -161,3 +161,50 @@ test("A4: popup copies through the native host before the web clipboard", () => 
   assert.match(arm[1], /type: "PV_CLIP_ARM"/);
   assert.match(arm[1], /msg\.hash = hash/);
 });
+
+// ---- A27 L2: desktop pairing UI -----------------------------------------
+
+function pairParser() {
+  const m = SRC.match(/const PAIR_ALPHABET = "([^"]+)";[\s\S]*?\n  function parsePairCode\(input\) \{([\s\S]*?)\n  \}/);
+  assert.ok(m, "parsePairCode present in popup.js");
+  assert.equal(m[1], "0123456789ABCDEFGHJKMNPQRSTVWXYZ", "Crockford alphabet");
+  return new Function(
+    `const PAIR_ALPHABET = ${JSON.stringify(m[1])};` +
+      `function parsePairCode(input) {${m[2]}\n  }` +
+      "return parsePairCode;"
+  )();
+}
+
+test("A27 L2: the popup decodes the desktop pairing code", () => {
+  const parse = pairParser();
+  // Same vector as host_pairing::tests: bytes 0..19.
+  const bytes = parse("000G-40R4-0M30-E209-185G-R38E-1W81-24GK");
+  assert.ok(bytes, "canonical code parses");
+  assert.deepEqual(bytes, Array.from({ length: 20 }, (_, i) => i));
+  // Case, spaces and Crockford lookalikes are tolerated.
+  assert.deepEqual(parse(" 000g 40r4 0m30 e209 185g r38e 1w81 24gk "), bytes);
+  assert.deepEqual(parse("000G-40R4-0M30-E209-185G-R38E-IW8I-24GK"), bytes,
+    "I and L read as 1");
+  // Wrong length, illegal letters and short codes are refused.
+  assert.equal(parse("000G-40R4-0M30-E209-185G-R38E-1W81-24G"), null);
+  assert.equal(parse("000G-40R4-0M30-E209-185G-R38E-1W81-24GK-0000"), null);
+  assert.equal(parse("UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU-UUUU"), null);
+  assert.equal(parse(""), null);
+});
+
+test("A27 L2: the popup stores only the decoded secret and proves it", () => {
+  assert.match(SRC, /await chrome\.storage\.local\.set\(\{ pv_pair_secret: b64 \}\)/,
+    "the decoded bytes go to storage, not the typed code");
+  assert.ok(!/pv_pair_secret: .*pairInput/.test(SRC), "the raw code is never stored");
+  assert.match(SRC, /type: "PV_PAIR"/, "the popup asks the host to verify");
+  const failed = SRC.match(/await chrome\.storage\.local\.remove\("pv_pair_secret"\);/g);
+  assert.ok(failed && failed.length >= 2, "a refused code and Unpair both wipe the secret");
+});
+
+test("A27 L2: popup.html carries the pairing row the script binds to", () => {
+  const HTML = readFileSync(
+    new URL("../../browser_extension/popup.html", import.meta.url), "utf8");
+  for (const id of ["pairHint", "pairCode", "pairBtn", "unpairBtn"]) {
+    assert.match(HTML, new RegExp(`id="${id}"`), `${id} present`);
+  }
+});

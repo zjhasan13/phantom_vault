@@ -27,6 +27,8 @@ No Chromium, no Electron, no WebView inside the app.
    - design tokens → `design/tokens.json`, `docs/UI_TOKENS.md`
    - specific subsystems → `docs/A13_KDBX.md`, `docs/A20_SEND.md`,
      `docs/A23_LOCAL_API.md`, `docs/A24_ATTACHMENTS.md`, `docs/A26_BN.md`
+   - manual QA / release sign-off → `docs/MANUAL_TEST_GUIDE.md` (written for a
+     non-technical tester; keep it in sync when a user-visible feature changes)
 
 `docs/HANDOFF.md` still has legacy mojibake in places; do not mass-rewrite it.
 

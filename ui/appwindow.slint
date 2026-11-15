@@ -1080,6 +1080,10 @@ export component MainWindow inherits Window {
     in-out property <string> share_priv: "";
     in-out property <string> share_env: "";
     in-out property <string> bridge_status: "";
+    // A27 L2: the extension pairing code (Crockford, 8 groups of 4). Shown only
+    // while the Settings panel is open; never written to a log.
+    in-out property <string> pair_code: "";
+    in-out property <string> pair_status: "";
     // Local Wi-Fi P2P sync (default OFF) + GitHub Releases updater.
     in-out property <bool> p2p_enabled: false;
     in-out property <string> p2p_status: "P2P discovery is OFF — enable to find LAN devices.";
@@ -1290,6 +1294,9 @@ export component MainWindow inherits Window {
     // Firefox uses the pinned add-on ID (manifest.firefox.json gecko.id) —
     // no paste needed, the ID is fixed at build time.
     callback install_firefox_host();
+    // A27 L2: mint/show the extension pairing code, and revoke it.
+    callback mint_pair_code();
+    callback revoke_pairing();
     // Zero-lockin reverse exporters (2FA hub QR + full-vault files).
     callback ga_export_start();
     callback ga_export_page(int);
@@ -2471,6 +2478,11 @@ export component MainWindow inherits Window {
                     Text { text: (root.ui_lang == "bn" ? "Firefox: about:debugging দিয়ে dist/firefox/ ইনস্টল করুন, তারপর নিচে আমাদের add-on ID লক করুন (Firefox ম্যানিফেস্টের একই পিন করা ID)।" : "Firefox: install dist/firefox/ via about:debugging, then lock our add-on ID below (same pinned ID as the Firefox manifest)."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🦊 Firefox হোস্ট ইনস্টল" : "🦊 Install Firefox Host"); width: 280px; clicked => { root.install_firefox_host(); } } }
                     Text { text: root.bridge_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
+                    FieldLabel { text: root.ui_lang == "bn" ? "এক্সটেনশন পেয়ারিং" : "EXTENSION PAIRING"; }
+                    Text { text: (root.ui_lang == "bn" ? "কোডটি এক্সটেনশন পপআপের Settings → Desktop pairing ঘরে বসান। কোড = DPAPI-সিল করা ২০-বাইট secret, তাই ডেস্কটপ অ্যাপ বন্ধ থাকলেও কাজ করে। যে প্রসেস পেয়ার করেনি তার ফ্রেম host আলাদা করে চিহ্নিত করে।" : "Type the code into the extension popup: Settings → Desktop pairing. The code is the DPAPI-sealed 20-byte secret, so it keeps working while the desktop app is closed. Frames from anything that did not pair are flagged by the host."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🔑 পেয়ারিং কোড দেখান" : "🔑 Show pairing code"); primary: true; width: 220px; clicked => { root.mint_pair_code(); } } AuraButton { label: (root.ui_lang == "bn" ? "পেয়ারিং মুছুন" : "Revoke pairing"); danger: true; width: 170px; clicked => { root.revoke_pairing(); } } }
+                    if root.pair_code != "" : Text { text: root.pair_code; color: PhantomTheme.secondary; font-size: 15px; font-weight: 800; wrap: char-wrap; }
+                    Text { text: root.pair_status; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                 }}
                 if root.settings_tab == 4 : Rectangle { background: PhantomTheme.surface; border-radius: 12px; border-width: 1px; border-color: PhantomTheme.border; VerticalLayout { padding: 16px; spacing: 10px;
                     Text { text: root.ui_lang == "bn" ? "📤 ভল্ট এক্সপোর্ট (জিরো ভেন্ডর লক-ইন)" : "📤 EXPORT VAULT (ZERO VENDOR LOCK-IN)"; color: PhantomTheme.primary; font-size: 12px; font-weight: 800; }

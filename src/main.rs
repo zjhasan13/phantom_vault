@@ -4303,6 +4303,11 @@ fn main() -> Result<(), slint::PlatformError> {
             }
         }
     }
+    // A27 L2: keep the host's data-dir marker in step with where the vault
+    // actually lives. The host CWDs to that recorded path before it reads the
+    // pairing seal, so a stale marker (an old dev install pointing at the repo)
+    // would split the app and the host across two different seal files.
+    windows_native::native_host::record_data_dir();
     // Cat 8 process hardening, applied before any secret exists in RAM:
     // refuse injected DLLs, opt out of WER crash-dump uploads, probe admin.
     let dll_guarded = windows_native::process_guard::block_injected_dlls();
@@ -10315,6 +10320,66 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 }
             });
         });
+    });
+
+    // A27 L2: show the extension pairing code (mint on first use) and revoke it.
+    // The code is the DPAPI-sealed 20-byte secret in the data dir, so it keeps
+    // working while the app is closed; revoking rotates it.
+    let pair_weak = main_window.as_weak();
+    main_window.on_mint_pair_code(move || {
+        let Some(ui) = pair_weak.upgrade() else {
+            return;
+        };
+        let path = windows_native::native_host::pairing_path();
+        // Already paired: show the existing code instead of rotating it, so a
+        // second browser does not silently break the first one.
+        let code = match security::host_pairing::load_at(&path).ok().flatten() {
+            Some(secret) => Ok(security::host_pairing::display_code(&secret)),
+            None => security::host_pairing::mint_at(&path),
+        };
+        match code {
+            Ok(code) => {
+                ui.set_pair_code(code.into());
+                ui.set_pair_status(
+                    tr(
+                        "Type this in the extension popup: Settings → Desktop pairing. Revoke mints a new secret and invalidates this code.",
+                        "এক্সটেনশন পপআপের Settings → Desktop pairing ঘরে বসান। Revoke করলে নতুন secret তৈরি হয়, এই কোড আর কাজ করবে না।",
+                    )
+                    .into(),
+                );
+                security::access_log::log_event("bridge", "pairing code shown");
+            }
+            Err(e) => {
+                ui.set_pair_code("".into());
+                ui.set_pair_status(
+                    format!("{}{e}", tr("⚠️ Pairing failed: ", "⚠️ পেয়ারিং ব্যর্থ: ")).into(),
+                );
+            }
+        }
+    });
+
+    let revoke_weak = main_window.as_weak();
+    main_window.on_revoke_pairing(move || {
+        let Some(ui) = revoke_weak.upgrade() else {
+            return;
+        };
+        let path = windows_native::native_host::pairing_path();
+        match security::host_pairing::clear_at(&path) {
+            Ok(()) => {
+                ui.set_pair_code("".into());
+                ui.set_pair_status(
+                    tr(
+                        "Pairing revoked — the extension goes back to unpaired frames.",
+                        "পেয়ারিং মুছে গেছে — এক্সটেনশন আবার unpaired frame পাঠাবে।",
+                    )
+                    .into(),
+                );
+                security::access_log::log_event("bridge", "pairing revoked");
+            }
+            Err(e) => ui.set_pair_status(
+                format!("{}{e}", tr("⚠️ Revoke failed: ", "⚠️ রিভোক ব্যর্থ: ")).into(),
+            ),
+        }
     });
 
     // Batch-4: privacy alias config (DPAPI-sealed token) + one-click generation.

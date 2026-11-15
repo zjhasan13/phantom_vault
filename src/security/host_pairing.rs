@@ -189,7 +189,7 @@ pub fn strip_mac_field(line: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
 }
 
 /// What one frame looked like to the pairing guard.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameVerdict {
     /// MAC, seq and ts all good.
     Verified,
@@ -296,6 +296,8 @@ mod tests {
         let code = display_code(&secret);
         assert_eq!(code.len(), 39, "32 chars + 7 hyphens: {code}");
         assert_eq!(code.split('-').count(), 8, "{code}");
+        // Cross-language vector: the popup test decodes this exact string.
+        assert_eq!(code, "000G-40R4-0M30-E209-185G-R38E-1W81-24GK");
         assert_eq!(parse_code(&code).as_deref(), Some(secret.as_slice()));
     }
 

@@ -1,7 +1,7 @@
 এখনো খোলা — সিকিউরিটি / প্রাইভেসি
 #	গ্যাপ	ঝুঁকি
 ২	Binaries unsigned — Authenticode নেই, .sig নেই	SmartScreen warning; in-app updater এই বিল্ড refuse করবে
-৩	Same-user process registered origin string জেনে native host spawn করতে পারে	L1-এর parent-image probe (warn-only audit line) + L2-এর core (secret mint/seal, frame MAC, seq/ts check) + extension-এর per-frame MAC হয়ে গেছে; বাকি — Pair extension বাটন, popup কোড এন্ট্রি, pair_confirm, Authenticode publisher check, step 2 enforcement — ডিজাইন `docs/A27_HOST_PAIRING.md`
+৩	Same-user process registered origin string জেনে native host spawn করতে পারে	L1-এর parent-image probe (warn-only audit line) + L2 end-to-end (secret mint/seal, Crockford কোড, frame MAC, seq/ts check, `pair_confirm`) + desktop-এ **Show pairing code / Revoke pairing** + popup-এর Desktop pairing রো। **Step 2 হয়েছে**: release build unverified frame refuse করে (debug-এ শুধু log)। বাকি — response MAC, Authenticode publisher check — ডিজাইন `docs/A27_HOST_PAIRING.md`
 ৪	Permission breadth — host_permissions:<all_urls>, tabs, scripting, clipboardWrite, nativeMessaging; hook.js সব http(s)-এ web-accessible	fingerprinting + SW compromise-এ blast radius. সিদ্ধান্ত: wontfix + নথিভুক্ত — <all_urls> ছাড়া autofill হয় না
 ৫	PV_BREACH sender-scoped নয় — যেকোনো content script পাসওয়ার্ডের SHA-1 prefix পাঠাতে পারে	k-anonymity, পেজের কাছে পাসওয়ার্ড আগেই আছে — কম ঝুঁকি. `reuse` leak বন্ধ হয়েছে (নিচে)
 ৬	Firefox bridge — আসল Firefox-এ যাচাই করা হয়নি (কোড ঠিক, manifest writer টেস্টেড)	কোড পাথে সমস্যা থাকলে Firefox ইউজার কিছুই পাবে না

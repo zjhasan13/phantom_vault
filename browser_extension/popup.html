@@ -393,6 +393,13 @@
       <div class="hint" id="neverSaveHint">Sites where you chose "Never" on the save prompt. Remove one to see the prompt again.</div>
       <div id="neverSaveList"></div>
     </div>
+    <div class="row">
+      <div class="t">Desktop pairing</div>
+      <div class="hint" id="pairHint">Not paired — frames go out unsigned until you paste the desktop code.</div>
+      <input id="pairCode" placeholder="K7Q2-9F3M-…  (PhantomVault → Settings → Browser Bridge → Show pairing code)" aria-label="Desktop pairing code" autocomplete="off" spellcheck="false" />
+      <button class="wide" id="pairBtn" style="margin-top:6px">Pair with desktop</button>
+      <button class="wide hidden" id="unpairBtn" style="margin-top:6px">Unpair</button>
+    </div>
     <button class="wide" id="saveSettings" style="width:100%">Save Settings</button>
     <div class="hint" id="saveHint"></div>
   </div>

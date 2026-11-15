@@ -2,13 +2,14 @@
 
 Status: **partially shipped**. L1's parent-image probe is in
 `src/windows_native/host_provenance.rs` and runs warn-only from `serve_cli`
-(one audit line per host start, no behaviour change). L2's core is in
-`src/security/host_pairing.rs` (secret mint/seal, Crockford code, frame MAC,
-`FrameGuard` seq/ts checks) and the extension already signs every frame when
-paired; what is missing is the user-facing side (desktop **Pair extension**
-button, popup code entry, `pair_confirm`), response MACs, L1's Authenticode
-publisher check, and step-2 enforcement. Tracked as open item 3 in
-`docs/baki kaj.md`.
+(one audit line per host start, no behaviour change). L2 is shipped end to end
+but still warn-only: `src/security/host_pairing.rs` mints/seals the 20-byte
+secret, prints it as a Crockford code, and verifies a MAC + seq + ts on every
+frame; the desktop shows the code in **Settings → Sync & Devices → Extension
+pairing** (`Show pairing code` / `Revoke pairing`), the popup stores the decoded
+bytes and answers `pair_confirm`, and a rejected MAC is logged, not refused.
+Still open: response MACs and L1's Authenticode publisher check. Tracked as open
+item 3 in `docs/baki kaj.md`.
 
 ## 1. The gap
 
@@ -114,15 +115,29 @@ field from the raw line and MACs the remainder. `strip_mac_field` is the Rust
 half and is unit-tested against frames with `mac` first, middle and last.
 
 Host rules: constant-time compare; `seq` strictly increasing per session;
-`|now - ts| <= 60 s`; reject and audit-log `host mac rejected` on any miss. The
-response carries the same MAC shape so the extension can detect a fake host.
+`|now - ts| <= 60 s`; reject and audit-log `host mac rejected` on any miss.
 
-`pair_confirm` binds both directions:
+**Shipped `pair_confirm` (2026-11-15b) is simpler than the draft above.** It is a
+normal MACed frame — `{"cmd":"pair_confirm","seq":N,"ts":T,"mac":…}` — and the
+reply is `{"ok":true,"paired":true}` or `{"error":"…"}`. It is answered before the
+heartbeat/unlock gate because the reply carries no vault data, only the MAC
+verdict, and the popup needs it while the desktop app is locked. The
+`ext`/`nonce`/`host_nonce` handshake below is **not implemented**; it stays here
+as the design for response MACs (next batch), not as a description of the code.
+
+`pair_confirm` binds both directions (design only — not shipped yet):
 
 ```
 ext -> host: {"cmd":"pair_confirm","ext":"<id>","nonce":"<hex32>","mac":HMAC(secret,"pair-confirm|"+ext+"|"+nonce)}
 host -> ext: {"ok":true,"host_nonce":"<hex32>","mac":HMAC(secret,"pair-ok|"+ext+"|"+host_nonce)}
 ```
+
+Response MAC design (next batch): the host signs every reply as
+`HMAC(secret, "pv1r|" + req_cmd + "|" + req_seq + "|" + req_ts + "|" + sha256(canonical_reply))`,
+where `canonical_reply` is the reply JSON without `mac`, serialised with
+recursively sorted keys. Both sides must sort, because Chrome's native-messaging
+port hands the extension a **parsed object**, not raw bytes — the byte-exact
+trick used for requests cannot work in this direction.
 
 Unpair wipes `host_pairing.dpapi` and `chrome.storage.local.pv_pair_secret`.
 
@@ -137,8 +152,32 @@ unchanged. L1/L2 are additive.
   host still serves unpaired callers and audit-logs `host unpaired`.
 - **Step 2 (hard require):** one release later, refuse unpaired frames in release
   builds. This is the step that actually closes the gap; step 1 only prepares it.
+  **Implemented (2026-11-15c):** `serve_cli` sets
+  `enforce_pairing = !cfg!(debug_assertions)`, so a release build refuses the
+  first unverified frame (and every later one) with an actionable message, while
+  a debug build stays warn-only so a dev loop does not need a re-pair per build.
+  `pair_confirm` is exempt: it is how a user pairs, and its reply carries only
+  `{ok,paired}`.
 - A paired extension keeps working across host updates because the secret lives
   in the vault dir, not in the binary.
+
+Shipped so far (step 1): `Show pairing code` / `Revoke pairing` in
+**Settings → Sync & Devices → Extension pairing**, `pair_confirm` answered before
+the heartbeat gate (the reply carries a MAC verdict, no vault data), the popup's
+`Desktop pairing` row, and `host mac rejected: <why>` in the bridge log.
+
+Two traps learned while wiring this:
+
+- **The seal lives where the *host* looks, not where the app happens to run.**
+  `pairing_path()` = `resolve_data_dir()` (the `project_dir.txt` marker under
+  `%LOCALAPPDATA%\PhantomVault`) + `host_pairing.dpapi`. A stale marker (a dev
+  install that recorded the repo root) silently split app and host across two
+  different seal files, so the app now rewrites the marker at startup
+  (`native_host::record_data_dir`). Portable mode moves the vault dir, and the
+  marker follows it.
+- **`pair_confirm` must be answered before the unlock gate.** The popup proves a
+  typed code while the desktop may be locked; the reply is `{ok,paired}` or an
+  error string, never vault content, so the gate stays where it is.
 
 ## 5. Files and tests
 

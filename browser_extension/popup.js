@@ -376,6 +376,79 @@
     setTimeout(() => { hint.textContent = ""; }, 2500);
   });
 
+  // ---------- A27 L2: desktop pairing ----------
+  // The desktop app shows a 32-character Crockford code; it decodes to the
+  // 20-byte secret the host seals with DPAPI. Storing it makes background.js
+  // MAC every frame, and PV_PAIR proves the code against the live host.
+  const PAIR_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
+
+  // Mirrors host_pairing::parse_code: 32 Crockford chars -> 20 bytes.
+  function parsePairCode(input) {
+    let acc = 0;
+    let bits = 0;
+    const out = [];
+    for (const ch of String(input || "")) {
+      const up = ch.toUpperCase();
+      if (up === "-" || up === " " || up === "\t" || up === "\n" || up === "\r") continue;
+      const c = up === "I" || up === "L" ? "1" : up === "O" ? "0" : up;
+      const idx = PAIR_ALPHABET.indexOf(c);
+      if (idx < 0) return null;
+      acc = (acc << 5) | idx;
+      bits += 5;
+      if (bits >= 8) {
+        out.push((acc >>> (bits - 8)) & 0xff);
+        bits -= 8;
+      }
+    }
+    if (bits >= 5) return null;
+    if (bits > 0 && (acc & ((1 << bits) - 1)) !== 0) return null;
+    return out.length === 20 ? out : null;
+  }
+
+  const pairHint = document.getElementById("pairHint");
+  const pairInput = document.getElementById("pairCode");
+  const pairBtn = document.getElementById("pairBtn");
+  const unpairBtn = document.getElementById("unpairBtn");
+
+  function paintPairState(paired, extra) {
+    if (!pairHint) return;
+    pairHint.textContent = extra || (paired
+      ? "Paired — every frame carries a MAC the host verifies."
+      : "Not paired — frames go out unsigned until you paste the desktop code.");
+    if (pairBtn) pairBtn.textContent = paired ? "Re-pair" : "Pair with desktop";
+    if (unpairBtn) unpairBtn.classList.toggle("hidden", !paired);
+  }
+
+  chrome.storage.local.get({ pv_pair_secret: "" }).then((s) => {
+    paintPairState(!!s.pv_pair_secret);
+  }).catch(() => paintPairState(false));
+
+  if (pairBtn) pairBtn.addEventListener("click", async () => {
+    const bytes = parsePairCode(pairInput ? pairInput.value : "");
+    if (!bytes) {
+      paintPairState(false, "That code looks wrong — 32 characters from 0-9 and A-Z (no I, L, O or U).");
+      return;
+    }
+    const b64 = btoa(String.fromCharCode(...bytes));
+    await chrome.storage.local.set({ pv_pair_secret: b64 });
+    const r = await chrome.runtime
+      .sendMessage({ type: "PV_PAIR" })
+      .catch((e) => ({ ok: false, error: String((e && e.message) || e) }));
+    if (r && r.ok) {
+      if (pairInput) pairInput.value = "";
+      paintPairState(true, "Paired — the host verified the MAC on a test frame.");
+    } else {
+      await chrome.storage.local.remove("pv_pair_secret");
+      paintPairState(false, (r && r.error) || "The desktop did not accept that code.");
+    }
+  });
+
+  if (unpairBtn) unpairBtn.addEventListener("click", async () => {
+    await chrome.storage.local.remove("pv_pair_secret");
+    if (pairInput) pairInput.value = "";
+    paintPairState(false, "Unpaired — frames go out unsigned again.");
+  });
+
   // ---------- stats ----------
   async function loadStats() {
     const box = document.getElementById("statsBox");

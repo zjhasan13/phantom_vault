@@ -30,6 +30,7 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Secure Send | ✅ | expiring one-view notes, TTL, read + burn (`docs/A20_SEND.md`) |
 | Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback; a forked remote still previews and merges locally without pushing (G6) |
 | Extension bridge | ✅ | native-messaging host install, allowed origins; allow-list fails closed (`361b309`) |
+| Extension pairing (A27 L2) | ◐ | desktop shows a Crockford code (Settings → Sync & Devices → Extension pairing), popup stores it and MACs every frame; **release builds refuse unverified frames**, debug builds log only. Open: response MACs + Authenticode publisher check (`docs/A27_HOST_PAIRING.md`) |
 | Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
 | Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs; auto-lock + clipboard TTL persist (`d7c3e1f`) |
 | Offline cache | ✅ | snapshot + DPAPI key + Hello/PIN gate; freshness + sealed timestamp |
@@ -157,3 +158,5 @@ For full detail: `git log --oneline` and `docs/HANDOFF.md`.
 3. Add one line to §5 with the commit hash.
 4. Keep claims verifiable: a row is only ✅ if a test, a screenshot, or a code
    path proves it.
+5. If a user-visible behaviour changes, update `docs/MANUAL_TEST_GUIDE.md` too —
+   that file is how a non-technical tester proves the row still works.

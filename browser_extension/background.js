@@ -570,6 +570,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         };
       }
     }
+    if (msg.type === "PV_PAIR") {
+      // A27 L2: the popup already wrote the typed code to storage, so signFrame
+      // MACs this frame with it. The host answers ok only if that MAC verifies.
+      try {
+        const r = await hostRequest({ cmd: "pair_confirm" }, 15000);
+        if (r && r.ok) return { ok: true, paired: true };
+        return { ok: false, error: (r && r.error) || "pairing refused" };
+      } catch (e) {
+        return { ok: false, error: (e && e.message) || "pairing failed" };
+      }
+    }
     if (msg.type === "PV_LIST") {
       const denied = popupReadOnly("the vault list");
       if (denied) return { ok: false, error: denied };

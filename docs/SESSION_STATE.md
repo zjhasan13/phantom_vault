@@ -9,14 +9,67 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-14 |
-| Branch / HEAD | `main` @ `dafa13f` (A27 L1+L2 groundwork; U1 modals in `adc846e`) |
+| Date | 2026-11-15 |
+| Branch / HEAD | `main` @ `1d20934` (dependency audit); A27 L2 pairing UI uncommitted |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
+| Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-15b) — A27 L2: pairing UI + step-2 enforcement + manual QA guide
+
+- **The user-facing half of A27 L2 is now on screen.** Settings → **Sync &
+  Devices** → *Extension pairing* has `Show pairing code` and `Revoke pairing`.
+  The code is the DPAPI-sealed 20-byte secret printed as 8 Crockford groups
+  (`FM6C-G96Y-CW5K-…`), minted on first use and **re-shown rather than rotated**
+  when one already exists, so pairing a second browser cannot silently break the
+  first. Revoke deletes the seal and logs `pairing revoked`.
+- **Popup side:** `Desktop pairing` row in Settings (code field, Pair, Unpair).
+  `parsePairCode` mirrors `host_pairing::parse_code` (I/L→1, O→0, hyphens and
+  spaces skipped, trailing bits must be zero, exactly 20 bytes), stores only the
+  decoded bytes in `chrome.storage.local.pv_pair_secret`, then sends `PV_PAIR`.
+  A refused code wipes the secret instead of leaving a dead one behind.
+- **`pair_confirm` is answered before the heartbeat/unlock gate.** The reply is
+  only `{ok,paired}` or an error string, so it leaks no vault content; that lets
+  the popup prove a typed code while the desktop app is locked or closed.
+- **Fixed a real split-brain bug found during the on-screen pass:** the seal was
+  written to `pairing_path()`, which resolves through the host's
+  `%LOCALAPPDATA%\PhantomVault\project_dir.txt` marker. A stale marker (a dev
+  install that recorded the repo root) put the app's seal in the repo while the
+  host would look elsewhere. The desktop app now rewrites the marker at startup
+  (`native_host::record_data_dir`, unit-tested), so portable mode and moved vault
+  dirs follow.
+- Tests: `npm test` **181 pass / 0 fail** (73 in `background.test.mjs`, incl.
+  `PV_PAIR` accepted/refused); `display_code`'s vector
+  (`000G-40R4-0M30-E209-185G-R38E-1W81-24GK`) is asserted in both Rust and JS;
+  tokens OK. On screen: code + status line captured after unlocking the demo
+  vault.
+- **Step 2 is in (`enforce_pairing`).** `serve_cli` sets
+  `enforce_pairing = !cfg!(debug_assertions)`: a release build refuses every
+  unverified frame (offline cache included) with a message that names the fix,
+  and a debug build stays warn-only so a dev loop does not need a re-pair per
+  rebuild. `pair_confirm` stays exempt — it is how a user pairs, and its reply
+  carries only the MAC verdict. `pairing_refusal()` is the single place that
+  decides "serve or refuse" and is unit-tested.
+- **Manual QA guide:** `docs/MANUAL_TEST_GUIDE.md` — 14 sections written for a
+  non-technical tester (setup with `PHANTOM_VAULT_DIR=C:\pv-demo`, reset, report
+  template, feature-by-feature expected results, 15-min smoke pass, known
+  traps, honest "still open" list). `tests/js/manual_guide.test.mjs` guards it:
+  every section, the release pairing warning, the four gate commands, the reset
+  path, and the absent-by-design list must stay in the file.
+- Tests: `cargo test -j 1` **635 passed / 0 failed / 4 ignored**
+  (`TEST_EXIT=0`); `cargo clippy --all-targets -j 1 -- -D warnings`
+  **CLIPPY_EXIT=0**; `npm test` **0 fail** (181 + 6 new guide tests);
+  `npm run test:tokens` → `UI tokens OK: 21 palette values`.
+- On screen (dev build, demo vault): code shown as
+  `T2AA-RVRX-PWB3-HDT3-PHM8-QYXF-WPGB-NHKW`, seal written to
+  `%TEMP%\pv-ui\host_pairing.dpapi`, `Revoke pairing` removed it and logged
+  `pairing revoked`.
+- Still open in A27: response MACs and the Authenticode publisher check (L1
+  step 2).
 
 ## Last code batch (2026-11-15a) — dependency audit: jsonwebtoken 9 -> 10
 

@@ -1001,6 +1001,16 @@ test("PV_BREACH keeps reuse for the popup and refuses an empty password", async 
 
 const PAIR_SECRET = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
 
+// WebCrypto + storage make signing async, so wait for the frame instead of
+// guessing a tick count (parallel test files made 10 ticks flaky).
+async function waitForFrame(chrome, n = 1, tries = 500) {
+  for (let i = 0; i < tries; i += 1) {
+    if (chrome.__state.postedNative.length >= n) return true;
+    await new Promise((r) => setImmediate(r));
+  }
+  return false;
+}
+
 function sha256hex(text) {
   return createHash("sha256").update(text).digest("hex");
 }
@@ -1026,7 +1036,7 @@ test("A27 L2: a paired extension signs every frame", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
   const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
-  await flushTicks(10);
+  assert.ok(await waitForFrame(chrome), "frame posted");
   const sent = chrome.__state.postedNative[0];
   assert.equal(sent.cmd, "ext_pin_status");
   assert.equal(typeof sent.seq, "number");
@@ -1069,8 +1079,33 @@ test("A27 L2: a secret of the wrong length is ignored, not fatal", async () => {
   const { chrome, onMessage } = fresh();
   chrome.__state.localStore.pv_pair_secret = Buffer.from("short").toString("base64");
   const pending = sendMessage(onMessage, chrome, { type: "PV_EXT_PIN_STATUS" });
-  await flushTicks(10);
+  assert.ok(await waitForFrame(chrome), "frame posted");
   assert.equal("mac" in chrome.__state.postedNative[0], false);
   chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, set: false }));
   await pending;
+});
+test("A27 L2: PV_PAIR proves the typed code with a MACed pair_confirm frame", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_PAIR" });
+  assert.ok(await waitForFrame(chrome), "pair_confirm posted");
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "pair_confirm");
+  assert.match(sent.mac, /^[0-9a-f]{64}$/, "the frame carries a MAC");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, paired: true }));
+  const r = await pending;
+  assert.equal(r.ok, true);
+  assert.equal(r.paired, true);
+});
+
+test("A27 L2: a refused pair_confirm surfaces the host's reason", async () => {
+  const { chrome, onMessage } = fresh();
+  chrome.__state.localStore.pv_pair_secret = PAIR_SECRET.toString("base64");
+  const pending = sendMessage(onMessage, chrome, { type: "PV_PAIR" });
+  assert.ok(await waitForFrame(chrome), "pair_confirm posted");
+  chrome.__state.ports[0].handlers.message.forEach((fn) =>
+    fn({ ok: false, error: "pairing code rejected: bad mac" }));
+  const r = await pending;
+  assert.equal(r.ok, false);
+  assert.match(r.error, /bad mac/);
 });

@@ -2884,6 +2884,34 @@ pub fn print_manifest(allowed_origin: &str) {
 
 /// `%LOCALAPPDATA%\PhantomVault` — home of the host manifest, the recorded
 /// data dir, and the debug log. Single choke-point so register + serve agree.
+/// Record where the vault data lives, so the native host (launched by Chrome
+/// with an unrelated working directory) reads the same files as the app —
+/// including the A27 pairing seal. Called at desktop startup; best-effort.
+pub(crate) fn record_data_dir() {
+    let Ok(cwd) = std::env::current_dir() else {
+        return;
+    };
+    let marker = bridge_dir().join("project_dir.txt");
+    if let Err(e) = record_data_dir_at(&cwd, &marker) {
+        bridge_log(&format!("WARN project dir record: {e}"));
+    }
+}
+
+/// Write `dir` into the host's marker file unless it already says so.
+/// Returns whether the file was rewritten (a no-op start writes nothing).
+fn record_data_dir_at(dir: &std::path::Path, marker: &std::path::Path) -> std::io::Result<bool> {
+    if let Ok(prev) = std::fs::read_to_string(marker) {
+        if prev.trim() == dir.to_string_lossy() {
+            return Ok(false);
+        }
+    }
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(marker, dir.to_string_lossy().as_bytes())?;
+    Ok(true)
+}
+
 fn bridge_dir() -> std::path::PathBuf {
     std::env::var("LOCALAPPDATA")
         .map(std::path::PathBuf::from)
@@ -2911,6 +2939,14 @@ fn bridge_log(line: &str) {
 /// Resolve the vault data dir: recorded at install time by
 /// `register_native_host` (the app's CWD *is* the data dir). Falls back to
 /// the current CWD so unit tests and manual runs keep working.
+/// Where the A27 L2 pairing seal lives: the data dir the host CWDs into, so the
+/// desktop app and the host always agree on one file.
+pub(crate) fn pairing_path() -> std::path::PathBuf {
+    resolve_data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join(crate::security::host_pairing::PAIRING_FILE)
+}
+
 fn resolve_data_dir() -> Option<std::path::PathBuf> {
     let marker = bridge_dir().join("project_dir.txt");
     let recorded = std::fs::read_to_string(&marker).ok()?;
@@ -3544,16 +3580,9 @@ fn write_host_key(subkey: &str, manifest_path: &str) -> Result<(), crate::error:
     Ok(())
 }
 
-/// Foreground entrypoint: `vault native-host`. Hello-cached unlock only
-/// (stdin is the protocol pipe), then serve frames until EOF.
-///
-/// Trust boundary (C2+C3+C4): argv[1] origin is enforced against the
-/// registered manifest; `unlocked` is re-derived every frame from the live
-/// Hello token + idle/max lifetimes (lock deletes the token → host exits).
 /// Load the A27 L2 pairing secret from the vault dir, if this machine has one.
 fn load_pair_secret() -> Option<Vec<u8>> {
-    let path = std::path::Path::new(crate::security::host_pairing::PAIRING_FILE);
-    match crate::security::host_pairing::load_at(path) {
+    match crate::security::host_pairing::load_at(&pairing_path()) {
         Ok(v) => v,
         Err(e) => {
             // Warn-only: a seal from another user/machine must not brick the
@@ -3564,14 +3593,43 @@ fn load_pair_secret() -> Option<Vec<u8>> {
     }
 }
 
-/// Log (never enforce) the pairing verdict for one raw frame.
-fn log_frame_verdict(guard: &mut crate::security::host_pairing::FrameGuard, raw: &[u8]) {
+/// Check one raw frame, log a rejection, and hand the verdict back so callers
+/// that need it (the pairing handshake) can answer without re-parsing.
+fn check_frame(
+    guard: &mut crate::security::host_pairing::FrameGuard,
+    raw: &[u8],
+) -> crate::security::host_pairing::FrameVerdict {
     use crate::security::host_pairing::FrameVerdict;
-    if let FrameVerdict::Rejected(why) = guard.observe(raw, now_secs()) {
+    let verdict = guard.observe(raw, now_secs());
+    if let FrameVerdict::Rejected(why) = verdict {
         bridge_log(&format!("host mac rejected: {why}"));
+    }
+    verdict
+}
+
+/// A27 L2 step 2: what to tell the caller when the frame is not acceptable.
+/// `None` means "serve it". The message is user-facing: the popup prints host
+/// errors as-is, so it has to say what to click, not just "rejected".
+fn pairing_refusal(verdict: crate::security::host_pairing::FrameVerdict) -> Option<String> {
+    use crate::security::host_pairing::FrameVerdict;
+    match verdict {
+        FrameVerdict::Verified => None,
+        FrameVerdict::Unpaired => Some(
+            "extension not paired — open PhantomVault → Settings → Sync & Devices → Extension pairing, click Show pairing code, then paste it in the extension's Settings → Desktop pairing"
+                .to_string(),
+        ),
+        FrameVerdict::Rejected(why) => {
+            Some(format!("frame rejected ({why}) — re-pair the extension from PhantomVault Settings"))
+        }
     }
 }
 
+/// Foreground entrypoint: `vault native-host`. Hello-cached unlock only
+/// (stdin is the protocol pipe), then serve frames until EOF.
+///
+/// Trust boundary (C2+C3+C4): argv[1] origin is enforced against the
+/// registered manifest; `unlocked` is re-derived every frame from the live
+/// Hello token + idle/max lifetimes (lock deletes the token → host exits).
 pub fn serve_cli() -> i32 {
     use secrecy::ExposeSecret;
     // Phase C: 60s idle TTL (HOST_IDLE_TTL_SECS) — one decrypted session
@@ -3616,8 +3674,19 @@ pub fn serve_cli() -> i32 {
     // `seq`/`ts`/`mac` on every frame and log a rejection. Serving is unchanged
     // until step 2 flips the verdict into a refusal.
     let mut pair_guard = crate::security::host_pairing::FrameGuard::new(load_pair_secret());
+    // A27 L2 step 2: a release build serves only MAC-verified frames. Debug
+    // builds stay warn-only, otherwise every `cargo build` in a dev loop would
+    // need a fresh pairing. `pair_confirm` is exempt (below) — it is how a user
+    // pairs in the first place, and its reply carries no vault data.
+    let enforce_pairing = !cfg!(debug_assertions);
     if pair_guard.is_paired() {
-        bridge_log("host paired: verifying frame macs (warn-only)");
+        bridge_log(if enforce_pairing {
+            "host paired: enforcing frame macs"
+        } else {
+            "host paired: verifying frame macs (warn-only)"
+        });
+    } else if enforce_pairing {
+        bridge_log("host unpaired: release build will refuse frames until paired");
     }
     // A11: the extension may ask for the read-only offline cache while the
     // desktop app is closed. That path is the ONLY one allowed before the
@@ -3632,8 +3701,38 @@ pub fn serve_cli() -> i32 {
             return 2;
         }
     };
-    log_frame_verdict(&mut pair_guard, &first_raw);
+    let first_verdict = check_frame(&mut pair_guard, &first_raw);
     let first_cmd = first_req.get("cmd").and_then(|c| c.as_str());
+    // A27 L2 pairing handshake. The reply only states whether this frame's MAC
+    // verified, so it is safe to answer before the heartbeat/unlock gate — the
+    // popup uses it to confirm a typed code instead of keeping a dead secret.
+    if first_cmd == Some("pair_confirm") {
+        use crate::security::host_pairing::FrameVerdict;
+        let reply = match first_verdict {
+            FrameVerdict::Verified => serde_json::json!({"ok": true, "paired": true}),
+            FrameVerdict::Unpaired => err(
+                "no pairing secret on this machine — open PhantomVault → Settings → Browser Bridge and click Show pairing code",
+            ),
+            FrameVerdict::Rejected(why) => err(format!("pairing code rejected: {why}")),
+        };
+        let frame = encode_frame(&reply);
+        let _ = output.write_all(&frame);
+        let _ = output.flush();
+        bridge_log(match first_verdict {
+            FrameVerdict::Verified => "pair_confirm ok",
+            _ => "pair_confirm refused",
+        });
+        return 0;
+    }
+    // Step 2 gate: everything below (offline cache included) serves vault data,
+    // so an unverified frame stops here in a release build.
+    if enforce_pairing {
+        if let Some(msg) = pairing_refusal(first_verdict) {
+            bridge_log(&format!("refused unpaired frame: {msg}"));
+            emit_err(&msg);
+            return 2;
+        }
+    }
     if first_cmd == Some("cache_status") {
         let reply = crate::security::offline_cache::cache_status();
         let frame = encode_frame(&reply);
@@ -3809,7 +3908,16 @@ pub fn serve_cli() -> i32 {
             Some(r) => r,
             None => match decode_frame_raw(&mut input) {
                 Ok((v, raw)) => {
-                    log_frame_verdict(&mut pair_guard, &raw);
+                    let verdict = check_frame(&mut pair_guard, &raw);
+                    if enforce_pairing {
+                        if let Some(msg) = pairing_refusal(verdict) {
+                            bridge_log(&format!("refused unpaired frame: {msg}"));
+                            let frame = encode_frame(&err(&msg));
+                            let _ = output.write_all(&frame);
+                            let _ = output.flush();
+                            return 2;
+                        }
+                    }
                     v
                 }
                 Err(e) => {
@@ -4013,6 +4121,52 @@ mod tests {
     // that touches a limiter (directly or via filled()/assert) serializes
     // here AND resets its budget first. Lock order: sidecar_guard, then this.
     static RATE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// A27 L2 step 2: only a verified frame may be served, and the refusal has
+    /// to name the fix (the popup prints host errors verbatim).
+    #[test]
+    fn pairing_refusal_gates_unverified_frames() {
+        use crate::security::host_pairing::FrameVerdict;
+        assert!(pairing_refusal(FrameVerdict::Verified).is_none());
+        let unpaired = pairing_refusal(FrameVerdict::Unpaired).expect("unpaired refused");
+        assert!(unpaired.contains("not paired"), "{unpaired}");
+        assert!(unpaired.contains("Show pairing code"), "{unpaired}");
+        let rejected =
+            pairing_refusal(FrameVerdict::Rejected("bad mac")).expect("rejected refused");
+        assert!(rejected.contains("bad mac"), "{rejected}");
+        assert!(rejected.contains("re-pair"), "{rejected}");
+    }
+
+    /// A27 L2: the host finds the pairing seal through this marker, so a stale
+    /// one (an old install pointing at the repo) would split app and host
+    /// across two seal files. Startup rewrites it; a matching dir writes
+    /// nothing.
+    #[test]
+    fn project_dir_marker_tracks_the_live_data_dir() {
+        let dir = std::env::temp_dir().join(format!("pv-marker-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let marker = dir.join("PhantomVault").join("project_dir.txt");
+        let vault = dir.join("vault-a");
+        std::fs::create_dir_all(&vault).expect("vault dir");
+
+        assert!(record_data_dir_at(&vault, &marker).expect("first write"));
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("read").trim(),
+            vault.to_string_lossy()
+        );
+        // Same dir again: no rewrite, so a read-only marker is not an error.
+        assert!(!record_data_dir_at(&vault, &marker).expect("no-op"));
+
+        // A moved vault dir (portable mode) wins over the recorded one.
+        let moved = dir.join("vault-b");
+        std::fs::create_dir_all(&moved).expect("moved dir");
+        assert!(record_data_dir_at(&moved, &marker).expect("rewrite"));
+        assert_eq!(
+            std::fs::read_to_string(&marker).expect("read").trim(),
+            moved.to_string_lossy()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn canonical_login_url_drops_query_fragment_and_trailing_slash() {
