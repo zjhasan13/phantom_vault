@@ -1,16 +1,20 @@
-# A27 — native-host pairing (design, not shipped)
+# A27 — native-host pairing (shipped, one gap left)
 
-Status: **partially shipped**. L1's parent-image probe is in
-`src/windows_native/host_provenance.rs` and runs warn-only from `serve_cli`
-(one audit line per host start, no behaviour change). L2 is shipped end to end:
-`src/security/host_pairing.rs` mints/seals the 20-byte secret, prints it as a
-Crockford code, and verifies a MAC + seq + ts on every frame; the desktop shows
-the code in **Settings → Sync & Devices → Extension pairing**
+Status: **shipped except one documented non-goal**. L1 is complete:
+`src/windows_native/host_provenance.rs` resolves the parent image, matches it
+against a browser allow-list, and `src/windows_native/authenticode.rs` verifies
+its Authenticode chain and signer (`WinVerifyTrust` +
+`CryptQueryObject`/`CertGetNameStringW`). A release build refuses a spawn whose
+parent is not a vendor-signed browser; debug builds log only. L2 is shipped end
+to end: `src/security/host_pairing.rs` mints/seals the 20-byte secret, prints it
+as a Crockford code, and verifies a MAC + seq + ts on every frame; the desktop
+shows the code in **Settings → Sync & Devices → Extension pairing**
 (`Show pairing code` / `Revoke pairing`); the popup stores the decoded bytes,
 answers `pair_confirm`, and **verifies the MAC on every reply**; a release build
 refuses unverified frames (`enforce_pairing = !cfg!(debug_assertions)`).
-Still open: L1's Authenticode publisher check. Tracked as open item 3 in
-`docs/baki kaj.md`.
+Remaining limit (documented, not a bug): a same-user process that can read
+`chrome.storage.local` or DPAPI-unseal the secret still wins, and revocation is
+not checked at host start. See §3 L1 "Limits".
 
 ## 1. The gap
 
@@ -59,22 +63,42 @@ At host start, before any frame is read:
 1. `GetCurrentProcessId` → Toolhelp32 `TH32CS_SNAPPROCESS` → parent PID.
 2. `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` →
    `QueryFullProcessImageNameW` → parent image path.
-3. ~~`WinVerifyTrust` on that path~~ — **correction (2026-11-14):** the updater
-   does not link `WinVerifyTrust`; it verifies a SHA-256 sidecar plus a detached
-   Ed25519 `.sig` (`src/sync/updater.rs`). Authenticode would be new code
-   (`WinTrust` feature, `WINTRUST_DATA` marshalling), so it is still open.
-   Shipped today: steps 1–2 only (`host_provenance::parent_image_path`), matched
-   against a file-name allow-list and logged, never enforced.
-4. Optional extra signal for Chromium: argv contains `--parent-window=`.
+3. File-name allow-list: `chrome.exe`, `msedge.exe`, `brave.exe`, `firefox.exe`,
+   `chromium.exe`, `vivaldi.exe`, `opera.exe`.
+4. `WinVerifyTrust` (`WINTRUST_ACTION_GENERIC_VERIFY_V2`, no UI, cache-only URL
+   retrieval, `WTD_REVOKE_NONE`) on that path — the embedded signature must chain
+   to a trusted root in the local store.
+5. `CryptQueryObject` → `CryptMsgGetParam(CMSG_SIGNER_INFO_PARAM)` →
+   `CertFindCertificateInStore(CERT_FIND_SUBJECT_CERT)` → `CertGetNameStringW`
+   — the signer's simple display name must match the browser's vendor token
+   (`chrome.exe` → `google`, `msedge.exe` → `microsoft`, `firefox.exe` →
+   `mozilla`, `brave.exe` → `brave`, `chromium.exe` → `google`/`chromium`,
+   `vivaldi.exe` → `vivaldi`, `opera.exe` → `opera`). Token, not exact subject:
+   certificate names drift, and an unknown vendor is refused with its name in the
+   log so the table is one line to extend.
 
-Accept `chrome.exe`, `msedge.exe`, `brave.exe`, `firefox.exe` **with a valid
-Authenticode signature from the expected publisher**. Release builds fail closed
-(`origin not allowed` frame, exit 2) when the check fails. Debug builds keep the
-existing `native-host` bypass for dev ergonomics.
+Release builds fail closed — an `err` frame naming the problem and exit 2 — for
+*not a browser*, *unsigned*, *untrusted chain*, *wrong publisher* and *probe
+failed*. Debug builds log `WARN release build would refuse this spawn: …` so a
+dev loop can still spawn the host by hand.
 
-Limits: PID reuse is possible in theory (read the parent before it exits);
-a renamed binary fails the signature check; injection into a real browser is out
-of scope. This layer alone stops the naive "spawn it myself" attack.
+**Escape hatch.** `PV_ALLOW_UNSIGNED_BROWSER=1` in the host's environment lets a
+*missing* signature through (LibreWolf, ungoogled Chromium, a self-built browser)
+and is audit-logged every time. It does not cover a broken chain or a wrong
+publisher. Be honest about what it costs: a same-user process that spawns the
+host can set the variable itself, so the hatch is only useful for a user who
+deliberately runs an unsigned browser. L2 is what still protects that user.
+
+Limits (state them in `SECURITY.md`):
+
+- **Revocation is not checked.** `WTD_REVOKE_NONE` plus
+  `WTD_CACHE_ONLY_URL_RETRIEVAL` keeps host start offline and instant; a
+  revoked-but-cached certificate therefore passes.
+- A copy of a real `chrome.exe` (same bytes, same signature) in another folder
+  passes. L1 stops *spawn and talk*, not a determined attacker.
+- PID reuse is possible in theory (read the parent before it exits).
+- Injection into a real browser is out of scope.
+- Non-Windows builds report `Unsigned`; the check is a Windows-only layer.
 
 ### L2. Pairing secret (one-time, user-mediated)
 
@@ -182,12 +206,17 @@ unchanged. L1/L2 are additive.
   `{ok,paired}`.
 - A paired extension keeps working across host updates because the secret lives
   in the vault dir, not in the binary.
+- **L1 step 2 (spawn provenance, enforced):** release builds refuse a host
+  spawn whose parent is not a vendor-signed browser (see §3 L1);
+  `PV_ALLOW_UNSIGNED_BROWSER=1` is the documented hatch for unsigned browser
+  forks and is audit-logged.
 
-Shipped so far (step 1 + step 2 + response MACs): `Show pairing code` /
-`Revoke pairing` in **Settings → Sync & Devices → Extension pairing**,
+Shipped so far (L1 step 2 + step 1 + step 2 + response MACs): `Show pairing code`
+/ `Revoke pairing` in **Settings → Sync & Devices → Extension pairing**,
 `pair_confirm` answered before the heartbeat gate (the reply carries a MAC
 verdict, no vault data), the popup's `Desktop pairing` row, signed replies that
-the popup verifies, and `host mac rejected: <why>` in the bridge log.
+the popup verifies, the Authenticode parent check, and `host mac rejected: <why>`
+in the bridge log.
 
 Two traps learned while wiring this:
 

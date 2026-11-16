@@ -1,9 +1,9 @@
 এখনো খোলা — সিকিউরিটি / প্রাইভেসি
 #	গ্যাপ	ঝুঁকি
 ২	Binaries unsigned — Authenticode নেই, .sig নেই	SmartScreen warning; in-app updater এই বিল্ড refuse করবে
-৩	Same-user process registered origin string জেনে native host spawn করতে পারে	L1-এর parent-image probe (warn-only audit line) + L2 end-to-end (secret mint/seal, Crockford কোড, frame MAC, seq/ts check, `pair_confirm`) + desktop-এ **Show pairing code / Revoke pairing** + popup-এর Desktop pairing রো। **Step 2 হয়েছে**: release build unverified frame refuse করে (debug-এ শুধু log)। **Response MAC-ও হয়েছে** — host প্রতিটা reply sign করে (`pv1r|cmd|seq|ts|sha256(canonical reply)`), popup verify করে; unsigned/tampered/replayed reply reject। বাকি শুধু Authenticode publisher check — ডিজাইন `docs/A27_HOST_PAIRING.md`
+৩	Same-user process registered origin string জেনে native host spawn করতে পারে	**সমাধান হয়েছে** — L1: release build শুধু vendor-signed browser-এর spawn সার্ভ করে (`WinVerifyTrust` + signer vendor match; debug শুধু log, `PV_ALLOW_UNSIGNED_BROWSER=1` hatch audit-log সহ)। L2: pairing secret, frame MAC, step-2 enforcement, **response MAC** (host reply sign করে, popup verify করে)। বাকি শুধু নথিভুক্ত সীমা: revocation চেক হয় না, byte-identical signed copy পাস করে, আর same-user process secret পড়তে পারলে সে জেতে — `docs/A27_HOST_PAIRING.md`, `SECURITY.md`
 ৪	Permission breadth — host_permissions:<all_urls>, tabs, scripting, clipboardWrite, nativeMessaging; hook.js সব http(s)-এ web-accessible	fingerprinting + SW compromise-এ blast radius. সিদ্ধান্ত: wontfix + নথিভুক্ত — <all_urls> ছাড়া autofill হয় না
-৫	PV_BREACH sender-scoped নয় — যেকোনো content script পাসওয়ার্ডের SHA-1 prefix পাঠাতে পারে	k-anonymity, পেজের কাছে পাসওয়ার্ড আগেই আছে — কম ঝুঁকি. `reuse` leak বন্ধ হয়েছে (নিচে)
+৫	PV_BREACH sender-scoped নয় — যেকোনো content script পাসওয়ার্ডের SHA-1 prefix পাঠাতে পারে	**সমাধান হয়েছে** — শুধু top-frame (`frameId 0`) `http(s)` page-এর sender গ্রহণ করা হয়; অন্য frame বা extension page হলে host spawn হয় না (JS টেস্ট)। `reuse` leak-ও বন্ধ (নিচে)
 ৬	Firefox bridge — আসল Firefox-এ যাচাই করা হয়নি (কোড ঠিক, manifest writer টেস্টেড)	কোড পাথে সমস্যা থাকলে Firefox ইউজার কিছুই পাবে না
 ৭	.zwork লগ একবার git history-তে ঢুকেছে (2460772)	শুধু লোকাল পাথ, সিক্রেট নেই; force-push ছাড়া ইতিহাস থেকে মোছা যাবে না — wontfix
 

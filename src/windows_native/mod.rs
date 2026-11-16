@@ -1,4 +1,5 @@
 pub mod autotype;
+pub mod authenticode;
 pub mod clipboard;
 pub mod desktop_autofill;
 pub mod device_bind;

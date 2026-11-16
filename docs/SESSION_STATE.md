@@ -19,6 +19,39 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-16a) — A27 L1: the host only serves a vendor-signed browser
+
+- **L1 step 2 is in.** `serve_cli` now refuses (release builds) a spawn whose
+  parent is not a browser, not Authenticode-signed, or signed by the wrong
+  vendor. `src/windows_native/authenticode.rs` does the Win32 work:
+  `WinVerifyTrust` (`GENERIC_VERIFY_V2`, no UI, cache-only URL retrieval,
+  `WTD_REVOKE_NONE`) then `CryptQueryObject` →
+  `CryptMsgGetParam(CMSG_SIGNER_INFO_PARAM)` →
+  `CertFindCertificateInStore(CERT_FIND_SUBJECT_CERT)` → `CertGetNameStringW`.
+  `host_provenance::spawn_refusal` is the single decision point and is
+  unit-tested for every verdict.
+- **Vendor pinning, not just "signed".** `publisher_matches_image` requires the
+  signer token to fit the image (`chrome.exe`→google, `msedge.exe`→microsoft,
+  `firefox.exe`→mozilla, `brave.exe`→brave, `chromium.exe`→google/chromium,
+  `vivaldi.exe`→vivaldi, `opera.exe`→opera), so a signed but unrelated binary
+  renamed to `chrome.exe` is refused and logged with its publisher.
+- **Escape hatch, documented.** `PV_ALLOW_UNSIGNED_BROWSER=1` accepts a
+  *missing* signature (LibreWolf, ungoogled Chromium) and audit-logs that it was
+  used; it does not cover a broken chain or a wrong publisher. `SECURITY.md`
+  says plainly that a process spawning the host can set the variable itself, so
+  the hatch is a usability valve, not a boundary.
+- **Honest limits:** revocation is not checked (host start must stay offline and
+  fast), and a byte-identical copy of a signed browser passes. Both are in
+  `SECURITY.md` and `docs/A27_HOST_PAIRING.md` §3 L1.
+- Tests: `cargo test -j 1` **643 passed / 0 failed / 4 ignored**
+  (`TEST_EXIT=0`); `cargo clippy --all-targets -j 1 -- -D warnings`
+  **CLIPPY_EXIT=0**; `npm test` **191 pass / 0 fail**; `npm run test:tokens` →
+  `UI tokens OK: 21 palette values`. The real WinTrust FFI is exercised by
+  `a_real_signed_browser_is_trusted_when_present`, which uses the machine's
+  Edge install (skip-guarded) — on this box `Get-AuthenticodeSignature` reports
+  `Valid | CN=Microsoft Corporation, O=Microsoft Corporation` and the test
+  accepts it as `Trusted`.
+
 ## Last code batch (2026-11-15c) — A27 L2b: the host signs its replies
 
 - **The gap this closes.** L2 proved *the caller* holds the pairing secret, but

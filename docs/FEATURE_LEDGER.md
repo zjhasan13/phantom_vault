@@ -30,7 +30,8 @@ when a user-visible capability is added, changed, or deliberately removed.
 | Secure Send | ✅ | expiring one-view notes, TTL, read + burn (`docs/A20_SEND.md`) |
 | Local sync & storage | ✅ | GitHub private-repo sync, local Wi-Fi P2P, QR fallback; a forked remote still previews and merges locally without pushing (G6) |
 | Extension bridge | ✅ | native-messaging host install, allowed origins; allow-list fails closed (`361b309`) |
-| Extension pairing (A27 L2) | ● | desktop shows a Crockford code (Settings → Sync & Devices → Extension pairing), popup stores it and MACs every frame; **release builds refuse unverified frames**, debug builds log only; **the host signs every reply and the popup verifies it** (unsigned/tampered/replayed replies are rejected). Open: Authenticode publisher check (A27 L1 step 2) — `docs/A27_HOST_PAIRING.md` |
+| Extension pairing (A27 L2) | ✅ | desktop shows a Crockford code (Settings → Sync & Devices → Extension pairing), popup stores it and MACs every frame; **release builds refuse unverified frames**, debug builds log only; **the host signs every reply and the popup verifies it** (unsigned/tampered/replayed replies are rejected) — `docs/A27_HOST_PAIRING.md` |
+| Host spawn check (A27 L1) | ✅ | release builds serve only a parent that is a browser from the allow-list, Authenticode-trusted, signed by that browser's vendor; debug logs only. `PV_ALLOW_UNSIGNED_BROWSER=1` accepts an unsigned browser and is audit-logged; revocation is not checked |
 | Import | ✅ | row preview, Skip/Update/Import all, undo, dedupe |
 | Settings & Dev Center | ✅ | Security / Sync & Devices / Privacy / Recovery / Backups / Dev & API tabs; auto-lock + clipboard TTL persist (`d7c3e1f`) |
 | Offline cache | ✅ | snapshot + DPAPI key + Hello/PIN gate; freshness + sealed timestamp |

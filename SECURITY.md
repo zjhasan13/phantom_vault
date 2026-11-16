@@ -178,8 +178,15 @@ These are documented rather than secret; please do not report them as new findin
   `chrome.storage.local` or DPAPI-unseal the sealed secret as the same user; it
   raises the cost from *spawn and talk* to *steal the secret first*. Debug builds
   stay warn-only.
-  The Authenticode publisher check on the parent process (A27 L1 step 2) is
-  designed and logged, not enforced. See `docs/A27_HOST_PAIRING.md`.
+- The native host **also checks who spawned it** (A27 L1): release builds refuse
+  to serve unless the parent image is a browser from the allow-list whose
+  Authenticode chain validates and whose signer matches that browser's vendor.
+  Two honest limits: revocation is not checked at host start (offline-first,
+  `WTD_REVOKE_NONE` + cache-only retrieval), and a byte-identical copy of a
+  signed browser passes. `PV_ALLOW_UNSIGNED_BROWSER=1` in the host environment
+  accepts an unsigned browser (LibreWolf, ungoogled Chromium) and is
+  audit-logged; a process that spawns the host can set that variable itself, so
+  treat it as a usability hatch, not a boundary. See `docs/A27_HOST_PAIRING.md`.
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

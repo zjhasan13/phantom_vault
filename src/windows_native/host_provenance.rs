@@ -1,20 +1,21 @@
-//! A27 L1 — which image spawned the native host?
+//! A27 L1 — which image spawned the native host, and is it really a browser?
 //!
 //! `native_host::serve_cli` authenticates the caller's `argv[1]` origin string,
 //! but that string is public: it is written to `native-host-*.json` on disk. So
 //! any same-user process can spawn the host with it. This module answers the
-//! second question — which executable started us — so the host can audit (step
-//! 1, current) and later refuse (step 2) a spawn that did not come from a
-//! browser.
+//! second question — which executable started us, and is that executable a
+//! browser signed by its vendor — so the host can audit (step 1) and refuse
+//! (step 2, release builds) a spawn that did not come from a browser.
 //!
-//! Scope: parent PID + image name only. Authenticode publisher verification is
-//! the next step (`docs/A27_HOST_PAIRING.md` §3 L1); until it lands, a renamed
-//! copy of `chrome.exe` still passes. Treat this as a speed bump, not a wall,
-//! and never as a replacement for the Hello/PIN/reprompt gates.
+//! Scope: parent PID + image name + Authenticode signer
+//! (`authenticode::check_file`). A copy of `chrome.exe` renamed to `chrome.exe`
+//! in another folder still passes if the signature is intact and by Google —
+//! that is the documented limit, not a bug: this layer stops *spawn and talk*,
+//! it does not stop injection into a real browser. Never treat it as a
+//! replacement for the Hello/PIN/reprompt gates.
 
 /// Browsers whose native-messaging host spawn is expected. Matched on the image
-/// file name only — the signature check that would make that meaningful is the
-/// documented follow-up.
+/// file name; the signature check below makes the name meaningful.
 const BROWSER_IMAGES: &[&str] = &[
     "chrome.exe",
     "msedge.exe",
@@ -38,6 +39,38 @@ pub fn browser_from_image_path(path: &str) -> Option<&'static str> {
     BROWSER_IMAGES.iter().copied().find(|b| *b == name)
 }
 
+/// Vendor tokens a browser image's signer must contain.
+///
+/// Token matching, not an exact certificate subject: the display names drift
+/// (`Google LLC`, `Microsoft Corporation`, `Mozilla Corporation`,
+/// `Brave Software, Inc.`, `Opera Norway AS`, …). A signed file whose signer
+/// carries none of these is refused and logged with the name it did carry, so a
+/// new vendor is one line here, not a bug report.
+fn vendor_tokens(image: &str) -> &'static [&'static str] {
+    match image {
+        "chrome.exe" => &["google"],
+        "msedge.exe" => &["microsoft"],
+        "brave.exe" => &["brave"],
+        "firefox.exe" => &["mozilla"],
+        "chromium.exe" => &["google", "chromium"],
+        "vivaldi.exe" => &["vivaldi"],
+        "opera.exe" => &["opera"],
+        _ => &[],
+    }
+}
+
+/// True when `publisher` looks like the vendor that ships `image`.
+///
+/// Pure: the whole rule is a lower-case token test, so it is unit-tested against
+/// the real certificate names without needing those browsers installed.
+pub fn publisher_matches_image(image: &str, publisher: &str) -> bool {
+    let name = publisher.to_ascii_lowercase();
+    if name.trim().is_empty() {
+        return false;
+    }
+    vendor_tokens(image).iter().any(|token| name.contains(token))
+}
+
 /// What the probe could establish about our parent process.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ParentVerdict {
@@ -55,16 +88,111 @@ pub fn classify_parent_image(path: &str) -> ParentVerdict {
     }
 }
 
-/// One audit-log line for the current parent. Never fails: a probe error is a
-/// log line, not an error return, because step 1 must not change behaviour.
-pub fn audit_line() -> String {
-    match parent_image_path() {
-        Ok(path) => match classify_parent_image(&path) {
-            ParentVerdict::Browser(name) => format!("parent ok: {name}"),
-            ParentVerdict::NotABrowser(p) => format!("WARN parent not a known browser: {p}"),
+/// The full L1 answer: name, signature and vendor must all agree.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpawnVerdict {
+    /// Browser image, Authenticode-trusted, signed by the expected vendor.
+    Trusted {
+        browser: &'static str,
+        publisher: String,
+    },
+    /// The parent image is not a browser at all.
+    NotABrowser(String),
+    /// Right image name, but the file has no usable signature.
+    Unsigned { browser: &'static str },
+    /// A signature is present but the chain does not validate.
+    Untrusted { browser: &'static str, status: i32 },
+    /// Trusted signature, wrong vendor for this image.
+    WrongPublisher {
+        browser: &'static str,
+        publisher: String,
+    },
+    /// The probe itself failed (no parent, access denied, non-Windows).
+    Unknown(String),
+}
+
+/// Inspect the process that spawned us. Never panics; every failure is a
+/// verdict the caller can log or refuse.
+pub fn inspect_parent() -> SpawnVerdict {
+    let path = match parent_image_path() {
+        Ok(path) => path,
+        Err(e) => return SpawnVerdict::Unknown(e),
+    };
+    match classify_parent_image(&path) {
+        ParentVerdict::NotABrowser(path) => SpawnVerdict::NotABrowser(path),
+        ParentVerdict::Browser(browser) => match crate::windows_native::authenticode::check_file(&path) {
+            crate::windows_native::authenticode::Signature::Trusted { publisher } => {
+                if publisher_matches_image(browser, &publisher) {
+                    SpawnVerdict::Trusted { browser, publisher }
+                } else {
+                    SpawnVerdict::WrongPublisher { browser, publisher }
+                }
+            }
+            crate::windows_native::authenticode::Signature::Unsigned => SpawnVerdict::Unsigned { browser },
+            crate::windows_native::authenticode::Signature::Untrusted { status } => {
+                SpawnVerdict::Untrusted { browser, status }
+            }
         },
-        Err(e) => format!("WARN parent probe failed: {e}"),
     }
+}
+
+/// One audit-log line for a verdict. Never carries vault data: a path, an image
+/// name, a publisher name or an error string.
+pub fn describe(verdict: &SpawnVerdict) -> String {
+    match verdict {
+        SpawnVerdict::Trusted { browser, publisher } => {
+            format!("parent ok: {browser} signed by {publisher}")
+        }
+        SpawnVerdict::NotABrowser(path) => format!("WARN parent not a known browser: {path}"),
+        SpawnVerdict::Unsigned { browser } => {
+            format!("WARN parent {browser} has no Authenticode signature")
+        }
+        SpawnVerdict::Untrusted { browser, status } => {
+            format!("WARN parent {browser} signature untrusted (0x{status:08x})")
+        }
+        SpawnVerdict::WrongPublisher { browser, publisher } => {
+            format!("WARN parent {browser} signed by unexpected publisher: {publisher}")
+        }
+        SpawnVerdict::Unknown(why) => format!("WARN parent probe failed: {why}"),
+    }
+}
+
+/// Decide whether the host must refuse this spawn.
+///
+/// `allow_unsigned` is the documented `PV_ALLOW_UNSIGNED_BROWSER=1` escape hatch
+/// for unsigned browser forks (LibreWolf, ungoogled Chromium). It only covers a
+/// *missing* signature — a wrong publisher stays refused — and it weakens this
+/// layer, so the host audit-logs that it was used. A same-user process that
+/// spawns the host can set the variable itself, which is exactly why L2 (the
+/// pairing secret) exists.
+pub fn spawn_refusal(verdict: &SpawnVerdict, allow_unsigned: bool) -> Option<String> {
+    let open_from = "open the extension from Chrome, Edge, Firefox, Brave, Vivaldi or Opera";
+    match verdict {
+        SpawnVerdict::Trusted { .. } => None,
+        SpawnVerdict::NotABrowser(_) => Some(format!(
+            "native host refused: it was not started by a browser — {open_from}"
+        )),
+        SpawnVerdict::Unknown(_) => Some(format!(
+            "native host refused: could not identify the process that started it — {open_from}"
+        )),
+        SpawnVerdict::Unsigned { .. } if allow_unsigned => None,
+        SpawnVerdict::Unsigned { browser } => Some(format!(
+            "native host refused: {browser} is not code-signed. Set PV_ALLOW_UNSIGNED_BROWSER=1 only if you built or trust this browser."
+        )),
+        SpawnVerdict::Untrusted { browser, .. } => Some(format!(
+            "native host refused: {browser} failed the signature check — reinstall it from the official source"
+        )),
+        SpawnVerdict::WrongPublisher { browser, .. } => Some(format!(
+            "native host refused: {browser} is signed by an unexpected publisher — reinstall it from the official source"
+        )),
+    }
+}
+
+/// One audit-log line for the current parent. Never fails: a probe error is a
+/// log line, not an error return.
+#[cfg(test)]
+pub fn audit_line() -> String {
+    describe(&inspect_parent())
 }
 
 /// Resolve the full image path of the process that spawned us.
@@ -185,5 +313,97 @@ mod tests {
         // carries no secret — it is only a path or an error string.
         let line = audit_line();
         assert!(!line.is_empty());
+    }
+
+    #[test]
+    fn publisher_must_match_the_browser_vendor() {
+        // Real certificate display names, as WinTrust reports them.
+        assert!(publisher_matches_image("chrome.exe", "Google LLC"));
+        assert!(publisher_matches_image("chrome.exe", "GOOGLE LLC"));
+        assert!(publisher_matches_image("msedge.exe", "Microsoft Corporation"));
+        assert!(publisher_matches_image("firefox.exe", "Mozilla Corporation"));
+        assert!(publisher_matches_image("brave.exe", "Brave Software, Inc."));
+        assert!(publisher_matches_image("vivaldi.exe", "Vivaldi Technologies AS"));
+        assert!(publisher_matches_image("opera.exe", "Opera Norway AS"));
+        assert!(publisher_matches_image("chromium.exe", "The Chromium Authors"));
+        // A signed file is not enough: the vendor has to match the image.
+        assert!(!publisher_matches_image("chrome.exe", "Microsoft Corporation"));
+        assert!(!publisher_matches_image("firefox.exe", "Google LLC"));
+        assert!(!publisher_matches_image("chrome.exe", ""));
+        assert!(!publisher_matches_image("chrome.exe", "   "));
+        assert!(!publisher_matches_image("unknown.exe", "Google LLC"));
+    }
+
+    #[test]
+    fn only_a_signed_vendor_browser_is_served() {
+        let trusted = SpawnVerdict::Trusted {
+            browser: "chrome.exe",
+            publisher: "Google LLC".into(),
+        };
+        assert_eq!(spawn_refusal(&trusted, false), None, "happy path serves");
+
+        let not_browser = SpawnVerdict::NotABrowser(r"C:\tools\evil.exe".into());
+        let msg = spawn_refusal(&not_browser, false).expect("refused");
+        assert!(msg.contains("not started by a browser"), "{msg}");
+        assert!(msg.contains("open the extension from Chrome"), "{msg}");
+        // The escape hatch is for unsigned browsers only, not for any parent.
+        assert!(spawn_refusal(&not_browser, true).is_some());
+
+        let unsigned = SpawnVerdict::Unsigned {
+            browser: "firefox.exe",
+        };
+        assert!(spawn_refusal(&unsigned, false).unwrap().contains("not code-signed"));
+        assert_eq!(
+            spawn_refusal(&unsigned, true),
+            None,
+            "PV_ALLOW_UNSIGNED_BROWSER covers a missing signature"
+        );
+
+        let untrusted = SpawnVerdict::Untrusted {
+            browser: "chrome.exe",
+            status: -2146762496,
+        };
+        assert!(spawn_refusal(&untrusted, false).unwrap().contains("signature check"));
+        assert!(
+            spawn_refusal(&untrusted, true).is_some(),
+            "a broken chain is never allowed through"
+        );
+
+        let wrong = SpawnVerdict::WrongPublisher {
+            browser: "chrome.exe",
+            publisher: "Contoso Ltd".into(),
+        };
+        assert!(spawn_refusal(&wrong, false).unwrap().contains("unexpected publisher"));
+        assert!(spawn_refusal(&wrong, true).is_some());
+
+        let unknown = SpawnVerdict::Unknown("no parent pid".into());
+        assert!(spawn_refusal(&unknown, false).unwrap().contains("could not identify"));
+        assert!(spawn_refusal(&unknown, true).is_some(), "fail closed");
+    }
+
+    #[test]
+    fn describe_names_the_problem_without_vault_data() {
+        assert!(
+            describe(&SpawnVerdict::Trusted {
+                browser: "msedge.exe",
+                publisher: "Microsoft Corporation".into()
+            })
+            .contains("signed by Microsoft")
+        );
+        assert!(
+            describe(&SpawnVerdict::Untrusted {
+                browser: "chrome.exe",
+                status: -2146762496
+            })
+            .contains("0x800b0100")
+        );
+        assert!(
+            describe(&SpawnVerdict::WrongPublisher {
+                browser: "chrome.exe",
+                publisher: "Contoso Ltd".into()
+            })
+            .contains("Contoso Ltd")
+        );
+        assert!(describe(&SpawnVerdict::Unknown("denied".into())).contains("denied"));
     }
 }

@@ -3728,10 +3728,29 @@ pub fn serve_cli() -> i32 {
         bridge_log("origin rejected");
         return 2;
     }
-    // A27 L1 (step 1, warn-only): the origin string above is public, so record
-    // which image actually spawned us. Never blocks; step 2 turns this into a
-    // refusal once the Authenticode check lands.
-    bridge_log(&crate::windows_native::host_provenance::audit_line());
+    // A27 L1 step 2: the origin string above is public, so prove the spawn came
+    // from a browser image that its vendor actually signed. Release builds
+    // refuse; debug builds log only, so a dev loop can spawn the host by hand.
+    {
+        use crate::windows_native::host_provenance::{describe, inspect_parent, spawn_refusal};
+        let spawn = inspect_parent();
+        bridge_log(&describe(&spawn));
+        let allow_unsigned = std::env::var("PV_ALLOW_UNSIGNED_BROWSER").as_deref() == Ok("1");
+        if allow_unsigned {
+            bridge_log("WARN PV_ALLOW_UNSIGNED_BROWSER=1 weakens the parent signature check");
+        }
+        if let Some(msg) = spawn_refusal(&spawn, allow_unsigned) {
+            if cfg!(debug_assertions) {
+                bridge_log(&format!("WARN release build would refuse this spawn: {msg}"));
+            } else {
+                bridge_log(&format!("refused spawn: {msg}"));
+                let frame = encode_frame(&err(&msg));
+                let _ = std::io::stdout().write_all(&frame);
+                let _ = std::io::stdout().flush();
+                return 2;
+            }
+        }
+    }
     // Chrome spawns us with CWD=System32: jump back to the recorded data
     // dir so vault_hello.dpapi / my_secure_vault.enc resolve correctly.
     match resolve_data_dir() {
