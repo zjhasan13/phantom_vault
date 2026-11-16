@@ -3885,7 +3885,14 @@ pub fn serve_cli() -> i32 {
         Ok(b) => b,
         Err(e) => {
             bridge_log(&format!("Hello token missing: {e}"));
-            emit_err(&mut output, "no Hello-cached credential — unlock the app with Hello once first");
+            // Not "unlock with Hello": Hello may be unavailable on this PC, and
+            // a PIN unlock never seals this credential (pin.dpapi is
+            // DPAPI+Argon2, a plain bridge token would be weaker). The master
+            // password path seals it, so that is the instruction that works.
+            emit_err(
+                &mut output,
+                "no bridge credential yet — lock the desktop app and unlock it with your master password once",
+            );
             return 2;
         }
     };

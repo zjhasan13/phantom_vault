@@ -32,6 +32,7 @@ Live E2E, DPI pass, স্ক্রিনশট — installer ইনস্টল
 UI harness trap: `setedit` (UIA ValuePattern) টেক্সট দেখায় কিন্তু Slint binding-এ সবসময় পৌঁছায় না — Save চাপলে "needs a title + key fields" আসতে পারে; এন্ড-টু-এন্ড save যাচাই করতে আসল keystroke দরকার
 UI harness trap: `click -Arg Save` ভুল টেক্সট ধরতে পারে ("0 saved") — বাটনের rect `dump` থেকে নিয়ে `clickshot` ব্যবহার করা নিরাপদ
 UI harness trap: এই মেশিনে StartAllBack shell hook মাঝে মাঝে modal error box ("StartAllBackLoaderX64.dll ... Bad Image") ফেলে, বিশেষ করে file-save/print path-এ — UIA click আটকে যায়; `EnumWindows` + `WM_CLOSE` দিয়ে বন্ধ করতে হয়
+ট্র্যাপ: extension বলছে "Vault is Locked" অথচ ডেস্কটপ খোলা — ডেস্কটপ PIN দিয়ে আনলক করা হয়েছে। PIN আনলক `vault_hello.dpapi` সিল করে না (ইচ্ছাকৃত: PIN ৪–৮ সংখ্যার, তাই master সাদা DPAPI-তে রাখলে PIN-এর সুরক্ষা অর্থহীন)। সমাধান: লক করে master password দিয়ে একবার আনলক। popup এখন এই কথাটাই দেখায় — `docs/MANUAL_TEST_GUIDE.md` §8.E
 
 আমার সুপারিশ (এখন শুধু ৩টা, সবই আপনার হাতের কাজ)
 1. Signing key সেটআপ (Authenticode) — সার্টিফিকেট কিনতে হবে; কোড দিয়ে হয় না।

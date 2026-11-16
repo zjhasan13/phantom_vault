@@ -269,6 +269,15 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
   iframe-এর লগইনে "breach" সংকেতও আসে না; top-frame লগইনে আসে।
 - "AES-256-GCM", "quantum-immune", "0 ms leak" — এসব দাবি ইচ্ছাকৃতভাবে **নেই**।
 
+### 8.E সমস্যা হলে (Troubleshooting)
+
+| উপসর্গ | কারণ | কী করবেন |
+|---|---|---|
+| ডেস্কটপ অ্যাপ খোলা ও আনলক করা, তবু popup বলছে "Vault is Locked" | ডেস্কটপ **PIN** দিয়ে আনলক করা হয়েছে। PIN আনলক bridge credential (`vault_hello.dpapi`) সিল করে না — ইচ্ছাকৃত: PIN ৪–৮ সংখ্যার, তাই master password সাদা DPAPI-তে রেখে দিলে PIN-এর সুরক্ষা অর্থহীন হয়ে যেত | ডেস্কটপ লক করে **master password** দিয়ে একবার আনলক করুন। তখনই extension কাজ করবে। নতুন build-এ popup এই কথাটাই লিখে দেখাবে |
+| popup-এ "native host refused: it was not started by a browser" | release host শুধু সই করা browser-এর spawn সার্ভ করে (A27 L1) | extension-টা Chrome/Edge/Firefox/Brave/Vivaldi/Opera থেকে খুলুন |
+| popup-এ "not code-signed" | browser-এর Authenticode সই নেই (LibreWolf, ungoogled Chromium, নিজের বানানো build) | শুধু নিজের বিশ্বাস করা browser হলে host-এর environment-এ `PV_ALLOW_UNSIGNED_BROWSER=1` দিন। এতে সুরক্ষা দুর্বল হয় |
+| popup-এ pairing সংক্রান্ত error | ডেস্কটপ আর extension একসাথে আপডেট হয়নি | Settings → Sync & Devices → Extension pairing → নতুন কোড নিয়ে popup-এ দিন |
+
 ---
 
 ## 9. Settings-এর প্রতিটা ট্যাব

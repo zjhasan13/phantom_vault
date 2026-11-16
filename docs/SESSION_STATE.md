@@ -19,6 +19,33 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-16c) — "Vault is Locked" while the desktop is open
+
+- **Reported symptom:** the desktop app is open and unlocked, but the extension
+  popup shows `🔒 Vault is Locked / Unlock PhantomVault desktop app`.
+- **Real cause:** the host had no bridge credential.
+  `%LOCALAPPDATA%\PhantomVault\native_host.log` said
+  `Hello token missing: The system cannot find the file specified. (os error 2)`
+  on every spawn, and `vault_hello.dpapi` did not exist in the app's directory
+  while `vault_heartbeat.json` was fresh. The app seals that credential only on
+  a **master-password** unlock (`unlock_with_password(..., cache_hello_token =
+  true, ...)`, `main.rs:5755`); the PIN path passes `false` (`main.rs:6384`).
+  That is deliberate, not an oversight: `pin.dpapi` is
+  `DPAPI(master, entropy = Argon2id(PIN))`, so writing the master into a plain
+  DPAPI token after a PIN unlock would let any same-user process unseal it
+  without knowing the 4–8 digit PIN.
+- **Fix (message, not policy):** the popup no longer discards the host's error.
+  `loadStats` shows the bridge's own text, and a credential refusal gets its own
+  line (`bridge_no_credential`, en + bn): *lock PhantomVault and unlock it with
+  your master password once*. The host's message changed from "no Hello-cached
+  credential — unlock the app with Hello once first" (impossible on a PC
+  without Hello) to the master-password instruction.
+- Also repaired a mojibake Bangla string in `popup.js` (`offline_stale`).
+- Docs: `docs/MANUAL_TEST_GUIDE.md` gained **§8.E Troubleshooting** with this
+  exact symptom, the L1 spawn refusal, the unsigned-browser hatch, and pairing
+  errors. `tests/js/popup.test.mjs` asserts the popup reads the host error and
+  that both locales define the new key.
+
 ## Last code batch (2026-11-16b) — local QA build + live L1 proof
 
 - `cargo build --release -j 1` finished in **45m 19s** (`BUILD_EXIT=0`).

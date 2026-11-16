@@ -208,3 +208,17 @@ test("A27 L2: popup.html carries the pairing row the script binds to", () => {
     assert.match(HTML, new RegExp(`id="${id}"`), `${id} present`);
   }
 });
+
+test("stats shows the real bridge refusal instead of a blanket lock", () => {
+  // The desktop can be open and unlocked and still refuse the bridge: a PIN
+  // unlock never seals a credential, and a release host refuses a spawn that
+  // did not come from a signed browser. "Vault is Locked" sent users in
+  // circles, so the popup must surface what the host actually said.
+  const stats = SRC.match(/async function loadStats\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(stats, "loadStats present");
+  assert.match(stats[1], /typeof s\.error === "string"/, "host error is read");
+  assert.match(stats[1], /bridge_no_credential/, "a missing credential has its own line");
+  // Both locales must define the key, or one language shows `undefined`.
+  const defined = SRC.match(/bridge_no_credential:/g) || [];
+  assert.equal(defined.length, 2, "en + bn both define bridge_no_credential");
+});

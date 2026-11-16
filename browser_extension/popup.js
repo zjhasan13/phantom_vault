@@ -61,6 +61,7 @@
       sync_locked_sub: "Unlock PhantomVault desktop app.",
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
       sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
+      bridge_no_credential: "🔑 Desktop is open, but it has no bridge credential yet. Lock PhantomVault and unlock it with your master password once (a PIN unlock does not create one).",
       offline_banner: "🔌 Offline cache — read-only. Changes are refused until the desktop app is open.",
   offline_stale: "Cache is stale - open the desktop app to refresh it.",
       offline_unlock_title: "🔌 Offline cache",
@@ -135,8 +136,9 @@
       sync_locked_sub: "PhantomVault ডেস্কটপ অ্যাপ আনলক করো।",
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
       sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
+      bridge_no_credential: "🔑 ডেস্কটপ খোলা আছে, কিন্তু bridge credential এখনো তৈরি হয়নি। PhantomVault লক করে একবার master password দিয়ে আনলক করো (PIN দিয়ে আনলক করলে এটি তৈরি হয় না)।",
       offline_banner: "🔌 অফলাইন ক্যাশ — শুধু পড়া যায়। ডেস্কটপ অ্যাপ চালু না হলে কোনো পরিবর্তন হবে না।",
-  offline_stale: "?????? ??????? - refresh ????? ??? ?????? ?????????? ??????",
+  offline_stale: "ক্যাশ পুরোনো হয়ে গেছে — রিফ্রেশ করতে ডেস্কটপ অ্যাপ খোলো।",
       offline_unlock_title: "🔌 অফলাইন ক্যাশ",
       offline_unlock_sub: "শুধু পড়া যায়। Windows Hello অথবা extension PIN দিয়ে খোলো।",
       offline_pin_go: "🔓 PIN দিয়ে খোলো",
@@ -458,7 +460,17 @@
       s = await chrome.runtime.sendMessage({ type: "PV_STATS" });
     } catch (_) { s = null; }
     if (!s || !s.ok) {
-      box.textContent = `${t("sync_locked")}. ${t("sync_locked_sub")}`;
+      // The desktop can be open and unlocked yet still refuse: a PIN unlock
+      // never seals a bridge credential (pin.dpapi is DPAPI+Argon2, a plain
+      // bridge token would be weaker), and a release host refuses a spawn that
+      // did not come from a signed browser. Show what the bridge actually said
+      // instead of a blanket "locked" — the old text sent users in circles.
+      const why = (s && typeof s.error === "string") ? s.error : "";
+      if (/credential/i.test(why)) {
+        box.textContent = t("bridge_no_credential");
+      } else {
+        box.textContent = why || `${t("sync_locked")}. ${t("sync_locked_sub")}`;
+      }
       return;
     }
     const total = s.logins + s.cards + s.notes + s.identities + s.ssh_keys + s.licenses + s.passkeys;
