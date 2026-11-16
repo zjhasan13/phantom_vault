@@ -235,6 +235,14 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 8. পেয়ার করার পর host-এর প্রতিটা উত্তর (reply) sign হয়। কোনো reply-তে হাত
    দেওয়া হলে বা অন্য প্রোগ্রাম উত্তর দিলে popup দেখাবে "host reply failed the
    pairing check — re-pair the extension" — ভল্টের ডেটা দেখাবে না।
+9. installed build host-টা তখনই চলে যদি তাকে সত্যিকারের browser চালু করে
+   (Chrome/Edge/Firefox/Brave/Vivaldi/Opera), আর সেই browser-এর ফাইলটি তার
+   নির্মাতার সই করা (Authenticode)। অন্য কোনো প্রোগ্রাম host চালু করলে popup-এ
+   আসবে "native host refused: it was not started by a browser …"। এটাও বাগ নয়।
+   LibreWolf/ungoogled Chromium-এর মতো unsigned browser ব্যবহার করলে host-এর
+   environment-এ `PV_ALLOW_UNSIGNED_BROWSER=1` দিলে চলবে। এই সুইচ browser-এর সই
+   যাচাই দুর্বল করে, তাই শুধু নিজে বানানো বা নিজের বিশ্বাস করা browser-এর জন্য
+   ব্যবহার করুন।
 
 ### 8.C দৈনন্দিন ব্যবহার
 
@@ -257,7 +265,8 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 
 - ৬৪০px dual-column HUD — বাতিল করা হয়েছে।
 - Organizations / collections — মডেলে নেই।
-- iframe-এর ভিতরের ফিল্ড autofill হয় না (শুধু top frame)।
+- iframe-এর ভিতরের ফিল্ড autofill হয় না (শুধু top frame)। একই কারণে cross-origin
+  iframe-এর লগইনে "breach" সংকেতও আসে না; top-frame লগইনে আসে।
 - "AES-256-GCM", "quantum-immune", "0 ms leak" — এসব দাবি ইচ্ছাকৃতভাবে **নেই**।
 
 ---

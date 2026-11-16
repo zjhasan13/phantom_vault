@@ -689,6 +689,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_BREACH") {
       const password = typeof msg.password === "string" ? msg.password : "";
       if (!password) return { ok: false, error: "password is required" };
+      // B-EXT: only a top-frame web page may ask. Content scripts run in the top
+      // frame only (all_frames:false), so requiring frameId 0 costs nothing and
+      // stops a sandboxed/extension-less frame (or a page that never loaded our
+      // script) from using the host as a free HIBP proxy and a timing oracle for
+      // arbitrary candidate passwords.
+      if (sender && sender.tab) {
+        const src = senderFrameUrl();
+        if (!src || !/^https?:/i.test(src)) {
+          return { ok: false, error: "breach check is not available to this frame" };
+        }
+        if (typeof sender.frameId === "number" && sender.frameId !== 0) {
+          return { ok: false, error: "breach check is not available to this frame" };
+        }
+      }
       const res = await hostRequest({ cmd: "breach_check", password }, 25000);
       // G-EXT: `reuse` is vault-derived — it says how many stored items share
       // this password, so returning it to a page makes the host a

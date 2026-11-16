@@ -997,6 +997,64 @@ test("PV_BREACH keeps reuse for the popup and refuses an empty password", async 
   assert.equal(chrome.__state.postedNative.length, 1, "an empty password never spawns the host");
 });
 
+test("PV_BREACH refuses a sender that is not a top-frame web page", async () => {
+  const { chrome, onMessage } = fresh();
+  // A cross-origin login widget: real page, but not the top frame.
+  const inFrame = {
+    url: "https://widget.example.net/login",
+    frameId: 3,
+    tab: { url: "https://shop.example.com/" },
+  };
+  const framed = await sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_BREACH", password: "hunter2" },
+    inFrame
+  );
+  assert.equal(framed.ok, false);
+  assert.match(framed.error, /not available to this frame/);
+
+  // An extension page (or anything that is not http/https).
+  const notWeb = {
+    url: "chrome-extension://abc/panel.html",
+    tab: { url: "chrome-extension://abc/panel.html" },
+  };
+  const other = await sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_BREACH", password: "hunter2" },
+    notWeb
+  );
+  assert.equal(other.ok, false);
+
+  assert.equal(
+    chrome.__state.postedNative.length,
+    0,
+    "a refused sender must not spawn the host"
+  );
+});
+
+test("PV_BREACH still serves the top frame (frameId 0)", async () => {
+  const { chrome, onMessage } = fresh();
+  const sender = {
+    url: "https://example.com/login",
+    frameId: 0,
+    tab: { url: "https://example.com/login" },
+  };
+  const pending = sendMessage(
+    onMessage,
+    chrome,
+    { type: "PV_BREACH", password: "hunter2" },
+    sender
+  );
+  await flushTicks();
+  assert.equal(chrome.__state.postedNative[0].cmd, "breach_check");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: true, breach: 1 }));
+  const r = await pending;
+  assert.equal(r.ok, true);
+  assert.equal(r.breach, 1);
+});
+
 // ---- A27 L2: pairing MAC ------------------------------------------------
 
 const PAIR_SECRET = Buffer.from(Array.from({ length: 20 }, (_, i) => i));
