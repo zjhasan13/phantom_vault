@@ -140,22 +140,10 @@ mod tests {
     use crate::share::{now_secs, CreatedShare};
     use secrecy::SecretString;
 
-    fn fetch(port: u16, path: &str) -> (u16, Vec<u8>) {
-        let mut last = String::new();
-        for attempt in 0..3 {
-            match try_fetch(port, path) {
-                Ok(v) => return v,
-                Err(e) => {
-                    last = e;
-                    if attempt < 2 {
-                        std::thread::sleep(Duration::from_millis(30));
-                    }
-                }
-            }
-        }
-        panic!("share fetch failed after retries: {last}");
-    }
-
+    /// One request. An empty or unparsable response is an error, not a
+    /// `(0, [])` result: a connection that Windows aborted before the reply is
+    /// a retryable transport failure, and pretending it was a status of 0 made
+    /// the one-view assertion read like a product bug.
     fn try_fetch(port: u16, path: &str) -> Result<(u16, Vec<u8>), String> {
         let mut s = TcpStream::connect(("127.0.0.1", port)).map_err(|e| e.to_string())?;
         s.set_read_timeout(Some(Duration::from_secs(3))).map_err(|e| e.to_string())?;
@@ -163,6 +151,9 @@ mod tests {
             .map_err(|e| e.to_string())?;
         let mut raw = Vec::new();
         let _ = s.read_to_end(&mut raw);
+        if raw.is_empty() {
+            return Err("empty response".to_string());
+        }
         let text = String::from_utf8_lossy(&raw);
         let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
         let status = head
@@ -171,7 +162,51 @@ mod tests {
             .and_then(|l| l.split_whitespace().nth(1))
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
+        if status == 0 {
+            return Err(format!("unparsable response: {head}"));
+        }
         Ok((status, body.as_bytes().to_vec()))
+    }
+
+    /// Retry a request that does not consume share state (`/health`, an unknown
+    /// id). Never use this for the one-view fetch: a retry after a lost reply
+    /// would report 404 and look like the store served twice.
+    fn fetch(port: u16, path: &str) -> (u16, Vec<u8>) {
+        let mut last = String::new();
+        for attempt in 0..5 {
+            match try_fetch(port, path) {
+                Ok(v) => return v,
+                Err(e) => {
+                    last = e;
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(30));
+                    }
+                }
+            }
+        }
+        panic!("share fetch failed after retries: {last}");
+    }
+
+    /// The one-view request: exactly one attempt, with the reason in the panic.
+    fn fetch_once(port: u16, path: &str) -> (u16, Vec<u8>) {
+        match try_fetch(port, path) {
+            Ok(v) => v,
+            Err(e) => panic!("one-view fetch failed: {e}"),
+        }
+    }
+
+    /// Wait until the accept loop answers `/health`. `serve` binds before it
+    /// returns, but the loop's first accept can still be in its 20 ms sleep, and
+    /// on Windows a connection opened that early can be reset before the reply.
+    /// Probe readiness on a request that has no side effect.
+    fn wait_ready(port: u16) {
+        for _ in 0..100 {
+            if matches!(try_fetch(port, "/health"), Ok((200, _))) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        panic!("share server never became ready on port {port}");
     }
 
     #[test]
@@ -193,8 +228,9 @@ mod tests {
         };
         share_store::save(&created).unwrap();
         let server = serve("127.0.0.1:0").unwrap();
+        wait_ready(server.port);
         assert_eq!(fetch(server.port, "/health").0, 200);
-        let (code, body) = fetch(server.port, "/deadbeef");
+        let (code, body) = fetch_once(server.port, "/deadbeef");
         assert_eq!(code, 200);
         assert_eq!(body, b"PVSH1bundle-bytes");
         assert_eq!(fetch(server.port, "/deadbeef").0, 404, "one view");

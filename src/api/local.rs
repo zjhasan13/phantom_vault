@@ -604,6 +604,27 @@ mod tests {
         clear_pending();
     }
 
+    /// `client_get` with a bounded retry. On Windows a loopback connection can
+    /// be aborted between accept and read (WSAECONNABORTED, os error 10053), and
+    /// the client sees an error with no response bytes at all. Retrying is the
+    /// honest reaction: the assertions below do not count pending requests, so a
+    /// duplicate `/v1/get` left behind by a lost reply is harmless.
+    fn client_get_retry(dir: &Path, path: &str) -> Result<(u16, String), String> {
+        let mut last = String::new();
+        for attempt in 0..5 {
+            match client_get(dir, path, Duration::from_secs(5)) {
+                Ok(v) => return Ok(v),
+                Err(e) => {
+                    last = e;
+                    if attempt < 4 {
+                        std::thread::sleep(Duration::from_millis(50));
+                    }
+                }
+            }
+        }
+        Err(last)
+    }
+
     #[test]
     fn handler_enforces_token_lock_approval_and_rate() {
         let _guard = crate::api::TEST_ENV_LOCK
@@ -703,10 +724,9 @@ mod tests {
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
-        let (code, body) = client_get(
+        let (code, body) = client_get_retry(
             &api_dir,
             "/v1/get?title=Gmail&field=password",
-            Duration::from_secs(5),
         )
         .unwrap();
         assert_eq!(code, 202);
@@ -716,12 +736,7 @@ mod tests {
             .to_string();
         let mut result = (0, String::new());
         for _ in 0..100 {
-            result = client_get(
-                &api_dir,
-                &format!("/v1/result?id={rid}"),
-                Duration::from_secs(5),
-            )
-            .unwrap();
+            result = client_get_retry(&api_dir, &format!("/v1/result?id={rid}")).unwrap();
             if result.0 != 202 {
                 break;
             }

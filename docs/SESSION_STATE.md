@@ -19,7 +19,7 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
-## Last code batch (2026-11-16a) — A27 L1: the host only serves a vendor-signed browser
+## Last code batch (2026-11-16a) — A27 L1, breach scoping, loopback test hygiene
 
 - **L1 step 2 is in.** `serve_cli` now refuses (release builds) a spawn whose
   parent is not a browser, not Authenticode-signed, or signed by the wrong
@@ -51,6 +51,24 @@
   Edge install (skip-guarded) — on this box `Get-AuthenticodeSignature` reports
   `Valid | CN=Microsoft Corporation, O=Microsoft Corporation` and the test
   accepts it as `Trusted`.
+- **`PV_BREACH` is top-frame only.** Any content-script sender could ask the
+  host for a breach verdict, which made the extension a free HIBP proxy and a
+  timing oracle for arbitrary candidate passwords. Content scripts already run
+  in the top frame only, so the gate costs nothing: a sender with a tab must be
+  an `http(s)` frame with `frameId 0`, else the request is refused *before* the
+  host is spawned. The popup (no sender tab) still gets the vault-derived `reuse`
+  count. Manual guide notes that a cross-origin iframe login gets no breach hint.
+- **Three loopback/KDF flakes defused** (`share_serve` one-view, `api::local`
+  `os error 10053`, `crypto::tests::test_legacy_v2_still_opens`). All three were
+  test-harness races on Windows, not product bugs: `share_serve` now waits for a
+  side-effect-free `/health` before asserting, treats an empty/unparsable reply
+  as a retryable transport error, and never retries the one-view request (a
+  retry after a lost reply would fake a 404); `api::local` retries `client_get`
+  up to 5×50 ms and the assertions do not count pending requests; the crypto
+  test flakes because one Argon2id call allocates 64 MiB × 4 lanes and
+  `-j 4` runs several KDF tests at once, so `derive_key_secret` takes a
+  test-only `KDF_TEST_LOCK` (production never touches it). Proven by 15
+  consecutive `-j 4` runs of each test.
 
 ## Last code batch (2026-11-15c) — A27 L2b: the host signs its replies
 
@@ -596,10 +614,13 @@ Run Rust gates with `-j 1`; see "Known traps".
 
 ## Known traps
 
-- Run Rust gates with `-j 1`: `share_serve::…served_share_is_one_view_and_revocable`,
+- Run Rust gates with `-j 1` (slower but calm on a RAM-tight machine). The three
+  old flakes — `share_serve::…served_share_is_one_view_and_revocable`,
   `api::local::…loopback_get_waits…` (os 10053) and
-  `crypto::…test_legacy_v2_still_opens` (under memory pressure) all flake in
-  parallel and pass alone.
+  `crypto::…test_legacy_v2_still_opens` — are defused in the harness, not by
+  loosening an assertion: readiness probe + retry for the two socket tests, and a
+  test-only `KDF_TEST_LOCK` for the Argon2 memory spike. Each was run 15× at
+  `-j 4` to prove it.
 - A cold `cargo build --release -j 1` took **106m** on this machine and
   succeeded; a >1h build is not a hang. `Allocation failed` linker errors mean
   RAM is tight (close Chrome and retry), not a code defect.

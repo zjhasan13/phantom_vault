@@ -25,7 +25,7 @@ G8: access-log append ব্যর্থতা গোনা হয়, প্র
 PV_BREACH: `reuse` count আর content-script sender-এর কাছে যায় না (vault-membership oracle বন্ধ); popup-এ থাকে; empty password host spawn করে না
 
 টেস্ট / টুলিং
-তিনটা ফ্লেক (share_serve, loopback os 10053, crypto legacy) — -j 1-এ পাস, defuse করা হয়নি, শুধু ডক করা
+তিনটা ফ্লেক (share_serve, loopback os 10053, crypto legacy) — **তিনটাই defuse করা হয়েছে**। share_serve: side-effect-free `/health` দিয়ে readiness wait, empty/unparsable response-কে retryable error ধরা, one-view request-এ retry নিষিদ্ধ। loopback: `client_get_retry` (৫ বার, ৫০ ms)। crypto legacy: test-এ KDF call গুলো `KDF_TEST_LOCK` দিয়ে serialise করা — Argon2id একবারে ৬৪ MiB চায়, `-j 4`-এ কয়েকটা একসাথে চললে allocation fail হতো (`derive_key_secret`-এ lock, production path অপরিবর্তিত)। প্রমাণ: `-j 4`-এ ১৫ বার করে তিনটা টেস্ট
 `Instant - Duration` Windows-এ panic করে (QPC origin) — টেস্টে `checked_sub` ব্যবহার করতে হবে
 Dependabot-এর moderate alert ছিল `jsonwebtoken 9.3.1` (GHSA-h395-gr6q-cpjc, type confusion → authz bypass) — `octocrab` 0.41-এর transitive dep। 2026-11-15-এ `octocrab` 0.50-এ bump করে `jsonwebtoken 10.4.0` (fixed 10.3.0) — alert বন্ধ। `RUSTSEC-2023-0071` (`rsa` Marvin) আর `RUSTSEC-2026-0387` (`crypto-bigint`) build graph-এ **আছে** (`jsonwebtoken` → `rsa`), কিন্তু path unreachable (GitHub App JWT কখনো sign/verify হয় না) — `audit.toml` + CI-তে ignore, কারণ নথিভুক্ত
 Live E2E, DPI pass, স্ক্রিনশট — installer ইনস্টল + extension reload ছাড়া হয় না
@@ -33,7 +33,9 @@ UI harness trap: `setedit` (UIA ValuePattern) টেক্সট দেখায
 UI harness trap: `click -Arg Save` ভুল টেক্সট ধরতে পারে ("0 saved") — বাটনের rect `dump` থেকে নিয়ে `clickshot` ব্যবহার করা নিরাপদ
 UI harness trap: এই মেশিনে StartAllBack shell hook মাঝে মাঝে modal error box ("StartAllBackLoaderX64.dll ... Bad Image") ফেলে, বিশেষ করে file-save/print path-এ — UIA click আটকে যায়; `EnumWindows` + `WM_CLOSE` দিয়ে বন্ধ করতে হয়
 
-আমার সুপারিশ (পরের ৩টা)
-Native-host pairing secret — same-user process host spawn আটকাতে একমাত্র আসল fix; ডিজাইন চেঞ্জ, ২–৩ দিন।
-Signing key সেটআপ (Authenticode) — আপনার সিদ্ধান্ত, সার্টিফিকেট লাগবে।
-Firefox live bridge check — আপনার মেশিনে Firefox unpacked extension লোড করে একবার যাচাই।
+আমার সুপারিশ (এখন শুধু ৩টা, সবই আপনার হাতের কাজ)
+1. Signing key সেটআপ (Authenticode) — সার্টিফিকেট কিনতে হবে; কোড দিয়ে হয় না।
+2. Firefox live bridge check — আপনার মেশিনে Firefox unpacked extension লোড করে একবার যাচাই।
+3. Installer + extension reload করে live E2E, DPI pass আর pairing pass।
+
+Native-host pairing secret **হয়ে গেছে** (L1 spawn check + L2 frame/reply MAC, step-2 enforcement) — ওখানে আর কিছু করার নেই।

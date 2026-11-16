@@ -91,10 +91,25 @@ pub fn detect_version(payload: &[u8]) -> VaultVersion {
     }
 }
 
+/// Test-only gate around the KDF.
+///
+/// One Argon2id call allocates 64 MiB and four lanes. Under `cargo test -j 4`
+/// several KDF-heavy tests overlap, the allocator can refuse the request, and
+/// the caller sees `Key derivation error: memory allocation failed` — which is
+/// how `crypto::tests::test_legacy_v2_still_opens` flaked on a RAM-tight
+/// machine. Serialising KDF work *in tests* caps peak memory at one call;
+/// production never touches this lock.
+#[cfg(test)]
+static KDF_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// মাস্টার পাসওয়ার্ড এবং Salt থেকে Argon2id ব্যবহার করে ৩২ বাইটের কি (Key) ডেরাইভ করা.
 /// Secret-owning variant: the password never materializes as `&str`.
 /// `expose_secret()` lives ONLY inside this call scope.
 pub fn derive_key_secret(master_password: &SecretString, salt: &[u8]) -> Result<[u8; 32], String> {
+    // Poison is irrelevant here: the guard protects memory, not data, so a test
+    // that panicked mid-KDF must not stop the next test from deriving a key.
+    #[cfg(test)]
+    let _kdf = KDF_TEST_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let mut derived_key = [0u8; 32];
 
     // মেমোরি-হার্ড প্যারামিটার (OWASP স্ট্যান্ডার্ড: 64MB RAM, 3 Iterations, 4 Parallel threads)
