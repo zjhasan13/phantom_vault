@@ -13,11 +13,33 @@
 | Branch / HEAD | `main` @ `3580501` (parallel-run flakes defused) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
-| Installer present | 0.4.2 built locally, **unsigned** — `installer-output/PhantomVault-Setup-0.4.2.exe` (10.06 MB) and `dist/release-0.4.2/` |
+| Installer present | **stale**: `installer-output/PhantomVault-Setup-0.4.2.exe` and `dist/release-0.4.2/` were built 2026-11-13, before A27 L1. A fresh local build lives in `dist/release-0.4.2-local/` (portable exe + both extension zips + SHA-256, **no installer**: Inno Setup 6 `ISCC.exe` is not installed on this machine, and `cargo-cyclonedx` is missing so there is no SBOM) |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-16b) — local QA build + live L1 proof
+
+- `cargo build --release -j 1` finished in **45m 19s** (`BUILD_EXIT=0`).
+  `browser_extension/build.ps1 -Browser all` rebuilt `dist/chrome` and
+  `dist/firefox` (12 files each, manifest version 0.4.2).
+- Packaged into `dist/release-0.4.2-local/`: `PhantomVault-0.4.2-windows-x64.exe`
+  (25,555,968 bytes), `phantomvault-chrome-0.4.2.zip` (152,595),
+  `phantomvault-firefox-0.4.2.zip` (152,637), per-file `.sha256`, `SHA256SUMS.txt`
+  and a `README.txt` that states what is missing (installer, SBOM, `.sig`) and why.
+  `dist/` is git-ignored, so none of it is committed.
+- **L1 verified against the real release binary**, not just unit tests: spawning
+  `PhantomVault-0.4.2-windows-x64.exe` from PowerShell with the registered
+  origin prints
+  `{"error":"native host refused: it was not started by a browser — …","ok":false}`
+  and exits **2**. `%LOCALAPPDATA%\PhantomVault\native_host.log` records
+  `WARN parent not a known browser: …\powershell.exe` followed by
+  `refused spawn: native host refused: it was not started by a browser …`.
+- Not done here, and not doable on this machine: the Inno installer
+  (`ISCC.exe` absent), the CycloneDX SBOM (`cargo-cyclonedx` absent) and the
+  `.sig` sidecars (no release signing key). `scripts/package_release.ps1` does
+  all three once those are installed.
 
 ## Last code batch (2026-11-16a) — A27 L1, breach scoping, loopback test hygiene
 
