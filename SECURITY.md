@@ -187,6 +187,28 @@ These are documented rather than secret; please do not report them as new findin
   accepts an unsigned browser (LibreWolf, ungoogled Chromium) and is
   audit-logged; a process that spawns the host can set that variable itself, so
   treat it as a usability hatch, not a boundary. See `docs/A27_HOST_PAIRING.md`.
+- **PIN unlock and the browser bridge.** By default the app now seals the
+  browser-bridge credential (`vault_hello.dpapi`) after a **PIN** unlock as well
+  as after a master-password unlock. Without this, the extension answered
+  "Vault is Locked" while the app was open, because the host had nothing to
+  unseal. The cost: while the app is unlocked, the master password sits
+  DPAPI-sealed on disk for the current Windows user, so a same-user process can
+  unseal it **without knowing the PIN**. `pin.dpapi` is
+  `DPAPI(master, entropy = Argon2id(PIN))`, so before this change the PIN was a
+  real (if weak) gate for a same-user process; with the bridge credential
+  present it is not. This is not new for master-password unlocks — that path
+  always sealed the same file — and the file is deleted on every lock
+  (`C4`, `main.rs`), on exit, and on a rekey failure. Settings → Security →
+  *Browser bridge after PIN unlock* turns it off (strict mode): the app then
+  writes no plain token after a PIN unlock and the extension asks for the PIN
+  itself, so the Argon2id + 5-strike counter still applies and the unsealed
+  master stays inside the host process (`docs/A27_HOST_PAIRING.md` §L4). Two
+  limits of that mode: liveness is the heartbeat, so a lock stops serving within
+  the 75 s heartbeat window rather than instantly, and a **master-password or
+  Hello** unlock still seals the token (it is the Hello auto-unlock credential),
+  so strict mode only means "a PIN-only session leaves nothing behind".
+  Same-user background malware remains outside the PIN threat model either way
+  (`src/security/app_pin.rs`).
 - There is no external security audit yet; `docs/AUDIT.md` is internal.
 
 ## Safe harbor

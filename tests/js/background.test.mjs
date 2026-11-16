@@ -1281,3 +1281,27 @@ test("A27 L2b: an unpaired extension accepts unsigned replies", async () => {
   assert.equal(r.ok, true);
   assert.equal("mac" in r, false);
 });
+
+test("A27 strict mode: PV_BRIDGE_PIN is popup-only and forwards the PIN", async () => {
+  const { chrome, onMessage } = fresh();
+  // A content script (sender.tab) must never be able to unlock the bridge: it
+  // would turn any page into a PIN-guessing oracle.
+  const denied = await sendMessage(
+    onMessage, chrome, { type: "PV_BRIDGE_PIN", pin: "1234" }, { tab: { id: 7 } });
+  assert.equal(denied.ok, false);
+  assert.match(denied.error || "", /popup-only/);
+  assert.equal(chrome.__state.postedNative.length, 0, "no native frame from a tab");
+
+  const pending = sendMessage(onMessage, chrome, { type: "PV_BRIDGE_PIN", pin: " 4821 " });
+  assert.ok(await waitForFrame(chrome), "frame posted");
+  const sent = chrome.__state.postedNative[0];
+  assert.equal(sent.cmd, "unlock_pin");
+  assert.equal(sent.pin, "4821", "the PIN is trimmed, never empty");
+  chrome.__state.ports[0].handlers.message.forEach((fn) => fn({ ok: false, remaining: 3 }));
+  const r = await pending;
+  assert.equal(r.ok, false);
+  assert.equal(r.remaining, 3);
+
+  const empty = await sendMessage(onMessage, chrome, { type: "PV_BRIDGE_PIN", pin: "   " });
+  assert.equal(empty.ok, false, "an empty PIN never reaches the host");
+});

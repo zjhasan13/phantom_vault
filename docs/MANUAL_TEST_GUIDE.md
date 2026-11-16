@@ -260,6 +260,8 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 | A10 | ডেস্কটপ অ্যাপ বন্ধ করে popup খুলুন | offline cache থেকে লিস্ট আসে (Hello/PIN চাইতে পারে) |
 | A11 | Clipboard auto-clear | কপি করার ৩০ সেকেন্ড পরে ক্লিপবোর্ড খালি |
 | A12 | Auto-lock | নির্দিষ্ট সময় নিষ্ক্রিয় থাকলে আবার পাসওয়ার্ড/Hello চায় |
+| A13 | ডেস্কটপ **PIN** দিয়ে আনলক করুন, তারপর popup খুলুন | Settings → Security-তে *Browser bridge after PIN unlock* **চালু** থাকলে extension সাথে সাথে ভল্ট দেখায় |
+| A14 | ওই toggle **বন্ধ** করে লক → PIN দিয়ে আনলক → popup খুলুন | popup একবার **অ্যাপ PIN** চায় ("Unlock the bridge"); সঠিক PIN-এ ভল্ট খোলে, ডিস্কে plain token তৈরি হয় না |
 
 ### 8.D যা ইচ্ছাকৃতভাবে নেই (ফেল লিখবেন না)
 
@@ -273,7 +275,11 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 
 | উপসর্গ | কারণ | কী করবেন |
 |---|---|---|
-| ডেস্কটপ অ্যাপ খোলা ও আনলক করা, তবু popup বলছে "Vault is Locked" | ডেস্কটপ **PIN** দিয়ে আনলক করা হয়েছে। PIN আনলক bridge credential (`vault_hello.dpapi`) সিল করে না — ইচ্ছাকৃত: PIN ৪–৮ সংখ্যার, তাই master password সাদা DPAPI-তে রেখে দিলে PIN-এর সুরক্ষা অর্থহীন হয়ে যেত | ডেস্কটপ লক করে **master password** দিয়ে একবার আনলক করুন। তখনই extension কাজ করবে। নতুন build-এ popup এই কথাটাই লিখে দেখাবে |
+| ডেস্কটপ অ্যাপ খোলা ও আনলক করা, তবু popup বলছে "Vault is Locked" | ০.৪.২-এর আগের build, অথবা Settings → Security-তে *Browser bridge after PIN unlock* **বন্ধ** (strict mode)। তখন PIN আনলক কোনো bridge credential (`vault_hello.dpapi`) সিল করে না | হয় ডেস্কটপ লক করে **master password** দিয়ে একবার আনলক করুন, নয়তো ওই toggle **চালু** করুন। ডিফল্টে চালু — তখন PIN আনলকেই extension কাজ করে |
+| Settings-এ *Browser bridge after PIN unlock* চালু আছে, তবু extension বলে credential নেই | অ্যাপটা PIN দিয়ে আনলক হয়েছে কিন্তু credential সিল হওয়ার আগেই popup খোলা হয়েছে, অথবা `vault_hello.dpapi` কেউ মুছে দিয়েছে | লক করে আবার আনলক করুন (PIN হলেও চলবে)। তারপরও না হলে master password দিয়ে একবার আনলক করুন |
+| PIN আনলকে bridge বন্ধ রাখতে চাই, কিন্তু extension PIN চাইছে | এটাই strict mode-এর প্রত্যাশিত আচরণ। host-এর কাছে plain token থাকে না, তাই প্রতি ব্রাউজার সেশনে (host প্রসেস) একবার অ্যাপ PIN লাগে | কিছু করার নেই — এটাই সুরক্ষার বিনিময়। `SECURITY.md` → "PIN unlock and the browser bridge" |
+| popup-এ PIN দিচ্ছি, বলছে "ভুল PIN — N বার বাকি" | অ্যাপ PIN-ই লাগে (ডেস্কটপ আনলকের PIN), extension PIN নয়। কাউন্টারটা ডেস্কটপের সাথে **শেয়ার করা** | ডেস্কটপের PIN-টাই দিন। ভুল করতে করতে ৫ বার হলে অ্যাপ PIN মুছে যাবে — তখন master password দিয়ে আনলক করে নতুন PIN সেট করুন |
+| popup বলছে "Too many wrong PINs — the app PIN was wiped" | ৫-স্ট্রাইক নিয়ম: sealed master shred হয়ে গেছে | master password দিয়ে ডেস্কটপ আনলক করুন → Settings → Windows Hello/App PIN → নতুন PIN |
 | popup-এ "native host refused: it was not started by a browser" | release host শুধু সই করা browser-এর spawn সার্ভ করে (A27 L1) | extension-টা Chrome/Edge/Firefox/Brave/Vivaldi/Opera থেকে খুলুন |
 | popup-এ "not code-signed" | browser-এর Authenticode সই নেই (LibreWolf, ungoogled Chromium, নিজের বানানো build) | শুধু নিজের বিশ্বাস করা browser হলে host-এর environment-এ `PV_ALLOW_UNSIGNED_BROWSER=1` দিন। এতে সুরক্ষা দুর্বল হয় |
 | popup-এ pairing সংক্রান্ত error | ডেস্কটপ আর extension একসাথে আপডেট হয়নি | Settings → Sync & Devices → Extension pairing → নতুন কোড নিয়ে popup-এ দিন |
@@ -284,7 +290,7 @@ Delete করলে Trash-এ যায়, Trash থেকে restore বা pe
 
 | ট্যাব | যা দেখতে হবে |
 |---|---|
-| Security | Screen Blackout, favicons toggle, Travel mode, Windows Hello/App PIN, Master password rotation, offline cache |
+| Security | Screen Blackout, favicons toggle, Travel mode, Windows Hello/App PIN, Master password rotation, offline cache, **Browser bridge after PIN unlock** (ডিফল্ট চালু) |
 | Sync & Devices | GitHub Sync, Per-item sharing, Secure Send, Business members, P2P, Browser Bridge + Extension pairing |
 | Privacy | blocked domains, breach-check সেটিংস |
 | Recovery | recovery kit, shards |

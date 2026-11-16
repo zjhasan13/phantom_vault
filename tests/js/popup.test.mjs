@@ -209,11 +209,40 @@ test("A27 L2: popup.html carries the pairing row the script binds to", () => {
   }
 });
 
+test("A27 strict mode: the popup asks for the app PIN when the host says so", () => {
+  // Settings → Security → "Browser bridge after PIN unlock" OFF writes no plain
+  // bridge token. The host answers `need: "pin"`; the popup must prompt instead
+  // of printing "Vault is Locked" at a user whose app is open and unlocked.
+  const stats = SRC.match(/async function loadStats\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(stats, "loadStats present");
+  assert.match(stats[1], /s\.need === "pin"/, "stats honours need:pin");
+  assert.match(stats[1], /showBridgePinLock\(\)/, "stats shows the PIN prompt");
+
+  const lock = SRC.match(/function showBridgePinLock\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(lock, "showBridgePinLock present");
+  assert.match(lock[1], /type: "PV_BRIDGE_PIN"/, "the prompt posts the PIN to the router");
+  assert.match(lock[1], /arm\(\); \/\/ loop: the next attempt must work/,
+    "a wrong PIN re-arms the handler instead of bricking the popup");
+  assert.match(lock[1], /res\.wiped/, "a 5-strike wipe is reported, not hidden");
+
+  // Every path that can meet a strict-mode host must route to the prompt.
+  assert.match(SRC, /if \(q\.need === "pin"\)/, "list/query refresh routes to the prompt");
+  assert.match(SRC, /if \(l\.need === "pin"\)/, "list refresh routes to the prompt");
+  assert.match(SRC, /pong\.need === "pin"/, "ping treats need:pin as reachable");
+
+  for (const key of ["bridge_pin_title", "bridge_pin_sub", "bridge_pin_go",
+    "bridge_pin_wrong", "bridge_pin_wiped"]) {
+    const defined = SRC.match(new RegExp(`${key}:`, "g")) || [];
+    assert.equal(defined.length, 2, `en + bn both define ${key}`);
+  }
+});
+
 test("stats shows the real bridge refusal instead of a blanket lock", () => {
-  // The desktop can be open and unlocked and still refuse the bridge: a PIN
-  // unlock never seals a credential, and a release host refuses a spawn that
-  // did not come from a signed browser. "Vault is Locked" sent users in
-  // circles, so the popup must surface what the host actually said.
+  // The desktop can be open and unlocked and still refuse the bridge: a build
+  // with the PIN bridge switched off has no credential to unseal, and a release
+  // host refuses a spawn that did not come from a signed browser. "Vault is
+  // Locked" sent users in circles, so the popup must surface what the host
+  // actually said.
   const stats = SRC.match(/async function loadStats\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(stats, "loadStats present");
   assert.match(stats[1], /typeof s\.error === "string"/, "host error is read");

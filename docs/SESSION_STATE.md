@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-16 |
-| Branch / HEAD | `main` @ `3580501` (parallel-run flakes defused) |
+| Branch / HEAD | `main` @ `8b95599` (PIN unlock now feeds the bridge; strict PIN mode) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | **stale**: `installer-output/PhantomVault-Setup-0.4.2.exe` and `dist/release-0.4.2/` were built 2026-11-13, before A27 L1. A fresh local build lives in `dist/release-0.4.2-local/` (portable exe + both extension zips + SHA-256, **no installer**: Inno Setup 6 `ISCC.exe` is not installed on this machine, and `cargo-cyclonedx` is missing so there is no SBOM) |
@@ -18,6 +18,72 @@
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-16e) — strict PIN mode (B)
+
+- **What:** with *Browser bridge after PIN unlock* **off**, a PIN-only session
+  writes no token, so the host used to die with "no bridge credential" and the
+  popup printed "Vault is Locked". Now the host serves a **locked session**:
+  - the first frame gets `{ok:false, need:"pin"}` and the process **stays alive**
+    on the same native port (a one-shot reply would close the port the popup
+    needs for the retry);
+  - `{cmd:"unlock_pin", pin}` is verified by
+    `security::app_pin::verify_and_recover` — same `pin.dpapi`, same Argon2id
+    parameters, same **5-strike** counter as the desktop unlock. Wrong PIN →
+    `{ok:false, need:"pin", remaining:N}`; fifth strike → `{ok:false, wiped:true}`
+    and exit 2;
+  - the popup shows its lock overlay with an app-PIN field
+    (`showBridgePinLock`, re-armed after every wrong attempt), and the router
+    handler `PV_BRIDGE_PIN` is **popup-only** so a page cannot use the bridge as
+    a PIN oracle (`popupOnly()` refuses a sender with a tab);
+  - liveness in this mode is the desktop heartbeat, because there is no token
+    file to watch; a lock therefore stops serving within the heartbeat window
+    (75 s) instead of instantly. Documented, not silent.
+- **Not claimed:** strict mode does not make the bridge PIN-only forever. A
+  master-password (or Hello) unlock still seals `vault_hello.dpapi` — that file
+  *is* the Hello auto-unlock credential — and the host serves it without a PIN.
+  Strict mode means "a PIN-only session leaves nothing behind", which is the
+  session the toggle is about.
+- Code: `native_host.rs` `pin_bridge_available_at` + `pin_bridge_bootstrap`,
+  `strict_pin` liveness branch in the serve loop and the watchdog,
+  `popup.js` `showBridgePinLock` + `need:"pin"` routing in `loadStats`,
+  `refresh`, `desktopReachable`, `background.js` `PV_BRIDGE_PIN`.
+- Tests: `strict_pin_mode_needs_an_enrolled_pin_file` (Rust),
+  `A27 strict mode: PV_BRIDGE_PIN is popup-only and forwards the PIN`
+  (background), `A27 strict mode: the popup asks for the app PIN when the host
+  says so` (popup, incl. both locales defining the five new keys).
+- Docs: `docs/A27_HOST_PAIRING.md` §L4, `SECURITY.md`, manual guide §8.C (A13/A14)
+  and §8.E, `docs/FEATURE_LEDGER.md`.
+
+## Last code batch (2026-11-16d) — bridge credential after a PIN unlock (A + C)
+
+- **Why:** the previous batch only fixed the *message*. The reported workflow is
+  "I almost always unlock with the PIN", and the extension must work in that
+  workflow, not tell the user to switch to the master password.
+- **A — seal on PIN unlock:** `main.rs` `on_request_pin_unlock` now reads
+  `prefs::bridge_on_pin_unlock` and passes it as `cache_hello_token` to
+  `unlock_with_password`, so `vault_hello.dpapi` exists after a PIN unlock and
+  the native host can serve. Default **on**.
+- **C — Settings toggle:** `UiPrefs` gained `bridge_on_pin_unlock: bool` with
+  `#[serde(default = "bridge_on_pin_default")]`, so an existing `ui.prefs.json`
+  keeps its auto-lock/clipboard values and simply defaults the new field. The
+  Slint side adds `callback set_bridge_on_pin(bool)`, `property bridge_on_pin`,
+  a Security-tab row (*Browser bridge after PIN unlock*) plus a one-line hint,
+  and `main_window.on_set_bridge_on_pin` persists the choice and announces it.
+  `main_window.set_bridge_on_pin(prefs::load().bridge_on_pin_unlock)` seeds the
+  control at startup next to `set_tray_minimize`.
+- **Cost, stated plainly:** while the app is unlocked, the master password is
+  DPAPI-sealed on disk for the current user, so a same-user process can unseal
+  it without the PIN. That was already true after a master-password unlock; the
+  new part is that a PIN-only user gets the same file. Lock (`C4`), exit and a
+  failed rekey delete it. `SECURITY.md` → "PIN unlock and the browser bridge"
+  documents it; the manual guide §8.E tells a tester how to switch it off.
+- **Still open:** strict mode B (host emits `need: "pin"`, popup asks for the
+  PIN, host unseals via `app_pin::verify_and_recover` with the shared 5-strike
+  counter) is the next batch. Until it lands, turning the toggle **off** makes
+  the extension say "no bridge credential" instead of prompting.
+- Tests: `src/prefs.rs` covers the default, an old file missing the field, and
+  an explicit opt-out round trip.
 
 ## Last code batch (2026-11-16c) — "Vault is Locked" while the desktop is open
 

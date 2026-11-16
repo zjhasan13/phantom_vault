@@ -4464,6 +4464,7 @@ fn main() -> Result<(), slint::PlatformError> {
     }
     // Prefs painted before first frame (tray + backup).
     main_window.set_tray_minimize(windows_native::tray::load_tray_pref());
+    main_window.set_bridge_on_pin(prefs::load().bridge_on_pin_unlock);
     main_window.set_chain_2fa(chain_2fa_enabled());
     {
         let bcfg = storage::backup_scheduler::load_config();
@@ -6377,13 +6378,19 @@ fn main() -> Result<(), slint::PlatformError> {
         let search_clone = Arc::clone(&pin_search);
         let qb_clone = pin_qb.clone();
         let uvis_clone = Arc::clone(&pin_uvis);
+        // Most people unlock with the PIN. Without a sealed bridge credential
+        // the extension answered "Vault is Locked" while the app was open, so
+        // the PIN path seals one by default (prefs::bridge_on_pin_unlock). The
+        // strict mode keeps the old behaviour and makes the extension ask for
+        // the PIN itself; SECURITY.md states the cost of the default.
+        let seal_bridge = crate::prefs::load().bridge_on_pin_unlock;
         std::thread::spawn(move || {
             // Argon2id + DPAPI happen here (never on the Slint thread).
             match security::app_pin::verify_and_recover(Path::new("."), &pin) {
                 Ok(master) => {
                     unlock_with_password(
                         master, weak, vault_clone, master_clone, search_clone, qb_clone,
-                        Arc::clone(&uvis_clone), false, false,
+                        Arc::clone(&uvis_clone), seal_bridge, false,
                     );
                 }
                 Err(security::app_pin::PinError::Wiped) => {
@@ -14549,6 +14556,24 @@ fn launch_url(ui: &MainWindow, url: &str) {
                 "📥 Close button minimizes to tray.".into()
             } else {
                 "⚠️ Close button now exits the app.".into()
+            });
+        }
+    });
+    // A27 bridge: seal the bridge credential after a PIN unlock (default ON).
+    // Off = strict mode; the extension then asks for the PIN itself.
+    let bridgepin_weak = main_window.as_weak();
+    main_window.on_set_bridge_on_pin(move |on| {
+        let mut p = prefs::load();
+        p.bridge_on_pin_unlock = on;
+        if let Err(e) = prefs::save(&p) {
+            eprintln!("ui.prefs.json write failed: {e}");
+        }
+        if let Some(ui) = bridgepin_weak.upgrade() {
+            ui.set_bridge_on_pin(on);
+            ui.set_notification_text(if on {
+                "🔗 The browser bridge now starts after a PIN unlock too.".into()
+            } else {
+                "🔒 Strict bridge: the extension will ask for your PIN.".into()
             });
         }
     });

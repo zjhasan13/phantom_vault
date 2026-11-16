@@ -1060,6 +1060,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "PV_STATS") {
       return await hostRequest({ cmd: "stats" });
     }
+    // A27 strict mode: the host answers `need: "pin"` when the desktop is open
+    // but wrote no plain bridge token. The PIN is verified inside the host with
+    // the app's own Argon2id record and the shared 5-strike counter, so a
+    // content script must never drive this — hence popup-only.
+    if (msg.type === "PV_BRIDGE_PIN") {
+      const denied = popupOnly();
+      if (denied) return { ok: false, error: denied };
+      const pin = String(msg.pin || "").trim();
+      if (!pin) return { ok: false, error: "PIN is empty" };
+      const r = await hostRequest({ cmd: "unlock_pin", pin }, 60000);
+      if (r && r.ok) touchActivity();
+      return r;
+    }
     // The user's own "this is the working one" verdict, for logins and
     // standalone 2FA accounts alike. `on` is coerced so a sloppy caller can
     // never send an undefined into the native bool and have it default to

@@ -1002,6 +1002,7 @@ export component MainWindow inherits Window {
     callback set_offline_mode(bool);
     callback view_access_log();
     callback set_tray_minimize(bool);
+    callback set_bridge_on_pin(bool);
     callback set_backup_enabled(bool);
     callback set_backup_interval(int);
     callback browse_backup_dir();
@@ -1105,6 +1106,7 @@ export component MainWindow inherits Window {
     in-out property <string> export_status: "";
     in-out property <int> rp_export_fmt: 0;
     in-out property <bool> tray_minimize: true;
+    in-out property <bool> bridge_on_pin: true;
     in-out property <bool> backup_enabled: true;
     in-out property <int> backup_interval: 7;
     in-out property <string> backup_dir: "";
@@ -2367,6 +2369,8 @@ export component MainWindow inherits Window {
                     HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "অফলাইন কিল-সুইচ (নেটওয়ার্ক নেই)" : "Offline kill-switch (no network)"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.offline_mode ? "OFFLINE" : "ONLINE"; primary: !root.offline_mode; danger: root.offline_mode; width: 100px; clicked => { root.set_offline_mode(!root.offline_mode); } } }
                     HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "📜  অ্যাক্সেস লগ" : "📜  Access Log"); width: 180px; clicked => { root.view_access_log(); } } }
                     HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "বন্ধ বাটনে ট্রেতে মিনিমাইজ হয়" : "Close button minimizes to tray"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.tray_minimize); primary: root.tray_minimize; width: 90px; clicked => { root.set_tray_minimize(!root.tray_minimize); } } }
+                    HorizontalLayout { spacing: 8px; Text { text: (root.ui_lang == "bn" ? "PIN আনলকের পরেও ব্রাউজার ব্রিজ চালু" : "Browser bridge after PIN unlock"); color: PhantomTheme.text; font-size: 13px; vertical-alignment: center; horizontal-stretch: 1; } AuraButton { label: root.tog(root.bridge_on_pin); primary: root.bridge_on_pin; width: 90px; clicked => { root.set_bridge_on_pin(!root.bridge_on_pin); } } }
+                    Text { text: (root.ui_lang == "bn" ? "চালু থাকলে PIN দিয়ে আনলক করলেই extension কাজ করে — তখন master password DPAPI-সিল হয়ে ডিস্কে থাকে (লক করলে মুছে যায়)। বন্ধ রাখলে extension নিজেই PIN চাইবে, ডিস্কে plain token থাকবে না।" : "On: the extension works right after a PIN unlock — while unlocked, your master password sits DPAPI-sealed on disk (deleted on lock). Off: the extension asks for the PIN itself and no plain token is written."); color: PhantomTheme.text-dim; font-size: 10px; wrap: word-wrap; }
                     FieldLabel { text: root.ui_lang == "bn" ? "অ্যাপ আপডেট (গিটহাব রিলিজ)" : "APP UPDATES (GITHUB RELEASES)"; }
                     Text { text: root.update_tag == "" ? "Current: v" + root.app_version : "🎉 New Update Available: " + root.update_tag; color: root.update_tag == "" ? PhantomTheme.text-muted : PhantomTheme.success; font-size: 12px; font-weight: 700; wrap: word-wrap; }
                     HorizontalLayout { spacing: 8px;

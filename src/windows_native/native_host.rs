@@ -3703,6 +3703,120 @@ fn emit_err<W: std::io::Write>(output: &mut W, msg: &str) {
     let _ = output.flush();
 }
 
+/// Strict mode (`Settings → Security → Browser bridge after PIN unlock` OFF)
+/// leaves no `vault_hello.dpapi` on disk, but `pin.dpapi` still exists. A host
+/// that finds no token must then ask for the app PIN instead of dying, or the
+/// extension shows "Vault is Locked" at a user whose app is open and unlocked.
+fn pin_bridge_available_at(base: &std::path::Path) -> bool {
+    base.join(crate::security::app_pin::PIN_FILE).exists()
+}
+
+fn pin_bridge_available() -> bool {
+    pin_bridge_available_at(std::path::Path::new("."))
+}
+
+/// Ask the frame that woke us for the app PIN, then keep reading frames until a
+/// correct PIN unseals the master. Returns the master, or the process exit code.
+///
+/// The PIN is verified by `app_pin::verify_and_recover` — the same `pin.dpapi`
+/// record, Argon2id parameters and 5-strike counter as the desktop unlock — so
+/// the bridge cannot become a cheaper guessing oracle than the app itself. A
+/// wrong PIN is a reply, never an exit: the native port must stay open so the
+/// popup can retry. Nothing is written to disk.
+fn pin_bridge_bootstrap<R: std::io::Read, W: std::io::Write>(
+    base: &std::path::Path,
+    input: &mut R,
+    output: &mut SignedOut<W>,
+    guard: &mut crate::security::host_pairing::FrameGuard,
+    enforce_pairing: bool,
+    first_req: serde_json::Value,
+) -> Result<secrecy::SecretString, i32> {
+    let ask = serde_json::json!({
+        "ok": false,
+        "need": "pin",
+        "error": "vault locked - enter your PhantomVault PIN",
+    });
+    // The first frame was already parsed and bound by the caller; answer it so
+    // the popup learns it must prompt instead of retrying a dead port.
+    output.bind(&first_req);
+    let frame = encode_frame(&ask);
+    if output.write_all(&frame).and(output.flush()).is_err() {
+        return Err(0);
+    }
+    bridge_log("strict pin mode: no token, asking for the app PIN");
+    loop {
+        let (req, raw) = match decode_frame_raw(input) {
+            Ok(v) => v,
+            Err(e) => {
+                let msg = e.to_string();
+                if msg.contains("frame read") {
+                    return Err(0); // browser gone - clean exit
+                }
+                let frame = encode_frame(&err(format!("bad frame: {msg}")));
+                if output.write_all(&frame).and(output.flush()).is_err() {
+                    return Err(0);
+                }
+                continue;
+            }
+        };
+        let verdict = check_frame(guard, &raw);
+        if enforce_pairing {
+            if let Some(msg) = pairing_refusal(verdict) {
+                bridge_log(&format!("refused unpaired frame: {msg}"));
+                let frame = encode_frame(&err(&msg));
+                let _ = output.write_all(&frame).and(output.flush());
+                return Err(2);
+            }
+        }
+        output.bind(&req);
+        if req.get("cmd").and_then(|c| c.as_str()) != Some("unlock_pin") {
+            // Any other command while locked gets the same prompt, never data.
+            let frame = encode_frame(&ask);
+            if output.write_all(&frame).and(output.flush()).is_err() {
+                return Err(0);
+            }
+            continue;
+        }
+        let pin = req.get("pin").and_then(|p| p.as_str()).unwrap_or("");
+        match crate::security::app_pin::verify_and_recover(base, pin) {
+            Ok(master) => {
+                bridge_log("strict pin mode: app PIN accepted");
+                let frame = encode_frame(&serde_json::json!({"ok": true}));
+                let _ = output.write_all(&frame).and(output.flush());
+                return Ok(master);
+            }
+            Err(crate::security::app_pin::PinError::WrongPin { remaining }) => {
+                bridge_log("strict pin mode: app PIN rejected");
+                let frame = encode_frame(&serde_json::json!({
+                    "ok": false,
+                    "need": "pin",
+                    "remaining": remaining,
+                    "error": "wrong PIN",
+                }));
+                if output.write_all(&frame).and(output.flush()).is_err() {
+                    return Err(0);
+                }
+            }
+            Err(crate::security::app_pin::PinError::Wiped) => {
+                bridge_log("strict pin mode: app PIN wiped after 5 wrong attempts");
+                let frame = encode_frame(&serde_json::json!({
+                    "ok": false,
+                    "wiped": true,
+                    "error": "too many wrong PINs - the app PIN was wiped",
+                }));
+                let _ = output.write_all(&frame).and(output.flush());
+                return Err(2);
+            }
+            Err(e) => {
+                bridge_log(&format!("strict pin mode: PIN unlock failed: {e}"));
+                let frame = encode_frame(&err(format!("PIN unlock failed: {e}")));
+                let _ = output.write_all(&frame).and(output.flush());
+                return Err(2);
+            }
+        }
+    }
+}
+
 /// Foreground entrypoint: `vault native-host`. Hello-cached unlock only
 /// (stdin is the protocol pipe), then serve frames until EOF.
 ///
@@ -3881,30 +3995,52 @@ pub fn serve_cli() -> i32 {
         }
     }
     // No TTY prompt possible here — stdin belongs to the browser.
-    let blob = match std::fs::read(HELLO_TOKEN_FILE) {
-        Ok(b) => b,
+    // The first frame is answered here in strict mode (need:pin), so the normal
+    // loop must not replay it. Declared before the token read for that reason.
+    let mut pending_req = Some(first_req);
+    // A27 L4 (strict mode): no plain bridge token, but an app PIN exists.
+    let mut strict_pin = false;
+    let master: secrecy::SecretString = match std::fs::read(HELLO_TOKEN_FILE) {
+        Ok(blob) => match crate::core::memory::DpapiGuard::unprotect(&blob) {
+            Ok(secret) => {
+                let m = secrecy::SecretString::new(
+                    String::from_utf8_lossy(secret.expose()).into_owned(),
+                );
+                drop(secret);
+                m
+            }
+            Err(_) => {
+                emit_err(&mut output, "Hello credential unseal failed");
+                return 2;
+            }
+        },
         Err(e) => {
             bridge_log(&format!("Hello token missing: {e}"));
-            // Not "unlock with Hello": Hello may be unavailable on this PC, and
-            // a PIN unlock never seals this credential (pin.dpapi is
-            // DPAPI+Argon2, a plain bridge token would be weaker). The master
-            // password path seals it, so that is the instruction that works.
-            emit_err(
+            if !pin_bridge_available() {
+                // Not "unlock with Hello": Hello may be unavailable on this PC.
+                // The master-password path seals the token, so that instruction
+                // always works; strict mode needs the toggle turned back on.
+                emit_err(
+                    &mut output,
+                    "no bridge credential yet — lock the desktop app and unlock it with your master password once, or turn on Settings → Security → Browser bridge after PIN unlock",
+                );
+                return 2;
+            }
+            strict_pin = true;
+            let first = pending_req.take().unwrap_or(serde_json::Value::Null);
+            match pin_bridge_bootstrap(
+                std::path::Path::new("."),
+                &mut input,
                 &mut output,
-                "no bridge credential yet — lock the desktop app and unlock it with your master password once",
-            );
-            return 2;
+                &mut pair_guard,
+                enforce_pairing,
+                first,
+            ) {
+                Ok(m) => m,
+                Err(code) => return code,
+            }
         }
     };
-    let secret = match crate::core::memory::DpapiGuard::unprotect(&blob) {
-        Ok(s) => s,
-        Err(_) => {
-            emit_err(&mut output, "Hello credential unseal failed");
-            return 2;
-        }
-    };
-    let master = secrecy::SecretString::new(String::from_utf8_lossy(secret.expose()).into_owned());
-    drop(secret);
     // Real vault first; on failure the cached passphrase may be the duress
     // password (cached by the decoy unlock path) — then serve ONLY the decoy
     // container. Real credentials never cross into the decoy branch.
@@ -3960,7 +4096,15 @@ pub fn serve_cli() -> i32 {
             .unwrap_or(0);
         let idle = now.saturating_sub(watch_last2.load(std::sync::atomic::Ordering::SeqCst));
         let total = watch_start.elapsed().as_secs();
-        if !token_ok_cached() {
+        // Strict mode has no token file to watch, so the heartbeat is the
+        // liveness signal: a lock stops the beats and the host exits within the
+        // heartbeat window instead of instantly.
+        let alive = if strict_pin {
+            desktop_alive()
+        } else {
+            token_ok_cached()
+        };
+        if !alive {
             // Lock is an immediate-clear event: the guarded flush only fires
             // when our secret is still on the clipboard.
             crate::windows_native::clipboard::flush_now();
@@ -3981,12 +4125,16 @@ pub fn serve_cli() -> i32 {
         }
     });
     // The first frame was consumed before the heartbeat gate so `cache_get`
-    // could be answered while closed; hand it to the normal serve loop.
-    let mut pending_req = Some(first_req);
+    // could be answered while closed; hand it to the normal serve loop. In
+    // strict mode `pin_bridge_bootstrap` already answered it.
     loop {
         // Live lock state: token deleted (app locked) / idle / max lifetime
         // → zeroize + exit instead of serving secrets indefinitely.
-        let token_alive = token_ok_cached();
+        let token_alive = if strict_pin {
+            desktop_alive()
+        } else {
+            token_ok_cached()
+        };
         let clip_linger =
             now_secs() < clip_until.load(std::sync::atomic::Ordering::SeqCst);
         if !token_alive {
@@ -5194,6 +5342,67 @@ mod tests {
         assert_eq!(r.reply["ok"], false);
         let r = answer(&mut v, false, &serde_json::json!({"cmd": "passkey_lookup", "rp": "github.com"}));
         assert_eq!(r.reply["ok"], false);
+    }
+
+    #[test]
+    fn strict_pin_mode_needs_an_enrolled_pin_file() {
+        // A27 L4: the host asks for the PIN only when `pin.dpapi` exists. A
+        // missing PIN must not turn a missing token into a PIN prompt loop, or
+        // the user gets a field that can never succeed.
+        let dir = std::env::temp_dir().join(format!("pv-pinmode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        assert!(!pin_bridge_available_at(&dir), "no pin.dpapi yet");
+        std::fs::write(dir.join(crate::security::app_pin::PIN_FILE), b"x").unwrap();
+        assert!(pin_bridge_available_at(&dir), "an enrolled PIN is detected");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn strict_pin_bootstrap_prompts_then_unseals_with_the_app_pin() {
+        // A27 L4: the host answers `need:"pin"`, keeps the port open, and
+        // verifies through the SAME `pin.dpapi` record the desktop uses. A
+        // wrong PIN is a reply (with the shared strike count), never an exit.
+        let dir = std::env::temp_dir().join(format!("pv-pinboot-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        crate::security::app_pin::enroll(&dir, "4821", "master-secret").expect("enroll");
+
+        let mut wire = Vec::new();
+        for frame in [
+            serde_json::json!({"cmd": "unlock_pin", "pin": "0000"}),
+            serde_json::json!({"cmd": "unlock_pin", "pin": "4821"}),
+        ] {
+            wire.extend_from_slice(&encode_frame(&frame));
+        }
+        let mut input = &wire[..];
+        let mut out = SignedOut::new(Vec::new(), None);
+        let mut guard = crate::security::host_pairing::FrameGuard::new(None);
+        let master = pin_bridge_bootstrap(
+            &dir,
+            &mut input,
+            &mut out,
+            &mut guard,
+            false,
+            serde_json::json!({"cmd": "stats"}),
+        )
+        .expect("the correct PIN unseals");
+        assert_eq!(
+            secrecy::ExposeSecret::expose_secret(&master),
+            "master-secret"
+        );
+
+        let mut buf = &out.inner[..];
+        let mut seen = Vec::new();
+        while let Ok((v, _raw)) = decode_frame_raw(&mut buf) {
+            seen.push(v);
+        }
+        assert_eq!(seen.len(), 3, "prompt + one strike + ok");
+        assert_eq!(seen[0]["need"], "pin", "the waking frame learns it needs a PIN");
+        assert_eq!(seen[1]["remaining"], 4, "one strike, four left");
+        assert_eq!(seen[1]["need"], "pin", "a wrong PIN re-prompts");
+        assert_eq!(seen[2]["ok"], true);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

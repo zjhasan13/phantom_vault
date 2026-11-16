@@ -192,6 +192,31 @@ Unpair wipes `host_pairing.dpapi` and `chrome.storage.local.pv_pair_secret`.
 Hello token, heartbeat, reprompt, extension PIN, idle TTL and the audit log are
 unchanged. L1/L2 are additive.
 
+### L4. PIN-gated session (strict mode, 2026-11-16)
+
+The default build seals `vault_hello.dpapi` after a **PIN** unlock too (see
+`SECURITY.md` → "PIN unlock and the browser bridge"), so the bridge normally
+needs no extra step. Settings → Security → *Browser bridge after PIN unlock*
+turns that off. In that mode the desktop writes no plain token, and the host
+does not die with "no bridge credential":
+
+- The first frame (typically `stats` or `ping`) is answered with
+  `{ok:false, need:"pin"}` and the host **stays alive** on the same native port.
+- The popup shows its lock overlay with an app-PIN field and sends
+  `{cmd:"unlock_pin", pin}` (popup-only: a content script is refused, so a page
+  cannot use the bridge as a PIN oracle).
+- The host calls `crate::security::app_pin::verify_and_recover`, i.e. the same
+  `pin.dpapi` record, the same Argon2id parameters and the same **5-strike**
+  counter as the desktop unlock. A wrong PIN answers
+  `{ok:false, need:"pin", remaining:N}`; the fifth shreds the sealed master and
+  answers `{ok:false, wiped:true}`.
+- No plain master ever touches disk. Liveness in this mode is the desktop
+  heartbeat (`desktop_alive()`), because there is no token file to watch; a lock
+  therefore stops serving within the heartbeat window instead of instantly.
+
+The unsealed master lives only in the host process and is zeroized on exit, the
+same as the Hello-token path.
+
 ## 4. Rollout
 
 - **Step 1 (warn-only):** ship L1 + L2 with a Settings banner when unpaired. The

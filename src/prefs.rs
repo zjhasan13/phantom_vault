@@ -21,6 +21,21 @@ pub const MAX_CLIPBOARD_SECS: u64 = 300;
 pub struct UiPrefs {
     pub auto_lock_mins: u64,
     pub clipboard_secs: u64,
+    /// Seal the browser-bridge credential after a **PIN** unlock too.
+    ///
+    /// Default on: most people unlock with the PIN, and a missing bridge
+    /// credential made the extension say "Vault is Locked" while the app was
+    /// open. The cost is documented in `SECURITY.md` ("PIN unlock and the
+    /// browser bridge"): while the app is unlocked, the master password then
+    /// sits DPAPI-sealed on disk, so a same-user process does not need the PIN.
+    /// Turn it off for the strict mode, where the extension asks for the PIN
+    /// itself and no plain token is written.
+    #[serde(default = "bridge_on_pin_default")]
+    pub bridge_on_pin_unlock: bool,
+}
+
+fn bridge_on_pin_default() -> bool {
+    true
 }
 
 impl Default for UiPrefs {
@@ -28,6 +43,7 @@ impl Default for UiPrefs {
         Self {
             auto_lock_mins: DEFAULT_AUTOLOCK_MINS,
             clipboard_secs: DEFAULT_CLIPBOARD_SECS,
+            bridge_on_pin_unlock: bridge_on_pin_default(),
         }
     }
 }
@@ -76,6 +92,7 @@ mod tests {
         let p = UiPrefs::default();
         assert_eq!(p.auto_lock_mins, 15);
         assert_eq!(p.clipboard_secs, 15);
+        assert!(p.bridge_on_pin_unlock, "PIN unlock seals the bridge by default");
     }
 
     #[test]
@@ -99,8 +116,23 @@ mod tests {
         let p = UiPrefs {
             auto_lock_mins: 1,
             clipboard_secs: 30,
+            bridge_on_pin_unlock: false,
         };
         let text = serde_json::to_string(&p).expect("serialize");
         assert_eq!(parse(&text), p);
+    }
+
+    #[test]
+    fn an_old_prefs_file_keeps_its_values_and_defaults_the_new_field() {
+        // Files written before `bridge_on_pin_unlock` existed must not reset
+        // the auto-lock and clipboard choices just because a field is missing.
+        let old = r#"{"auto_lock_mins":1,"clipboard_secs":60}"#;
+        let p = parse(old);
+        assert_eq!(p.auto_lock_mins, 1);
+        assert_eq!(p.clipboard_secs, 60);
+        assert!(p.bridge_on_pin_unlock, "the new field defaults to on");
+        // An explicit opt-out survives a round trip.
+        let strict = r#"{"auto_lock_mins":1,"clipboard_secs":60,"bridge_on_pin_unlock":false}"#;
+        assert!(!parse(strict).bridge_on_pin_unlock);
     }
 }

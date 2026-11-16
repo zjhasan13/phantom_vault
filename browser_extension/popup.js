@@ -62,6 +62,11 @@
       sync_inactive: "Session auto-locked for inactivity. Confirm the desktop app is open, then Retry.",
       sync_still_locked: "❌ Still locked — open/unlock the desktop app, then Retry.",
       bridge_no_credential: "🔑 Desktop is open, but it has no bridge credential yet. Lock PhantomVault and unlock it with your master password once (a PIN unlock does not create one).",
+      bridge_pin_title: "🔐 Unlock the bridge",
+      bridge_pin_sub: "PhantomVault is open. Enter your app PIN once for this browser session — no plain credential is stored on disk.",
+      bridge_pin_go: "🔓 Unlock with PIN",
+      bridge_pin_wrong: (n) => `❌ Wrong PIN — ${n} attempt(s) left before the PIN is wiped.`,
+      bridge_pin_wiped: "❌ Too many wrong PINs — the app PIN was wiped. Unlock PhantomVault with your master password to set a new one.",
       offline_banner: "🔌 Offline cache — read-only. Changes are refused until the desktop app is open.",
   offline_stale: "Cache is stale - open the desktop app to refresh it.",
       offline_unlock_title: "🔌 Offline cache",
@@ -137,6 +142,11 @@
       sync_inactive: "নিষ্ক্রিয়তার জন্য সেশন লক হয়েছে। ডেস্কটপ অ্যাপ খোলা আছে কিনা দেখে Retry চাপো।",
       sync_still_locked: "❌ এখনো লকড — ডেস্কটপ অ্যাপ খুলে/আনলক করে Retry চাপো।",
       bridge_no_credential: "🔑 ডেস্কটপ খোলা আছে, কিন্তু bridge credential এখনো তৈরি হয়নি। PhantomVault লক করে একবার master password দিয়ে আনলক করো (PIN দিয়ে আনলক করলে এটি তৈরি হয় না)।",
+      bridge_pin_title: "🔐 ব্রিজ আনলক করো",
+      bridge_pin_sub: "PhantomVault খোলা আছে। এই ব্রাউজার সেশনের জন্য একবার অ্যাপ PIN দাও — ডিস্কে কোনো plain credential রাখা হয় না।",
+      bridge_pin_go: "🔓 PIN দিয়ে খোলো",
+      bridge_pin_wrong: (n) => `❌ ভুল PIN — PIN মুছে যাওয়ার আগে আর ${n} বার সুযোগ।`,
+      bridge_pin_wiped: "❌ অনেকবার ভুল PIN — অ্যাপ PIN মুছে গেছে। master password দিয়ে PhantomVault আনলক করে নতুন PIN সেট করো।",
       offline_banner: "🔌 অফলাইন ক্যাশ — শুধু পড়া যায়। ডেস্কটপ অ্যাপ চালু না হলে কোনো পরিবর্তন হবে না।",
   offline_stale: "ক্যাশ পুরোনো হয়ে গেছে — রিফ্রেশ করতে ডেস্কটপ অ্যাপ খোলো।",
       offline_unlock_title: "🔌 অফলাইন ক্যাশ",
@@ -460,11 +470,14 @@
       s = await chrome.runtime.sendMessage({ type: "PV_STATS" });
     } catch (_) { s = null; }
     if (!s || !s.ok) {
-      // The desktop can be open and unlocked yet still refuse: a PIN unlock
-      // never seals a bridge credential (pin.dpapi is DPAPI+Argon2, a plain
-      // bridge token would be weaker), and a release host refuses a spawn that
-      // did not come from a signed browser. Show what the bridge actually said
-      // instead of a blanket "locked" — the old text sent users in circles.
+      // Strict mode: the desktop is alive but holds no plain bridge token.
+      // Ask for the app PIN instead of calling the vault locked.
+      if (s && s.need === "pin") { showBridgePinLock(); return; }
+      // The desktop can be open and unlocked yet still refuse: a release host
+      // refuses a spawn that did not come from a signed browser, and a build
+      // with the PIN bridge switched off has no credential to unseal. Show
+      // what the bridge actually said instead of a blanket "locked" — the old
+      // text sent users in circles.
       const why = (s && typeof s.error === "string") ? s.error : "";
       if (/credential/i.test(why)) {
         box.textContent = t("bridge_no_credential");
@@ -990,10 +1003,13 @@
     try {
       const pong = await withTimeout(
         chrome.runtime.sendMessage({ type: "PV_PING" }), 5000, "ping");
-      if (pong && pong.ok) {
+      if (pong && (pong.ok || pong.need === "pin")) {
         offlineMode = false;
         offlineAvailable = false;
-        return pong.unlocked !== false;
+        // `need: "pin"` means the desktop is alive and unlocked but holds no
+        // plain token; the overlay asks for the PIN, so do not fall through to
+        // the offline-cache path.
+        return pong.need === "pin" ? true : pong.unlocked !== false;
       }
     } catch (_) { /* app closed — probe the offline cache */ }
     // A11b: prompt-free status; the popup chooses Hello or PIN on its own
@@ -1133,6 +1149,63 @@
       input.value = "";
       input.focus();
       arm(); // loop: next attempt works
+    };
+    arm();
+  }
+  // A27 strict mode (Settings → Security → "Browser bridge after PIN unlock"
+  // OFF): the desktop is open and unlocked but wrote no plain bridge token, so
+  // the host answers `need: "pin"`. The PIN is verified by the app's own
+  // Argon2id record with the shared 5-strike counter; the unsealed master never
+  // leaves the host process.
+  function showBridgePinLock() {
+    document.getElementById("extLockTitle").textContent = t("bridge_pin_title");
+    document.getElementById("extLockSub").textContent = t("bridge_pin_sub");
+    const input = document.getElementById("extPinInput");
+    input.style.display = "";
+    input.value = "";
+    const ub = document.getElementById("extUnlockBtn");
+    ub.style.display = "";
+    ub.textContent = t("bridge_pin_go");
+    const rb = document.getElementById("extRetryBtn");
+    rb.style.display = "";
+    rb.textContent = t("retry_btn");
+    const msg = document.getElementById("extLockMsg");
+    msg.style.color = "";
+    msg.textContent = "";
+    setLockVisible(true, "bridge-pin");
+    input.focus();
+    const arm = () => {
+      ub.onclick = async () => {
+        try {
+          const res = await withTimeout(
+            chrome.runtime.sendMessage({ type: "PV_BRIDGE_PIN", pin: input.value.trim() }),
+            60000, "bridge pin");
+          finish(!!(res && res.ok), res);
+        } catch (_) { finish(false, null); }
+      };
+      input.onkeydown = (ev) => { if (ev.key === "Enter") ub.click(); };
+    };
+    const finish = async (ok, res) => {
+      if (ok) {
+        input.value = "";
+        setLockVisible(false, "bridge-pin-ok");
+        refresh();
+        return;
+      }
+      msg.style.color = "#ff6b6b";
+      if (res && res.wiped) {
+        msg.textContent = t("bridge_pin_wiped");
+        ub.style.display = "none";
+        input.style.display = "none";
+        return;
+      }
+      const left = res && typeof res.remaining === "number" ? res.remaining : null;
+      msg.textContent = left !== null
+        ? t("bridge_pin_wrong")(left)
+        : (res && res.error) || t("offline_unlock_failed");
+      input.value = "";
+      input.focus();
+      arm(); // loop: the next attempt must work
     };
     arm();
   }
@@ -1289,12 +1362,14 @@
       if (q && !q.ok) {
         const err = q.error || "";
         console.log("PV refresh: query not ok:", err);
+        if (q.need === "pin") { showBridgePinLock(); return; }
         if (/lock/i.test(err)) { showLocked(); return; }
         if (err) { status.textContent = "⚠️ " + err; return; }
       }
       if (l && !l.ok) {
         const err = l.error || "";
         console.log("PV refresh: list not ok:", err);
+        if (l.need === "pin") { showBridgePinLock(); return; }
         if (/lock/i.test(err)) { showLocked(); return; }
       }
       suggEntries = (q && q.ok && q.entries) || [];
