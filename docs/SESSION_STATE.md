@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-16 |
-| Branch / HEAD | `main` @ `8b95599` (PIN unlock now feeds the bridge; strict PIN mode) |
+| Branch / HEAD | `main` @ `6131aa1` (PIN unlock now feeds the bridge; strict PIN mode) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | **stale**: `installer-output/PhantomVault-Setup-0.4.2.exe` and `dist/release-0.4.2/` were built 2026-11-13, before A27 L1. A fresh local build lives in `dist/release-0.4.2-local/` (portable exe + both extension zips + SHA-256, **no installer**: Inno Setup 6 `ISCC.exe` is not installed on this machine, and `cargo-cyclonedx` is missing so there is no SBOM) |
