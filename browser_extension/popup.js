@@ -451,6 +451,9 @@
     if (r && r.ok) {
       if (pairInput) pairInput.value = "";
       paintPairState(true, "Paired — the host verified the MAC on a test frame.");
+      // The vault list behind this pane was filled by a refused frame, so
+      // re-run the normal load now that the host will accept our MACs.
+      refresh();
     } else {
       await chrome.storage.local.remove("pv_pair_secret");
       paintPairState(false, (r && r.error) || "The desktop did not accept that code.");
@@ -1007,6 +1010,10 @@
   let offlineAvailable = false; // cache exists but this SW has not unlocked it
   let offlinePinSet = false;
   let offlineStale = false;
+  // The last thing the bridge said when it refused. The ping used to swallow
+  // this, so the lock overlay printed a generic "Vault is Locked" for an
+  // unpaired host and hid the pairing button — a dead end.
+  let lastBridgeWhy = "";
   async function desktopReachable() {
     try {
       const pong = await withTimeout(
@@ -1014,11 +1021,13 @@
       if (pong && (pong.ok || pong.need === "pin")) {
         offlineMode = false;
         offlineAvailable = false;
+        lastBridgeWhy = "";
         // `need: "pin"` means the desktop is alive and unlocked but holds no
         // plain token; the overlay asks for the PIN, so do not fall through to
         // the offline-cache path.
         return pong.need === "pin" ? true : pong.unlocked !== false;
       }
+      if (pong && typeof pong.error === "string") lastBridgeWhy = pong.error;
     } catch (_) { /* app closed — probe the offline cache */ }
     // A11b: prompt-free status; the popup chooses Hello or PIN on its own
     // offline screen. Never paper over a locked desktop (handled above).
@@ -1059,8 +1068,10 @@
     msg.textContent = why || "";
     const pb = document.getElementById("extPairBtn");
     if (pb) {
-      const needsPair = /pair/i.test(why || "");
-      pb.style.display = needsPair ? "" : "none";
+      // Always offered here: this overlay means the bridge refused or could not
+      // be reached, and pairing is the fix for both. Hiding it behind a string
+      // match left the user with a Retry button that could never succeed.
+      pb.style.display = "";
       pb.textContent = t("pair_open");
     }
     setLockVisible(true, "desktop-lock");
@@ -1074,7 +1085,7 @@
     }
     document.getElementById("settingsPane").classList.remove("hidden");
     document.getElementById("settingsBtn").classList.add("active");
-    const pi = document.getElementById("pairInput");
+    const pi = document.getElementById("pairCode");
     if (pi) {
       pi.focus();
       if (pi.scrollIntoView) pi.scrollIntoView({ block: "center" });
@@ -1263,7 +1274,7 @@
         return false;
       }
       console.log("PV desktop unreachable — lock shown");
-      showDesktopLock();
+      showDesktopLock(undefined, lastBridgeWhy);
       return false;
     }
     if (inactive && !offlineMode) {

@@ -223,12 +223,21 @@ test("A27 L2: an unpaired host gets a way into pairing from the lock overlay", (
 
   const lock = SRC.match(/function showDesktopLock\(sub, why\) \{([\s\S]*?)\n  \}/);
   assert.ok(lock, "showDesktopLock takes the reason");
-  assert.match(lock[1], /extPairBtn/, "the pairing button is toggled");
-  assert.match(lock[1], /\/pair\/i\.test\(why \|\| ""\)/, "shown only for a pairing refusal");
+  assert.match(lock[1], /extPairBtn/, "the pairing button is offered");
+  // It must not be gated on the reason text: the ping path swallows the host
+  // error, so a string match hid the button on the exact screen that needed it.
+  assert.doesNotMatch(lock[1], /needsPair/, "the button is not hidden behind a string match");
+
+  // The ping refusal has to reach the overlay, or the user sees a generic
+  // "Vault is Locked" with a Retry that can never succeed.
+  const reach = SRC.match(/async function desktopReachable\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(reach, "desktopReachable present");
+  assert.match(reach[1], /lastBridgeWhy = pong\.error/, "the ping refusal is kept");
+  assert.match(SRC, /showDesktopLock\(undefined, lastBridgeWhy\)/, "and handed to the overlay");
 
   const pane = SRC.match(/function openPairingPane\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(pane, "openPairingPane present");
-  assert.match(pane[1], /pairInput/, "it focuses the pairing field");
+  assert.match(pane[1], /getElementById\("pairCode"\)/, "it focuses the pairing field");
   assert.doesNotMatch(pane[1], /ensureUnlocked/, "it must not re-arm the lock overlay");
 
   // Both locales must define the label, or one language shows `undefined`.
