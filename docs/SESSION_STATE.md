@@ -42,6 +42,53 @@
 - `dist\release-0.4.2-local\` (the 2026-11-16 pre-PIN-bridge build) was deleted
   so nobody installs it by mistake.
 
+## Last code batch (2026-11-17b) — L1 spawn chain + fork browsers
+
+Reported: "the extension still does not open" right after installing the
+2026-11-17 build, with the app unlocked. The audit log showed:
+
+```
+WARN parent not a known browser: C:\Windows\System32\cmd.exe
+refused spawn: native host refused: it was not started by a browser
+```
+
+Root cause: **Chromium never spawns the host directly.** It runs
+`cmd.exe /d /s /c ""<host>" <origin> --parent-window=0" < \\.\pipe\chrome.nativeMessaging.in.X > \\.\pipe\chrome.nativeMessaging.out.X`,
+so the immediate parent is a shell for Chrome, Edge, Brave and every Chromium
+fork. A27 L1 judged only the immediate parent, so it refused **every** Chromium
+browser; the pure-function tests never caught it because they only ever fed one
+hop. Firefox spawns the host itself, so it was the only engine that could work.
+
+Fix (`src/windows_native/host_provenance.rs`):
+
+- `ancestor_images()` walks up to `MAX_ANCESTOR_HOPS = 4` ancestors from one
+  Toolhelp snapshot; `browser_hop()` picks the nearest browser image in that
+  chain (hop 0 for Firefox, hop 1 for Chromium behind `cmd.exe`).
+- The verdict (trusted / unsigned / untrusted / wrong publisher) is now made on
+  the browser hop, not the parent; the audit log adds one line
+  `spawn chain: …cmd.exe <- …chrome.exe` when the browser is not the parent.
+- Allow-list gained the forks that ship their own image name: `thorium.exe`,
+  `yandex.exe`, `librewolf.exe`, `waterfox.exe`, `zen.exe`, `floorp.exe`,
+  `palemoon.exe`, `basilisk.exe`.
+- `publisher_matches_image` also consults `EXTRA_BROWSER_VENDORS`, so a
+  rebranded Chromium that keeps `chrome.exe` passes with its own signer
+  (Helium is `CN=imput LLC`). Unknown signers are still refused and logged.
+- New `PV_TRUSTED_BROWSER_SIGNERS=acme,myfork` adds signer substrings at
+  runtime for a fork this build does not name; audit-logged when set.
+- Removed `parent_image_path()` (unused after the chain rework).
+
+Tests: `browser_hop_walks_past_chromiums_cmd_wrapper` (cmd → chrome, direct
+firefox, cmd → powershell refused, empty chain), and
+`fork_images_and_fork_publishers_are_recognised` (8 fork images, imput/LibreWolf/
+Zen/Waterfox signers, unrelated signer still refused).
+
+Docs: `docs/A27_HOST_PAIRING.md` §L1 rewritten (chain, fork list, env var, new
+limit), `SECURITY.md`, `docs/FEATURE_LEDGER.md`, `docs/MANUAL_TEST_GUIDE.md`.
+
+Not yet verified on screen: the user's machine is the only one with Helium +
+this vault, so the real confirmation is a fresh installer plus one popup open
+(log must read `parent ok: chrome.exe signed by imput LLC`).
+
 ## Last code batch (2026-11-16e) — strict PIN mode (B)
 
 - **What:** with *Browser bridge after PIN unlock* **off**, a PIN-only session

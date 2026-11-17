@@ -60,22 +60,34 @@ Non-goals (state these in `SECURITY.md`):
 
 At host start, before any frame is read:
 
-1. `GetCurrentProcessId` → Toolhelp32 `TH32CS_SNAPPROCESS` → parent PID.
+1. `GetCurrentProcessId` → Toolhelp32 `TH32CS_SNAPPROCESS` → the ancestor PIDs,
+   nearest first, up to 4 hops.
 2. `OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION)` →
-   `QueryFullProcessImageNameW` → parent image path.
-3. File-name allow-list: `chrome.exe`, `msedge.exe`, `brave.exe`, `firefox.exe`,
-   `chromium.exe`, `vivaldi.exe`, `opera.exe`.
+   `QueryFullProcessImageNameW` for each hop → ancestor image paths.
+3. The nearest hop whose file name is on the allow-list is the browser. **The
+   immediate parent is not enough**: Chromium spawns the host as
+   `cmd.exe /d /s /c "<host> <origin> --parent-window=0" <pipe >pipe`, so hop 0
+   is a shell for Chrome, Edge, Brave and every Chromium fork. Firefox spawns the
+   host itself, so hop 0 is `firefox.exe`.
+   Allow-list: `chrome.exe`, `msedge.exe`, `brave.exe`, `firefox.exe`,
+   `chromium.exe`, `vivaldi.exe`, `opera.exe`, plus the forks that ship their own
+   image name — `thorium.exe`, `yandex.exe`, `librewolf.exe`, `waterfox.exe`,
+   `zen.exe`, `floorp.exe`, `palemoon.exe`, `basilisk.exe`.
 4. `WinVerifyTrust` (`WINTRUST_ACTION_GENERIC_VERIFY_V2`, no UI, cache-only URL
    retrieval, `WTD_REVOKE_NONE`) on that path — the embedded signature must chain
    to a trusted root in the local store.
 5. `CryptQueryObject` → `CryptMsgGetParam(CMSG_SIGNER_INFO_PARAM)` →
    `CertFindCertificateInStore(CERT_FIND_SUBJECT_CERT)` → `CertGetNameStringW`
-   — the signer's simple display name must match the browser's vendor token
-   (`chrome.exe` → `google`, `msedge.exe` → `microsoft`, `firefox.exe` →
-   `mozilla`, `brave.exe` → `brave`, `chromium.exe` → `google`/`chromium`,
-   `vivaldi.exe` → `vivaldi`, `opera.exe` → `opera`). Token, not exact subject:
-   certificate names drift, and an unknown vendor is refused with its name in the
-   log so the table is one line to extend.
+   — the signer's simple display name must match a browser vendor token. Two
+   tables are consulted: the per-image vendor (`chrome.exe` → `google`,
+   `msedge.exe` → `microsoft`, `firefox.exe` → `mozilla`, `brave.exe` → `brave`,
+   `chromium.exe` → `google`/`chromium`, `vivaldi.exe` → `vivaldi`,
+   `opera.exe` → `opera`) and a fork list for a rebranded Chromium that keeps a
+   stock image name (`chrome.exe` signed by `CN=imput LLC` is Helium;
+   `librewolf`, `waterfox`, `zen browser`, `floorp`, `yandex`, `thorium`,
+   `pale moon`, `basilisk`). Token, not exact subject: certificate names drift,
+   and an unknown vendor is refused with its name in the log so the table is one
+   line to extend.
 
 Release builds fail closed — an `err` frame naming the problem and exit 2 — for
 *not a browser*, *unsigned*, *untrusted chain*, *wrong publisher* and *probe
@@ -83,11 +95,16 @@ failed*. Debug builds log `WARN release build would refuse this spawn: …` so a
 dev loop can still spawn the host by hand.
 
 **Escape hatch.** `PV_ALLOW_UNSIGNED_BROWSER=1` in the host's environment lets a
-*missing* signature through (LibreWolf, ungoogled Chromium, a self-built browser)
-and is audit-logged every time. It does not cover a broken chain or a wrong
-publisher. Be honest about what it costs: a same-user process that spawns the
-host can set the variable itself, so the hatch is only useful for a user who
-deliberately runs an unsigned browser. L2 is what still protects that user.
+*missing* signature through (a self-built browser) and is audit-logged every
+time. It does not cover a broken chain or a wrong publisher. Be honest about
+what it costs: a same-user process that spawns the host can set the variable
+itself, so the hatch is only useful for a user who deliberately runs an unsigned
+browser. L2 is what still protects that user.
+
+**Extra signer.** `PV_TRUSTED_BROWSER_SIGNERS=acme,myfork` adds comma-separated
+signer substrings for a fork the tables do not name yet, without a rebuild. It is
+audit-logged when non-empty and is read per spawn; it widens L1 the same way the
+unsigned hatch does.
 
 Limits (state them in `SECURITY.md`):
 
@@ -96,7 +113,10 @@ Limits (state them in `SECURITY.md`):
   revoked-but-cached certificate therefore passes.
 - A copy of a real `chrome.exe` (same bytes, same signature) in another folder
   passes. L1 stops *spawn and talk*, not a determined attacker.
-- PID reuse is possible in theory (read the parent before it exits).
+- A fork's own vendor token is a name match, not a curated list: a browser that
+  re-signs a Chromium build under a new publisher needs one more token (or the
+  env var above).
+- PID reuse is possible in theory (read the chain before it exits).
 - Injection into a real browser is out of scope.
 - Non-Windows builds report `Unsigned`; the check is a Windows-only layer.
 

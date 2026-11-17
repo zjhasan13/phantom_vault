@@ -3845,13 +3845,21 @@ pub fn serve_cli() -> i32 {
     // A27 L1 step 2: the origin string above is public, so prove the spawn came
     // from a browser image that its vendor actually signed. Release builds
     // refuse; debug builds log only, so a dev loop can spawn the host by hand.
+    // Chromium spawns us through `cmd.exe /d /s /c ... <pipe >pipe`, so the
+    // verdict comes from the ancestor chain, not the immediate parent.
     {
         use crate::windows_native::host_provenance::{describe, inspect_parent, spawn_refusal};
-        let spawn = inspect_parent();
+        let (spawn, chain) = inspect_parent();
         bridge_log(&describe(&spawn));
+        if chain.len() > 1 {
+            bridge_log(&format!("spawn chain: {}", chain.join(" <- ")));
+        }
         let allow_unsigned = std::env::var("PV_ALLOW_UNSIGNED_BROWSER").as_deref() == Ok("1");
         if allow_unsigned {
             bridge_log("WARN PV_ALLOW_UNSIGNED_BROWSER=1 weakens the parent signature check");
+        }
+        if !crate::windows_native::host_provenance::extra_signers().is_empty() {
+            bridge_log("WARN PV_TRUSTED_BROWSER_SIGNERS is set; L1 trusts an extra signer");
         }
         if let Some(msg) = spawn_refusal(&spawn, allow_unsigned) {
             if cfg!(debug_assertions) {

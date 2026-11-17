@@ -7,15 +7,23 @@
 //! browser signed by its vendor — so the host can audit (step 1) and refuse
 //! (step 2, release builds) a spawn that did not come from a browser.
 //!
-//! Scope: parent PID + image name + Authenticode signer
+//! Scope: ancestor chain + image name + Authenticode signer
 //! (`authenticode::check_file`). A copy of `chrome.exe` renamed to `chrome.exe`
 //! in another folder still passes if the signature is intact and by Google —
 //! that is the documented limit, not a bug: this layer stops *spawn and talk*,
 //! it does not stop injection into a real browser. Never treat it as a
 //! replacement for the Hello/PIN/reprompt gates.
+//!
+//! Chromium does not spawn the host directly: it runs
+//! `cmd.exe /d /s /c "<host> <origin> --parent-window=0" <pipe >pipe`, so the
+//! immediate parent is a shell even for Chrome, Edge and Brave. L1 therefore
+//! walks up to [`MAX_ANCESTOR_HOPS`] ancestors and judges the nearest
+//! browser-looking image. Firefox spawns the host directly, so its parent is
+//! `firefox.exe` and the walk stops at hop 0.
 
-/// Browsers whose native-messaging host spawn is expected. Matched on the image
-/// file name; the signature check below makes the name meaningful.
+/// Browsers (and the common Chromium/Firefox forks) whose native-messaging host
+/// spawn is expected. Matched on the image file name; the signature check below
+/// makes the name meaningful.
 const BROWSER_IMAGES: &[&str] = &[
     "chrome.exe",
     "msedge.exe",
@@ -24,7 +32,38 @@ const BROWSER_IMAGES: &[&str] = &[
     "chromium.exe",
     "vivaldi.exe",
     "opera.exe",
+    // Forks that ship their own image name. Chromium: Thorium, Yandex.
+    // Firefox: LibreWolf, Waterfox, Zen, Floorp, Pale Moon, Basilisk.
+    "thorium.exe",
+    "yandex.exe",
+    "librewolf.exe",
+    "waterfox.exe",
+    "zen.exe",
+    "floorp.exe",
+    "palemoon.exe",
+    "basilisk.exe",
 ];
+
+/// Signers that ship a browser even when the image name belongs to a fork
+/// (`librewolf.exe`) or when a rebranded Chromium keeps `chrome.exe` but carries
+/// its own publisher (Helium is `CN=imput LLC`). A valid signature by one of
+/// these counts as a browser; the publisher is still written to the audit log.
+const EXTRA_BROWSER_VENDORS: &[&str] = &[
+    "imput",
+    "waterfox",
+    "librewolf",
+    "zen browser",
+    "floorp",
+    "yandex",
+    "thorium",
+    "pale moon",
+    "basilisk",
+];
+
+/// How far up the chain to look for the browser. Chromium's `cmd.exe` wrapper
+/// costs one hop, a launcher script one more; anything deeper is not a spawn we
+/// want to serve.
+const MAX_ANCESTOR_HOPS: usize = 4;
 
 /// Lower-case the file name and match it against the allow-list.
 ///
@@ -63,12 +102,32 @@ fn vendor_tokens(image: &str) -> &'static [&'static str] {
 ///
 /// Pure: the whole rule is a lower-case token test, so it is unit-tested against
 /// the real certificate names without needing those browsers installed.
+///
+/// Two token lists are consulted: the per-image vendor (a `chrome.exe` from
+/// Google) and [`EXTRA_BROWSER_VENDORS`] (a fork that keeps a stock image name
+/// but signs with its own publisher, e.g. Helium's `chrome.exe` →
+/// `CN=imput LLC`). Anything else is still refused and logged.
 pub fn publisher_matches_image(image: &str, publisher: &str) -> bool {
     let name = publisher.to_ascii_lowercase();
     if name.trim().is_empty() {
         return false;
     }
     vendor_tokens(image).iter().any(|token| name.contains(token))
+        || EXTRA_BROWSER_VENDORS.iter().any(|token| name.contains(token))
+}
+
+/// `PV_TRUSTED_BROWSER_SIGNERS=acme,myfork` — comma-separated signer substrings
+/// for a fork this build has no token for. Read per spawn; a release build
+/// audit-logs when it is non-empty, because it widens L1.
+pub fn extra_signers() -> Vec<String> {
+    match std::env::var("PV_TRUSTED_BROWSER_SIGNERS") {
+        Ok(raw) => raw
+            .split(',')
+            .map(|s| s.trim().to_ascii_lowercase())
+            .filter(|s| !s.is_empty())
+            .collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// What the probe could establish about our parent process.
@@ -111,29 +170,58 @@ pub enum SpawnVerdict {
     Unknown(String),
 }
 
-/// Inspect the process that spawned us. Never panics; every failure is a
-/// verdict the caller can log or refuse.
-pub fn inspect_parent() -> SpawnVerdict {
-    let path = match parent_image_path() {
-        Ok(path) => path,
-        Err(e) => return SpawnVerdict::Unknown(e),
+/// The nearest ancestor that looks like a browser, as `(hop, image name)`.
+///
+/// Pure so the chain rule is testable without spawning anything: Chromium puts
+/// `cmd.exe /d /s /c` at hop 0, so the browser is usually hop 1. Firefox spawns
+/// the host directly and the browser is hop 0.
+pub fn browser_hop(chain: &[String]) -> Option<(usize, &'static str)> {
+    chain
+        .iter()
+        .enumerate()
+        .find_map(|(hop, path)| match classify_parent_image(path) {
+            ParentVerdict::Browser(browser) => Some((hop, browser)),
+            ParentVerdict::NotABrowser(_) => None,
+        })
+}
+
+/// Inspect the process chain that spawned us.
+///
+/// Returns the verdict plus the chain it came from (nearest first, image paths
+/// only) so the caller can log the shell wrapper in one line. Never panics;
+/// every failure is a verdict the caller can log or refuse.
+pub fn inspect_parent() -> (SpawnVerdict, Vec<String>) {
+    use crate::windows_native::authenticode::Signature;
+
+    let chain = ancestor_images();
+    let (hop, browser) = match browser_hop(&chain) {
+        Some(found) => found,
+        None => {
+            if chain.is_empty() {
+                return (SpawnVerdict::Unknown("parent image unreadable".into()), chain);
+            }
+            let nearest = chain[0].clone();
+            return (SpawnVerdict::NotABrowser(nearest), chain);
+        }
     };
-    match classify_parent_image(&path) {
-        ParentVerdict::NotABrowser(path) => SpawnVerdict::NotABrowser(path),
-        ParentVerdict::Browser(browser) => match crate::windows_native::authenticode::check_file(&path) {
-            crate::windows_native::authenticode::Signature::Trusted { publisher } => {
-                if publisher_matches_image(browser, &publisher) {
-                    SpawnVerdict::Trusted { browser, publisher }
-                } else {
-                    SpawnVerdict::WrongPublisher { browser, publisher }
-                }
+    let path = &chain[hop];
+    let verdict = match crate::windows_native::authenticode::check_file(path) {
+        Signature::Trusted { publisher } => {
+            let extra = extra_signers();
+            if publisher_matches_image(browser, &publisher)
+                || extra
+                    .iter()
+                    .any(|token| publisher.to_ascii_lowercase().contains(token))
+            {
+                SpawnVerdict::Trusted { browser, publisher }
+            } else {
+                SpawnVerdict::WrongPublisher { browser, publisher }
             }
-            crate::windows_native::authenticode::Signature::Unsigned => SpawnVerdict::Unsigned { browser },
-            crate::windows_native::authenticode::Signature::Untrusted { status } => {
-                SpawnVerdict::Untrusted { browser, status }
-            }
-        },
-    }
+        }
+        Signature::Unsigned => SpawnVerdict::Unsigned { browser },
+        Signature::Untrusted { status } => SpawnVerdict::Untrusted { browser, status },
+    };
+    (verdict, chain)
 }
 
 /// One audit-log line for a verdict. Never carries vault data: a path, an image
@@ -188,28 +276,33 @@ pub fn spawn_refusal(verdict: &SpawnVerdict, allow_unsigned: bool) -> Option<Str
     }
 }
 
-/// One audit-log line for the current parent. Never fails: a probe error is a
+/// One audit-log line for the current spawn. Never fails: a probe error is a
 /// log line, not an error return.
 #[cfg(test)]
 pub fn audit_line() -> String {
-    describe(&inspect_parent())
+    describe(&inspect_parent().0)
 }
 
-/// Resolve the full image path of the process that spawned us.
+/// Image paths of our ancestors, nearest first.
+///
+/// Chromium's `cmd.exe /d /s /c` wrapper means hop 0 is a shell for every
+/// Chromium-family browser, so the caller needs the whole chain, not the parent.
 #[cfg(windows)]
-pub fn parent_image_path() -> Result<String, String> {
-    let pid = parent_pid().ok_or_else(|| "no parent pid".to_string())?;
-    image_path_for_pid(pid)
+pub fn ancestor_images() -> Vec<String> {
+    ancestor_pids()
+        .into_iter()
+        .filter_map(|pid| image_path_for_pid(pid).ok())
+        .collect()
 }
 
 #[cfg(not(windows))]
-pub fn parent_image_path() -> Result<String, String> {
-    Err("not windows".into())
+pub fn ancestor_images() -> Vec<String> {
+    Vec::new()
 }
 
-/// Parent PID via a Toolhelp process snapshot.
+/// Ancestor PIDs, nearest first, from a single Toolhelp snapshot.
 #[cfg(windows)]
-fn parent_pid() -> Option<u32> {
+fn ancestor_pids() -> Vec<u32> {
     use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, PROCESSENTRY32W, Process32FirstW, Process32NextW,
@@ -222,21 +315,35 @@ fn parent_pid() -> Option<u32> {
     unsafe {
         let snap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
         if snap == INVALID_HANDLE_VALUE || snap.is_null() {
-            return None;
+            return Vec::new();
         }
         let mut entry: PROCESSENTRY32W = std::mem::zeroed();
         entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
-        let mut found = None;
+        let mut pairs: Vec<(u32, u32)> = Vec::new();
         let mut ok = Process32FirstW(snap, &mut entry);
         while ok != 0 {
-            if entry.th32ProcessID == me {
-                found = Some(entry.th32ParentProcessID);
-                break;
-            }
+            pairs.push((entry.th32ProcessID, entry.th32ParentProcessID));
             ok = Process32NextW(snap, &mut entry);
         }
         CloseHandle(snap);
-        found.filter(|p| *p != 0 && *p != me)
+
+        let mut chain = Vec::new();
+        let mut pid = me;
+        for _ in 0..MAX_ANCESTOR_HOPS {
+            let Some(parent) = pairs
+                .iter()
+                .find(|(child, _)| *child == pid)
+                .map(|(_, parent)| *parent)
+            else {
+                break;
+            };
+            if parent == 0 || parent == me || chain.contains(&parent) {
+                break;
+            }
+            chain.push(parent);
+            pid = parent;
+        }
+        chain
     }
 }
 
@@ -313,6 +420,57 @@ mod tests {
         // carries no secret — it is only a path or an error string.
         let line = audit_line();
         assert!(!line.is_empty());
+    }
+
+    #[test]
+    fn browser_hop_walks_past_chromiums_cmd_wrapper() {
+        // The real Chromium spawn: cmd.exe /d /s /c "<host> <origin>" <pipe.
+        let chain = vec![
+            r"C:\Windows\System32\cmd.exe".to_string(),
+            r"C:\Users\Admin\AppData\Local\imput\Helium\Application\chrome.exe".to_string(),
+            r"C:\Windows\Explorer.EXE".to_string(),
+        ];
+        assert_eq!(browser_hop(&chain), Some((1, "chrome.exe")));
+
+        // Firefox spawns the host itself, so the browser is hop 0.
+        let chain = vec![r"C:\Program Files\Mozilla Firefox\firefox.exe".to_string()];
+        assert_eq!(browser_hop(&chain), Some((0, "firefox.exe")));
+
+        // A shell that is not in front of a browser is still not a browser.
+        let chain = vec![
+            r"C:\Windows\System32\cmd.exe".to_string(),
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe".to_string(),
+        ];
+        assert_eq!(browser_hop(&chain), None);
+        assert_eq!(browser_hop(&[]), None);
+    }
+
+    #[test]
+    fn fork_images_and_fork_publishers_are_recognised() {
+        // Forks that ship their own image name.
+        for image in [
+            "librewolf.exe",
+            "waterfox.exe",
+            "zen.exe",
+            "floorp.exe",
+            "thorium.exe",
+            "yandex.exe",
+            "palemoon.exe",
+            "basilisk.exe",
+        ] {
+            assert!(
+                browser_from_image_path(&format!(r"C:\forks\{image}")).is_some(),
+                "{image} must be on the allow-list"
+            );
+        }
+        // A rebranded Chromium keeps chrome.exe but signs with its own vendor.
+        assert!(publisher_matches_image("chrome.exe", "imput LLC"));
+        assert!(publisher_matches_image("chrome.exe", "IMPUT LLC"));
+        assert!(publisher_matches_image("librewolf.exe", "LibreWolf"));
+        assert!(publisher_matches_image("zen.exe", "Zen Browser"));
+        assert!(publisher_matches_image("waterfox.exe", "Waterfox Ltd"));
+        // Still refused: a browser-shaped name with an unrelated signer.
+        assert!(!publisher_matches_image("chrome.exe", "Contoso Ltd"));
     }
 
     #[test]

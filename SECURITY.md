@@ -179,14 +179,21 @@ These are documented rather than secret; please do not report them as new findin
   raises the cost from *spawn and talk* to *steal the secret first*. Debug builds
   stay warn-only.
 - The native host **also checks who spawned it** (A27 L1): release builds refuse
-  to serve unless the parent image is a browser from the allow-list whose
-  Authenticode chain validates and whose signer matches that browser's vendor.
-  Two honest limits: revocation is not checked at host start (offline-first,
-  `WTD_REVOKE_NONE` + cache-only retrieval), and a byte-identical copy of a
-  signed browser passes. `PV_ALLOW_UNSIGNED_BROWSER=1` in the host environment
-  accepts an unsigned browser (LibreWolf, ungoogled Chromium) and is
-  audit-logged; a process that spawns the host can set that variable itself, so
-  treat it as a usability hatch, not a boundary. See `docs/A27_HOST_PAIRING.md`.
+  to serve unless the nearest browser image in the ancestor chain (up to 4 hops —
+  Chromium launches the host through `cmd.exe /d /s /c`, so the immediate parent
+  is a shell) is on the allow-list, its Authenticode chain validates, and its
+  signer matches a browser vendor token. The allow-list covers Chrome, Edge,
+  Brave, Firefox, Chromium, Vivaldi, Opera and the forks that ship their own
+  image name (Thorium, Yandex, LibreWolf, Waterfox, Zen, Floorp, Pale Moon,
+  Basilisk); the signer table also accepts a rebranded Chromium that keeps
+  `chrome.exe` (Helium is signed by `imput LLC`). Two honest limits: revocation
+  is not checked at host start (offline-first, `WTD_REVOKE_NONE` + cache-only
+  retrieval), and a byte-identical copy of a signed browser passes.
+  `PV_ALLOW_UNSIGNED_BROWSER=1` accepts an unsigned browser and
+  `PV_TRUSTED_BROWSER_SIGNERS=acme` adds a signer token for a fork this build
+  does not name; both are audit-logged, and a process that spawns the host can
+  set either variable itself, so treat them as usability hatches, not a boundary.
+  See `docs/A27_HOST_PAIRING.md`.
 - **PIN unlock and the browser bridge.** By default the app now seals the
   browser-bridge credential (`vault_hello.dpapi`) after a **PIN** unlock as well
   as after a master-password unlock. Without this, the extension answered

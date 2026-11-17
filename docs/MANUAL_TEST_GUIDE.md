@@ -329,6 +329,7 @@ npm run test:tokens
 - **Firefox bridge** আসল Firefox-এ যাচাই করা হয়নি — একবার চালিয়ে দেখুন।
 - **কিছু সিস্টেম-মেসেজ ইংরেজিতে** থাকবে (localization আংশিক)।
 - **Response MAC** আর **Authenticode publisher check** — দুটোই হয়ে গেছে (A27 L1/L2)। বাকি শুধু নথিভুক্ত সীমা: revocation চেক হয় না, আর `PV_ALLOW_UNSIGNED_BROWSER=1` hatch-টা যে প্রসেস spawn করে সে নিজেই সেট করতে পারে।
+- **যেকোনো Chromium/Firefox ব্রাউজার** (Chrome, Edge, Brave, Helium, Thorium, Yandex, Firefox, LibreWolf, Waterfox, Zen, Floorp) এখন কাজ করে। কারণ Chromium হোস্টকে সরাসরি চালায় না — `cmd.exe /d /s /c "…" <pipe >pipe` দিয়ে চালায়। তাই host এখন immediate parent নয়, **ancestor chain** (৪ ধাপ পর্যন্ত) দেখে ব্রাউজার খোঁজে, আর signer টেবিলে fork-দের vendor token আছে (Helium = `imput LLC`)। লগে দেখবেন `spawn chain: …cmd.exe <- …chrome.exe`। নতুন কোনো fork আটকালে: `PV_TRUSTED_BROWSER_SIGNERS=vendorname` (env, audit-log হয়)।
 - **"ENCLAVE MODE" / "LOCAL ENCLAVE SYNCHRONIZED"** — পুরনো UI লেবেল,
   নিরাপত্তার দাবি নয়।
 
