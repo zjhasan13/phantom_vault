@@ -35,8 +35,10 @@ UI harness trap: এই মেশিনে StartAllBack shell hook মাঝে 
 ট্র্যাপ: extension বলছে "Vault is Locked" অথচ ডেস্কটপ খোলা — দুটো কারণ: (ক) ০.৪.২-এর আগের build, (খ) Settings → Security-তে *Browser bridge after PIN unlock* বন্ধ। ডিফল্টে চালু, তাই PIN আনলকেও `vault_hello.dpapi` সিল হয়; toggle বন্ধ থাকলে (strict mode) host-এর কাছে credential থাকে না। সমাধান: toggle চালু করে লক→আনলক, অথবা master password দিয়ে একবার আনলক। popup এখন আসল কারণ দেখায় — `docs/MANUAL_TEST_GUIDE.md` §8.E
 
 আমার সুপারিশ (এখন শুধু ৩টা, সবই আপনার হাতের কাজ)
-1. Signing key সেটআপ (Authenticode) — সার্টিফিকেট কিনতে হবে; কোড দিয়ে হয় না।
+1. Signing key সেটআপ (Authenticode) — সার্টিফিকেট কিনতে হবে; কোড দিয়ে হয় না। `.sig` ছাড়া updater এই build refuse করবে (ইচ্ছাকৃত)।
 2. Firefox live bridge check — আপনার মেশিনে Firefox unpacked extension লোড করে একবার যাচাই।
-3. Installer + extension reload করে live E2E, DPI pass আর pairing pass।
+3. নতুন installer (`dist\release-0.4.2\PhantomVault-Setup-0.4.2.exe`) ইনস্টল করে live E2E, DPI pass আর pairing pass। ইনস্টলের পরে `exe_integrity.dpapi` মুছে দিতে হবে (নতুন exe-র hash বদলেছে, নাহলে "tampered" ব্যানার আসবে), তারপর Settings → Sync & Devices → Extension pairing → Show pairing code দিয়ে এক্সটেনশন pair করতে হবে।
+
+SBOM এখনো নেই: `cargo-cyclonedx` install করা নেই (`cargo install cargo-cyclonedx --locked`)। Inno Setup 6 পাওয়া গেছে (`%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`) — তাই installer আর blocker নয়।
 
 Native-host pairing secret **হয়ে গেছে** (L1 spawn check + L2 frame/reply MAC, step-2 enforcement) — ওখানে আর কিছু করার নেই।

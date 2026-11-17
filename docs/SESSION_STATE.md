@@ -13,11 +13,34 @@
 | Branch / HEAD | `main` @ `6131aa1` (PIN unlock now feeds the bridge; strict PIN mode) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
-| Installer present | **stale**: `installer-output/PhantomVault-Setup-0.4.2.exe` and `dist/release-0.4.2/` were built 2026-11-13, before A27 L1. A fresh local build lives in `dist/release-0.4.2-local/` (portable exe + both extension zips + SHA-256, **no installer**: Inno Setup 6 `ISCC.exe` is not installed on this machine, and `cargo-cyclonedx` is missing so there is no SBOM) |
+| Installer present | **fresh local QA build (2026-11-17 07:44)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,167,816 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,578,496 B), both extension zips and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). The older `dist/release-0.4.2-local/` was deleted because it predates the PIN-bridge work. |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Local QA build (2026-11-17) — installer exists now
+
+- `cargo build --release -j 1` (target dir `C:\Users\Admin\pv-target`) finished in
+  91m27s, `BUILD_EXIT=0`; the binary is 25,578,496 B.
+- `scripts/package_release.ps1 -SkipTests -SkipBuild -SkipSbom` then produced
+  `installer-output\PhantomVault-Setup-0.4.2.exe` (10,167,816 B) and staged
+  `dist\release-0.4.2\`: installer + portable exe + chrome/firefox zips +
+  per-asset `.sha256` + `SHA256SUMS.txt`.
+- Inno Setup 6 **is** installed, at
+  `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`. `Find-Iscc` only probes the
+  two Program Files paths plus `PATH`, so prepend that directory before running
+  the script.
+- Not publishable: no `.sig` (no signing key on this machine) and no SBOM
+  (`cargo-cyclonedx` not installed). The updater refuses such a build by design.
+- Installing over the old 0.4.2 keeps the vault (the installer never tracks data
+  files) but changes the exe hash, so delete `exe_integrity.dpapi` afterwards or
+  the lock screen shows the tampered banner. `host_pairing.dpapi` is absent on
+  this machine, so the new release host will refuse frames until the extension
+  is paired once (Settings → Sync & Devices → Show pairing code → popup →
+  Settings → Desktop pairing). Both steps are in `docs/MANUAL_TEST_GUIDE.md` §12.
+- `dist\release-0.4.2-local\` (the 2026-11-16 pre-PIN-bridge build) was deleted
+  so nobody installs it by mistake.
 
 ## Last code batch (2026-11-16e) — strict PIN mode (B)
 

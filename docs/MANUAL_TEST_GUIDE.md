@@ -328,13 +328,24 @@ npm run test:tokens
 - **Windows Hello** সব মেশিনে থাকে না; থাকলে টেস্ট করুন, না থাকলে স্কিপ।
 - **Firefox bridge** আসল Firefox-এ যাচাই করা হয়নি — একবার চালিয়ে দেখুন।
 - **কিছু সিস্টেম-মেসেজ ইংরেজিতে** থাকবে (localization আংশিক)।
-- **Response MAC / Authenticode publisher check** এখনও বাকি (A27)।
+- **Response MAC** আর **Authenticode publisher check** — দুটোই হয়ে গেছে (A27 L1/L2)। বাকি শুধু নথিভুক্ত সীমা: revocation চেক হয় না, আর `PV_ALLOW_UNSIGNED_BROWSER=1` hatch-টা যে প্রসেস spawn করে সে নিজেই সেট করতে পারে।
 - **"ENCLAVE MODE" / "LOCAL ENCLAVE SYNCHRONIZED"** — পুরনো UI লেবেল,
   নিরাপত্তার দাবি নয়।
 
 ---
 
 ## 12. স্মোক টেস্ট (১৫ মিনিট, প্রতিবার release-এর আগে)
+
+নতুন build ইনস্টল করার আগে/পরে (একবারই লাগে):
+
+1. অ্যাপ পুরোপুরি বন্ধ করুন (tray-তেও থাকা যাবে না)।
+2. `PhantomVault-Setup-0.4.2.exe` চালান। ভল্ট ফাইল (`my_secure_vault.enc`) কখনো মুছে যায় না — ইনস্টলার শুধু exe বদলায়।
+3. `C:\Users\<you>\AppData\Local\Programs\PhantomVault\exe_integrity.dpapi` মুছে দিন। নতুন exe-র hash আলাদা, তাই এটা না মুছলে lock screen-এ "tampered" ব্যানার আসবে (ব্যানারটা ঠিকই কাজ করছে — সেটাই ট্রিপওয়্যার)।
+4. অ্যাপ খুলে একবার master password (বা PIN) দিয়ে আনলক করুন।
+5. Settings → Sync & Devices → **Show pairing code** → কোড কপি করুন।
+6. এক্সটেনশন reload করুন (`chrome://extensions` → Reload), popup → Settings → **Desktop pairing** → কোড বসিয়ে **Pair with desktop**।
+
+তারপর:
 
 1. §3 প্রস্তুতি → unlock।
 2. একটা login যোগ করুন → লক → unlock → আইটেমটা আছে।
