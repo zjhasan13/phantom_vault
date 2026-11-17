@@ -13,7 +13,7 @@
 | Branch / HEAD | `main` @ `bb19fe5` (PIN unlock now feeds the bridge; strict PIN mode; local QA installer built) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
-| Installer present | **fresh local QA build (2026-11-17 07:44)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,167,816 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,578,496 B), both extension zips and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). The older `dist/release-0.4.2-local/` was deleted because it predates the PIN-bridge work. |
+| Installer present | **fresh local QA build (2026-11-17 09:18)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,171,105 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,580,544 B), both extension zips and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). The older `dist/release-0.4.2-local/` was deleted because it predates the PIN-bridge work. |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
@@ -22,9 +22,9 @@
 ## Local QA build (2026-11-17) — installer exists now
 
 - `cargo build --release -j 1` (target dir `C:\Users\Admin\pv-target`) finished in
-  91m27s, `BUILD_EXIT=0`; the binary is 25,578,496 B.
+  23m49s (deps cached), `BUILD_EXIT=0`; the binary is 25,580,544 B.
 - `scripts/package_release.ps1 -SkipTests -SkipBuild -SkipSbom` then produced
-  `installer-output\PhantomVault-Setup-0.4.2.exe` (10,167,816 B) and staged
+  `installer-output\PhantomVault-Setup-0.4.2.exe` (10,171,105 B) and staged
   `dist\release-0.4.2\`: installer + portable exe + chrome/firefox zips +
   per-asset `.sha256` + `SHA256SUMS.txt`.
 - Inno Setup 6 **is** installed, at
