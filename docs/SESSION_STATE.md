@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-17 |
-| Branch / HEAD | `main` @ `6ec6c00` (pairing reachable from the popup lock overlay; app can copy the code; local QA installer rebuilt) |
+| Branch / HEAD | `main` @ `d7c9ea7` (pairing button always offered on the lock overlay; pairing confirmed working on the user's machine) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | **fresh local QA build (2026-11-17 10:03)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,177,397 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,589,760 B), both extension zips (chrome 154,524 B / firefox 154,566 B) and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). |
@@ -18,6 +18,43 @@
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
+
+## Last code batch (2026-11-17d) — the pairing button was still hidden
+
+Follow-up to `2026-11-17c` after the user loaded the unpacked build and pasted
+its id into the app (`native-host.json` → `chrome-extension://ffchmamjlcnlimdhpibjhphmglacbnnn/`).
+The overlay still showed a bare *Vault is Locked* with only *Retry*, so there was
+still no way to reach the pairing field.
+
+- **Cause 1:** `showDesktopLock()` showed `#extPairBtn` only when the host's
+  error matched `/pair/i`, but `desktopReachable()` swallowed the ping refusal
+  and `ensureUnlocked()` called `showDesktopLock()` with no reason at all.
+- **Cause 2:** `openPairingPane()` focused `getElementById("pairInput")`; the
+  real id is `pairCode`, so the field was never focused even when the pane
+  opened.
+- **Fix:** `lastBridgeWhy` keeps the ping refusal and `ensureUnlocked()` hands it
+  to `showDesktopLock()`; the pairing button is now always offered on this
+  overlay (the overlay means "bridge refused or unreachable", and pairing is the
+  fix for both); `openPairingPane()` targets `pairCode`; a successful pair calls
+  `refresh()` so the list is not left empty from the refused frame.
+- **Tests:** the `A27 L2` overlay test now pins all four behaviours
+  (`lastBridgeWhy = pong.error`, the reason reaching `showDesktopLock`, no
+  `needsPair` gating, the `pairCode` focus target).
+- **Gates:** `npm test` 194 pass / 0 fail, `npm run test:tokens` OK. No Rust file
+  changed in this batch, so the `cargo test` / `clippy` results from `baafc63`
+  still describe the tree.
+
+Confirmed on the user's machine after reloading the unpacked extension:
+`native_host.log` shows `host paired: enforcing frame macs` with **no**
+`host mac rejected` line — the frame MAC is accepted, i.e. pairing works. The
+only refusal left is `refused: stale/missing heartbeat (app closed or locked)`,
+which is the app being locked or closed, not a pairing problem.
+
+Related, documented for support (no code change): the desktop already runs
+`"auto_lock_mins": 0` (Never), but a Windows session lock / sleep still locks
+the vault by design, and the **extension** has its own default
+`lock_timeout_min: 10`. A popup that "turns itself off" after a few idle minutes
+is that setting — popup → Autofill Settings → Auto-Lock Timeout → Never.
 
 ## Last code batch (2026-11-17c) — pairing was unreachable from the popup
 
