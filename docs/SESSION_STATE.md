@@ -10,7 +10,7 @@
 | Field | Value |
 |---|---|
 | Date | 2026-11-16 |
-| Branch / HEAD | `main` @ `6131aa1` (PIN unlock now feeds the bridge; strict PIN mode) |
+| Branch / HEAD | `main` @ `bb19fe5` (PIN unlock now feeds the bridge; strict PIN mode; local QA installer built) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
 | Installer present | **fresh local QA build (2026-11-17 07:44)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,167,816 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,578,496 B), both extension zips and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). The older `dist/release-0.4.2-local/` was deleted because it predates the PIN-bridge work. |
