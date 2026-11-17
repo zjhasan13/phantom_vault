@@ -42,9 +42,7 @@
 - `dist\release-0.4.2-local\` (the 2026-11-16 pre-PIN-bridge build) was deleted
   so nobody installs it by mistake.
 
-## Last code batch (2026-11-17b) — L1 spawn chain + fork browsers
-
-Reported: "the extension still does not open" right after installing the
+## Last code batch (2026-11-17b) — L1 spawn chain + fork browsersReported: "the extension still does not open" right after installing the
 2026-11-17 build, with the app unlocked. The audit log showed:
 
 ```
@@ -84,6 +82,15 @@ Zen/Waterfox signers, unrelated signer still refused).
 
 Docs: `docs/A27_HOST_PAIRING.md` §L1 rewritten (chain, fork list, env var, new
 limit), `SECURITY.md`, `docs/FEATURE_LEDGER.md`, `docs/MANUAL_TEST_GUIDE.md`.
+
+Installer change in the same batch (`installer.iss`): the Chromium/Firefox
+registry keys now point at `%LOCALAPPDATA%\PhantomVault\native-host.json` /
+`native-host-firefox.json` — the files the app itself writes — instead of a
+manifest under `{app}`. The installer only creates them when they are absent, so
+a reinstall no longer wipes the user's `allowed_origins` (the old behaviour forced
+"Install Browser Extension Host" again after every reinstall). `[UninstallDelete]`
+moved to the two LOCALAPPDATA files. `ISCC /Qp installer.iss` compiles clean
+(`ISCC_EXIT=0`).
 
 Not yet verified on screen: the user's machine is the only one with Helium +
 this vault, so the real confirmation is a fresh installer plus one popup open

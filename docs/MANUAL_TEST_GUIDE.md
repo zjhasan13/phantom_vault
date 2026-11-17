@@ -340,7 +340,7 @@ npm run test:tokens
 নতুন build ইনস্টল করার আগে/পরে (একবারই লাগে):
 
 1. অ্যাপ পুরোপুরি বন্ধ করুন (tray-তেও থাকা যাবে না)।
-2. `PhantomVault-Setup-0.4.2.exe` চালান। ভল্ট ফাইল (`my_secure_vault.enc`) কখনো মুছে যায় না — ইনস্টলার শুধু exe বদলায়।
+2. `PhantomVault-Setup-0.4.2.exe` চালান। ভল্ট ফাইল (`my_secure_vault.enc`) কখনো মুছে যায় না — ইনস্টলার শুধু exe বদলায়। আপনার এক্সটেনশন ID (allowed_origins) আর pairing ফাইলও থাকে: ইনস্টলার আগে থেকে থাকা `%LOCALAPPDATA%\PhantomVault\native-host.json` আর `native-host-firefox.json` আর লেখে না।
 3. `C:\Users\<you>\AppData\Local\Programs\PhantomVault\exe_integrity.dpapi` মুছে দিন। নতুন exe-র hash আলাদা, তাই এটা না মুছলে lock screen-এ "tampered" ব্যানার আসবে (ব্যানারটা ঠিকই কাজ করছে — সেটাই ট্রিপওয়্যার)।
 4. অ্যাপ খুলে একবার master password (বা PIN) দিয়ে আনলক করুন।
 5. Settings → Sync & Devices → **Show pairing code** → কোড কপি করুন।

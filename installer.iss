@@ -62,26 +62,27 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; \
 Root: HKCU; \
   Subkey: "Software\Google\Chrome\NativeMessagingHosts\com.phantomvault.host"; \
   ValueType: string; ValueName: ""; \
-  ValueData: "{app}\browser_extension\{#HostJsonName}"; Flags: uninsdeletekey
+  ValueData: "{localappdata}\PhantomVault\native-host.json"; Flags: uninsdeletekey
 Root: HKCU; \
   Subkey: "Software\BraveSoftware\Brave-Browser\NativeMessagingHosts\com.phantomvault.host"; \
   ValueType: string; ValueName: ""; \
-  ValueData: "{app}\browser_extension\{#HostJsonName}"; Flags: uninsdeletekey
+  ValueData: "{localappdata}\PhantomVault\native-host.json"; Flags: uninsdeletekey
 Root: HKCU; \
   Subkey: "Software\Microsoft\Edge\NativeMessagingHosts\com.phantomvault.host"; \
   ValueType: string; ValueName: ""; \
-  ValueData: "{app}\browser_extension\{#HostJsonName}"; Flags: uninsdeletekey
-; Placeholder: the app's Firefox button rewrites this to
-; %LOCALAPPDATA%\PhantomVault\native-host-firefox.json (allowed_extensions).
+  ValueData: "{localappdata}\PhantomVault\native-host.json"; Flags: uninsdeletekey
+; Firefox: the app's button writes the same file with allowed_extensions.
 Root: HKCU; \
   Subkey: "Software\Mozilla\NativeMessagingHosts\com.phantomvault.host"; \
   ValueType: string; ValueName: ""; \
-  ValueData: "{app}\browser_extension\com.phantomvault.host.firefox.json"; Flags: uninsdeletekey
+  ValueData: "{localappdata}\PhantomVault\native-host-firefox.json"; Flags: uninsdeletekey
 
 [Code]
-// Write a locked-down host manifest (empty allowed_origins = no extension
-// can connect until the user pairs theirs in the app). Returns False only
-// on disk failure — install continues, the app button repairs it later.
+// Write a locked-down host manifest into %LOCALAPPDATA%\PhantomVault.
+// An existing file is left alone: it holds the user's allowed_origins /
+// allowed_extensions, and overwriting it on every reinstall would break a
+// working browser registration. Returns False only on disk failure — install
+// continues, the app button repairs it later.
 // JSON strings need doubled backslashes (C:\x -> C:\\x). Written with
 // plain Pascal only (no StrUtils dependency quirks across ISCC versions).
 function DoubleBackslashes(const S: String): String;
@@ -100,9 +101,16 @@ end;
 
 function WriteHostManifest(): Boolean;
 var
-  ManifestPath, ExePath, Doc: String;
+  Dir, ManifestPath, ExePath, Doc: String;
 begin
-  ManifestPath := ExpandConstant('{app}\browser_extension\{#HostJsonName}');
+  Dir := ExpandConstant('{localappdata}\PhantomVault');
+  ManifestPath := Dir + '\native-host.json';
+  if FileExists(ManifestPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  ForceDirectories(Dir);
   ExePath := DoubleBackslashes(ExpandConstant('{app}\{#MyAppExeName}'));
   Doc := #13#10 +
     '{ "name": "com.phantomvault.host",' + #13#10 +
@@ -110,6 +118,30 @@ begin
     '  "path": "' + ExePath + '",' + #13#10 +
     '  "type": "stdio",' + #13#10 +
     '  "allowed_origins": [] }';
+  Result := SaveStringToFile(ManifestPath, Doc, False);
+end;
+
+// Firefox reads the same document shape with `allowed_extensions`. The add-on
+// id is pinned in manifest.firefox.json (gecko.id), so nothing to paste.
+function WriteFirefoxManifest(): Boolean;
+var
+  Dir, ManifestPath, ExePath, Doc: String;
+begin
+  Dir := ExpandConstant('{localappdata}\PhantomVault');
+  ManifestPath := Dir + '\native-host-firefox.json';
+  if FileExists(ManifestPath) then
+  begin
+    Result := True;
+    Exit;
+  end;
+  ForceDirectories(Dir);
+  ExePath := DoubleBackslashes(ExpandConstant('{app}\{#MyAppExeName}'));
+  Doc := #13#10 +
+    '{ "name": "com.phantomvault.host",' + #13#10 +
+    '  "description": "PhantomVault native bridge (stdio, vault-gated)",' + #13#10 +
+    '  "path": "' + ExePath + '",' + #13#10 +
+    '  "type": "stdio",' + #13#10 +
+    '  "allowed_extensions": ["phantomvault@phantomvault.local"] }';
   Result := SaveStringToFile(ManifestPath, Doc, False);
 end;
 
@@ -121,10 +153,15 @@ begin
       MsgBox('Host manifest could not be written. Open PhantomVault → ' +
         'Settings → Browser Bridge → Install Browser Extension Host.',
         mbInformation, MB_OK);
+    if not WriteFirefoxManifest() then
+      MsgBox('Firefox host manifest could not be written. Open PhantomVault → ' +
+        'Settings → Browser Bridge → Install Firefox Host.',
+        mbInformation, MB_OK);
   end;
 end;
 
 [UninstallDelete]
-; Remove the generated manifest (tracked files + shortcuts + keys go
+; Remove the generated host manifests (tracked files + shortcuts + keys go
 ; automatically). User vault/data files are NEVER touched.
-Type: files; Name: "{app}\browser_extension\{#HostJsonName}"
+Type: files; Name: "{localappdata}\PhantomVault\native-host.json"
+Type: files; Name: "{localappdata}\PhantomVault\native-host-firefox.json"
