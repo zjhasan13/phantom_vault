@@ -209,6 +209,33 @@ test("A27 L2: popup.html carries the pairing row the script binds to", () => {
   }
 });
 
+test("A27 L2: an unpaired host gets a way into pairing from the lock overlay", () => {
+  // The overlay covers the Settings tab, so a bare "Vault is Locked" left no
+  // route to the pairing field — the exact loop a user hit after installing.
+  const HTML = readFileSync(
+    new URL("../../browser_extension/popup.html", import.meta.url), "utf8");
+  assert.match(HTML, /id="extPairBtn"/, "overlay carries a pairing button");
+
+  const stats = SRC.match(/async function loadStats\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(stats, "loadStats present");
+  assert.match(stats[1], /\/pair\/i\.test\(why\)/, "a pairing refusal is detected");
+  assert.match(stats[1], /showDesktopLock\(undefined, why\)/, "the host reason travels with it");
+
+  const lock = SRC.match(/function showDesktopLock\(sub, why\) \{([\s\S]*?)\n  \}/);
+  assert.ok(lock, "showDesktopLock takes the reason");
+  assert.match(lock[1], /extPairBtn/, "the pairing button is toggled");
+  assert.match(lock[1], /\/pair\/i\.test\(why \|\| ""\)/, "shown only for a pairing refusal");
+
+  const pane = SRC.match(/function openPairingPane\(\) \{([\s\S]*?)\n  \}/);
+  assert.ok(pane, "openPairingPane present");
+  assert.match(pane[1], /pairInput/, "it focuses the pairing field");
+  assert.doesNotMatch(pane[1], /ensureUnlocked/, "it must not re-arm the lock overlay");
+
+  // Both locales must define the label, or one language shows `undefined`.
+  const defined = SRC.match(/pair_open:/g) || [];
+  assert.equal(defined.length, 2, "en + bn both define pair_open");
+});
+
 test("A27 strict mode: the popup asks for the app PIN when the host says so", () => {
   // Settings → Security → "Browser bridge after PIN unlock" OFF writes no plain
   // bridge token. The host answers `need: "pin"`; the popup must prompt instead

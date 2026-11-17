@@ -1298,6 +1298,7 @@ export component MainWindow inherits Window {
     callback install_firefox_host();
     // A27 L2: mint/show the extension pairing code, and revoke it.
     callback mint_pair_code();
+    callback copy_pair_code();
     callback revoke_pairing();
     // Zero-lockin reverse exporters (2FA hub QR + full-vault files).
     callback ga_export_start();
@@ -2484,7 +2485,7 @@ export component MainWindow inherits Window {
                     Text { text: root.bridge_status; color: PhantomTheme.secondary; font-size: 11px; wrap: word-wrap; }
                     FieldLabel { text: root.ui_lang == "bn" ? "এক্সটেনশন পেয়ারিং" : "EXTENSION PAIRING"; }
                     Text { text: (root.ui_lang == "bn" ? "কোডটি এক্সটেনশন পপআপের Settings → Desktop pairing ঘরে বসান। কোড = DPAPI-সিল করা ২০-বাইট secret, তাই ডেস্কটপ অ্যাপ বন্ধ থাকলেও কাজ করে। যে প্রসেস পেয়ার করেনি তার ফ্রেম host আলাদা করে চিহ্নিত করে।" : "Type the code into the extension popup: Settings → Desktop pairing. The code is the DPAPI-sealed 20-byte secret, so it keeps working while the desktop app is closed. Frames from anything that did not pair are flagged by the host."); color: PhantomTheme.text-dim; font-size: 11px; wrap: word-wrap; }
-                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🔑 পেয়ারিং কোড দেখান" : "🔑 Show pairing code"); primary: true; width: 220px; clicked => { root.mint_pair_code(); } } AuraButton { label: (root.ui_lang == "bn" ? "পেয়ারিং মুছুন" : "Revoke pairing"); danger: true; width: 170px; clicked => { root.revoke_pairing(); } } }
+                    HorizontalLayout { spacing: 8px; AuraButton { label: (root.ui_lang == "bn" ? "🔑 পেয়ারিং কোড দেখান" : "🔑 Show pairing code"); primary: true; width: 220px; clicked => { root.mint_pair_code(); } } AuraButton { label: (root.ui_lang == "bn" ? "📋 কোড কপি" : "📋 Copy code"); width: 150px; clicked => { root.copy_pair_code(); } } AuraButton { label: (root.ui_lang == "bn" ? "পেয়ারিং মুছুন" : "Revoke pairing"); danger: true; width: 170px; clicked => { root.revoke_pairing(); } } }
                     if root.pair_code != "" : Text { text: root.pair_code; color: PhantomTheme.secondary; font-size: 15px; font-weight: 800; wrap: char-wrap; }
                     Text { text: root.pair_status; color: PhantomTheme.text-muted; font-size: 11px; wrap: word-wrap; }
                 }}

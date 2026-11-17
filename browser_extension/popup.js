@@ -75,6 +75,7 @@
       offline_hello_go: "🪟 Use Windows Hello",
       offline_unlock_failed: "❌ Could not unlock the offline cache.",
       retry_btn: "🔄 Retry",
+      pair_open: "🔗 Pair with desktop",
       lock_timeout_h: "⏱️ Auto-Lock Timeout",
       lock_timeout_hint: "Lock after inactivity. A locked desktop app always locks instantly.",
       quick_pin_h: "🔐 Quick Unlock",
@@ -155,6 +156,7 @@
       offline_hello_go: "🪟 Windows Hello ব্যবহার করো",
       offline_unlock_failed: "❌ অফলাইন ক্যাশ খোলা যায়নি।",
       retry_btn: "🔄 পুনরায়",
+      pair_open: "🔗 ডেস্কটপের সাথে পেয়ার করো",
       lock_timeout_h: "⏱️ অটো-লক সময়",
       lock_timeout_hint: "নিষ্ক্রিয়তার পর লক হবে। ডেস্কটপ লক হলে সাথে সাথে লক হবে।",
       quick_pin_h: "🔐 কুইক আনলক",
@@ -481,6 +483,12 @@
       const why = (s && typeof s.error === "string") ? s.error : "";
       if (/credential/i.test(why)) {
         box.textContent = t("bridge_no_credential");
+      } else if (/pair/i.test(why)) {
+        // Unpaired host: the overlay must offer the pairing screen, not just
+        // "Vault is Locked" — pairing lives behind Settings, which it covers.
+        box.textContent = why;
+        showDesktopLock(undefined, why);
+        return;
       } else {
         box.textContent = why || `${t("sync_locked")}. ${t("sync_locked_sub")}`;
       }
@@ -1036,7 +1044,7 @@
     ov.style.display = v ? "flex" : "none";
     console.log(`PV lock overlay ${v ? "SHOWN" : "HIDDEN"} (${why || "?"})`);
   }
-  function showDesktopLock(sub) {
+  function showDesktopLock(sub, why) {
     document.getElementById("extLockTitle").textContent = t("sync_locked");
     document.getElementById("extLockSub").textContent = sub || t("sync_locked_sub");
     document.getElementById("extPinInput").style.display = "none";
@@ -1044,8 +1052,33 @@
     const rb = document.getElementById("extRetryBtn");
     rb.style.display = "";
     rb.textContent = t("retry_btn");
-    document.getElementById("extLockMsg").textContent = "";
+    // A27 L2: an unpaired host is not a locked vault. Say what the bridge said
+    // and offer the pairing screen, otherwise the user has no way in — the
+    // overlay covers the Settings tab that holds the pairing field.
+    const msg = document.getElementById("extLockMsg");
+    msg.textContent = why || "";
+    const pb = document.getElementById("extPairBtn");
+    if (pb) {
+      const needsPair = /pair/i.test(why || "");
+      pb.style.display = needsPair ? "" : "none";
+      pb.textContent = t("pair_open");
+    }
     setLockVisible(true, "desktop-lock");
+  }
+  // Open the Settings tab straight on the pairing field, without the
+  // ensureUnlocked() probe that would put the lock overlay back.
+  function openPairingPane() {
+    for (const [b, p] of Object.entries(panes)) {
+      document.getElementById(b).classList.remove("active");
+      document.getElementById(p).classList.add("hidden");
+    }
+    document.getElementById("settingsPane").classList.remove("hidden");
+    document.getElementById("settingsBtn").classList.add("active");
+    const pi = document.getElementById("pairInput");
+    if (pi) {
+      pi.focus();
+      if (pi.scrollIntoView) pi.scrollIntoView({ block: "center" });
+    }
   }
   // A11b: offline cache unlock screen — Windows Hello or the extension PIN.
   function showOfflineLock() {
@@ -1063,6 +1096,8 @@
     ub.textContent = t("offline_pin_go");
     rb.style.display = "";
     rb.textContent = t("offline_hello_go");
+    const pairBtn = document.getElementById("extPairBtn");
+    if (pairBtn) pairBtn.style.display = "none";
     setLockVisible(true, "offline-lock");
 
     const finish = (ok, res) => {
@@ -1111,6 +1146,8 @@
     ub.style.display = "";
     ub.textContent = t("quick_pin_go");
     document.getElementById("extRetryBtn").style.display = "none";
+    const pairBtn = document.getElementById("extPairBtn");
+    if (pairBtn) pairBtn.style.display = "none";
     const msg = document.getElementById("extLockMsg");
     msg.style.color = "";
     msg.textContent = "";
@@ -1169,6 +1206,8 @@
     const rb = document.getElementById("extRetryBtn");
     rb.style.display = "";
     rb.textContent = t("retry_btn");
+    const pairBtn = document.getElementById("extPairBtn");
+    if (pairBtn) pairBtn.style.display = "none";
     const msg = document.getElementById("extLockMsg");
     msg.style.color = "";
     msg.textContent = "";
@@ -1241,6 +1280,12 @@
     setLockVisible(false, "open");
     return true;
   }
+  // Pairing shortcut from the lock overlay (A27 L2). The overlay hides the
+  // Settings tab that owns the pairing field, so it gets its own way in.
+  document.getElementById("extPairBtn").addEventListener("click", () => {
+    setLockVisible(false, "pair-open");
+    openPairingPane();
+  });
   // Retry (wired once): re-probe desktop, restart idle clock, load vault.
   document.getElementById("extRetryBtn").addEventListener("click", async () => {
     const msg = document.getElementById("extLockMsg");

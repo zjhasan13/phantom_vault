@@ -10365,6 +10365,40 @@ fn launch_url(ui: &MainWindow, url: &str) {
         }
     });
 
+    // Copy the shown code: the Slint Text is not selectable, and the code is 39
+    // characters in 8 groups — nobody types that by hand.
+    let pair_copy_weak = main_window.as_weak();
+    main_window.on_copy_pair_code(move || {
+        let Some(ui) = pair_copy_weak.upgrade() else {
+            return;
+        };
+        let code = ui.get_pair_code().to_string();
+        if code.trim().is_empty() {
+            ui.set_pair_status(
+                tr(
+                    "⚠️ Click Show pairing code first.",
+                    "⚠️ আগে Show pairing code চাপুন।",
+                )
+                .into(),
+            );
+            return;
+        }
+        // The code IS the pairing secret, so it takes the same auto-clearing
+        // clipboard path as a password; 120 s is long enough to paste it.
+        match windows_native::clipboard::copy_sensitive(&code, 120, || {}) {
+            Ok(()) => ui.set_pair_status(
+                tr(
+                    "✅ Copied. Paste it in the extension popup: Settings → Desktop pairing.",
+                    "✅ কপি হয়েছে। এক্সটেনশন পপআপের Settings → Desktop pairing ঘরে বসান।",
+                )
+                .into(),
+            ),
+            Err(_) => ui.set_pair_status(
+                tr("⚠️ Could not copy the code.", "⚠️ কোড কপি করা যায়নি।").into(),
+            ),
+        }
+    });
+
     let revoke_weak = main_window.as_weak();
     main_window.on_revoke_pairing(move || {
         let Some(ui) = revoke_weak.upgrade() else {
