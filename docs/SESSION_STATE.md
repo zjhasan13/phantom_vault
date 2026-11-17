@@ -9,17 +9,70 @@
 
 | Field | Value |
 |---|---|
-| Date | 2026-11-16 |
-| Branch / HEAD | `main` @ `bb19fe5` (PIN unlock now feeds the bridge; strict PIN mode; local QA installer built) |
+| Date | 2026-11-17 |
+| Branch / HEAD | `main` @ `6ec6c00` (pairing reachable from the popup lock overlay; app can copy the code; local QA installer rebuilt) |
 | App version | 0.4.2 (`Cargo.toml`) |
 | Extension version | 0.4.2 (`browser_extension/manifest.json`) |
-| Installer present | **fresh local QA build (2026-11-17 09:18)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,171,105 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,580,544 B), both extension zips and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). The older `dist/release-0.4.2-local/` was deleted because it predates the PIN-bridge work. |
+| Installer present | **fresh local QA build (2026-11-17 10:03)**: `dist/release-0.4.2/` has the Inno installer `PhantomVault-Setup-0.4.2.exe` (10,177,397 B), the portable `PhantomVault-0.4.2-windows-x64.exe` (25,589,760 B), both extension zips (chrome 154,524 B / firefox 154,566 B) and `SHA256SUMS.txt`. Built with `package_release.ps1 -SkipTests -SkipBuild -SkipSbom`; Inno Setup 6 lives at `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe` (not in the two Program Files paths the script probes, so put it on `PATH` first). **Not publishable**: no `.sig` (no signing key) and no SBOM (`cargo-cyclonedx` missing). |
 | Open work | `docs/baki kaj.md` — security gaps and logic/UX gaps not yet fixed |
 | Manual QA | `docs/MANUAL_TEST_GUIDE.md` — non-technical, feature-by-feature checklist + 15-min smoke pass |
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-17c) — pairing was unreachable from the popup
+
+Reported: "the extension does not open and I cannot pair". `native_host.log`
+showed the desktop **had** minted the secret but the extension never received it:
+
+```
+host paired: enforcing frame macs
+host mac rejected: no mac field
+refused unpaired frame: frame rejected (no mac field)
+```
+
+`host_pairing.dpapi` existed (09:23:42, written by *Show pairing code*), so the
+secret was fine — the user simply could not type it anywhere. The popup's lock
+overlay is `position: fixed; inset: 0` and covers the Settings tab that owns the
+pairing field, so the only visible control was *Retry*, which looped.
+
+- **Popup (`browser_extension/popup.js`, `popup.html`)**: the overlay gained
+  `#extPairBtn` (*🔗 Pair with desktop*). `showDesktopLock(sub, why)` now takes
+  the host's reason, writes it into `#extLockMsg`, and shows the pairing button
+  only when the reason matches `/pair/i`. `loadStats()` routes a pairing refusal
+  to the overlay instead of only writing text into `#statsBox`.
+  `openPairingPane()` switches to the Settings pane, focuses `#pairInput` and
+  deliberately **does not** call `ensureUnlocked()` (that would put the overlay
+  straight back). The quick-PIN, offline and bridge-PIN screens hide the button
+  so it cannot leak into an unrelated prompt. `pair_open` exists in en + bn.
+- **Desktop (`src/main.rs`, `ui/appwindow.slint`)**: new `copy_pair_code()`
+  callback + **📋 Copy code** button next to *Show pairing code*. A Slint `Text`
+  is not selectable and the code is 39 characters in 8 groups, so copying is the
+  only usable path. It reuses `clipboard::copy_sensitive(&code, 120, …)` because
+  the code **is** the pairing secret, and refuses an empty code with a "click
+  Show pairing code first" hint.
+- **Tests**: `popup.test.mjs` — `A27 L2: an unpaired host gets a way into pairing
+  from the lock overlay` (overlay button present, `/pair/i` routing, reason
+  travels into `showDesktopLock`, `openPairingPane` focuses the field and does
+  not call `ensureUnlocked`, both locales define `pair_open`).
+- **Gates** on this tree: `cargo test -j 1` 648 passed / 0 failed / 4 ignored
+  (`TEST_EXIT=0`), `cargo clippy --all-targets -j 1 -- -D warnings`
+  (`CLIPPY_EXIT=0`), `npm test` 194 pass / 0 fail, `npm run test:tokens` OK.
+- **Build**: `cargo build --release -j 1` 15m45s (`BUILD_EXIT=0`), packaged as
+  the 10:03 installer above. Zip contents were diffed against
+  `browser_extension/` after packaging: `popup.js`, `popup.html`,
+  `background.js`, `content.js` hash-identical in both zips; the Firefox
+  `manifest.json` differs only by `browser_specific_settings` (expected), and
+  both manifests read `0.4.2`.
+- **Still needs the user**: install the 10:03 setup (delete
+  `exe_integrity.dpapi` afterwards), reload the unpacked extension, then
+  *Pair with desktop* with the code shown in the app. Success shows
+  `host mac accepted` in `%LOCALAPPDATA%\PhantomVault\native_host.log`.
+
 ## Local QA build (2026-11-17) — installer exists now
+
+> Numbers below are the **09:18** build; the current staging dir is the 10:03
+> build from batch `2026-11-17c` (see the Snapshot table for its sizes). The
+> procedure and the caveats are unchanged.
 
 - `cargo build --release -j 1` (target dir `C:\Users\Admin\pv-target`) finished in
   23m49s (deps cached), `BUILD_EXIT=0`; the binary is 25,580,544 B.
@@ -35,10 +88,11 @@
   (`cargo-cyclonedx` not installed). The updater refuses such a build by design.
 - Installing over the old 0.4.2 keeps the vault (the installer never tracks data
   files) but changes the exe hash, so delete `exe_integrity.dpapi` afterwards or
-  the lock screen shows the tampered banner. `host_pairing.dpapi` is absent on
-  this machine, so the new release host will refuse frames until the extension
-  is paired once (Settings → Sync & Devices → Show pairing code → popup →
-  Settings → Desktop pairing). Both steps are in `docs/MANUAL_TEST_GUIDE.md` §12.
+  the lock screen shows the tampered banner. Pairing is a one-time step per
+  extension install: the app shows the code (Settings → Sync & Devices → Show
+  pairing code, or the 📋 Copy code button next to it) and the popup takes it in
+  Settings → Desktop pairing — or straight from the lock overlay's
+  🔗 Pair with desktop button. Both steps are in `docs/MANUAL_TEST_GUIDE.md` §12.
 - `dist\release-0.4.2-local\` (the 2026-11-16 pre-PIN-bridge build) was deleted
   so nobody installs it by mistake.
 
