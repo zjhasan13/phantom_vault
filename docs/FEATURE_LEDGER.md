@@ -43,7 +43,8 @@ when a user-visible capability is added, changed, or deliberately removed.
 
 | Area | Status | Notes / where |
 |---|---|---|
-| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry; fills only on a real user gesture (`ecca87d`); rows in a closed shadow root (`b45969c`); **top frame only** — iframe widgets are not filled (`b81c766`) |
+| Autofill dropdown | ✅ | one ranking for dropdown/hotkey/context menu, per-tab carry; fills only on a real user gesture (`ecca87d`); rows in a closed shadow root (`b45969c`); **top frame only** — iframe widgets are not filled (`b81c766`); width floor 260 px so a one-char anchor cannot crush it (`d7c9ea7`+1) |
+| Segmented code fields | ✅ | 4–12 one-char boxes are ONE code ceremony even when each box sits in its own wrapper (GitHub device page); one-char boxes are never username fields; a code whose length does not match the strip is copied, never poured into box 0 (`d7c9ea7`+1) |
 | Continue-as (identifier step) | ✅ | username-only step carries to password step (`fc1def7`) |
 | Save prompt — login | ✅ | closed shadow root, 60 s TTL, per-tab, folder picker, notes, editable title/URL, update-target chips, EN/BN, at-risk hint |
 | Save prompt — card / identity | ✅ | Aegis panel, reuse hint pending |

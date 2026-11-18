@@ -1006,6 +1006,58 @@ test("focused real 2FA box still opens the account picker (control)", async (t) 
   assert.ok(window.document.getElementById("__pv_otp_picker"), "explicit focus must still open the picker");
 });
 
+// GitHub's device-authorization page ("Authorize your device") is eight
+// one-character boxes, each inside its own bordered <div>, under a
+// "Signed in as <user>" heading. Reported symptom: the login dropdown opened
+// there with nothing to fill, and it was only one box wide, so its "No match"
+// line wrapped to a letter per line.
+const DEVICE_CODE = `<div class="auth">
+  <h1>Authorize your device</h1>
+  <p>Signed in as <strong>zjhasan13</strong></p>
+  <p>Enter the code displayed in the app or on the device you're signing in to.</p>
+  <div class="row">
+    ${Array.from({ length: 8 }, (_, i) =>
+      `<div class="cell"><input type="text" maxlength="1" inputmode="numeric" aria-label="digit ${i + 1}"></div>`).join("")}
+  </div>
+  <button type="submit">Continue</button>
+</div>`;
+
+test("a one-char code box is never a username field", async (t) => {
+  const { window } = env(t, DEVICE_CODE, "https://github.com/login/device", [], [], [], []);
+  const box = window.document.querySelector("input[maxlength='1']");
+  box.focus();
+  await flush(150);
+  assert.equal(window.document.getElementById("__pv_drop"), null,
+    "no login dropdown on a segmented code page");
+});
+
+test("segmented code boxes are one OTP group even inside per-box wrappers", async (t) => {
+  const { window } = env(t, DEVICE_CODE, "https://github.com/login/device", [], [], [], TOTP_TWO);
+  const box = window.document.querySelector("input[maxlength='1']");
+  box.focus();
+  await flush(150);
+  // Recognising the group is the point: with two accounts the picker is the
+  // correct answer (the user picks). Before the ancestor walk these boxes were
+  // eight unrelated "username" fields, so the login dropdown opened instead.
+  assert.ok(window.document.getElementById("__pv_otp_picker"),
+    "the wrapped boxes are recognised as one code ceremony");
+
+  // ...but a 6-digit TOTP can never fill 8 boxes. The fill path must hand the
+  // code to the clipboard instead of dropping it into box 0, which the page
+  // rejects and the user reads as a PhantomVault bug.
+  const SRC = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
+  assert.match(SRC, /otpBoxGroupAny\(\)/, "the fill path can see a group of any length");
+  assert.match(SRC, /code copied, paste it in/, "and says so instead of filling box 0");
+});
+
+test("login dropdown keeps a readable width on a tiny anchor", async (t) => {
+  const SRC = readFileSync(new URL("../../browser_extension/content.js", import.meta.url), "utf8");
+  // Bitwarden parity is "match the input box", which collapses on a 24 px code
+  // box. The width now has a floor and is clamped to the viewport.
+  assert.match(SRC, /Math\.max\(rc\.width, 260\)/, "width floor present");
+  assert.match(SRC, /window\.innerWidth - 16/, "clamped to the viewport");
+});
+
 // ---- "Never save for this site" (content side) ---------------------------
 // Bitwarden parity for the save prompt: the middle option is "Not Now", the
 // permanent opt-out must exist too. Choice is stored per registrable domain,

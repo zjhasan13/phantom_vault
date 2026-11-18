@@ -1175,6 +1175,14 @@
   }
   function isUsernameField(el) {
     if (isSearchField(el)) return false;
+    // One-character boxes are code digits, never usernames. GitHub's
+    // "Authorize your device" page is a row of them: every keyword gate missed,
+    // `pageLooksLikeAuth()` matched the "Signed in as …" copy, and the login
+    // dropdown opened on a page with nothing to fill — one box wide.
+    {
+      const ml = String(el.getAttribute("maxlength") || "");
+      if (ml === "1" || (el.size === 1 && ml === "")) return false;
+    }
     const hay = fieldHaystack(el);
     if (hasKeyword(hay, FIELD_IGNORE_KEYWORDS)) return false;
     if (hasIdentityAutocomplete(el)) return false;
@@ -1203,20 +1211,25 @@
   // children where EVERY child is a one-digit input. Requiring all children to
   // be narrow boxes is what keeps this from firing on a quantity stepper or an
   // expiry-year pair.
+  //
+  // GitHub's device page wraps every box in its own <div> (the wrapper carries
+  // the border), so the direct-children test saw one input per container and
+  // the group went unrecognised. The search therefore climbs up to two levels
+  // and counts the one-char inputs under each ancestor: a wrapper with a single
+  // box never qualifies, the shared row does.
   function inSplitOtpGroup(el) {
-    const p = el.parentElement;
-    if (!p) return false;
-    const sibs = [...p.children];
-    if (sibs.length < 4 || sibs.length > 12) return false;
-    let narrow = 0;
-    for (const c of sibs) {
-      if (c.tagName !== "INPUT") return false;
-      const t = (c.type || "").toLowerCase();
-      if (t === "password" || t === "hidden") return false;
-      if (String(c.getAttribute("maxlength") || "") !== "1") return false;
-      narrow++;
+    let p = el.parentElement;
+    for (let up = 0; p && up < 3; up++, p = p.parentElement) {
+      const boxes = [...p.querySelectorAll("input")].filter((c) => {
+        if (!isVisible(c)) return false;
+        const t = (c.type || "").toLowerCase();
+        if (t === "password" || t === "hidden") return false;
+        const ml = String(c.getAttribute("maxlength") || "");
+        return ml === "1" || (c.size === 1 && ml === "");
+      });
+      if (boxes.length >= 4 && boxes.length <= 12 && boxes.includes(el)) return true;
     }
-    return narrow >= 4;
+    return false;
   }
 
   function isOtpField(el) {
@@ -1562,8 +1575,7 @@
   // ancestor so two unrelated one-char inputs elsewhere on the page (an expiry
   // year, a quantity stepper) never get concatenated into one fake "code".
   // Returns null when this is not a group that matches the code length.
-  function otpBoxGroup(codeLen) {
-    if (!codeLen) return null;
+  function otpBoxGroups() {
     const narrow = [...deepQuery("input")].filter((el) => {
       if (!isVisible(el)) return false;
       const t = (el.type || "").toLowerCase();
@@ -1574,21 +1586,48 @@
       // trust it when maxlength was left unset rather than set to "-1".
       return el.size === 1 && ml === "";
     });
-    if (narrow.length < codeLen) return null;
-    // Group by parent element; take the tightest run that covers the code.
-    const byParent = new Map();
+    if (narrow.length < 4) return [];
+    // Group by the nearest ancestor that holds the run. Walking up matters for
+    // wrappers: GitHub puts each digit in its own bordered <div>, so a
+    // parent-only grouping saw one box per group and the code went into box 0
+    // alone.
+    const byAncestor = new Map();
     for (const el of narrow) {
-      const p = el.parentElement;
-      if (!p) continue;
-      if (!byParent.has(p)) byParent.set(p, []);
-      byParent.get(p).push(el);
+      let p = el.parentElement;
+      for (let up = 0; p && up < 3; up++, p = p.parentElement) {
+        if (!byAncestor.has(p)) byAncestor.set(p, new Set());
+        byAncestor.get(p).add(el);
+      }
     }
+    const groups = [];
+    for (const [, set] of byAncestor) {
+      if (set.size < 4) continue;
+      groups.push([...set].sort((a, b) =>
+        (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) ? -1 : 1));
+    }
+    return groups;
+  }
+  // The tightest run of one-char boxes on the page, whatever its length. Used
+  // to refuse a fill that cannot possibly satisfy the page (a 6-digit TOTP
+  // poured into box 0 of an 8-box device code is rejected by the page and looks
+  // like a PhantomVault bug).
+  function otpBoxGroupAny() {
+    const groups = otpBoxGroups();
     let best = null;
-    for (const [, group] of byParent) {
-      if (group.length < codeLen) continue;
-      if (!best || group.length < best.length) best = group;
+    for (const g of groups) {
+      if (g.length > 12) continue;
+      if (!best || g.length < best.length) best = g;
     }
-    return best && best.length >= codeLen ? best.slice(0, codeLen) : null;
+    return best;
+  }
+  function otpBoxGroup(codeLen) {
+    if (!codeLen) return null;
+    let best = null;
+    for (const g of otpBoxGroups()) {
+      if (g.length < codeLen) continue;
+      if (!best || g.length < best.length) best = g;
+    }
+    return best ? best.slice(0, codeLen) : null;
   }
 
   // Write one digit into one box WITHOUT blurring it: `setNativeValue` fires a
@@ -1651,6 +1690,16 @@
       boxes.forEach((box, i) => setBoxDigit(box, digits[i]));
       if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
       return true;
+    }
+    // A split code screen of a DIFFERENT length (GitHub's 8-character device
+    // code, a 4-box PIN screen) can never take a 6-digit TOTP. Putting the code
+    // in box 0 leaves the rest empty and the page rejects it, which reads as a
+    // PhantomVault bug. Hand the code to the clipboard instead and say so.
+    const anyGroup = otpBoxGroupAny();
+    if (anyGroup) {
+      if (settings.copy_totp_auto !== false) copyWithAutoclear(digits);
+      toast(`⚠️ ${anyGroup.length}-box code field — code copied, paste it in.`);
+      return false;
     }
     if (f.otp[0]) {
       setNativeValue(f.otp[0], digits);
@@ -2101,9 +2150,15 @@
     root.append(foot);
     document.documentElement.appendChild(dropEl);
     const rc = anchor.getBoundingClientRect();
-    // Bitwarden parity: dropdown matches the input's EXACT bounding box.
-    dropEl.style.width = rc.width + "px";
-    dropEl.style.left = (rc.left + window.scrollX) + "px";
+    // Bitwarden parity: dropdown matches the input's EXACT bounding box. A
+    // 24 px one-char code box is the exception — matching it produced a
+    // crushed panel whose "No match" line wrapped to one letter per line, so
+    // the width gets a floor and is clamped to the viewport.
+    const want = Math.max(rc.width, 260);
+    const maxW = Math.max(220, window.innerWidth - 16);
+    dropEl.style.width = Math.min(want, maxW) + "px";
+    const left = Math.min(rc.left + window.scrollX, window.scrollX + window.innerWidth - Math.min(want, maxW) - 8);
+    dropEl.style.left = Math.max(window.scrollX + 8, left) + "px";
     dropEl.style.top = (rc.bottom + window.scrollY + 4) + "px";
     dropEl.style.boxSizing = "border-box";
     dropAnchor = anchor;

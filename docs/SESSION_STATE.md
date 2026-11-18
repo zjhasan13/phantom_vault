@@ -19,6 +19,42 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
+## Last code batch (2026-11-17e) — a code page looked like a login form
+
+Reported with a screenshot of GitHub's *Authorize your device* page: the login
+dropdown opened on a page with no username or password, and it was only one box
+wide, so "No match - refine the filter" wrapped one letter per line.
+
+- **Why it opened:** the page is a row of one-character inputs, each inside its
+  own bordered `<div>`. `inSplitOtpGroup()` only looked at direct siblings, so
+  every box looked like a separate text input; every keyword gate missed; and
+  `isUsernameField()` then accepted it because `pageLooksLikeAuth()` matched the
+  "Signed in as …" copy. Focus in a "username" field opens the suggestion
+  dropdown, which had nothing to offer.
+- **Why it was crushed:** the dropdown deliberately matches the anchor input's
+  width (Bitwarden parity), and the anchor was a ~24 px digit box.
+- **Fixes** (`browser_extension/content.js`):
+  - `isUsernameField()` refuses any `maxlength="1"` / `size=1` box. A one-char
+    input is a code digit, never an account name.
+  - `inSplitOtpGroup()` now climbs up to three ancestors and counts one-char
+    inputs under each, so per-box wrappers (GitHub) still form one group. A
+    wrapper holding a single box never qualifies.
+  - `otpBoxGroup()` groups the same way (`otpBoxGroups()` + `otpBoxGroupAny()`),
+    so a fill lands in every box of a wrapped strip.
+  - `fillTotpNow()` refuses a length mismatch: a 6-digit TOTP into an 8-box
+    device code can never be accepted by the page, so it copies the code and
+    toasts "N-box code field — code copied, paste it in" instead of dropping the
+    code into box 0.
+  - The login dropdown keeps a 260 px floor and is clamped to the viewport, so a
+    tiny anchor can no longer produce an unreadable panel.
+- **Tests** (`tests/js/content.test.mjs`): one-char box is never a username (no
+  `__pv_drop`), wrapped 8-box strip is recognised as one code ceremony, and the
+  dropdown width floor is pinned.
+- **Gates:** `npm test` exit 0, `npm run test:tokens` OK, `node --check` clean on
+  both files. No Rust file changed.
+- **Not verified on screen:** the GitHub page needs a device-flow login, so the
+  fix is proven by the DOM tests above, not by a screenshot.
+
 ## Last code batch (2026-11-17d) — the pairing button was still hidden
 
 Follow-up to `2026-11-17c` after the user loaded the unpacked build and pasted
