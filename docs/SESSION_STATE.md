@@ -19,8 +19,33 @@
 | Rust modules | 88 `.rs` files under `src/` |
 | UI | one file: `ui/appwindow.slint` (~3.8k lines) |
 
-## Last code batch (2026-11-17e) — a code page looked like a login form
+## Published release (2026-11-18) — v0.4.2
 
+`gh release create v0.4.2` published
+<https://github.com/zjhasan13/phantom_vault/releases/tag/v0.4.2> with five assets:
+`PhantomVault-Setup-0.4.2.exe` (10,177,397 B),
+`PhantomVault-0.4.2-windows-x64.exe` (25,589,760 B),
+`phantomvault-chrome-0.4.2.zip` (155,772 B),
+`phantomvault-firefox-0.4.2.zip` (155,814 B) and `SHA256SUMS.txt`.
+
+The zips were rebuilt from `browser_extension\dist\{chrome,firefox}` after the
+`2026-11-17e` fix and diffed against the source (`content.js`, `popup.js`,
+`popup.html`, `background.js` hash-identical in both). The exes are the 10:03
+build; every commit after it touched extension files or docs only, so the
+binary still matches the Rust tree.
+
+Still **not publishable-quality**: no Authenticode signature, no `.sig` (the
+updater refuses the build by design) and no SBOM. Pushing the tag also triggers
+`.github/workflows/release.yml`, which needs the `PV_SIGNING_KEY` repository
+secret; without it the workflow refuses to publish, so the manually uploaded
+assets are what users get.
+
+Extension stores: there is no publish script and no credentials in this repo.
+Chrome Web Store needs a paid developer account plus an OAuth client id/secret
+and refresh token; AMO needs a JWT issuer/secret. Until those exist, the zip +
+"load unpacked" is the install path, and `docs/MANUAL_TEST_GUIDE.md` says so.
+
+## Last code batch (2026-11-17e) — a code page looked like a login form
 Reported with a screenshot of GitHub's *Authorize your device* page: the login
 dropdown opened on a page with no username or password, and it was only one box
 wide, so "No match - refine the filter" wrapped one letter per line.
